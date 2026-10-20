@@ -111,10 +111,7 @@ fn kv_row(p: &mut P, cx: &Cx, ox: f32, oy: f32, y: f32, k: &str, v: String) {
 }
 
 fn frame_box(bg: Color) -> impl Bundle {
-    (
-        BackgroundColor(bg),
-        BorderColor::all(BORDER),
-    )
+    (BackgroundColor(bg), BorderColor::all(BORDER))
 }
 
 /// Right-hand page strip (exit + five page buttons) at 946,76.
@@ -128,7 +125,7 @@ fn sidebar(p: &mut P, cx: &Cx, active: Option<Screen>) {
         (PAGE_QUESTS, Some(Screen::Journal)),
         (PAGE_QUILL, None),
     ];
-    let mut slot = |p: &mut P, pic: Pic, y: f32, act: Option<Action>, on: bool| {
+    let slot = |p: &mut P, pic: Pic, y: f32, act: Option<Action>, on: bool| {
         let mut n = abs(ox + 8.0, oy + y, 46.0, 46.0);
         n.border = UiRect::all(px(2));
         n.align_items = AlignItems::Center;
@@ -150,7 +147,14 @@ fn sidebar(p: &mut P, cx: &Cx, active: Option<Screen>) {
                 ..default()
             })
             .with_children(|i| {
-                spawn_pic(i, cx.a, pic, 0.0, 0.0, Some((pic.w.min(38.0), pic.h.min(38.0))));
+                spawn_pic(
+                    i,
+                    cx.a,
+                    pic,
+                    0.0,
+                    0.0,
+                    Some((pic.w.min(38.0), pic.h.min(38.0))),
+                );
             });
         });
     };
@@ -177,7 +181,7 @@ fn item_grid(
     sel: Option<&str>,
     mk: impl Fn(&str) -> Action,
 ) {
-    let (x, y, w, h) = rect;
+    let (x, y, _w, h) = rect;
     let cols = 5usize;
     p.spawn((
         Node {
@@ -192,15 +196,20 @@ fn item_grid(
         let cells = (list.len().div_ceil(cols) * cols).max(cols * 10);
         for i in 0..cells {
             let mut n = Node {
-                width: px(48),
-                height: px(48),
+                width: px(44),
+                height: px(44),
+                margin: UiRect::all(px(2)),
                 border: UiRect::all(px(1)),
                 flex_shrink: 0.0,
                 ..default()
             };
             match list.get(i) {
                 None => {
-                    g.spawn((n, frame_box(CELL), BorderColor::all(Color::srgba(0.5, 0.4, 0.28, 0.45))));
+                    g.spawn((
+                        n,
+                        BackgroundColor(CELL),
+                        BorderColor::all(Color::srgba(0.5, 0.4, 0.28, 0.45)),
+                    ));
                 }
                 Some((_, key, count)) => {
                     let is_sel = sel == Some(key.as_str());
@@ -211,7 +220,11 @@ fn item_grid(
                     g.spawn((
                         button(
                             mk(key),
-                            if is_sel { Color::srgba(0.25, 0.38, 0.55, 0.9) } else { CELL },
+                            if is_sel {
+                                Color::srgba(0.25, 0.38, 0.55, 0.9)
+                            } else {
+                                CELL
+                            },
                             CELL_HOVER,
                         ),
                         n,
@@ -231,7 +244,7 @@ fn item_grid(
                                 c,
                                 cx.font(),
                                 count.to_string(),
-                                (14.0, 32.0, 30.0, 12.0),
+                                (10.0, 29.0, 30.0, 12.0),
                                 11.0,
                                 TEXT,
                                 Al::Right,
@@ -248,7 +261,11 @@ fn item_grid(
     p.spawn((t, frame_box(Color::srgba(0.08, 0.06, 0.05, 0.9))));
 }
 
-fn item_list(cx: &Cx, inv: &std::collections::BTreeMap<String, u32>, cat: Option<i32>) -> Vec<(String, String, u32)> {
+fn item_list(
+    cx: &Cx,
+    inv: &std::collections::BTreeMap<String, u32>,
+    cat: Option<i32>,
+) -> Vec<(String, String, u32)> {
     let mut v: Vec<_> = inv
         .iter()
         .filter(|(k, n)| k.as_str() != GOLD_ITEM && **n > 0)
@@ -277,7 +294,15 @@ fn character_view(p: &mut P, cx: &Cx) {
     kv_row(p, cx, ox, oy, 44.0, "Stufe", st.level.to_string());
     kv_row(p, cx, ox, oy, 68.0, "Erfahrung", st.xp.to_string());
     kv_row(p, cx, ox, oy, 92.0, "Nächste Stufe", next.to_string());
-    kv_row(p, cx, ox, oy, 116.0, "Lernpunkte", st.learning_points.to_string());
+    kv_row(
+        p,
+        cx,
+        ox,
+        oy,
+        116.0,
+        "Lernpunkte",
+        st.learning_points.to_string(),
+    );
     heading(p, cx, "Attribute", (ox + 24.0, oy + 164.0, 260.0, 25.0));
     let attr = |tag: &str| {
         st.attributes
@@ -288,7 +313,12 @@ fn character_view(p: &mut P, cx: &Cx) {
     };
     let mut y = 196.0;
     for tag in ["STR", "HNT", "INT", "SMT", "THF", "ALC"] {
-        kv_row(p, cx, ox, oy, y, &attrib_name(db, tag), attr(tag));
+        let name = if tag == "HNT" {
+            "Jagdgeschick".to_string()
+        } else {
+            attrib_name(db, tag)
+        };
+        kv_row(p, cx, ox, oy, y, &name, attr(tag));
         y += 23.0;
     }
     let v = cx.vitals;
@@ -300,7 +330,12 @@ fn character_view(p: &mut P, cx: &Cx) {
         kv_row(p, cx, ox, oy, y, name, format!("{cur:.0} / {max:.0}"));
         y += 23.0;
     }
-    heading(p, cx, "Rüstungsschutz", (ox + 24.0, oy + 428.0, 260.0, 25.0));
+    heading(
+        p,
+        cx,
+        "Rüstungsschutz",
+        (ox + 24.0, oy + 428.0, 260.0, 25.0),
+    );
     for (i, (name, tag)) in [
         ("Schutz vor Klingen", "prot_blade"),
         ("Schutz vor Zerschmettern", "prot_impact"),
@@ -313,7 +348,15 @@ fn character_view(p: &mut P, cx: &Cx) {
     .enumerate()
     {
         let y = [464.0, 488.0, 512.0, 532.0, 556.0, 580.0][i];
-        kv_row(p, cx, ox, oy, y, name, st.attributes.get(tag).copied().unwrap_or(0).to_string());
+        kv_row(
+            p,
+            cx,
+            ox,
+            oy,
+            y,
+            name,
+            st.attributes.get(tag).copied().unwrap_or(0).to_string(),
+        );
     }
 }
 
@@ -344,7 +387,11 @@ fn tab_strip(p: &mut P, cx: &Cx, rect: (f32, f32), selected: usize) {
         p.spawn((
             button(
                 Action::InvTab(k),
-                if on { Color::srgba(0.12, 0.30, 0.18, 0.95) } else { Color::srgba(0.02, 0.10, 0.06, 0.92) },
+                if on {
+                    Color::srgba(0.12, 0.30, 0.18, 0.95)
+                } else {
+                    Color::srgba(0.02, 0.10, 0.06, 0.92)
+                },
                 Color::srgba(0.12, 0.26, 0.18, 0.95),
             ),
             n,
@@ -368,12 +415,17 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
     let db = &cx.s.db;
     let info = cx.s.items.get(key);
     spawn_pic(p, cx.a, ITEM, ox, oy, None);
-    heading(p, cx, item_name(db, key), (ox + 12.0, oy + 8.0, 264.0, 28.0));
+    heading(
+        p,
+        cx,
+        item_name(db, key),
+        (ox + 12.0, oy + 8.0, 264.0, 28.0),
+    );
     if let Some(d) = db.text(&format!("ITEMDESC_{key}")).filter(|d| d != "-") {
         p.spawn((
             Node {
                 overflow: Overflow::clip(),
-                ..abs(ox + 18.0, oy + 44.0, 252.0, 60.0)
+                ..abs(ox + 90.0, oy + 40.0, 180.0, 66.0)
             },
             children![txt_wrap(cx.font(), d, 14.0, TEXT)],
         ));
@@ -381,6 +433,15 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
     let Some(info) = info else {
         return;
     };
+    let gl = glyph(info.category);
+    spawn_pic(
+        p,
+        cx.a,
+        gl,
+        ox + 16.0 + (52.0 - gl.w) / 2.0,
+        oy + 40.0 + (52.0 - gl.h) / 2.0,
+        None,
+    );
     let mut y = 112.0;
     let mut row = |p: &mut P, k: String, v: String, c: Color| {
         body(p, cx, k, (ox + 18.0, oy + y, 170.0, 20.0), Al::Left, TEXT);
@@ -403,13 +464,12 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
         row(p, attrib_name(db, tag), format!("{v:+}"), TEXT);
     }
     for (tag, need) in info.requirements.iter().take(3) {
-        let have = cx
-            .s
-            .state
-            .attributes
-            .get(&tag.to_ascii_lowercase())
-            .copied()
-            .unwrap_or(0);
+        let have =
+            cx.s.state
+                .attributes
+                .get(&tag.to_ascii_lowercase())
+                .copied()
+                .unwrap_or(0);
         row(
             p,
             format!("Benötigt {}", attrib_name(db, tag)),
@@ -424,7 +484,11 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
         n.align_items = AlignItems::Center;
         n.justify_content = JustifyContent::Center;
         p.spawn((
-            button(a, Color::srgba(0.12, 0.08, 0.05, 0.95), Color::srgba(0.30, 0.20, 0.10, 0.95)),
+            button(
+                a,
+                Color::srgba(0.12, 0.08, 0.05, 0.95),
+                Color::srgba(0.30, 0.20, 0.10, 0.95),
+            ),
             n,
             BorderColor::all(BORDER),
         ))
@@ -461,13 +525,36 @@ fn inventory(p: &mut P, cx: &Cx) {
     spawn_pic(p, cx.a, INVENTORY, ox, oy, None);
     heading(p, cx, INV_TABS[tab].0, (ox + 26.0, oy + 12.0, 258.0, 25.0));
     tab_strip(p, cx, (ox + 30.0, oy + 46.0), tab);
-    item_grid(p, cx, (ox + 26.0, oy + 85.0, 258.0, 482.0), "items", &list, sel.as_deref(), |k| {
-        Action::SelectItem(k.to_string())
-    });
-    body(p, cx, cx.t("HUD_GoldAmount", "Gold"), (ox + 32.0, oy + 580.0, 100.0, 20.0), Al::Left, TEXT);
-    body(p, cx, st.gold().to_string(), (ox + 98.0, oy + 580.0, 180.0, 20.0), Al::Right, TEXT);
+    item_grid(
+        p,
+        cx,
+        (ox + 26.0, oy + 85.0, 258.0, 482.0),
+        "items",
+        &list,
+        sel.as_deref(),
+        |k| Action::SelectItem(k.to_string()),
+    );
+    body(
+        p,
+        cx,
+        cx.t("HUD_GoldAmount", "Gold"),
+        (ox + 32.0, oy + 580.0, 100.0, 20.0),
+        Al::Left,
+        TEXT,
+    );
+    body(
+        p,
+        cx,
+        st.gold().to_string(),
+        (ox + 98.0, oy + 580.0, 180.0, 20.0),
+        Al::Right,
+        TEXT,
+    );
     if let Some(k) = &sel {
-        let equip = cx.s.items.get(k).is_some_and(|i| matches!(i.category, 1 | 2));
+        let equip =
+            cx.s.items
+                .get(k)
+                .is_some_and(|i| matches!(i.category, 1 | 2));
         let label = if equip { "Anlegen" } else { "Benutzen" };
         item_view(p, cx, k, vec![(label.into(), Action::UseItem(k.clone()))]);
     }
@@ -478,9 +565,13 @@ fn inventory(p: &mut P, cx: &Cx) {
 fn skill_group(key: &str) -> usize {
     let k = key.to_ascii_lowercase();
     let has = |w: &[&str]| w.iter().any(|x| k.contains(x));
-    if has(&["sword", "1h", "2h", "bow", "crossbow", "combat", "weapon", "shield", "fight"]) {
+    if has(&[
+        "sword", "1h", "2h", "bow", "crossbow", "combat", "weapon", "shield", "fight",
+    ]) {
         0 // Kampf
-    } else if has(&["hunt", "sneak", "sprint", "animal", "pelt", "claw", "teeth", "trophy", "skin"]) {
+    } else if has(&[
+        "hunt", "sneak", "sprint", "animal", "pelt", "claw", "teeth", "trophy", "skin",
+    ]) {
         1 // Jagd
     } else if has(&["magic", "spell", "rune", "mana", "scroll", "summon"]) {
         2 // Magie
@@ -522,11 +613,25 @@ fn character(p: &mut P, cx: &Cx) {
     for (i, (name, h, r)) in groups.into_iter().enumerate() {
         heading(p, cx, name, (ox + h.0, oy + h.1, 260.0, 25.0));
         for (j, s) in buckets[i].iter().take((r.3 / 20.0) as usize).enumerate() {
-            body(p, cx, s.clone(), (ox + r.0 + 8.0, oy + r.1 + 20.0 * j as f32, r.2 - 16.0, 20.0), Al::Left, TEXT);
+            body(
+                p,
+                cx,
+                s.clone(),
+                (ox + r.0 + 8.0, oy + r.1 + 20.0 * j as f32, r.2 - 16.0, 20.0),
+                Al::Left,
+                TEXT,
+            );
         }
     }
     if st.skills.is_empty() {
-        body(p, cx, "Noch keine Fertigkeiten erlernt.", (ox + 320.0, oy + 444.0, 288.0, 40.0), Al::Center, TEXT_DIM);
+        body(
+            p,
+            cx,
+            "Noch keine Fertigkeiten erlernt.",
+            (ox + 320.0, oy + 444.0, 288.0, 40.0),
+            Al::Center,
+            TEXT_DIM,
+        );
     }
     sidebar(p, cx, Some(Screen::Character));
 }
@@ -536,7 +641,10 @@ fn quest_tab_of(s: QuestStatus) -> Option<usize> {
     match s {
         QuestStatus::Running => Some(0),
         QuestStatus::Success | QuestStatus::Won => Some(1),
-        QuestStatus::Failed | QuestStatus::Lost | QuestStatus::Obsolete | QuestStatus::Cancelled => Some(2),
+        QuestStatus::Failed
+        | QuestStatus::Lost
+        | QuestStatus::Obsolete
+        | QuestStatus::Cancelled => Some(2),
         QuestStatus::Open => None,
     }
 }
@@ -551,7 +659,8 @@ fn dialog_excerpt(db: &gothic_gameplay::GameDatabase, info: &str) -> Vec<String>
         .filter(|s| Cmd::parse(&s.command) == Some(Cmd::Say))
         .filter_map(|s| {
             let t = db.text(&s.text)?;
-            let player = s.entity1.eq_ignore_ascii_case("player") || s.entity1.eq_ignore_ascii_case("pc_hero");
+            let player = s.entity1.eq_ignore_ascii_case("player")
+                || s.entity1.eq_ignore_ascii_case("pc_hero");
             Some(format!("{}: {t}", if player { "Du" } else { "Gegenüber" }))
         })
         .collect()
@@ -562,7 +671,7 @@ fn journal(p: &mut P, cx: &Cx) {
     let st = &cx.s.state;
     let (ox, oy) = (14.0, 16.0);
     spawn_pic(p, cx.a, QUESTS, ox, oy, None);
-    heading(p, cx, cx.t("HUD_Quests", "Alle Missionen"), (ox + 32.0, oy + 8.0, 872.0, 30.0));
+    heading(p, cx, "Alle Missionen", (ox + 32.0, oy + 8.0, 872.0, 30.0));
     // world map (cropped to the 442x392 view)
     let mut map = WORLD_MAP;
     map.h = 514.0;
@@ -582,13 +691,22 @@ fn journal(p: &mut P, cx: &Cx) {
         p.spawn((
             button(
                 Action::QuestTab(i),
-                if on { Color::srgba(0.05, 0.25, 0.12, 0.95) } else { Color::srgba(0.0, 0.07, 0.04, 0.95) },
+                if on {
+                    Color::srgba(0.05, 0.25, 0.12, 0.95)
+                } else {
+                    Color::srgba(0.0, 0.07, 0.04, 0.95)
+                },
                 Color::srgba(0.07, 0.22, 0.12, 0.95),
             ),
             nd,
             BorderColor::all(BORDER),
         ))
-        .with_child(txt(cx.font(), n.clone(), 16.0, if on { TEXT_HI } else { TEXT }));
+        .with_child(txt(
+            cx.font(),
+            n.clone(),
+            16.0,
+            if on { TEXT_HI } else { TEXT },
+        ));
     }
     let mut list: Vec<(String, String)> = st
         .quests
@@ -636,7 +754,12 @@ fn journal(p: &mut P, cx: &Cx) {
                 .with_children(|i| {
                     spawn_pic(i, cx.a, MARK_QUEST, 0.0, 0.0, None);
                 });
-                r.spawn(txt(cx.font(), title.clone(), 15.0, if sel { TEXT_HI } else { TEXT }));
+                r.spawn(txt(
+                    cx.font(),
+                    title.clone(),
+                    15.0,
+                    if sel { TEXT_HI } else { TEXT },
+                ));
             });
         }
     });
@@ -691,7 +814,11 @@ fn journal(p: &mut P, cx: &Cx) {
         }
     }
     // reputation
-    let mut fame: Vec<(String, i32)> = st.fame.iter().map(|(k, v)| (fame_name(db, k), *v)).collect();
+    let mut fame: Vec<(String, i32)> = st
+        .fame
+        .iter()
+        .map(|(k, v)| (fame_name(db, k), *v))
+        .collect();
     if fame.is_empty() {
         fame = [
             "Ruf in Nordmar",
@@ -707,8 +834,22 @@ fn journal(p: &mut P, cx: &Cx) {
     }
     for (i, (n, v)) in fame.iter().take(6).enumerate() {
         let y = 464.0 + 22.0 * i as f32;
-        body(p, cx, n.clone(), (ox + 42.0, oy + y, 200.0, 25.0), Al::Left, TEXT);
-        body(p, cx, v.to_string(), (ox + 206.0, oy + y, 100.0, 25.0), Al::Right, TEXT);
+        body(
+            p,
+            cx,
+            n.clone(),
+            (ox + 42.0, oy + y, 200.0, 25.0),
+            Al::Left,
+            TEXT,
+        );
+        body(
+            p,
+            cx,
+            v.to_string(),
+            (ox + 206.0, oy + y, 100.0, 25.0),
+            Al::Right,
+            TEXT,
+        );
     }
     // clock
     spawn_pic(p, cx.a, TIME_SKY, ox + 330.0, oy + 460.0, None);
@@ -750,8 +891,13 @@ fn dialog(p: &mut P, cx: &Cx) {
                 ..abs(227.0 + 19.0, 100.0 + 9.0, 532.0, 62.0)
             },
             children![(
-                txt_wrap(cx.font(), l.text.clone(), 15.0, if l.player { TEXT_HI } else { TEXT }),
-                TextLayout::new_with_justify(Justify::Center),
+                txt_wrap(
+                    cx.font(),
+                    l.text.clone(),
+                    15.0,
+                    if l.player { TEXT_HI } else { TEXT }
+                ),
+                TextLayout::justify(Justify::Center),
             )],
         ));
     }
@@ -769,7 +915,7 @@ fn dialog(p: &mut P, cx: &Cx) {
             m.spawn((
                 button(Action::Close, Color::NONE, SEL),
                 Node {
-                    padding: UiRect::axes(px(6), px(2)),
+                    padding: UiRect::axes(px(14), px(2)),
                     flex_shrink: 0.0,
                     ..default()
                 },
@@ -780,7 +926,7 @@ fn dialog(p: &mut P, cx: &Cx) {
             m.spawn((
                 button(Action::Choose(i), Color::NONE, SEL),
                 Node {
-                    padding: UiRect::axes(px(6), px(2)),
+                    padding: UiRect::axes(px(14), px(2)),
                     flex_shrink: 0.0,
                     ..default()
                 },
@@ -807,18 +953,55 @@ fn trade(p: &mut P, cx: &Cx) {
     let sel = cx.ui.inv_sel.clone();
     // vendor (left)
     spawn_pic(p, cx.a, TRADE_VENDOR, 14.0, 16.0, None);
-    heading(p, cx, npc.replace('_', " "), (14.0 + 26.0, 16.0 + 8.0, 252.0, 25.0));
-    item_grid(p, cx, (14.0 + 22.0, 16.0 + 44.0, 260.0, 384.0), "trade_theirs", &theirs, sel.as_deref(), |k| {
-        Action::Trade(k.to_string(), true)
-    });
+    heading(
+        p,
+        cx,
+        npc.replace('_', " "),
+        (14.0 + 26.0, 16.0 + 8.0, 252.0, 25.0),
+    );
+    item_grid(
+        p,
+        cx,
+        (14.0 + 22.0, 16.0 + 44.0, 260.0, 384.0),
+        "trade_theirs",
+        &theirs,
+        sel.as_deref(),
+        |k| Action::Trade(k.to_string(), true),
+    );
     // player (right)
     spawn_pic(p, cx.a, TRADE_PLAYER, 691.0, 16.0, None);
-    heading(p, cx, "Dein Inventar", (691.0 + 25.0, 16.0 + 8.0, 252.0, 25.0));
-    item_grid(p, cx, (691.0 + 22.0, 16.0 + 48.0, 260.0, 380.0), "trade_mine", &mine, sel.as_deref(), |k| {
-        Action::Trade(k.to_string(), false)
-    });
-    body(p, cx, "Gold", (691.0 + 33.0, 16.0 + 444.0, 100.0, 25.0), Al::Left, TEXT);
-    body(p, cx, st.gold().to_string(), (691.0 + 117.0, 16.0 + 444.0, 152.0, 25.0), Al::Right, TEXT);
+    heading(
+        p,
+        cx,
+        "Dein Inventar",
+        (691.0 + 25.0, 16.0 + 8.0, 252.0, 25.0),
+    );
+    tab_strip(p, cx, (691.0 + 25.0, 16.0 + 48.0), cx.ui.inv_tab.min(4));
+    item_grid(
+        p,
+        cx,
+        (691.0 + 22.0, 16.0 + 92.0, 260.0, 336.0),
+        "trade_mine",
+        &mine,
+        sel.as_deref(),
+        |k| Action::Trade(k.to_string(), false),
+    );
+    body(
+        p,
+        cx,
+        "Gold",
+        (691.0 + 33.0, 16.0 + 444.0, 100.0, 25.0),
+        Al::Left,
+        TEXT,
+    );
+    body(
+        p,
+        cx,
+        st.gold().to_string(),
+        (691.0 + 117.0, 16.0 + 444.0, 152.0, 25.0),
+        Al::Right,
+        TEXT,
+    );
     // transaction strip
     spawn_pic(p, cx.a, TRANSACTION, 14.0, 524.0, None);
     body(
@@ -834,7 +1017,11 @@ fn trade(p: &mut P, cx: &Cx) {
     n.align_items = AlignItems::Center;
     n.justify_content = JustifyContent::Center;
     p.spawn((
-        button(Action::Close, Color::srgba(0.12, 0.08, 0.05, 0.95), Color::srgba(0.30, 0.20, 0.10, 0.95)),
+        button(
+            Action::Close,
+            Color::srgba(0.12, 0.08, 0.05, 0.95),
+            Color::srgba(0.30, 0.20, 0.10, 0.95),
+        ),
         n,
         BorderColor::all(BORDER),
         children![txt(cx.font(), "Schliessen", 16.0, TEXT)],

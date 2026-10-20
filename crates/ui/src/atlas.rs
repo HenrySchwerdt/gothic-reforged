@@ -48,6 +48,7 @@ pub const TALK: Pic = bg(17, 1, 606, 570, 81); // 227,100
 pub const QUICKSLOTS: Pic = bg(17, 1, 689, 540, 56); // 252,688
 pub const STATUSBAR: Pic = bg(17, 290, 576, 201, 19);
 pub const CONFIRM: Pic = bg(17, 290, 431, 482, 143);
+pub const ITEM: Pic = bg(16, 306, 507, 287, 350); // 336,16
 pub const TIP: Pic = bg(16, 595, 507, 350, 279);
 pub const WORLD_MAP: Pic = bg(15, 1, 1, 580, 599);
 pub const TIME_SKY: Pic = bg(17, 573, 606, 158, 34);
@@ -56,7 +57,7 @@ pub const TIME_LABEL: Pic = bg(17, 573, 642, 158, 34);
 // icon atlas
 pub const COMPASS_WHEEL: Pic = ic(218, 16, 169, 170);
 pub const COMPASS_ROSE: Pic = ic(3, 1, 198, 199);
-pub const PAGE_EXIT: Pic = ic(447, 138, 39, 39);
+pub const PAGE_EXIT: Pic = ic(136, 249, 32, 30);
 pub const PAGE_INVENTORY: Pic = ic(410, 55, 34, 32);
 pub const PAGE_CHARACTER: Pic = ic(458, 94, 37, 38);
 pub const PAGE_DOCUMENTS: Pic = ic(409, 98, 38, 35);

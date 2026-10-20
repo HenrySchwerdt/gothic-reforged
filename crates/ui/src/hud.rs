@@ -74,15 +74,15 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
             },
         ))
         .with_children(|r| {
-            // compass: wheel in front, rose behind it turning with the view
+            // compass: brass wheel with the star rose turning in it
             let mut n = abs(0.0, 0.0, 100.0, 100.0);
             n.left = px(16);
             n.top = Val::Auto;
             n.bottom = px(8);
             r.spawn(n).with_children(|c| {
-                let mut rose = spawn_pic(c, &a, COMPASS_ROSE, 12.0, 12.0, Some((76.0, 76.0)));
-                rose.insert(Rose);
                 spawn_pic(c, &a, COMPASS_WHEEL, 8.0, 8.0, Some((84.0, 84.0)));
+                let mut rose = spawn_pic(c, &a, COMPASS_ROSE, 20.0, 20.0, Some((60.0, 60.0)));
+                rose.insert(Rose);
             });
             // quick bar
             let mut n = abs(0.0, 0.0, 520.0, 56.0);
@@ -144,18 +144,28 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_hud(
     mut commands: Commands,
+    ui: Res<UiState>,
     vitals: Res<PlayerVitals>,
     heading: Res<PlayerHeading>,
     focus: Res<FocusHealth>,
     slots: Res<QuickSlots>,
     session: Option<Res<GameSession>>,
     assets: Res<UiAssets>,
+    mut root: Query<&mut Visibility, (With<HudRoot>, Without<FocusRoot>)>,
     mut bars: Query<(&HudBar, &mut Node), Without<SlotsRoot>>,
     mut rose: Query<&mut UiTransform, With<Rose>>,
     mut focus_root: Query<&mut Visibility, With<FocusRoot>>,
     slot_root: Query<(Entity, Option<&Children>), With<SlotsRoot>>,
     mut last_slots: Local<u32>,
 ) {
+    // the full-width dialog / trade panels replace the HUD, every other page keeps it
+    for mut v in &mut root {
+        *v = if matches!(ui.screen, Screen::Dialog | Screen::Trade) {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
     for (b, mut n) in &mut bars {
         let f = match b {
             HudBar::Hp => frac(vitals.hp, vitals.hp_max),
@@ -189,6 +199,13 @@ pub(crate) fn update_hud(
             for i in 0..10 {
                 let x = 22.0 + 48.0 * i as f32;
                 let slot = slots.0.get(i).and_then(Option::as_ref);
+                let mut cell = abs(x + 2.0, 7.0, 44.0, 44.0);
+                cell.border = UiRect::all(px(1));
+                c.spawn((
+                    cell,
+                    BackgroundColor(Color::srgba(0.24, 0.17, 0.12, 0.92)),
+                    BorderColor::all(Color::srgba(0.55, 0.45, 0.30, 0.8)),
+                ));
                 if let Some(s) = slot {
                     let cat = session
                         .as_ref()

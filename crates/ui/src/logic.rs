@@ -31,7 +31,7 @@ pub(crate) fn ui_scale(
         return;
     }
     if let Ok(w) = windows.single() {
-        let s = (w.width() / 1280.0).min(w.height() / 720.0).max(0.5);
+        let s = (w.width() / 1024.0).min(w.height() / 768.0).max(0.5);
         if (scale.0 - s).abs() > 0.001 {
             scale.0 = s;
         }

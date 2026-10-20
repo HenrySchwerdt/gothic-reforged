@@ -3215,6 +3215,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-nav"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "gothic-physics",
+]
+
+[[package]]
 name = "gothic-physics"
 version = "0.1.0"
 dependencies = [
@@ -3239,6 +3247,7 @@ dependencies = [
  "bevy",
  "gothic-animation",
  "gothic-audio",
+ "gothic-cook",
  "gothic-formats",
  "gothic-gameplay",
  "gothic-importer",

@@ -4,8 +4,10 @@
 //! (`GameDatabase` + `GameState` from `gothic-gameplay`) and talks to the host through
 //! messages ([`StartDialog`], [`ChooseOption`], [`UseItem`], [`OpenScreen`], [`Notify`] ...).
 //! Original fonts/textures are loaded at runtime from the installation (`UiConfig`).
-//! Layout, colours and tab names are an approximation of Gothic 3's look, not a port.
+//! Layouts are rebuilt from the original `g3.gui.res` and atlas art (see
+//! `docs/research/UI_ORIGINAL.md`); screens are visual ports only, not gameplay-complete.
 pub mod assets;
+mod atlas;
 pub mod demo;
 mod hud;
 pub mod items;
@@ -13,7 +15,8 @@ mod logic;
 mod screens;
 mod style;
 
-pub use assets::UiAssets;
+pub use assets::{Page, UiAssets};
+pub use hud::{FocusHealth, QuickSlot, QuickSlots};
 pub use items::{ItemCatalog, ItemInfo};
 
 use bevy::prelude::*;
@@ -239,6 +242,8 @@ impl Plugin for GothicUiPlugin {
             .init_resource::<UiState>()
             .init_resource::<PlayerVitals>()
             .init_resource::<PlayerHeading>()
+            .init_resource::<QuickSlots>()
+            .init_resource::<FocusHealth>()
             .add_message::<StartDialog>()
             .add_message::<OpenScreen>()
             .add_message::<CloseScreen>()

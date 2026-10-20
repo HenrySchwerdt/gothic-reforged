@@ -125,7 +125,7 @@ pub fn run(args: &[String]) -> Result<()> {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gothic Reforged / UI demo".into(),
-                resolution: WindowResolution::new(1280, 720),
+                resolution: WindowResolution::new(1024, 768),
                 ..default()
             }),
             ..default()
@@ -145,6 +145,7 @@ pub fn run(args: &[String]) -> Result<()> {
             sp: 85.0,
             sp_max: 100.0,
         })
+        .insert_resource(FocusHealth(Some(0.55)))
         .insert_resource(Demo {
             npc,
             shots,
@@ -188,9 +189,24 @@ fn demo_system(
     mut notify: MessageWriter<Notify>,
     mut trade: MessageWriter<OpenTrade>,
     mut exit: MessageWriter<AppExit>,
+    mut act: MessageWriter<Act>,
 ) {
     demo.frame += 1;
     let f = demo.frame;
+    if f == 2 {
+        let mut slots: Vec<Option<QuickSlot>> = Vec::new();
+        for want in [1, 1, 1, 6, 4, 7, 2] {
+            let hit = s.state.inventory.iter().find(|(k, _)| {
+                s.items.get(k).is_some_and(|i| i.category == want)
+                    && !slots.iter().flatten().any(|q| &q.item == *k)
+            });
+            slots.push(hit.map(|(k, n)| QuickSlot {
+                item: k.clone(),
+                count: *n,
+            }));
+        }
+        commands.insert_resource(QuickSlots(slots));
+    }
     if f == 5 {
         start.write(StartDialog {
             npc: demo.npc.clone(),
@@ -225,6 +241,16 @@ fn demo_system(
         110 => shot(&mut commands, "journal"),
         115 => {
             open.write(OpenScreen(Screen::Inventory));
+        }
+        118 => {
+            let k = s
+                .state
+                .inventory
+                .keys()
+                .find(|k| s.items.get(k).is_some_and(|i| i.category == 1));
+            if let Some(k) = k {
+                act.write(Act(Action::SelectItem(k.clone())));
+            }
         }
         150 => shot(&mut commands, "inventory"),
         155 => {

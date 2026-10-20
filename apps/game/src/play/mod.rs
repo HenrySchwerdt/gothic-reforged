@@ -13,6 +13,7 @@ mod cam;
 mod events;
 mod hero;
 mod hud;
+mod kit;
 mod npcs;
 mod record;
 mod script;
@@ -125,15 +126,8 @@ pub struct HeroKit {
 /// 4 `Arrow` x50, 5 `It_Potion_Health` x10 and 123 `It_Gold`.
 fn new_game_state() -> gothic_gameplay::GameState {
     let mut st = gothic_gameplay::GameState::new();
-    for (item, n) in [
-        ("It_1H_OrcSlayer_01", 1),
-        ("It_Torch_Burning", 1),
-        ("It_Bow_Hunting", 1),
-        ("Arrow", 50),
-        ("It_Potion_Health", 10),
-        ("it_gold", 123),
-    ] {
-        st.add_item(item, n);
+    for (item, n, _slot) in kit::START_KIT {
+        st.add_item(if *item == "It_Gold" { "it_gold" } else { item }, *n);
     }
     st
 }
@@ -150,6 +144,25 @@ fn item_mesh(items_json: &std::path::Path, name: &str) -> Option<String> {
         .map(|m| m.trim_end_matches(".xcmsh").to_string())
 }
 
+/// The quest / dialog database: from the cooked cache when one exists (profile `desktop-high`,
+/// German texts), otherwise parsed from the installation.
+fn load_database(data_dir: &std::path::Path) -> Result<(GameDatabase, &'static str)> {
+    if std::env::var_os("GR_NO_CACHE").is_none() {
+        match gothic_cook::Cache::open_default("desktop-high").and_then(|c| c.load_db()) {
+            Ok(mut db) if db.strings.language_index("German").is_some() => {
+                // The cooked table carries every language; only the selection differs.
+                db.language = "German".to_string();
+                return Ok((db, "cooked cache"));
+            }
+            Ok(_) => eprintln!("play: cooked database has no German texts"),
+            Err(e) => eprintln!("play: no usable cooked database: {e:#}"),
+        }
+    }
+    let db = GameDatabase::load_install(data_dir, "German")
+        .map_err(|e| anyhow::anyhow!("loading the quest / dialog database: {e:#}"))?;
+    Ok((db, "installation (no usable cache)"))
+}
+
 /// Called from `walk::run` after the walk app is assembled.
 pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     let data_dir = PathBuf::from(
@@ -161,8 +174,12 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     let record = flag(args, "--record").map(PathBuf::from);
     let started = std::time::Instant::now();
 
-    let db = GameDatabase::load_install(&data_dir, "German")
-        .map_err(|e| anyhow::anyhow!("loading the quest / dialog database: {e:#}"))?;
+    let t_db = std::time::Instant::now();
+    let (db, db_source) = load_database(&data_dir)?;
+    eprintln!(
+        "play: game database from {db_source} in {} ms",
+        t_db.elapsed().as_millis()
+    );
     let db = std::sync::Arc::new(db);
     let items_json = PathBuf::from(".local/items.json");
     let items = ItemDb::load(&items_json).map_err(|e| {

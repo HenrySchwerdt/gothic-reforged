@@ -15,7 +15,7 @@ pub const TEXT_HI: Color = Color::srgb(1.0, 0.97, 0.88);
 pub const TEXT_BAD: Color = Color::srgb(0.85, 0.30, 0.25);
 pub const BORDER: Color = Color::srgb(0.62, 0.52, 0.36);
 pub const SEL: Color = Color::srgba(1.0, 0.85, 0.45, 0.16);
-pub const CELL: Color = Color::srgba(0.17, 0.12, 0.09, 0.78);
+pub const CELL: Color = Color::srgba(0.26, 0.19, 0.14, 0.88);
 pub const CELL_HOVER: Color = Color::srgba(0.32, 0.24, 0.15, 0.9);
 
 pub type P<'a> = ChildSpawnerCommands<'a>;
@@ -90,7 +90,7 @@ pub fn label(
             ..default()
         },
         TextColor(color),
-        TextLayout::new_with_justify(match al {
+        TextLayout::justify(match al {
             Al::Left => Justify::Left,
             Al::Center => Justify::Center,
             Al::Right => Justify::Right,

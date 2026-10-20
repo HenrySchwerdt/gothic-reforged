@@ -232,7 +232,7 @@ fn direct(
             if dist > 215.0 {
                 input.wish = rot * d.normalize_or_zero();
             }
-            if s.shots == 0 && pt > 3.0 {
+            if s.shots == 0 && pt > 1.2 {
                 shoot(&mut commands, &mut recorder, "world");
                 s.shots = 1;
             }

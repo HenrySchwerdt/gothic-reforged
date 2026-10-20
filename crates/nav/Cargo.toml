@@ -1,0 +1,16 @@
+[package]
+name = "gothic-nav"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = "0.33"
+gothic-physics = { path = "../physics" }
+
+[dev-dependencies]
+
+
+[lints]
+workspace = true

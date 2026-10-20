@@ -1,0 +1,12 @@
+[package]
+name = "gothic-script"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Rust port of the Gothic 3 Script_Game.dll behaviour (stat accessors, decision predicates, daily routines) over engine-interface traits. Bevy-free and deterministic."
+
+[dependencies]
+
+[lints]
+workspace = true
