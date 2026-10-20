@@ -109,6 +109,8 @@ The string table begins with the template file name and the **entity name** (e.g
 (`DeliveryEntities` `It_*`, `CondItems`, `Give`) 162 resolve to a template entity name; 3 do not (`It_Abbas_Artefakt`,
 `It_Chalice_Adanos`, `It_Chalice_Innos`).
 
+**Update:** the property values are now decoded, see `PROPERTY_STREAMS.md` (items, NPCs, skills, 100 % typed). The paragraph below describes the pre-decoder state.
+
 **Opaque:** all property values, i.e. item stats, NPC attributes, inventories (`gCInventory_PS` stacks), treasure sets,
 script routines, damage tables. The property stream is the same persistence format as world nodes, with per-class
 schemas; decoding it is the next big task (shared with `world_node.rs` owners). Do not invent stats.

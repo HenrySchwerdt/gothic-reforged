@@ -36,16 +36,76 @@ pub struct WorldEntity {
     pub property_sets: Vec<String>,
 }
 
+/// Byte range of one entity property set inside the document body.
+#[derive(Debug, Clone)]
+pub struct PropertySetSpan {
+    pub class: String,
+    pub wrapper_version: u16,
+    /// Offset of the object-version `u16` (start of the decodable property object).
+    pub start: usize,
+    pub end: usize,
+}
+
 impl WorldDocument {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
+        Ok(Self::parse_inner(bytes)?.0)
+    }
+
+    /// Parse and additionally decode the property sets whose class passes `filter` into typed
+    /// [`crate::propstream::PropertySet`]s. The result is a side table: `sets[i]` belongs to
+    /// `entities[i]`. A property set that fails to decode is skipped and counted in
+    /// `stats.tail_errors`.
+    pub fn parse_with_properties(
+        bytes: &[u8],
+        filter: &dyn Fn(&str) -> bool,
+        stats: &mut crate::propstream::DecodeStats,
+    ) -> Result<(Self, Vec<Vec<crate::propstream::PropertySet>>)> {
+        use crate::propstream::{Cursor, Strings, read_object_body};
+        let (doc, spans) = Self::parse_inner(bytes)?;
+        if spans.is_empty() {
+            return Ok((doc, Vec::new()));
+        }
+        let genome = GenomeFile::parse(bytes)?;
+        let strings = Strings::new(&genome.strings);
+        let mut sets = Vec::with_capacity(spans.len());
+        for entity in spans {
+            let mut decoded = Vec::new();
+            for span in entity.into_iter().filter(|s| filter(&s.class)) {
+                let result = Cursor::with_range(bytes, span.start, span.end).and_then(|mut cur| {
+                    read_object_body(
+                        &mut cur,
+                        &strings,
+                        &span.class,
+                        Some(span.wrapper_version),
+                        0,
+                        stats,
+                    )
+                });
+                match result {
+                    Ok(set) => decoded.push(set),
+                    Err(e) => {
+                        let key = format!("world {}: {e:#}", span.class);
+                        *stats.tail_errors.entry(key).or_default() += 1;
+                    }
+                }
+            }
+            sets.push(decoded);
+        }
+        Ok((doc, sets))
+    }
+
+    fn parse_inner(bytes: &[u8]) -> Result<(Self, Vec<Vec<PropertySetSpan>>)> {
         // Observed empty placeholder: raw "GENOMEDL" + u16 version, nothing else
         // (ten bytes, e.g. GUID-named .lrentdat stubs). Represents zero entities.
         if bytes.len() == 10 && bytes.starts_with(b"GENOMEDL") {
-            return Ok(Self {
-                kind: WorldKind::Lrentdat,
-                entities: Vec::new(),
-                edges: Vec::new(),
-            });
+            return Ok((
+                Self {
+                    kind: WorldKind::Lrentdat,
+                    entities: Vec::new(),
+                    edges: Vec::new(),
+                },
+                Vec::new(),
+            ));
         }
         let genome = GenomeFile::parse(bytes)?;
         let kind = if genome.body.starts_with(b"GENOMEDL") {
@@ -60,6 +120,7 @@ impl WorldDocument {
             limit: genome.table_offset,
             // Only retained strings are charged (names, classes, resources).
             text_budget: 64 * 1024 * 1024 + bytes.len().saturating_mul(2),
+            spans: Vec::new(),
         };
         if kind == WorldKind::Lrentdat {
             reader.take(8)?;
@@ -128,11 +189,14 @@ impl WorldDocument {
                 marks[index] = 2;
             }
         }
-        Ok(Self {
-            kind,
-            entities,
-            edges,
-        })
+        Ok((
+            Self {
+                kind,
+                entities,
+                edges,
+            },
+            std::mem::take(&mut reader.spans),
+        ))
     }
 }
 
@@ -143,11 +207,16 @@ struct Reader<'a> {
     limit: usize,
     // Caps expansion from repeatedly referenced large string-table entries.
     text_budget: usize,
+    /// Property-set spans per entity, in entity order.
+    spans: Vec<Vec<PropertySetSpan>>,
 }
 
 struct ClassSummary {
     name: String,
     assets: Vec<String>,
+    wrapper_version: u16,
+    start: usize,
+    end: usize,
 }
 
 impl<'a> Reader<'a> {
@@ -206,15 +275,14 @@ impl<'a> Reader<'a> {
         Ok(matrix)
     }
     fn class(&mut self, wrapped: bool, context: bool) -> Result<ClassSummary> {
-        if wrapped {
-            self.u16()?; // Property-set-specific outer version remains opaque.
-        }
+        let wrapper_version = if wrapped { self.u16()? } else { 0 };
         ensure!(
             self.take(6)? == [1, 0, 1, 1, 0, 1],
             "unsupported class accessor"
         );
         let name = self.text()?;
         self.take(5)?; // Factory metadata is not interpreted.
+        let start = self.pos;
         ensure!(self.u16()? == 83, "unsupported property object version");
         let size = self.u32()? as usize;
         let end = self.pos.checked_add(size).context("class size overflow")?;
@@ -269,6 +337,9 @@ impl<'a> Reader<'a> {
         Ok(ClassSummary {
             name,
             assets: assets.into_iter().collect(),
+            wrapper_version,
+            start,
+            end,
         })
     }
     fn entity(&mut self, kind: WorldKind) -> Result<WorldEntity> {
@@ -322,11 +393,19 @@ impl<'a> Reader<'a> {
         );
         let mut property_sets = Vec::with_capacity(count);
         let mut assets = BTreeSet::new();
+        let mut spans = Vec::with_capacity(count);
         for _ in 0..count {
             let class = self.class(true, false)?;
+            spans.push(PropertySetSpan {
+                class: class.name.clone(),
+                wrapper_version: class.wrapper_version,
+                start: class.start,
+                end: class.end,
+            });
             property_sets.push(class.name);
             assets.extend(class.assets);
         }
+        self.spans.push(spans);
         if trailing_creator {
             self.take(20)?;
         }
@@ -513,6 +592,41 @@ mod tests {
         assert_eq!(parsed.kind, WorldKind::Lrentdat);
         assert_eq!(parsed.entities.len(), 1);
         assert_eq!(parsed.entities[0].source_id, [3; 20]);
+        Ok(())
+    }
+
+    #[test]
+    fn property_side_table_decodes_typed_values_without_changing_entities() -> Result<()> {
+        use crate::propstream::{DecodeStats, PropValue};
+        let bytes = node();
+        let plain = WorldDocument::parse(&bytes)?;
+        let mut stats = DecodeStats::default();
+        let (doc, sets) = WorldDocument::parse_with_properties(&bytes, &|_| true, &mut stats)?;
+        assert_eq!(doc.entities.len(), plain.entities.len());
+        assert_eq!(
+            doc.entities[1].property_sets,
+            plain.entities[1].property_sets
+        );
+        assert!(sets[0].is_empty());
+        assert_eq!(sets[1].len(), 1);
+        let set = &sets[1][0];
+        assert_eq!(set.class, "eCVisualMeshStatic_PS");
+        assert_eq!(set.wrapper_version, Some(1));
+        assert_eq!(
+            set.get("ResourceFileName"),
+            Some(&PropValue::Str("fixture.xcmsh".into()))
+        );
+        assert_eq!((stats.properties, stats.typed), (1, 1));
+        // a class filter skips decoding but keeps the per-entity alignment
+        let (_, none) =
+            WorldDocument::parse_with_properties(&bytes, &|c| c == "other", &mut stats)?;
+        assert!(none.iter().all(Vec::is_empty) && none.len() == 2);
+        // truncation behaves like plain parsing
+        for n in 0..bytes.len() {
+            assert!(
+                WorldDocument::parse_with_properties(&bytes[..n], &|_| true, &mut stats).is_err()
+            );
+        }
         Ok(())
     }
 }

@@ -12,9 +12,9 @@
 //! * Raw legacy variant (50 files): `u32 = 2`, `u16`, 16-byte GUID, ...; the entity name is a
 //!   `u16`-length-prefixed string at fixed offset 42 (validated by the survey on every file).
 //!
-//! Decoded here: variant, entity name, class-name vocabulary, property vocabulary.
-//! Opaque: all property *values* (item stats, NPC attributes, inventories). Decoding those
-//! requires the per-class property schema of the world/entity persistence layer.
+//! [`TemplateSummary`] decodes variant, entity name and vocabulary only. The full property
+//! streams (stats, attributes, inventories) are decoded by [`TemplateDocument`] on top of
+//! [`crate::propstream`]; see `docs/research/PROPERTY_STREAMS.md` for coverage.
 use anyhow::{Result, bail, ensure};
 use serde::Serialize;
 
@@ -191,6 +191,265 @@ impl TemplateSummary {
             other_strings: Vec::new(),
             payload_bytes: bytes.len(),
         })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Full template decoding
+// ---------------------------------------------------------------------------------------------
+
+use crate::propstream::{Cursor, DecodeStats, PropertySet, Strings, hex, read_sub_class};
+
+const DEADCODE: u32 = 0xdead_c0de;
+
+/// One entity header of a template (`*.tple` holds a small tree of these; the first is the
+/// item/management header, the second the reference header that carries the property sets).
+#[derive(Debug, Clone, Serialize)]
+pub struct TemplateEntity {
+    pub header_version: u16,
+    pub file_name: String,
+    /// Template GUID (20 raw bytes as lowercase hex): the id other templates and inventories use.
+    pub guid: String,
+    pub flags: [bool; 7],
+    pub helper_parent: bool,
+    /// Set when this header only references another template.
+    pub ref_template: Option<String>,
+    pub name: String,
+    pub world_matrix: [[f32; 4]; 4],
+    pub local_matrix: [[f32; 4]; 4],
+    pub deleted: bool,
+    pub property_sets: Vec<PropertySet>,
+}
+
+impl TemplateEntity {
+    pub fn set(&self, class: &str) -> Option<&PropertySet> {
+        self.property_sets.iter().find(|s| s.class == class)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TemplateDocument {
+    pub variant: TemplateVariant,
+    pub version: u16,
+    pub entities: Vec<TemplateEntity>,
+    pub edges: Vec<(u32, u32)>,
+}
+
+fn matrix(cur: &mut Cursor) -> Result<[[f32; 4]; 4]> {
+    let mut m = [[0.0; 4]; 4];
+    for row in &mut m {
+        *row = cur.floats()?;
+    }
+    Ok(m)
+}
+
+impl TemplateDocument {
+    /// Parse a `GENOMFLE` or bare `GENOMETP` template (the 50 legacy raw files are rejected).
+    pub fn parse(bytes: &[u8], stats: &mut DecodeStats) -> Result<Self> {
+        ensure!(
+            bytes.len() <= crate::MAX_PAYLOAD as usize,
+            "template exceeds payload ceiling"
+        );
+        if bytes.starts_with(b"GENOMFLE") {
+            ensure!(
+                bytes.get(8..10) == Some(&[1, 0]),
+                "unsupported GENOMFLE version"
+            );
+            let table_offset = u32::from_le_bytes(
+                bytes
+                    .get(10..14)
+                    .ok_or_else(|| anyhow::anyhow!("truncated header"))?
+                    .try_into()?,
+            ) as usize;
+            ensure!(
+                (14..bytes.len()).contains(&table_offset),
+                "table offset out of bounds"
+            );
+            let mut tail = &bytes[table_offset..];
+            ensure!(
+                take(&mut tail, 4)? == [0xef, 0xbe, 0xad, 0xde],
+                "missing table marker"
+            );
+            ensure!(take(&mut tail, 1)? == [1], "unsupported table version");
+            let count = u32::from_le_bytes(take(&mut tail, 4)?.try_into()?) as usize;
+            let (strings, rest) = read_strings(tail, count)?;
+            ensure!(rest.is_empty(), "unexpected trailing metadata");
+            let mut cur = Cursor::with_range(bytes, 14, table_offset)?;
+            ensure!(cur.take(8)? == b"GENOMETP", "template body is not GENOMETP");
+            let version = cur.u16()?;
+            ensure!(
+                (58..=62).contains(&version),
+                "unsupported GENOMETP version {version}"
+            );
+            cur.skip(2)?;
+            let indexed = cur.flag()?;
+            let effective: Vec<&[u8]> = if indexed {
+                let n = cur.u32()? as usize;
+                ensure!(
+                    n <= MAX_STRINGS && n <= cur.remaining() / 2,
+                    "index table bounds"
+                );
+                let mut v = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let i = usize::from(cur.u16()?);
+                    v.push(
+                        *strings
+                            .get(i)
+                            .ok_or_else(|| anyhow::anyhow!("string index"))?,
+                    );
+                }
+                v
+            } else {
+                strings
+            };
+            Self::body(
+                TemplateVariant::GenomfleGenometp,
+                version,
+                &mut cur,
+                &effective,
+                stats,
+            )
+        } else if bytes.starts_with(b"GENOMETP") {
+            let mut cur = Cursor::new(bytes);
+            cur.skip(8)?;
+            let version = cur.u16()?;
+            ensure!(
+                (58..=62).contains(&version),
+                "unsupported GENOMETP version {version}"
+            );
+            ensure!(cur.take(3)? == [1, 0, 1], "unexpected GENOMETP preamble");
+            let count = cur.u32()? as usize;
+            let (strings, rest) = read_strings(&bytes[cur.pos..], count)?;
+            cur.pos = bytes.len() - rest.len();
+            Self::body(
+                TemplateVariant::Genometp,
+                version,
+                &mut cur,
+                &strings,
+                stats,
+            )
+        } else {
+            bail!("unsupported template variant (legacy raw)")
+        }
+    }
+
+    fn body(
+        variant: TemplateVariant,
+        version: u16,
+        cur: &mut Cursor,
+        table: &[&[u8]],
+        stats: &mut DecodeStats,
+    ) -> Result<Self> {
+        let strings = Strings::new(table);
+        cur.skip(4)?; // size of code section
+        let count = cur.u32()? as usize;
+        ensure!(count > 0 && count <= 1024, "header count {count}");
+        let mut entities = Vec::with_capacity(count);
+        for _ in 0..count {
+            entities.push(Self::entity(cur, &strings, stats)?);
+        }
+        let mut edges = Vec::new();
+        loop {
+            let parent = cur.u32()?;
+            let child = cur.u32()?;
+            if parent == u32::MAX {
+                ensure!(child == u32::MAX, "invalid graph terminator");
+                break;
+            }
+            ensure!(
+                (parent as usize) < count && (child as usize) < count,
+                "invalid entity index"
+            );
+            edges.push((parent, child));
+            ensure!(edges.len() <= count, "too many edges");
+        }
+        ensure!(cur.remaining() == 0, "trailing bytes after template graph");
+        Ok(Self {
+            variant,
+            version,
+            entities,
+            edges,
+        })
+    }
+
+    fn entity(
+        cur: &mut Cursor,
+        strings: &Strings,
+        stats: &mut DecodeStats,
+    ) -> Result<TemplateEntity> {
+        let header_version = cur.u16()?;
+        ensure!(
+            (40..=62).contains(&header_version),
+            "unsupported template header version {header_version}"
+        );
+        let file_name = strings.entry(cur)?;
+        let guid = hex(&cur.guid()?);
+        let mut flags = [false; 7];
+        for f in &mut flags {
+            *f = cur.flag()?;
+        }
+        let helper_parent = cur.flag()?;
+        let ref_template = if cur.flag()? {
+            Some(hex(&cur.guid()?))
+        } else {
+            None
+        };
+        cur.skip(4 + 2 + 1)?; // alpha, insert type, render priority
+        let name = strings.entry(cur)?;
+        let world_matrix = matrix(cur)?;
+        let local_matrix = matrix(cur)?;
+        cur.skip(3 * 24)?; // three boxes
+        cur.skip(4)?; // visual LoD factor
+        cur.flag()?;
+        let deleted = cur.flag()?;
+        cur.skip(4)?; // object cull factor (>= 40)
+        if header_version >= 56 {
+            cur.skip(4)?;
+        }
+        if header_version >= 58 {
+            cur.skip(1)?;
+        }
+        if header_version >= 61 {
+            cur.skip(4)?;
+        }
+        if header_version >= 62 {
+            cur.skip(2)?;
+        }
+        let mut property_sets = Vec::new();
+        if ref_template.is_none() {
+            let n = cur.u32()? as usize;
+            ensure!(n <= 4096 && n <= cur.remaining() / 20, "class entry count");
+            for _ in 0..n {
+                let wrapper = cur.u16()?;
+                cur.skip(4)?; // pre-size
+                let _pre_type = strings.entry(cur)?;
+                let mut set = read_sub_class(cur, strings, 0, stats)?;
+                set.wrapper_version = Some(wrapper);
+                ensure!(cur.u32()? == DEADCODE, "class terminator missing");
+                property_sets.push(set);
+            }
+        }
+        Ok(TemplateEntity {
+            header_version,
+            file_name,
+            guid,
+            flags,
+            helper_parent,
+            ref_template,
+            name,
+            world_matrix,
+            local_matrix,
+            deleted,
+            property_sets,
+        })
+    }
+
+    /// The header that carries the property sets of an ordinary (non object-group) template.
+    pub fn reference_header(&self) -> Option<&TemplateEntity> {
+        self.entities
+            .iter()
+            .find(|e| !e.helper_parent && e.ref_template.is_none())
+            .or_else(|| self.entities.first())
     }
 }
 

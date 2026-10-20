@@ -1,7 +1,24 @@
 #[cfg(feature = "viewer")]
+mod actor_viewer;
+#[cfg(feature = "viewer")]
 mod viewer;
+#[cfg(feature = "viewer")]
+mod walk;
+#[cfg(feature = "viewer")]
+mod world_loader;
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "viewer")]
+    if std::env::args().any(|a| a == "--actor") {
+        return actor_viewer::run();
+    }
+    #[cfg(feature = "viewer")]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.iter().any(|a| a == "--walk") {
+            return walk::run(&args);
+        }
+    }
     #[cfg(feature = "viewer")]
     viewer::run()?;
     #[cfg(not(feature = "viewer"))]

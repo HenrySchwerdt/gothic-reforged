@@ -1,16 +1,22 @@
 //! Read-only, bounded Genome G3V0 archive reader. No original game assets embedded.
+pub mod emfx;
 pub mod gdini;
 pub mod genome;
 pub mod info;
+pub mod propstream;
+pub mod props;
 pub mod quest;
 pub mod stringtable;
 pub mod template;
 pub mod terrain;
 pub mod vfs;
 pub mod world_node;
+pub mod xact;
 pub mod xcmsh;
 pub mod ximg;
 pub mod xlmsh;
+pub mod xmot;
+pub mod xnvmsh;
 pub mod xshmat;
 use anyhow::{Context, Result, bail, ensure};
 use flate2::{Decompress, FlushDecompress, Status};

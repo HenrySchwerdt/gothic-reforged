@@ -8,9 +8,5 @@ license.workspace = true
 [dependencies]
 glam = "0.33"
 
-[dev-dependencies]
-gothic-formats = { path = "../formats" }
-anyhow.workspace = true
-
 [lints]
 workspace = true

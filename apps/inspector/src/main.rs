@@ -1,4 +1,6 @@
+mod actors;
 mod gamedata;
+mod propdump;
 use anyhow::{Context, Result, bail, ensure};
 use gothic_formats::{PakArchive, normalize_path};
 use std::{
@@ -144,7 +146,10 @@ fn main() -> Result<()> {
             "gothic-inspector scan INSTALLATION\ngothic-inspector list ARCHIVE [FILTER]\ngothic-inspector extract ARCHIVE MEMBER OUTPUT_FILE\ngothic-inspector ximg-dds ARCHIVE MEMBER OUTPUT_FILE\ngothic-inspector mesh-info ARCHIVE MEMBER\ngothic-inspector world-info ARCHIVE MEMBER\ngothic-inspector scene-info WORLD_ARCHIVE WORLD_MEMBER MESH_ARCHIVE\nRead-only source access. Extraction creates one new file; no overwrite."
         ),
         other => {
-            if !gamedata::dispatch(other, &args)? {
+            if !actors::dispatch(other, &args)?
+                && !gamedata::dispatch(other, &args)?
+                && !propdump::dispatch(other, &args)?
+            {
                 bail!("unknown command {other}; use --help")
             }
         }

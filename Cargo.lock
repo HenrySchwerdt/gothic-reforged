@@ -2519,6 +2519,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-animation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "gothic-formats",
+]
+
+[[package]]
 name = "gothic-dialog-cli"
 version = "0.1.0"
 dependencies = [
@@ -2572,9 +2581,7 @@ dependencies = [
 name = "gothic-physics"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "glam",
- "gothic-formats",
 ]
 
 [[package]]
@@ -2595,6 +2602,7 @@ dependencies = [
  "bevy",
  "gothic-formats",
  "gothic-importer",
+ "gothic-physics",
  "gothic-world",
 ]
 

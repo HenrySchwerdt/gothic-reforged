@@ -17,7 +17,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Sym(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct InfoId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -154,6 +154,31 @@ impl GameDatabase {
         let quests = read_all(&data_dir.join("Quests.pak"), ".quest", Quest::parse)?;
         let infos = read_all(&data_dir.join("Infos.pak"), ".info", Info::parse)?;
         Self::from_parts(quests, infos, strings, language)
+    }
+
+    /// Load item template names (entity names of non-deleted `Templates.pak` templates)
+    /// so lint can report references to missing items.
+    pub fn load_item_names(&mut self, data_dir: &Path) -> Result<usize> {
+        use gothic_formats::template::TemplateSummary;
+        let mut pak = PakArchive::open(data_dir.join("Templates.pak"))?;
+        let mut names = HashSet::new();
+        for i in 0..pak.entries.len() {
+            let e = &pak.entries[i];
+            if !e.path.to_ascii_lowercase().ends_with(".tple")
+                || e.payloadless()
+                || e.path.starts_with("_deleted/")
+            {
+                continue;
+            }
+            let bytes = pak.read_payload(i)?;
+            // One corrupt template ships with the game; skip unparsable ones.
+            if let Ok(t) = TemplateSummary::parse(&bytes) {
+                names.insert(t.entity_name.to_ascii_lowercase());
+            }
+        }
+        let n = names.len();
+        self.known_items = Some(names);
+        Ok(n)
     }
 
     pub fn sym(&self, name: &str) -> Option<Sym> {
