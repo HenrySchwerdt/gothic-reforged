@@ -101,7 +101,7 @@ Sound definitions are ordinary templates under `Templates.pak/sfx/` whose refere
 Other audio-adjacent properties: `CollisionSound*`/`SpawningSound*` (enum `eECollisionSound`/`eESpawningSound`, 471 / 476 templates; the enum-to-sample
 tables live in code, not data [U]), NPC `Voice`, `gEAmbientAction`.
 `SoundIndex` resolves a name by stem (extension ignored, Ogg preferred) and falls back to numbered variants (`foo` -> `foo_01..foo_07`).
-Spatial attenuation: rodio spatial audio has no min/max distance, so `MinDistance/MaxDistance` are parsed but not applied.
+Spatial attenuation: see section 7 (FMOD inverse rolloff in centimetres); template distances are used for `PlaySfx` when the name is a template.
 
 ## 5. Plugin API (`gothic_audio`)
 
@@ -119,3 +119,79 @@ Spatial attenuation: rodio spatial audio has no min/max distance, so `MinDistanc
 3. `.xlip` viseme table and how it maps to head morph targets.
 4. Emitter attenuation curves and `SpawningMode` values; `eECollisionSound`/`eESpawningSound` tables (code).
 5. Text for `svm_*` recordings of voice classes without a string key (fall back to a sibling class's text).
+
+## 7. Original mix (FMOD Ex runtime capture) [V]
+
+Method: `.local/research/audio/fmod_dbg.py` launches `Gothic3Final.exe` under a ctypes debugger (REA's Frida provider is not installed here), sets INT3
+breakpoints on the `fmodex.dll` C++ exports that `Engine.dll` imports (76 `?name@Class@FMOD@@QAG..` imports: `System::init/playSound/createSound/set3DSettings/
+set3DListenerAttributes/createChannelGroup`, `Channel::setVolume/setPaused/setPriority/set3DAttributes/set3DMinMaxDistance/setChannelGroup/setLoopCount/setMode`,
+`ChannelGroup::setVolume/addGroup/setMute`; `__stdcall` members take `this` as the first stack argument) and logs every call (`fmod-trace.jsonl`, 31 835 calls,
+Ardea new game: 68 s of menu, then 173 s in the world including the opening brawl). Analysis: `analyze.py`, `summ.py`, `orig_stats.py` (durations from
+`crates/audio/examples/durations.rs`). All kept under the gitignored `.local/research/audio/`.
+
+| Item | Captured value |
+| --- | --- |
+| `System::setSpeakerMode` / `init` | stereo (2) / `maxchannels 64`, flags 0 |
+| `System::set3DSettings` | doppler 1.0, **distancefactor 100.0** (all distances are centimetres), rolloff scale 1.0 |
+| Channel groups | `Master` > `Voice`, `Music`, `FX`, `Ambient` |
+| Group volumes (set at 5.8 s and again from the options) | Master 1.0, Voice 1.0, **Music 0.2196 (= 56/255)**, **FX 0.8039 (= 205/255)**, Ambient 1.0: exactly `Sound.*Volume`/255 of `ge3.INI`; `ChannelGroup::setMute` toggles Voice/FX/Ambient on menu <-> game |
+| Voice channel | group Voice, **priority 1**, min 500 cm, max 1 000 000 cm, volume 1.0, 3D stream (`mode 0x20000d0`), one `createSound` per play |
+| FX channel (steps, hits, sword) | group FX, **priority 3**, min 150 cm (steps, 877 of 2 027), 80 (sword draw/whoosh), 90/75/100 (impacts), max unbounded (1e12), a few 90/30 000; volume 1.0 (creature steps 0.4-0.7), mode `0x2004150` (3D sample) |
+| Ambient channel | group Ambient, **priority 4**, birds min 500 / max 1 000 000, volume 0.2 (0.3), fire loops min 25 / max 25 000 (loop -1), coast water 2D linear loop |
+| Music channel | group Music, 2D stream, volume 1.0 (the group carries the level), no fades via `Channel::setVolume`; a `transition_NN` stinger starts 28 ms before/after the new fragment and plays over it; the story cue `myrtana_revolution_day_01` restarted via `transition_00` after 72 s |
+| Listener | Gothic coordinates passed unchanged (left-handed, FMOD default), position = camera, forward/up from the camera |
+| Rolloff mode | no rolloff flag in the create/setMode values (`0x...d0/150`) = FMOD default **inverse**: `gain = min / (min + rolloff * (d - min))` for `d > min`, 1 inside `min`, attenuation stops at `max` |
+
+Activity in the 173 s world window (2 630 `playSound` calls):
+
+| Group | plays | per min | max concurrent | mean concurrent |
+| --- | ---: | ---: | ---: | ---: |
+| Voice (`SVM_*_AARGH/DOWN/DEAD/DieEnemy` in the brawl) | 348 | 121 | 9 | 1.9 |
+| FX | 2 177 | 755 | 25 | 9.2 |
+| Ambient | 99 | 34 | 11 | 7.8 |
+| Music (fragment + stinger) | 6 | 2 | 3 | 1.5 |
+
+Takeaways: the original mix is **music 0.22 / fx 0.80 / voice 1.0 / ambient 1.0 and 0.2 per bird**; barks never exceed 9 at once; group maxima sum to 48 channels, below the 64 budget. The old plugin defaults (music 0.6, no FX/ambient groups) put the music 2.7x too loud relative to speech.
+
+## 8. QA (2026-10-20, "Ton ist cursed")
+
+Tools: `examples/qa_decode.rs`, `examples/tap_mix.rs`, `GR_AUDIO_TAP=path` (plugin tap, TSV: `t kind id file gain pan extra`).
+
+### 8.1 Decode correctness (ffmpeg as ground truth)
+
+25 files (20 voices, 5 music fragments) + 10 sfx (Ogg and WAV): our `pcm::decode` (i16) and the playback decoder (Bevy `AudioSource` -> rodio lewton/hound, f32)
+match `ffmpeg -f s16le/f32le` in sample rate, channel count and frame count exactly, max sample difference 1 LSB (rounding) / 0.00000 (f32). Rates are
+44.1 kHz mono (voice, sfx), 48 kHz or 44.1 kHz stereo (music; `locationgothic1theme` is 44.1 kHz). Resampling to the device rate is rodio's; no
+rate-dependent bug found. **No decode bug.**
+
+### 8.2 Bugs found and fixed
+
+| # | Finding (measurement) | Fix |
+| --- | --- | --- |
+| 1 | Music default 0.6 vs original 0.2196; FX/ambient groups absent | `AudioSettings` defaults from `ge3.INI` /255 (`music 56/255`, `sfx 205/255`, `ambient 1.0`) |
+| 2 | Spatial attenuation = rodio 1/d^2 (clamped at 1 unit) with a 100 u/m scale: a voice 3 m away played at 0.11, 6 m at 0.03, i.e. NPC dialog inaudible outside ~1 m; original is inverse with 5 m full volume (`mix::inverse_gain`, 0.5 at 10 m) | rodio unit scaled to 1 km so its term stays 1; per-frame `rolloff_3d` sets `volume = base x FMOD inverse(distance, min, max, rolloff)`; voices min 5 m / max 10 km, sfx from template or footstep default 1.5 m |
+| 3 | **Left/right swapped**: rodio 0.22 `Spatial` gives the ear *farther* from the source the larger gain (`left_diff_modifier` grows with `left_dist - right_dist`) | `fix_listener_ears` swaps the ear offsets of every `SpatialListener` (no change to `play/cam.rs` needed) |
+| 4 | Spawn frame: a new child voice's `GlobalTransform` is origin until propagation, tap showed 0.07 gain for one frame | tap logs one frame later; rolloff applied after propagation |
+| 5 | Play mode never started music (no `SetLocation`; only `SetSituation(fight)` on an attack) and fight music never ended; no footsteps / SFX wired | `play/audio.rs`: `SetLocation("myrtana")` at start, fight -> explore after 12 s without target change, hero footsteps via `PlaySfx` |
+| 6 | No channel budget / group priorities; unlimited SVM barks would overlap | `mix.rs`: 64 channels with priority (voice 1 < fx 3 < ambient 4) then quietest stealing; barks (`SVM_*`) limited to 1 per speaker and 9 total (original peak 9) |
+| 7 | Transition stingers (`transition_NN`, played over the new fragment in the original) are not played; plain 3 s equal-power cross-fade | open: `ConnectIn/Out` pairing [U] |
+
+Not bugs (checked): ~10 s silent fragment lead-in is cut (`skip_lead_silence`; whether the original plays the silence is still [U]); lines for keys without a recording emit `VoiceMissing` (no sound, no stall); dialog line sequencing has 15-30 ms gaps; no re-triggering per frame.
+
+### 8.3 Our tap vs the original (scripted `--play --smoke`, 56.7 s of game time)
+
+Offline render of `GR_AUDIO_TAP` (`examples/tap_mix.rs`, also `.local/audio-tap.mp3`; raw log `.local/research/audio/our-tap.tsv`):
+
+| Measure | Ours (after fixes) | Original (brawl capture) |
+| --- | --- | --- |
+| Peak / clipped samples | 0.709 / 0 | not measurable (FMOD mixes to the device) |
+| Music vs voice RMS | -40 vs -22 dBFS (music 18 dB under speech; group 0.2196, fragment `Volume` 1.0) | groups 0.2196 vs 1.0 |
+| Simultaneous voices | 1 (dialog is sequential, 15-30 ms gaps) | 1.9 mean / 9 max (barks) |
+| Voice gain at dialog distance 3 m / 5.4 m | 1.00 / 0.92 (inverse, min 5 m) | same law |
+| Footstep gain at 3.45 m | 0.35 = 0.8039 (FX) x 1.5/(1.5+1.95) | FX group 0.8039, min 150 cm |
+| Voice re-triggers per frame | none (each key started once, `VoiceFinished` follows the sink end) | n/a |
+| Pan sign | speaker left of the camera -> pan -0.34, rodio ear factors left 0.83 / right 0.67 after the ear swap | FMOD stereo pan |
+
+Remaining gaps (not wired in play mode, so nothing can spam or be wrong yet): NPC footsteps and combat hits/whooshes (the original plays ~755 FX/min in the
+brawl), ambient emitters (birds, water, fire), SVM barks from the script layer (limits are ready: 1 per speaker, 9 total), music transition stingers, night
+music, and the speaking cooldown inside the script runtime (not ported; the bark limit is the audio-side guard).

@@ -9,6 +9,7 @@
 //! 1 / 0 draw / holster the sword, E talk to the NPC in front of you (within 3 m), left click
 //! attack, L journal, I inventory, C character, F5 / F9 quick save / load, F fly, V camera.
 mod anim;
+mod audio;
 mod cam;
 mod events;
 mod hero;
@@ -251,6 +252,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     nav::register(app);
     events::register(app);
     cam::register(app);
+    audio::register(app);
     hud::register(app);
     if smoke {
         script::register(app);

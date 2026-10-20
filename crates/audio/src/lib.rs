@@ -3,6 +3,7 @@
 //!
 //! Layout of the original data is documented in `docs/research/AUDIO_FORMATS.md`.
 pub mod library;
+pub mod mix;
 pub mod mul;
 pub mod music;
 pub mod pcm;
@@ -11,6 +12,7 @@ pub mod sfx;
 pub mod speech;
 
 pub use library::AudioLibrary;
+pub use mix::Category;
 pub use music::{Fragment, MusicLibrary};
 pub use plugin::{
     AudioAssets, AudioSettings, GothicAudioPlugin, MusicCommand, MusicState, MusicTrack, PlaySfx,
