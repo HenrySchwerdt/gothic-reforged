@@ -58,11 +58,17 @@ messages. Frames are the art in the panels (gold bevel + dark blue-grey/teal tra
   (14,524,980x213) bottom with exchange buttons and both gold totals.
 * **Modal boxes**: confirm box 482x143 (dark red), buttons "Ja"/"Nein" 109x37; tip window 450x379
   ("Tipp", green inner panel, checkbox "Keine Tipps mehr anzeigen", "Ok").
-* **Main menu**: full-screen backgrounds 00-08 with the red banner; menu entries are plain centred
+* **Main menu**: full-screen backgrounds 00-08 (page 02 = red banner, 1024x768 at the atlas top; implemented as `Screen::MainMenu`); entries are 252x32 buttons at x=386, y=368/400/432/464/496/532 (bold 19 px, centred; "Spiel speichern" greyed without a game); the confirm box (`Modal::Confirm`, 482x143 at 271,202, buttons 109x37 at +64/+300,+84) and the tip window (`Modal::Tip`, 450x379 at 287,154; art stretched/9-sliced from the 350x279 piece) are `ShowModal`/`ModalAnswer` messages. The original also lists menu entries are plain centred
   bold text on the banner (Neues Spiel, Spiel laden, Spiel speichern, Einstellungen, Mitwirkende,
   Spiel beenden); hovered entry white.
 
-## Item icons - open point
+## Item icons - status
+Searched: item templates (only `Texture` = TGA file name, e.g. `IT_1H_OrcSlayer_01.tga`), `g3.gui.res` (`<bitmaps>` empty),
+`_compiledImage.pak` (no hud/icon entries), DDS headers (no metadata), install files (`g3_hud_it` only occurs in gui.pak
+member names). The cell order is not alphabetical by icon name or template name (e.g. `IT_1H_FlameSword_01` is cell 31 of
+the weapons atlas, alphabetical rank 11-17); atlas groups follow folder-like order (1H, 2H, axes, bows, ammo, crossbows,
+shields, staves) and contain ~12 more cells than there are weapon templates, so extra unreferenced icons are interleaved.
+The mapping therefore lives in engine code (`gCInventoryStack::CreateIcons`, Game.dll) or in the build tool, not in data.
 `g3_hud_it_*` atlases are regular grids of ~64 px cells, but neither `gui.pak` nor the item
 templates (`icon` = TGA file name) carry the cell index (order is not alphabetical). The UI therefore
 uses category glyphs from `g3_hud_icons_00` until the compile order is found (likely inside

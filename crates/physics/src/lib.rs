@@ -143,6 +143,23 @@ impl CollisionWorld {
         })
     }
 
+    /// Like [`Self::capsule_blocked`] for two radii at once (`small <= big`) with one query:
+    /// returns (blocked at `small`, blocked at `big`).
+    pub fn capsule_blocked2(&self, a: Vec3, b: Vec3, small: f32, big: f32) -> (bool, bool) {
+        let mut tris = Vec::new();
+        self.query(
+            a.min(b) - Vec3::splat(big + 1.0),
+            a.max(b) + Vec3::splat(big + 1.0),
+            &mut tris,
+        );
+        let mut nearest = f32::MAX;
+        for t in &tris {
+            let (sp, tp, crossing) = segment_triangle(a, b, t);
+            nearest = nearest.min(if crossing { 0.0 } else { sp.distance(tp) });
+        }
+        (nearest < small, nearest < big)
+    }
+
     /// Nearest hit along a normalised direction with the (up-facing) triangle normal.
     pub fn raycast_hit(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
         let end = origin + dir * max;

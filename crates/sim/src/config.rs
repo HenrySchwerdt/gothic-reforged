@@ -56,8 +56,9 @@ pub struct SimConfig {
     pub tick_ms: u32,
     /// Game seconds per real second [CA 11.2].
     pub game_speed: u32,
-    /// Game chapter from which Orc and Assassin are friendly [CA 10.4, I].
-    pub orc_ass_friendly_from_chapter: u32,
+    /// The one chapter in which Orcs and Assassins are hostile; friendly in every other
+    /// chapter (`GetPoliticalAttitude`, S:f620, ported in `gothic-script`).
+    pub orc_ass_hostile_chapter: u32,
     /// Chance (percent) that an unobstructed ranged shot hits. The original has no roll
     /// (collision/aim driven) [CA 0.1]; this stands in for the missing aiming model [I].
     pub ranged_hit_pct: i32,
@@ -77,7 +78,7 @@ impl Default for SimConfig {
             seed: 0x474F_5448_4943,
             tick_ms: 50,
             game_speed: 12,
-            orc_ass_friendly_from_chapter: 4,
+            orc_ass_hostile_chapter: 2,
             ranged_hit_pct: 75,
             fov_degrees: 120.0,
             variants: Variants::default(),

@@ -3218,7 +3218,9 @@ dependencies = [
 name = "gothic-nav"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "glam",
+ "gothic-cook",
  "gothic-physics",
 ]
 
@@ -3251,6 +3253,7 @@ dependencies = [
  "gothic-formats",
  "gothic-gameplay",
  "gothic-importer",
+ "gothic-nav",
  "gothic-physics",
  "gothic-runtime",
  "gothic-sim",
@@ -3265,11 +3268,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "glam",
  "gothic-gameplay",
+ "gothic-nav",
+ "gothic-physics",
  "gothic-sim",
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "gothic-script"
+version = "0.1.0"
 
 [[package]]
 name = "gothic-sim"
@@ -3278,6 +3288,7 @@ dependencies = [
  "anyhow",
  "gothic-formats",
  "gothic-gameplay",
+ "gothic-script",
  "serde",
  "serde_json",
 ]

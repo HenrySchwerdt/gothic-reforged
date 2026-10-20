@@ -10,7 +10,8 @@ glam = "0.33"
 gothic-physics = { path = "../physics" }
 
 [dev-dependencies]
-
+anyhow.workspace = true
+gothic-cook = { path = "../cook", default-features = false }
 
 [lints]
 workspace = true

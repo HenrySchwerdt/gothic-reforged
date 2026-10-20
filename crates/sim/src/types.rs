@@ -51,6 +51,14 @@ macro_rules! species_enum {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
         pub enum Species { $($v,)* Other }
         impl Species {
+            /// The script crate's engine species (`Other` has no counterpart and maps to the
+            /// unnamed engine species 40, which the routine tables treat as an ambient creature).
+            pub fn to_script(self) -> gothic_script::enums::Species {
+                match self {
+                    $(Self::$v => gothic_script::enums::Species::$v,)*
+                    Self::Other => gothic_script::enums::Species::EmptyB,
+                }
+            }
             pub fn from_name(s: &str) -> Self {
                 match s.to_ascii_lowercase().as_str() {
                     $($s => Self::$v,)*

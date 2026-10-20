@@ -17,6 +17,15 @@ macro_rules! engine_enum {
             pub fn from_raw(raw: u32) -> Option<Self> {
                 match raw { $($n => Some($name::$v),)* _ => None }
             }
+            /// Variant name as written in the engine reflection data.
+            pub const fn name(self) -> &'static str {
+                match self { $($name::$v => stringify!($v),)* }
+            }
+            /// Case-insensitive lookup by variant name.
+            pub fn from_name(name: &str) -> Option<Self> {
+                $(if name.eq_ignore_ascii_case(stringify!($v)) { return Some($name::$v); })*
+                None
+            }
         }
     };
 }
@@ -363,6 +372,8 @@ engine_enum! {
     Flee = 4,
     Arena = 5,
     Talk = 6,
+    // Raw value 7 is unnamed in the engine reflection data; ZS_AnimalSleep stores it.
+    Sleep = 7,
     Down = 8,
     Dead = 9,
     Abandoned = 10,
@@ -567,3 +578,37 @@ engine_enum! {
     }
 }
 
+engine_enum! {
+    /// `gEAttitude`: how one entity regards another.
+    Attitude {
+        None = 0,
+        Friendly = 1,
+        Neutral = 2,
+        Angry = 3,
+        Hostile = 4,
+        Predator = 5,
+        Panic = 6,
+    }
+}
+
+engine_enum! {
+    /// `gESecurityLevel`: the AI-zone security level.
+    SecurityLevel {
+        None = 0,
+        Public = 1,
+        Enclave = 2,
+        Political = 3,
+    }
+}
+
+engine_enum! {
+    /// `gEPlayerCrime`: the crime memory slot.
+    PlayerCrime {
+        None = 0,
+        Livestock = 1,
+        Attack = 2,
+        Theft = 3,
+        Murder = 4,
+        Count = 5,
+    }
+}

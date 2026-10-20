@@ -3,6 +3,9 @@
 //! [CA 11.1 U]; [`RoutineResolver`] is the hook the game (or a test) fills in.
 use crate::types::Species;
 use crate::world::Pos;
+use gothic_script::routine::select::task_for_use_type as script_task_for_use_type;
+use gothic_script::routine::state::State as ScriptState;
+use gothic_script::routine::time as script_time;
 use std::collections::BTreeMap;
 
 /// Game clock: the normal clock runs 12 game seconds per real second [CA 11.2].
@@ -42,7 +45,8 @@ impl GameClock {
     }
 }
 
-/// `GetRoutineTime` (S:a99d0): 0 sleep, 1 work, 2 relax [CA 11.2].
+/// `GetRoutineTime` (S:a99d0): 0 sleep, 1 work, 2 relax [CA 11.2]. The schedule itself is the
+/// ported script rule (`gothic_script::routine::time`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RoutineTime {
     Sleep,
@@ -51,39 +55,10 @@ pub enum RoutineTime {
 }
 
 pub fn routine_time(species: Species, hour: f32) -> RoutineTime {
-    use Species::*;
-    match species {
-        Human | Orc => {
-            if hour < 6.0 {
-                RoutineTime::Sleep
-            } else if hour < 20.0 {
-                RoutineTime::Work
-            } else {
-                RoutineTime::Relax
-            }
-        }
-        Scavenger | Boar | Bison | Rhino | Pig | Cow => {
-            if !(5.0..23.0).contains(&hour) {
-                RoutineTime::Sleep
-            } else {
-                RoutineTime::Work
-            }
-        }
-        Wolf | Sabertooth | Ripper => {
-            if (4.0..6.0).contains(&hour) {
-                RoutineTime::Sleep
-            } else {
-                RoutineTime::Work
-            }
-        }
-        Shadowbeast => {
-            if (6.0..20.0).contains(&hour) {
-                RoutineTime::Sleep
-            } else {
-                RoutineTime::Work
-            }
-        }
-        _ => RoutineTime::Work,
+    match script_time::routine_time(species.to_script(), hour) {
+        script_time::RoutineTime::Sleep => RoutineTime::Sleep,
+        script_time::RoutineTime::Work => RoutineTime::Work,
+        script_time::RoutineTime::Relax => RoutineTime::Relax,
     }
 }
 
@@ -140,50 +115,59 @@ pub enum RoutineTask {
     Ambient,
 }
 
-/// UseType -> task for humans (and orcs where the doc marks `*`) [CA 11.3].
+impl RoutineTask {
+    /// Map a script state name to the task the simulation tracks; `None` for states that are not
+    /// daily-routine tasks.
+    pub fn from_state(state: ScriptState) -> Option<Self> {
+        use RoutineTask::*;
+        Some(match state {
+            ScriptState::Arena => Arena,
+            ScriptState::GuidePlayer => GuidePlayer,
+            ScriptState::WaitForPlayer => WaitForPlayer,
+            ScriptState::FollowPlayer => FollowPlayer,
+            ScriptState::FollowNpc => FollowNpc,
+            ScriptState::Smith => Smith,
+            ScriptState::Grind => Grind,
+            ScriptState::Cook => Cook,
+            ScriptState::Barbecue => Barbecue,
+            ScriptState::Alchemy => Alchemy,
+            ScriptState::Study => Study,
+            ScriptState::CarryStones => CarryStones,
+            ScriptState::Digger => Digger,
+            ScriptState::Farmer => Farmer,
+            ScriptState::Woodwork => Woodwork,
+            ScriptState::Lumberjack => Lumberjack,
+            ScriptState::Sleep => Sleep,
+            ScriptState::SlaveBabe => SlaveBabe,
+            ScriptState::Boss => Boss,
+            ScriptState::Bard => Bard,
+            ScriptState::Preach => Preach,
+            ScriptState::Guard => Guard,
+            ScriptState::Trader => Trader,
+            ScriptState::Pray => Pray,
+            ScriptState::RunToAttackPoint => RunToAttackPoint,
+            ScriptState::OrcParty => OrcParty,
+            ScriptState::HangAround => HangAround,
+            ScriptState::AnimalSleep => AnimalSleep,
+            ScriptState::Monster => Monster,
+            ScriptState::Ambient => Ambient,
+            _ => return None,
+        })
+    }
+}
+
+/// UseType -> task (port of the `SelectRoutineTask` switch, S:a9440; the table lives in
+/// `gothic_script::routine::select::task_for_use_type`). `use_type` is the engine's `gEUseType`
+/// name; unknown names behave like a point without a use type.
+///
+/// Differences from the earlier rule doc, taken from the ported code: Orcs do **not** run to
+/// attack points (they hang around), and any non-Human, non-Orc species (Goblins included) uses
+/// the animal rules.
 pub fn task_for_use_type(species: Species, use_type: &str) -> RoutineTask {
-    use RoutineTask::*;
-    let orc = species == Species::Orc;
-    let human_like = species.is_humanoid();
-    if !human_like {
-        return match use_type {
-            "SleepGround" => AnimalSleep,
-            "EatGround" | "Roam" => Monster,
-            _ => Ambient,
-        };
-    }
-    // (task, orcs share it)
-    let (task, orc_ok) = match use_type {
-        "Anvil" | "Forge" => (Smith, true),
-        "GrindStone" => (Grind, true),
-        "Cauldron" => (Cook, true),
-        "Barbecue" => (Barbecue, true),
-        "Alchemy" => (Alchemy, true),
-        "Bookshelf" | "Bookstand" => (Study, true),
-        "TakeStone" | "DropStone" => (CarryStones, false),
-        "PickOre" | "PickGround" | "DigGround" => (Digger, false),
-        "Field" => (Farmer, false),
-        "Repair" | "SawLog" => (Woodwork, false),
-        "Lumberjack" => (Lumberjack, false),
-        "Bed" | "SleepGround" => (Sleep, true),
-        "CleanFloor" | "Dance" | "FanBoss" => (SlaveBabe, false),
-        "Boss" | "Throne" | "Pace" => (Boss, true),
-        "Bard" => (Bard, false),
-        "Preach" => (Preach, true),
-        "Guard" => (Guard, true),
-        "Trader" => (Trader, true),
-        "Shrine" => (Pray, true),
-        "AttackPoint" => (RunToAttackPoint, false),
-        "OrcDance" | "OrcDrum" | "OrcBoulder" => {
-            return if orc { OrcParty } else { HangAround };
-        }
-        _ => return HangAround,
-    };
-    if orc && !orc_ok && task != RunToAttackPoint {
-        HangAround
-    } else {
-        task
-    }
+    let use_type = gothic_script::enums::UseType::from_name(use_type)
+        .unwrap_or(gothic_script::enums::UseType::None);
+    let state = script_task_for_use_type(species.to_script(), use_type);
+    RoutineTask::from_state(state).unwrap_or(RoutineTask::HangAround)
 }
 
 /// Inputs of the `SelectRoutineTask` priority list [CA 11.3].

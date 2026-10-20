@@ -40,8 +40,9 @@ fn index(a: Alignment) -> Option<usize> {
 }
 
 /// Political attitude of `observer` towards `target` [CA 10.4 matrix]. `None` when either
-/// side has no alignment. The Orc/Assassin cell is chapter dependent [I: friendly from
-/// `orc_ass_friendly_from_chapter`].
+/// side has no alignment. The Orc/Assassin cell is friendly except in one chapter
+/// (`orc_ass_hostile_chapter`, 2 in the shipped script; the script additionally exempts two
+/// named NPCs that the decompiler did not preserve [U]).
 pub fn political_attitude(
     cfg: &SimConfig,
     chapter: u32,
@@ -56,10 +57,10 @@ pub fn political_attitude(
         'N' => Attitude::Neutral,
         'H' => Attitude::Hostile,
         'C' => {
-            if chapter >= cfg.orc_ass_friendly_from_chapter {
-                Attitude::Friendly
-            } else {
+            if chapter == cfg.orc_ass_hostile_chapter {
                 Attitude::Hostile
+            } else {
+                Attitude::Friendly
             }
         }
         _ => Attitude::None,
@@ -270,8 +271,16 @@ mod tests {
         assert_eq!(p(Alignment::Slave, Alignment::Orc), Attitude::Neutral);
         assert_eq!(p(Alignment::Mid, Alignment::Pirate), Attitude::Friendly);
         assert_eq!(p(Alignment::None, Alignment::Orc), Attitude::None);
-        // Chapter dependent Orc <-> Assassin.
-        assert_eq!(p(Alignment::Orc, Alignment::Ass), Attitude::Hostile);
+        // Orc <-> Assassin: hostile only in chapter 2.
+        assert_eq!(p(Alignment::Orc, Alignment::Ass), Attitude::Friendly);
+        assert_eq!(
+            political_attitude(&c, 2, Alignment::Ass, Alignment::Orc),
+            Attitude::Hostile
+        );
+        assert_eq!(
+            political_attitude(&c, 2, Alignment::Orc, Alignment::Ass),
+            Attitude::Hostile
+        );
         assert_eq!(
             political_attitude(&c, 4, Alignment::Ass, Alignment::Orc),
             Attitude::Friendly

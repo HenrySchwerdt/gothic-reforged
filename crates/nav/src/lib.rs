@@ -63,6 +63,9 @@ pub struct Cell {
     pub angle: f32,
     /// Horizontal downhill direction of the ground (unit, zero on flat ground).
     pub downhill: Vec2,
+    /// Clear of geometry by the agent radius plus half a cell: any point of the cell is at
+    /// least the agent radius away from walls. Narrow cells are only crossed near their centre.
+    pub wide: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -168,14 +171,17 @@ impl NavMesh {
         }
         let a = Vec3::new(x, y + p.step_height + p.radius, z);
         let b = Vec3::new(x, (y + p.height - p.radius).max(a.y), z);
-        if world.capsule_blocked(a, b, p.radius) {
+        let (blocked, tight) = world.capsule_blocked2(a, b, p.radius, p.radius + p.cell * 0.5);
+        if blocked {
             return None;
         }
         let nh = Vec2::new(n.x, n.z);
+        let wide = !tight;
         Some(Cell {
             y,
             angle,
             downhill: nh.normalize_or_zero(),
+            wide,
         })
     }
 
@@ -395,28 +401,32 @@ impl NavMesh {
     }
 
     /// Walkable straight line between two points: every cell the segment touches exists and
-    /// consecutive cells differ by at most the step height.
+    /// consecutive cells differ by at most the step height; cells that are not `wide` may only
+    /// be crossed within 10 cm of their centre, which keeps the agent radius from walls.
     pub fn line_walkable(&self, a: Vec3, b: Vec3) -> bool {
-        let c = self.params.cell;
         let len = (b - a).xz_len();
-        let steps = (len / (c * 0.5)).ceil().max(1.0) as usize;
+        let steps = (len / 10.0).ceil().max(1.0) as usize;
         let mut prev: Option<f32> = None;
         let mut last_key = None;
         for i in 0..=steps {
-            let t = i as f32 / steps as f32;
-            let p = a.lerp(b, t);
+            let p = a.lerp(b, i as f32 / steps as f32);
             let k = self.key_of(p.x, p.z);
-            if Some(k) == last_key {
-                continue;
-            }
-            last_key = Some(k);
             let Some(cell) = self.cells.get(&k) else {
                 return false;
             };
-            if prev.is_some_and(|y| (cell.y - y).abs() > self.params.step_height * 0.6) {
-                return false;
+            if !cell.wide {
+                let (cx, cz) = self.center(k);
+                if (p.x - cx).hypot(p.z - cz) > 10.0 {
+                    return false;
+                }
             }
-            prev = Some(cell.y);
+            if last_key != Some(k) {
+                if prev.is_some_and(|y| (cell.y - y).abs() > self.params.step_height * 0.6) {
+                    return false;
+                }
+                prev = Some(cell.y);
+                last_key = Some(k);
+            }
         }
         true
     }
@@ -602,6 +612,27 @@ impl SharedNav {
     pub fn path_length(&self, from: Vec3, to: Vec3) -> Option<f32> {
         self.path(from, to).map(|p| p.length)
     }
+
+    /// Does the mesh know the ground near both points? When not, "no path" means "unknown"
+    /// and callers should fall back to straight movement.
+    pub fn covers(&self, a: Vec3, b: Vec3) -> bool {
+        self.0.read().is_ok_and(|m| {
+            m.nearest_cell(a.x, a.z, 4).is_some() && m.nearest_cell(b.x, b.z, 4).is_some()
+        })
+    }
+
+    pub fn height_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.0.read().ok()?.height_at(x, z)
+    }
+}
+
+impl std::fmt::Debug for SharedNav {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0.read() {
+            Ok(m) => write!(f, "SharedNav({} cells)", m.cell_count()),
+            Err(_) => write!(f, "SharedNav(poisoned)"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -627,8 +658,12 @@ mod tests {
     }
 
     fn baked(world: &CollisionWorld, radius: f32) -> NavMesh {
+        baked_at(world, Vec3::new(-500.0, 0.0, 0.0), radius)
+    }
+
+    fn baked_at(world: &CollisionWorld, seed: Vec3, radius: f32) -> NavMesh {
         let mut nav = NavMesh::new(NavParams::default());
-        nav.bake_disc(world, Vec3::new(0.0, 0.0, 0.0), radius);
+        nav.bake_disc(world, seed, radius);
         nav
     }
 
@@ -655,7 +690,7 @@ mod tests {
         w.insert_chunk(1, floor(3000.0));
         // Wall at x = 0 from z = -1500 to z = 600; gap above z = 600.
         w.insert_chunk(2, wall_x(0.0, -1500.0, 600.0));
-        let nav = baked(&w, 1800.0);
+        let nav = baked(&w, 2200.0);
         let p = nav
             .find_path(Vec3::new(-500.0, 0.0, 0.0), Vec3::new(500.0, 0.0, 0.0))
             .expect("path");
@@ -716,9 +751,9 @@ mod tests {
         };
         w.insert_chunk(2, ramp(30.0, 1.0));
         w.insert_chunk(3, ramp(60.0, -1.0));
-        let nav = baked(&w, 1500.0);
+        let nav = baked_at(&w, Vec3::new(10.0, 0.0, 10.0), 1500.0);
         assert!(nav.is_walkable(650.0, 0.0), "30 degree ramp walkable");
-        assert!(!nav.is_walkable(-650.0, 0.0), "60 degree ramp blocked");
+        assert!(!nav.is_walkable(-560.0, 0.0), "60 degree ramp blocked");
     }
 
     #[test]
@@ -752,30 +787,5 @@ mod tests {
         assert!(d.y.abs() > 0.2, "{d:?}");
         // No neighbour: unchanged.
         assert_eq!(avoid(Vec2::ZERO, Vec2::X, 150.0, 35.0, &[], 2.0), Vec2::X);
-    }
-}
-#[cfg(test)]
-mod dbg {
-    use super::*;
-    #[test]
-    fn dbg_wall() {
-        let mut w = CollisionWorld::new();
-        let h = 3000.0;
-        let a = Vec3::new(-h, 0.0, -h);
-        let b = Vec3::new(h, 0.0, -h);
-        let c = Vec3::new(h, 0.0, h);
-        let d = Vec3::new(-h, 0.0, h);
-        w.insert_chunk(1, vec![[a, c, b], [a, d, c]]);
-        let a = Vec3::new(0.0, 0.0, -1500.0);
-        let b = Vec3::new(0.0, 300.0, -1500.0);
-        let c = Vec3::new(0.0, 300.0, 600.0);
-        let d = Vec3::new(0.0, 0.0, 600.0);
-        w.insert_chunk(2, vec![[a, b, c], [a, c, d]]);
-        let mut nav = NavMesh::new(NavParams::default());
-        let n = nav.bake_disc(&w, Vec3::ZERO, 1800.0);
-        eprintln!("cells {n} pending {}", nav.pending());
-        for z in [0.0, 300.0, 580.0, 640.0, 700.0, 900.0, 1500.0] {
-            eprintln!("z {z}: w(-300)={} w(0)={} w(300)={}", nav.is_walkable(-300.0, z), nav.is_walkable(0.0, z), nav.is_walkable(300.0, z));
-        }
     }
 }
