@@ -5,7 +5,7 @@ use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-const MAX_ENTITIES: usize = 100_000;
+const MAX_ENTITIES: usize = 4_000_000;
 const MAX_PROPERTIES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -38,6 +38,15 @@ pub struct WorldEntity {
 
 impl WorldDocument {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
+        // Observed empty placeholder: raw "GENOMEDL" + u16 version, nothing else
+        // (ten bytes, e.g. GUID-named .lrentdat stubs). Represents zero entities.
+        if bytes.len() == 10 && bytes.starts_with(b"GENOMEDL") {
+            return Ok(Self {
+                kind: WorldKind::Lrentdat,
+                entities: Vec::new(),
+                edges: Vec::new(),
+            });
+        }
         let genome = GenomeFile::parse(bytes)?;
         let kind = if genome.body.starts_with(b"GENOMEDL") {
             WorldKind::Lrentdat
@@ -49,7 +58,8 @@ impl WorldDocument {
             strings: genome.strings,
             pos: 14,
             limit: genome.table_offset,
-            text_budget: 64 * 1024 * 1024,
+            // Only retained strings are charged (names, classes, resources).
+            text_budget: 64 * 1024 * 1024 + bytes.len().saturating_mul(2),
         };
         if kind == WorldKind::Lrentdat {
             reader.take(8)?;
@@ -68,14 +78,10 @@ impl WorldDocument {
             "world entity count exceeds bounds"
         );
         let mut entities = Vec::with_capacity(count);
-        let mut identities = BTreeSet::new();
         for _ in 0..count {
-            let entity = reader.entity(kind)?;
-            ensure!(
-                identities.insert(entity.source_id),
-                "duplicate entity source ID"
-            );
-            entities.push(entity);
+            // Duplicate source IDs occur in shipped data (one CStat cell);
+            // identity is therefore (document, index), not the ID alone.
+            entities.push(reader.entity(kind)?);
         }
         let mut edges = Vec::new();
         let mut parents = vec![None; count];
@@ -144,7 +150,7 @@ struct ClassSummary {
     assets: Vec<String>,
 }
 
-impl Reader<'_> {
+impl<'a> Reader<'a> {
     fn remaining(&self) -> usize {
         self.limit - self.pos
     }
@@ -169,12 +175,16 @@ impl Reader<'_> {
         ensure!(value <= 1, "invalid world boolean");
         Ok(value == 1)
     }
-    fn text(&mut self) -> Result<String> {
+    /// Borrowed string-table entry; not charged against the text budget.
+    fn text_bytes(&mut self) -> Result<&'a [u8]> {
         let index = self.u16()? as usize;
-        let bytes = self
-            .strings
+        self.strings
             .get(index)
-            .context("world string index out of bounds")?;
+            .copied()
+            .context("world string index out of bounds")
+    }
+    fn text(&mut self) -> Result<String> {
+        let bytes = self.text_bytes()?;
         let cost = bytes
             .len()
             .checked_mul(2)
@@ -219,17 +229,17 @@ impl Reader<'_> {
         );
         let mut assets = BTreeSet::new();
         for _ in 0..count {
-            let property = self.text()?;
-            let property_type = self.text()?;
+            let property = self.text_bytes()?;
+            let property_type = self.text_bytes()?;
             self.u16()?;
             let length = self.u32()? as usize;
-            if matches!(property.as_str(), "ResourceFileName" | "ResourceFilePath")
+            if matches!(property, b"ResourceFileName" | b"ResourceFilePath")
                 && matches!(
-                    property_type.as_str(),
-                    "bCMeshResourceString"
-                        | "bCAnimationResourceString"
-                        | "bCImageResourceString"
-                        | "bCString"
+                    property_type,
+                    b"bCMeshResourceString"
+                        | b"bCAnimationResourceString"
+                        | b"bCImageResourceString"
+                        | b"bCString"
                 )
             {
                 ensure!(length == 2, "unsupported resource reference payload");
@@ -446,6 +456,43 @@ mod tests {
         bad[152..156].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(WorldDocument::parse(&bad).is_err());
     }
+    #[test]
+    fn empty_lrentdat_stub_and_duplicate_ids_are_accepted() -> Result<()> {
+        let mut stub = b"GENOMEDL".to_vec();
+        stub.extend(56u16.to_le_bytes());
+        let doc = WorldDocument::parse(&stub)?;
+        assert_eq!(doc.kind, WorldKind::Lrentdat);
+        assert!(doc.entities.is_empty() && doc.edges.is_empty());
+        // Other raw GENOMEDL payloads (legacy v56 layout) remain unsupported.
+        stub.push(0);
+        assert!(WorldDocument::parse(&stub).is_err());
+        assert!(WorldDocument::parse(&stub[..9]).is_err());
+
+        // One shipped CStat cell repeats a source ID: identity is the index.
+        let mut body = 83u16.to_le_bytes().to_vec();
+        body.extend(2u32.to_le_bytes());
+        body.extend(entity(WorldKind::Node, 7, &[]));
+        body.extend(entity(WorldKind::Node, 7, &[]));
+        for value in [u32::MAX, u32::MAX] {
+            body.extend(value.to_le_bytes());
+        }
+        let doc = WorldDocument::parse(&envelope(&body, &["entity"]))?;
+        assert_eq!(doc.entities.len(), 2);
+        assert_eq!(doc.entities[0].source_id, doc.entities[1].source_id);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_string_table_is_reported_not_guessed() {
+        // GENOMFLE header with table offset 0 (observed in eight GUID .lrentdat files).
+        let mut bytes = b"GENOMFLE     ".to_vec();
+        bytes.extend(b"GENOMEDL");
+        bytes.extend(83u16.to_le_bytes());
+        bytes.extend([0; 64]);
+        let error = WorldDocument::parse(&bytes).unwrap_err();
+        assert!(format!("{error:#}").contains("table offset"));
+    }
+
     #[test]
     fn lrentdat_context_size_can_include_the_following_entities() -> Result<()> {
         let mut context = 30u16.to_le_bytes().to_vec();

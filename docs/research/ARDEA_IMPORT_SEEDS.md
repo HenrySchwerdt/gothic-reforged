@@ -156,6 +156,8 @@ the Rust source. Relevant format evidence:
 - [bCMatrix](https://github.com/georgeto/g3dit/blob/7bf3ab9d6cb5fd546591201ff5546990c1b4b627/G3Utils/src/main/java/de/george/g3utils/structure/bCMatrix.java): serialized basis vectors and translation.
 - [ClassUtil](https://github.com/georgeto/g3dit/blob/7bf3ab9d6cb5fd546591201ff5546990c1b4b627/LrentNode/src/main/java/de/george/lrentnode/util/ClassUtil.java) and [ClassProperty](https://github.com/georgeto/g3dit/blob/7bf3ab9d6cb5fd546591201ff5546990c1b4b627/LrentNode/src/main/java/de/george/lrentnode/properties/ClassProperty.java): property framing.
 
+> Whole-installation coverage numbers and remaining failure classes: `WORLD_SURVEY.md`.
+
 ## Next validation
 
 Implement a checked Rust subset with synthetic fixtures, compare all nine

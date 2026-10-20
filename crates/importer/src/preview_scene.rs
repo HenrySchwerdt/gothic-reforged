@@ -1,6 +1,13 @@
 //! Explicit single-archive geometry preview; no inferred patch precedence.
 use anyhow::{Context, Result, ensure};
-use gothic_formats::{PakArchive, world_node::WorldDocument, xcmsh::Xcmsh, xlmsh::Xlmsh};
+use gothic_formats::{
+    PakArchive,
+    world_node::WorldDocument,
+    xcmsh::Xcmsh,
+    ximg::Ximg,
+    xlmsh::Xlmsh,
+    xshmat::{TextureRole, Xshmat},
+};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,11 +18,17 @@ const MAX_PAYLOAD_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_GEOMETRY_BYTES: usize = 128 * 1024 * 1024;
 const MAX_INSTANCES: usize = 10_000;
 const MAX_MESHES: usize = 4096;
+const MAX_TEXTURE_BYTES: usize = 512 * 1024 * 1024;
+const MAX_TEXTURES: usize = 2048;
 
 #[derive(Debug, Serialize)]
 pub struct PreviewScene {
     pub meshes: Vec<PreviewMesh>,
     pub instances: Vec<PreviewInstance>,
+    /// Materials keyed by lowercase material name exactly as stored in `Submesh::material`.
+    /// Only present when material and image archives were supplied.
+    pub materials: BTreeMap<String, PreviewMaterial>,
+    pub textures: Vec<PreviewTexture>,
     /// Missing, ambiguous, corrupt, or unsupported resources skipped individually.
     pub issues: Vec<String>,
     /// Explicit preview policies; these are not resource failures.
@@ -30,6 +43,30 @@ pub struct PreviewMesh {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PreviewMaterial {
+    pub name: String,
+    /// Raw enum / byte values; their meaning is not verified, see XSHMAT_FORMAT.md.
+    pub blend_mode: Option<u32>,
+    pub mask_reference: Option<u8>,
+    pub disable_lighting: Option<bool>,
+    /// Indices into `PreviewScene::textures`.
+    pub diffuse: Option<usize>,
+    pub normal: Option<usize>,
+    pub specular: Option<usize>,
+}
+
+/// Compressed DXT texture, mips largest to smallest, blocks untouched.
+#[derive(Debug, Serialize)]
+pub struct PreviewTexture {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub fourcc: [u8; 4],
+    #[serde(skip)]
+    pub mips: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct PreviewInstance {
     pub source_id: [u8; 20],
     pub name: String,
@@ -41,19 +78,39 @@ pub struct PreviewInstance {
 /// Meshes are decoded once, while each instance retains its authored transform.
 /// Ordinary resource failures are issues; budget exhaustion fails the import.
 pub fn import_preview(world: &WorldDocument, mesh_archive: &Path) -> Result<PreviewScene> {
-    import_with_policy(world, mesh_archive, false)
+    import_with_policy(world, mesh_archive, false, None)
+}
+
+/// Explicit material and image archives (typically `_compiledMaterial.pak` and
+/// `_compiledImage.pak`); materials and their textures are resolved by case-insensitive
+/// basename with ambiguity reported as an issue.
+#[derive(Debug, Clone, Copy)]
+pub struct TextureSources<'a> {
+    pub material_archive: &'a Path,
+    pub image_archive: &'a Path,
+}
+
+/// Like [`import_preview`]/[`import_preview_lod0`] plus material and texture resolution.
+pub fn import_preview_textured(
+    world: &WorldDocument,
+    mesh_archive: &Path,
+    sources: TextureSources<'_>,
+    lod0: bool,
+) -> Result<PreviewScene> {
+    import_with_policy(world, mesh_archive, lod0, Some(sources))
 }
 
 /// Explicitly select XLMSH source level 0; original distance-based LOD behavior
 /// remains unverified. Only one XLMSH indirection ending in XCMSH is supported.
 pub fn import_preview_lod0(world: &WorldDocument, mesh_archive: &Path) -> Result<PreviewScene> {
-    import_with_policy(world, mesh_archive, true)
+    import_with_policy(world, mesh_archive, true, None)
 }
 
 fn import_with_policy(
     world: &WorldDocument,
     mesh_archive: &Path,
     lod0: bool,
+    sources: Option<TextureSources<'_>>,
 ) -> Result<PreviewScene> {
     let archive = PakArchive::open(mesh_archive).context("open explicit preview mesh archive")?;
     let basenames = index_basenames(archive.entries.iter().map(|entry| entry.path.as_str()));
@@ -67,6 +124,8 @@ fn import_with_policy(
         scene: PreviewScene {
             meshes: Vec::new(),
             instances: Vec::new(),
+            materials: BTreeMap::new(),
+            textures: Vec::new(),
             issues: Vec::new(),
             notes: if lod0 {
                 vec!["Preview explicitly selects XLMSH source LOD0; original distance behavior is unverified. One explicit mesh archive is used, without inferred patch precedence.".into()]
@@ -79,8 +138,10 @@ fn import_with_policy(
     for entity in &world.entities {
         let mut entity_meshes = BTreeSet::new();
         for reference in &entity.asset_references {
-            if let Some(mesh_index) = loader.load(reference)? {
-                if entity_meshes.insert(mesh_index) {
+            if let Some(mesh_index) = loader.load(reference)?
+                && entity_meshes.insert(mesh_index)
+            {
+                {
                     ensure!(
                         loader.scene.instances.len() < MAX_INSTANCES,
                         "preview instance budget exceeds 10000"
@@ -110,7 +171,173 @@ fn import_with_policy(
             }
         }
     }
+    if let Some(sources) = sources {
+        resolve_materials(&mut loader.scene, sources)?;
+    }
     Ok(loader.scene)
+}
+
+fn resolve_materials(scene: &mut PreviewScene, sources: TextureSources<'_>) -> Result<()> {
+    let mut materials =
+        PakArchive::open(sources.material_archive).context("open material archive")?;
+    let mut images = PakArchive::open(sources.image_archive).context("open image archive")?;
+    let material_index = index_by_extension(&materials, ".xshmat");
+    let image_index = index_by_extension(&images, ".ximg");
+    let wanted: BTreeSet<String> = scene
+        .meshes
+        .iter()
+        .flat_map(|m| m.mesh.submeshes.iter().map(|s| s.material.to_lowercase()))
+        .filter(|name| !name.is_empty())
+        .collect();
+    let mut texture_ids: BTreeMap<String, Option<usize>> = BTreeMap::new();
+    let mut texture_bytes = 0usize;
+    for key in wanted {
+        let index = match resolve(&material_index, basename(&key)) {
+            Resolution::Unique(index) => index,
+            Resolution::Missing => {
+                scene.issues.push(format!("material not found: {key}"));
+                continue;
+            }
+            Resolution::Ambiguous => {
+                scene
+                    .issues
+                    .push(format!("ambiguous material basename: {key}"));
+                continue;
+            }
+        };
+        let entry = &materials.entries[index];
+        if entry.deleted() || entry.payloadless() || entry.size > 4 * 1024 * 1024 {
+            scene
+                .issues
+                .push(format!("material unavailable: {}", entry.path));
+            continue;
+        }
+        let parsed = materials
+            .read_payload(index)
+            .and_then(|bytes| Xshmat::parse(&bytes));
+        let material = match parsed {
+            Ok(material) => material,
+            Err(error) => {
+                scene
+                    .issues
+                    .push(format!("invalid material {key}: {error:#}"));
+                continue;
+            }
+        };
+        let mut result = PreviewMaterial {
+            name: key.clone(),
+            blend_mode: material.blend_mode,
+            mask_reference: material.mask_reference,
+            disable_lighting: material.disable_lighting,
+            diffuse: None,
+            normal: None,
+            specular: None,
+        };
+        for (role, slot) in [
+            (TextureRole::Diffuse, 0),
+            (TextureRole::Normal, 1),
+            (TextureRole::Specular, 2),
+        ] {
+            let Some(texture) = material.texture(role) else {
+                continue;
+            };
+            let image_key = format!("{}.ximg", texture.stem().to_lowercase());
+            let id = if let Some(cached) = texture_ids.get(&image_key) {
+                *cached
+            } else {
+                let loaded = load_texture(
+                    &mut images,
+                    &image_index,
+                    &image_key,
+                    &mut texture_bytes,
+                    scene,
+                )?;
+                texture_ids.insert(image_key, loaded);
+                loaded
+            };
+            match slot {
+                0 => result.diffuse = id,
+                1 => result.normal = id,
+                _ => result.specular = id,
+            }
+        }
+        scene.materials.insert(key, result);
+    }
+    Ok(())
+}
+
+fn load_texture(
+    images: &mut PakArchive,
+    index: &BTreeMap<String, Vec<usize>>,
+    key: &str,
+    total: &mut usize,
+    scene: &mut PreviewScene,
+) -> Result<Option<usize>> {
+    let at = match resolve(index, key) {
+        Resolution::Unique(at) => at,
+        Resolution::Missing => {
+            scene.issues.push(format!("texture not found: {key}"));
+            return Ok(None);
+        }
+        Resolution::Ambiguous => {
+            scene
+                .issues
+                .push(format!("ambiguous texture basename: {key}"));
+            return Ok(None);
+        }
+    };
+    let entry = &images.entries[at];
+    if entry.deleted() || entry.payloadless() || entry.size > 64 * 1024 * 1024 {
+        scene
+            .issues
+            .push(format!("texture unavailable: {}", entry.path));
+        return Ok(None);
+    }
+    *total = total
+        .checked_add(entry.size as usize)
+        .context("texture size overflow")?;
+    ensure!(
+        *total <= MAX_TEXTURE_BYTES && scene.textures.len() < MAX_TEXTURES,
+        "preview texture budget exceeded"
+    );
+    let bytes = match images.read_payload(at) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            scene.issues.push(format!("texture {key}: {error:#}"));
+            return Ok(None);
+        }
+    };
+    match Ximg::parse(&bytes) {
+        Ok(ximg) => {
+            scene.textures.push(PreviewTexture {
+                name: key.to_string(),
+                width: ximg.width,
+                height: ximg.height,
+                fourcc: ximg.fourcc,
+                mips: ximg.mips().iter().map(|m| m.to_vec()).collect(),
+            });
+            Ok(Some(scene.textures.len() - 1))
+        }
+        Err(error) => {
+            scene
+                .issues
+                .push(format!("unsupported texture {key}: {error:#}"));
+            Ok(None)
+        }
+    }
+}
+
+fn index_by_extension(archive: &PakArchive, extension: &str) -> BTreeMap<String, Vec<usize>> {
+    let mut names: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, entry) in archive.entries.iter().enumerate() {
+        if entry.path.to_ascii_lowercase().ends_with(extension) {
+            names
+                .entry(basename(&entry.path).to_lowercase())
+                .or_default()
+                .push(index);
+        }
+    }
+    names
 }
 
 struct PreviewLoader {

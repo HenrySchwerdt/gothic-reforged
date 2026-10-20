@@ -1,5 +1,7 @@
 //! Deterministic, read-only installation inventory. Never executes game binaries.
 pub mod preview_scene;
+pub mod survey;
+pub mod world_index;
 use anyhow::{Context, Result, ensure};
 use gothic_formats::{PakArchive, PakHeader};
 use serde::Serialize;
@@ -203,7 +205,7 @@ fn ini_evidence(root: &Path, path: &Path) -> Result<Vec<IniEvidence>> {
     let text = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         let little = bytes[0] == 0xff;
         let words: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|chunk| {
                 if little {
                     u16::from_le_bytes([chunk[0], chunk[1]])
@@ -425,7 +427,7 @@ mod tests {
         for word in [0x10u32, 0, 0, 2] {
             bytes.extend(word.to_le_bytes());
         }
-        for name in [b'a', b'b'] {
+        for name in *b"ab" {
             bytes.extend([0; 32]);
             bytes.extend(0x20000u32.to_le_bytes());
             for value in [48u64, 0, u64::MAX] {

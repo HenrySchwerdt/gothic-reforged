@@ -2519,12 +2519,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-dialog-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gothic-formats",
+ "gothic-gameplay",
+ "serde_json",
+]
+
+[[package]]
 name = "gothic-formats"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "flate2",
  "serde",
+]
+
+[[package]]
+name = "gothic-gameplay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gothic-formats",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2545,6 +2565,25 @@ dependencies = [
  "anyhow",
  "gothic-formats",
  "gothic-importer",
+ "serde_json",
+]
+
+[[package]]
+name = "gothic-physics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "gothic-formats",
+]
+
+[[package]]
+name = "gothic-questlint"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gothic-formats",
+ "gothic-gameplay",
  "serde_json",
 ]
 

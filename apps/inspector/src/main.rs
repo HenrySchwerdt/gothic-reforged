@@ -1,3 +1,4 @@
+mod gamedata;
 use anyhow::{Context, Result, bail, ensure};
 use gothic_formats::{PakArchive, normalize_path};
 use std::{
@@ -26,6 +27,34 @@ fn main() -> Result<()> {
             let scene =
                 gothic_importer::preview_scene::import_preview(&world, Path::new(&args[3]))?;
             serde_json::to_writer_pretty(std::io::stdout().lock(), &scene)?;
+        }
+        "world-survey" | "mesh-survey" | "world-query" => {
+            ensure!(args.len() >= 2, "{command} requires DATA_DIR");
+            let mut vfs = gothic_formats::vfs::VirtualFileSystem::open_data_dir(Path::new(&args[1]))?;
+            eprintln!(
+                "mounted {} archives, {} visible entries, {} overridden, {} payloadless ignored, {} skipped",
+                vfs.archive_names().len(),
+                vfs.len(),
+                vfs.overridden,
+                vfs.ignored_payloadless.len(),
+                vfs.skipped.len()
+            );
+            let json = match command {
+                "world-survey" => serde_json::to_value(gothic_importer::survey::world_survey(&mut vfs)?)?,
+                "mesh-survey" => serde_json::to_value(gothic_importer::survey::mesh_survey(&mut vfs)?)?,
+                _ => {
+                    ensure!(args.len() == 6, "world-query requires DATA_DIR X Y Z RADIUS");
+                    let num = |i: usize| -> Result<f32> { Ok(args[i].to_str().context("number")?.parse()?) };
+                    let index = gothic_importer::world_index::WorldIndex::build(&mut vfs)?;
+                    eprintln!("indexed {} placements from {} documents", index.len(), index.documents);
+                    serde_json::to_value(index.query([num(2)?, num(3)?, num(4)?], num(5)?))?
+                }
+            };
+            if let Some(out) = args.get(2).filter(|_| command != "world-query") {
+                std::fs::write(out, serde_json::to_vec_pretty(&json)?)?;
+            } else {
+                serde_json::to_writer_pretty(std::io::stdout().lock(), &json)?;
+            }
         }
         "scan" => {
             let root = args
@@ -114,7 +143,11 @@ fn main() -> Result<()> {
         "help" | "--help" | "-h" => println!(
             "gothic-inspector scan INSTALLATION\ngothic-inspector list ARCHIVE [FILTER]\ngothic-inspector extract ARCHIVE MEMBER OUTPUT_FILE\ngothic-inspector ximg-dds ARCHIVE MEMBER OUTPUT_FILE\ngothic-inspector mesh-info ARCHIVE MEMBER\ngothic-inspector world-info ARCHIVE MEMBER\ngothic-inspector scene-info WORLD_ARCHIVE WORLD_MEMBER MESH_ARCHIVE\nRead-only source access. Extraction creates one new file; no overwrite."
         ),
-        other => bail!("unknown command {other}; use --help"),
+        other => {
+            if !gamedata::dispatch(other, &args)? {
+                bail!("unknown command {other}; use --help")
+            }
+        }
     }
     Ok(())
 }
