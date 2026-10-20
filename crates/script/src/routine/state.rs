@@ -419,6 +419,42 @@ pub enum Callback {
     OnGuidePlayer,
     /// `OnFollowNPC`.
     OnFollowNpc,
+    /// `OnAttack_Goto`: per-tick callback of the approach in `ZS_Attack_Goto`/`Sprint`.
+    OnAttackGoto,
+    /// `OnAttack_Positioning`: callback of `ZS_Attack_ChangePosition`.
+    OnAttackPositioning,
+    /// `OnAttack_GoBack`.
+    OnAttackGoBack,
+    /// `OnAttack_Strafe`.
+    OnAttackStrafe,
+    /// `OnAttack_Turn`.
+    OnAttackTurn,
+    /// `OnReactToDamage`.
+    OnReactToDamage,
+    /// `OnReactToDamage_GoBack`.
+    OnReactToDamageGoBack,
+    /// `OnReactToWeapon`.
+    OnReactToWeapon,
+    /// `OnReactToZone`.
+    OnReactToZone,
+    /// `OnWatchFight`.
+    OnWatchFight,
+    /// `OnWatchFight_GoBack`.
+    OnWatchFightGoBack,
+    /// `OnWatchFight_Goto`.
+    OnWatchFightGoto,
+    /// `OnFlee_GotoFleePoint`.
+    OnFleeGotoFleePoint,
+    /// `OnFlee_GoBack`.
+    OnFleeGoBack,
+    /// `OnEatBody_Perception`.
+    OnEatBodyPerception,
+    /// `OnRansackBody`.
+    OnRansackBody,
+    /// `OnArena`.
+    OnArena,
+    /// `OnRevolutionAttack`.
+    OnRevolutionAttack,
 }
 
 #[cfg(test)]

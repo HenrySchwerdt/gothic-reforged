@@ -122,48 +122,27 @@ pub fn apply_tick(cfg: &SimConfig, a: &mut Actor, env: &TickEnv) {
     a.stamina = (a.stamina + st).clamp(0, a.stamina_max(cfg));
 }
 
-/// Stamina cost of starting a move [CA 9.5]. Hack pays 20 now and 20 in its second stage
-/// (40 in total); Whirl 40; Jump 10; JumpBack 10 without ExtendedContent, free with it.
-pub fn stamina_cost(cfg: &SimConfig, action: Action) -> i32 {
-    match action {
-        Action::Attack
-        | Action::QuickAttack
-        | Action::QuickAttackR
-        | Action::QuickAttackL
-        | Action::SimpleWhirl
-        | Action::PierceAttack => {
-            if cfg.extended_content {
-                12
-            } else {
-                10
-            }
-        }
-        Action::PowerAttack | Action::SprintAttack => 20,
-        Action::HackAttack | Action::WhirlAttack => 40,
-        Action::Jump => 10,
-        Action::JumpBack => {
-            if cfg.extended_content {
-                0
-            } else {
-                10
-            }
-        }
-        _ => 0,
-    }
+/// Convert the simulation's action to the script port's by name.
+pub fn script_action(a: Action) -> gothic_script::enums::Action {
+    gothic_script::enums::Action::from_name(&format!("{a:?}"))
+        .unwrap_or(gothic_script::enums::Action::None)
 }
 
-/// Seconds after which the hit window of a move opens [CA 9.5]. Hack opens after a parade
-/// wind-up that the doc does not time; 0.5 s is assumed [I].
+/// Stamina cost of starting a move: the table of the ported `_AI_*` commands
+/// (`gothic_script::combat::commands`, [CA 9.5]). A hack pays its second 20 when its second
+/// stage begins ([`second_stage_cost`]).
+pub fn stamina_cost(cfg: &SimConfig, action: Action) -> i32 {
+    gothic_script::combat::commands::stamina_cost(cfg.extended_content, script_action(action))
+}
+
+/// The stamina the second stage of a move costs (a hack's overhead stage).
+pub fn second_stage_cost(action: Action) -> i32 {
+    gothic_script::combat::commands::second_stage_cost(script_action(action))
+}
+
+/// Seconds after which the hit window of a move opens (the `OnAI_*` thresholds of the port).
 pub fn hit_window_secs(action: Action) -> f32 {
-    match action {
-        Action::Attack | Action::SimpleWhirl | Action::WhirlAttack => 0.25,
-        Action::QuickAttack | Action::QuickAttackR | Action::QuickAttackL => 0.10,
-        Action::PierceAttack => 0.8,
-        Action::PowerAttack | Action::SprintAttack => 0.10,
-        Action::HackAttack => 0.5,
-        Action::GetUpAttack => 0.10,
-        _ => 0.25,
-    }
+    gothic_script::combat::commands::hit_window_secs(script_action(action))
 }
 
 /// Seconds before an unconscious actor wakes: 5 (player or party), 20 (arena defeat), else 30
@@ -342,7 +321,8 @@ mod tests {
         assert_eq!(stamina_cost(&ext, Action::Attack), 12);
         assert_eq!(stamina_cost(&van, Action::Attack), 10);
         assert_eq!(stamina_cost(&ext, Action::PowerAttack), 20);
-        assert_eq!(stamina_cost(&ext, Action::HackAttack), 40);
+        assert_eq!(stamina_cost(&ext, Action::HackAttack), 20);
+        assert_eq!(second_stage_cost(Action::HackAttack), 20);
         assert_eq!(stamina_cost(&ext, Action::JumpBack), 0);
         assert_eq!(stamina_cost(&van, Action::JumpBack), 10);
         assert_eq!(stamina_cost(&ext, Action::Parade), 0);

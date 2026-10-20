@@ -180,6 +180,89 @@ pub enum AiCommand {
     },
     /// `_AI_SelectWeapon`.
     SelectWeapon,
+    /// `_AI_TakeItem`: pick an item entity up.
+    TakeItem {
+        /// The item entity.
+        item: EntityId,
+    },
+    /// The `_AI_Attack` family: one melee move against `target` (`Attack`, `PowerAttack`,
+    /// `QuickAttack`, `SimpleWhirl`, `WhirlAttack`, `PierceAttack`, `HackAttack`,
+    /// `FinishingAttack`). The host plays the swing, charges the stamina and opens the hit
+    /// window (`crate::combat::commands`).
+    Attack {
+        /// The move.
+        action: Action,
+        /// The opponent.
+        target: EntityId,
+    },
+    /// `_AI_Parade`: raise the guard against `target`.
+    Parade {
+        /// The opponent.
+        target: EntityId,
+    },
+    /// `_AI_JumpBack`: hop away from `target`.
+    JumpBack {
+        /// The opponent.
+        target: EntityId,
+    },
+    /// `sAIGotoInstr` as the combat states use it: move relative to `target` until the local
+    /// callback ends the instruction.
+    CombatGoto {
+        /// The opponent.
+        target: EntityId,
+        /// Walk mode (`GetCombatWalkMode`: 1 slow, 2 walk, 3 run).
+        walk_mode: u8,
+        /// What kind of movement.
+        kind: GotoKind,
+    },
+    /// `_AI_Shoot`: loose the loaded projectile at `target`.
+    Shoot {
+        /// The opponent.
+        target: EntityId,
+    },
+    /// `sAIWaitInstr` with a millisecond argument.
+    WaitMs {
+        /// Milliseconds.
+        ms: u32,
+    },
+    /// `_AI_Die` / ragdoll start for a killed NPC.
+    Die,
+    /// A hit reaction animation (`_AI_Stumble` family).
+    Stumble {
+        /// Which stumble.
+        action: Action,
+    },
+}
+
+/// Kinds of movement of `sAIGotoInstr` in the combat states (the instruction's second operand).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GotoKind {
+    /// Walk toward the target (`ZS_Attack_Goto`, `Sprint`, `ChangePosition`).
+    Approach,
+    /// Walk away (`ZS_Attack_GoBack`).
+    Back,
+    /// Circle left (`ZS_Attack_StrafeLeft`).
+    StrafeLeft,
+    /// Circle right (`ZS_Attack_StrafeRight`).
+    StrafeRight,
+    /// Turn on the spot to the left.
+    TurnLeft,
+    /// Turn on the spot to the right.
+    TurnRight,
+}
+
+/// `gEDirection` values `Entity::CanEvade` takes.
+pub mod dir {
+    /// Straight back.
+    pub const BACK: u32 = 2;
+    /// Sidestep probe used before turning right.
+    pub const RIGHT_SIDE: u32 = 3;
+    /// Sidestep probe used before turning left.
+    pub const LEFT_SIDE: u32 = 4;
+    /// Strafe left.
+    pub const STRAFE_LEFT: u32 = 7;
+    /// Strafe right.
+    pub const STRAFE_RIGHT: u32 = 8;
 }
 
 /// `gCScriptProcessingUnit` + `gCScriptAdmin` + engine globals: the per-invocation context.
@@ -637,6 +720,70 @@ pub trait WorldApi {
     fn on_enclave_state_changed(&mut self, enclave: EntityId);
 }
 
+/// Combat-specific engine queries and writes (B08-B10): hit timing, evasion, focus, the local
+/// target-search helper.
+pub trait CombatApi {
+    /// `PSNpc::CanHit(min_duration)`: at least `min_duration` hit-duration units (100 ms) have
+    /// passed since the NPC last struck.
+    fn can_hit(&self, npc: EntityId, min_duration: u32) -> bool;
+    /// `PSNpc::SetLastHit`: stamp "this NPC struck now".
+    fn set_last_hit(&mut self, npc: EntityId);
+    /// `PSNpc::GetLastHitTimestamp`: units since the NPC last struck (saturating).
+    fn last_hit_timestamp(&self, npc: EntityId) -> u32;
+    /// `Entity::CanEvade(from, direction)`: is there room to move away (see [`dir`]).
+    fn can_evade(&self, npc: EntityId, from: EntityId, direction: u32) -> bool;
+    /// `Entity::GetCurrentAniPhase` as a raw phase id (`0` unknown).
+    fn ani_phase(&self, _npc: EntityId) -> u32 {
+        0
+    }
+    /// `PSRoutine::GetLastTask`: the task before the current one.
+    fn last_task(&self, _npc: EntityId) -> Option<State> {
+        None
+    }
+    /// Start the dialog (`PSInfoManager::Start`) between the player and `npc`.
+    fn start_dialog(&mut self, _npc: EntityId) {}
+    /// `PSInventory::GetAmount` of the stack holding `template`.
+    fn item_amount(&self, _e: EntityId, _template: &str) -> i32 {
+        0
+    }
+    /// `PSInventory::TransferAmountTo`: move `n` of `template` from `from` to `to`.
+    fn transfer_items(&mut self, _from: EntityId, _to: EntityId, _template: &str, _n: i32) {}
+    /// Write `PSRoutine.StatePosition` (the stage of the current move).
+    fn set_state_position(&mut self, npc: EntityId, pos: u32);
+    /// `PSMagic.SpellTarget` of the hand spell is the focus kind (no aiming needed).
+    fn spell_targets_focus(&self, _npc: EntityId) -> bool {
+        false
+    }
+    /// `PSNpc.LastDistToTarget`.
+    fn last_dist_to_target(&self, npc: EntityId) -> f32;
+    /// Write `PSNpc.LastDistToTarget`.
+    fn set_last_dist_to_target(&mut self, npc: EntityId, d: f32);
+    /// `PSNpc::GetAlternativeTarget`.
+    fn alternative_target(&self, npc: EntityId) -> EntityId;
+    /// `PSFocus::GetFocusEntity` of the player.
+    fn focus_entity(&self) -> EntityId {
+        EntityId::NONE
+    }
+    /// `Entity::IsFreeLOSKneeHeight`.
+    fn has_free_los_knee(&self, a: EntityId, b: EntityId) -> bool;
+    /// `Entity::SetLookAtTarget` / `SetAlignmentTarget` (animation head and body turning).
+    fn set_look_at(&mut self, _npc: EntityId, _target: EntityId) {}
+    /// The arena entity of `npc` (`FUN_100089c0`), `NONE` when it takes part in none.
+    fn arena_of(&self, _npc: EntityId) -> EntityId {
+        EntityId::NONE
+    }
+    /// `PSArena.Status == Running` for the arena entity.
+    fn arena_running(&self, _arena: EntityId) -> bool {
+        false
+    }
+}
+
 /// Everything a ported script function can call.
-pub trait ScriptHost: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi {}
-impl<T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi> ScriptHost for T {}
+pub trait ScriptHost:
+    ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi
+{
+}
+impl<T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi> ScriptHost
+    for T
+{
+}

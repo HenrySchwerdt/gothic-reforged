@@ -126,6 +126,8 @@ pub struct NpcScript {
     pub last_player_ar: se::AttackReason,
     /// Status of the NPC's last attacker.
     pub last_attacker: EntityId,
+    /// `PSNpc.LastDistToTarget` as the script wrote it (`None`: the live distance).
+    pub last_dist: Option<f32>,
 }
 
 impl Default for NpcScript {
@@ -166,6 +168,7 @@ impl Default for NpcScript {
             last_fight_friendly: false,
             last_player_ar: se::AttackReason::None,
             last_attacker: EntityId::NONE,
+            last_dist: None,
         }
     }
 }
@@ -293,6 +296,20 @@ impl ScriptTables {
     /// Define the roaming points of an anchor name.
     pub fn set_roaming_points(&mut self, name: &str, points: &[EntityId]) {
         self.roaming.insert(name.into(), points.to_vec());
+    }
+
+    /// Drain the queued AI commands of one actor, leaving the others queued.
+    pub fn take_commands_for(&mut self, id: ActorId) -> Vec<AiCommand> {
+        let mut mine = Vec::new();
+        self.commands.retain(|(who, cmd)| {
+            if *who == id {
+                mine.push(cmd.clone());
+                false
+            } else {
+                true
+            }
+        });
+        mine
     }
 
     /// Drain the queued AI commands.
@@ -846,8 +863,11 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
             s.combat_state = state;
         }
     }
-    fn stop_ai_goto(&mut self, _npc: EntityId) {
+    fn stop_ai_goto(&mut self, npc: EntityId) {
         self.sim.script.stopped_goto += 1;
+        if let Some(a) = self.actor_mut(npc) {
+            a.brain.goto = None;
+        }
     }
     fn task_time(&self, npc: EntityId) -> f32 {
         self.script(npc).task_time
@@ -923,6 +943,7 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
     fn set_last_hit_timestamp(&mut self, npc: EntityId, _t: u32) {
         if let Some(a) = self.actor_mut(npc) {
             a.brain.last_hit_taken_ms = None;
+            a.brain.last_strike_ms = None;
         }
     }
     fn set_current_action(&mut self, npc: EntityId, action: se::Action) {
@@ -1010,7 +1031,8 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
         self.actor(npc).is_some_and(|a| a.ai_mode == AiMode::Arena)
     }
     fn has_svm_sample(&self, _npc: EntityId, _family: &str) -> bool {
-        false
+        // The simulation has no voice data: every character has every line.
+        true
     }
     fn in_dialog_with_player(&self, npc: EntityId) -> bool {
         self.sim.gui_open && self.sim.dialog_partner == actor_of(npc)
@@ -1143,6 +1165,12 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
     fn full_stop(&mut self, npc: EntityId) {
         if let Some(a) = actor_of(npc) {
             self.sim.script.commands.retain(|(who, _)| *who != a);
+            let now = self.sim.now_ms();
+            let actor = &mut self.sim.actors[a.0 as usize];
+            actor.brain.goto = None;
+            if actor.brain.strike.is_none() {
+                actor.brain.busy_until_ms = actor.brain.busy_until_ms.min(now);
+            }
         }
     }
     fn destination_point(&self, npc: EntityId) -> EntityId {
@@ -1382,6 +1410,12 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
     }
     fn generate_plunder(&mut self, _e: EntityId) {}
     fn slot_use_type(&self, e: EntityId, slot: se::Slot) -> se::UseType {
+        // A weapon that is not drawn hangs on the back, not in the hand.
+        if matches!(slot, se::Slot::RightHand | se::Slot::LeftHand)
+            && self.actor(e).is_some_and(|a| !a.drawn)
+        {
+            return se::UseType::None;
+        }
         self.equipped(e, slot)
             .map_or(se::UseType::None, |i| s_use_kind(i.use_kind()))
     }
@@ -1792,6 +1826,58 @@ impl<W: WorldQuery> WorldApi for SimHost<'_, W> {
     fn on_enclave_state_changed(&mut self, _enclave: EntityId) {}
 }
 
+impl<W: WorldQuery> gothic_script::host::CombatApi for SimHost<'_, W> {
+    fn can_hit(&self, npc: EntityId, min_duration: u32) -> bool {
+        let now = self.sim.now_ms();
+        self.actor(npc).is_none_or(|a| {
+            a.brain
+                .last_strike_ms
+                .is_none_or(|t| now.saturating_sub(t) >= u64::from(min_duration) * 100)
+        })
+    }
+    fn set_last_hit(&mut self, npc: EntityId) {
+        let now = self.sim.now_ms();
+        if let Some(a) = self.actor_mut(npc) {
+            a.brain.last_strike_ms = Some(now);
+        }
+    }
+    fn last_hit_timestamp(&self, npc: EntityId) -> u32 {
+        let now = self.sim.now_ms();
+        self.actor(npc)
+            .and_then(|a| a.brain.last_strike_ms)
+            .map_or(u32::MAX, |t| (now.saturating_sub(t) / 100) as u32)
+    }
+    fn can_evade(&self, _npc: EntityId, _from: EntityId, _direction: u32) -> bool {
+        true
+    }
+    fn last_dist_to_target(&self, npc: EntityId) -> f32 {
+        if let Some(d) = self.script(npc).last_dist {
+            return d;
+        }
+        let t = actor_of(self.current_target(npc));
+        match (actor_of(npc), t) {
+            (Some(a), Some(b)) => self.sim.dist(a, b),
+            _ => 0.0,
+        }
+    }
+    fn set_last_dist_to_target(&mut self, npc: EntityId, d: f32) {
+        if let Some(s) = self.script_mut(npc) {
+            s.last_dist = Some(d);
+        }
+    }
+    fn alternative_target(&self, npc: EntityId) -> EntityId {
+        self.script(npc).alt_target
+    }
+    fn has_free_los_knee(&self, a: EntityId, b: EntityId) -> bool {
+        self.has_free_los(a, b)
+    }
+    fn set_state_position(&mut self, npc: EntityId, pos: u32) {
+        if let Some(a) = self.actor_mut(npc) {
+            a.state_position = pos as i32;
+        }
+    }
+}
+
 impl<W: WorldQuery> SimHost<'_, W> {
     /// The entity handle of an actor.
     pub fn entity(&self, a: ActorId) -> EntityId {
@@ -1816,6 +1902,17 @@ impl<W: WorldQuery> SimHost<'_, W> {
     /// Convert a script position.
     pub fn to_world(p: SPos) -> Pos {
         from_pos(p)
+    }
+
+    /// World position of a point or item entity of the script tables (`None` for others).
+    pub fn entity_position_of(tables: &ScriptTables, e: EntityId) -> Option<Pos> {
+        if let Some(i) = table_index(e, KIND_POINT) {
+            return tables.points.get(i).map(|p| p.pos);
+        }
+        if let Some(i) = table_index(e, KIND_ITEM) {
+            return tables.items.get(i).map(|p| p.pos);
+        }
+        None
     }
 
     /// Drain the queued AI commands.

@@ -227,6 +227,20 @@ pub struct TestWorld {
     pub full_stops: u32,
     /// Stack indices passed to `unequip_stack` (ignoring `-1`).
     pub unequipped: Vec<i32>,
+    /// NPCs that may not strike yet (`CanHit` false).
+    pub hit_blocked: HashSet<EntityId>,
+    /// There is no room to evade for these NPCs.
+    pub evade_blocked: HashSet<EntityId>,
+    /// `LastDistToTarget` per NPC.
+    pub last_dist: HashMap<EntityId, f32>,
+    /// `GetLastHitTimestamp` per NPC.
+    pub last_hit_ts: HashMap<EntityId, u32>,
+    /// Entities that stamped `SetLastHit`.
+    pub hit_stamped: Vec<EntityId>,
+    /// The player's focus entity.
+    pub focus: EntityId,
+    /// The arena entity everybody belongs to while `arena` is set.
+    pub arena_entity: EntityId,
 }
 
 impl Default for TestWorld {
@@ -257,6 +271,13 @@ impl TestWorld {
             roaming: HashMap::new(),
             political_fame: HashMap::new(),
             smalltalk_partner: EntityId::NONE,
+            hit_blocked: HashSet::new(),
+            evade_blocked: HashSet::new(),
+            last_dist: HashMap::new(),
+            last_hit_ts: HashMap::new(),
+            hit_stamped: Vec::new(),
+            focus: EntityId::NONE,
+            arena_entity: EntityId::NONE,
             rng: 0x2545_F491_4F6C_DD1D,
             pm: PlayerMemory::default(),
             setup: EngineSetup::default(),
@@ -1733,5 +1754,50 @@ impl WorldApi for TestWorld {
     }
     fn on_npc_felled(&mut self, victim: EntityId, _killer: EntityId, killed: bool) {
         self.felled.push((victim, killed));
+    }
+}
+
+impl crate::host::CombatApi for TestWorld {
+    fn can_hit(&self, npc: EntityId, _min_duration: u32) -> bool {
+        !self.hit_blocked.contains(&npc)
+    }
+    fn set_last_hit(&mut self, npc: EntityId) {
+        self.hit_stamped.push(npc);
+    }
+    fn last_hit_timestamp(&self, npc: EntityId) -> u32 {
+        self.last_hit_ts.get(&npc).copied().unwrap_or(u32::MAX)
+    }
+    fn can_evade(&self, npc: EntityId, _from: EntityId, _direction: u32) -> bool {
+        !self.evade_blocked.contains(&npc)
+    }
+    fn last_dist_to_target(&self, npc: EntityId) -> f32 {
+        self.last_dist.get(&npc).copied().unwrap_or(0.0)
+    }
+    fn set_last_dist_to_target(&mut self, npc: EntityId, d: f32) {
+        self.last_dist.insert(npc, d);
+    }
+    fn alternative_target(&self, npc: EntityId) -> EntityId {
+        self.npc(npc).map_or(EntityId::NONE, |n| n.alt_target)
+    }
+    fn focus_entity(&self) -> EntityId {
+        self.focus
+    }
+    fn has_free_los_knee(&self, _a: EntityId, _b: EntityId) -> bool {
+        self.los
+    }
+    fn arena_of(&self, npc: EntityId) -> EntityId {
+        if self.arena && self.npc(npc).is_some() {
+            self.arena_entity
+        } else {
+            EntityId::NONE
+        }
+    }
+    fn arena_running(&self, _arena: EntityId) -> bool {
+        self.arena
+    }
+    fn set_state_position(&mut self, npc: EntityId, pos: u32) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.state_position = pos;
+        }
     }
 }

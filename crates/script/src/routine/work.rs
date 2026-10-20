@@ -1119,7 +1119,7 @@ pub fn definition(state: State) -> Option<Def> {
         S::AmbientSleepLoop => steps(AMBIENT_SLEEP_LOOP),
         S::AnimalSleep => steps(ANIMAL_SLEEP),
         S::AnimalSleepSleepGround => steps(ANIMAL_SLEEP_GROUND),
-        _ => None,
+        _ => crate::combat::definition(state),
     }
 }
 

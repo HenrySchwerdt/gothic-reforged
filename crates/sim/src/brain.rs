@@ -16,6 +16,9 @@ pub enum Task {
     Attack,
     /// `ZS_Attack_WaitForFlee` [CA 9.1].
     AttackWaitForFlee,
+    /// Any other state of the ported reaction machinery (watching a fight, observing a
+    /// suspect, eating, ransacking, talking, ...).
+    Reaction,
     /// `ZS_Flee`.
     Flee,
     FollowPlayer,
@@ -32,6 +35,21 @@ pub struct Strike {
     pub at_ms: u64,
     pub action: Action,
     pub target: ActorId,
+}
+
+/// A running combat movement instruction (`sAIGotoInstr` of the attack states): the host moves
+/// the actor every tick and runs the state's local callback until the callback ends it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GotoState {
+    /// The actor to walk to or circle around.
+    pub target: Option<ActorId>,
+    /// A fixed destination (points, objects, home positions).
+    pub pos: Option<crate::world::Pos>,
+    pub kind: gothic_script::host::GotoKind,
+    pub walk_mode: u8,
+    /// Stop (arrived) within this distance.
+    pub stop: f32,
+    pub since_ms: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,4 +78,8 @@ pub struct Brain {
     pub routine_task: Option<RoutineTask>,
     pub last_destination_ms: u64,
     pub potions_used: u32,
+    /// The combat movement in progress, if any.
+    pub goto: Option<GotoState>,
+    /// When the actor last started a strike (`PSNpc::SetLastHit`, read by `CanHit`).
+    pub last_strike_ms: Option<u64>,
 }

@@ -205,10 +205,15 @@ pub fn change_enclave_status(
     true
 }
 
-/// Port of `NotifyEnclave` (S:5ef70), **mode 1 only**: the witness' enclave learns of a murder
-/// (`KnownPlayerCrime = Murder`). Modes 2 (raid) and 3 (member attacked) escalate the enclave to
-/// Attack or Flee by a friend-versus-foe head count and send up to ten members; that 4.9 KB body
-/// is not ported yet and the call returns false for them.
+/// Port of `NotifyEnclave` (S:5ef70): the witness' enclave reacts to an event.
+///
+/// Mode 1 records a murder (`KnownPlayerCrime = Murder`). Modes 2 (an enemy was sighted) and 3
+/// (a member was attacked) count the members that side against the player and the ones that are
+/// down, dead or talking: when the able ones are outnumbered five to one the enclave flees
+/// (which pardons the player, see [`change_enclave_status`]), otherwise it attacks and up to ten
+/// able members nearest to the witness turn on the player. The enclave "Faring" and the named
+/// exempt NPCs never notify; a fleeing enclave ignores everything. [I: the DLL's member counting
+/// was only partly readable; the head count and the ten-member limit are as read.]
 pub fn notify_enclave(host: &mut dyn ScriptHost, witness: EntityId, mode: u32) -> bool {
     let enclave = host.enclave(witness);
     if enclave.is_none() || exempt(host, witness, enclave) {
@@ -217,11 +222,55 @@ pub fn notify_enclave(host: &mut dyn ScriptHost, witness: EntityId, mode: u32) -
     if host.enclave_status(enclave) == EnclaveStatus::Flee {
         return false;
     }
-    if mode == 1 {
-        host.set_enclave_known_crime(enclave, PlayerCrime::Murder);
-        return true;
+    match mode {
+        1 => {
+            host.set_enclave_known_crime(enclave, PlayerCrime::Murder);
+            true
+        }
+        2 | 3 => escalate_enclave(host, witness, enclave),
+        _ => false,
     }
-    false
+}
+
+/// Modes 2 and 3 of [`notify_enclave`].
+fn escalate_enclave(host: &mut dyn ScriptHost, witness: EntityId, enclave: EntityId) -> bool {
+    let player = host.player();
+    let mut able = Vec::new();
+    let mut down = 0;
+    for m in host.enclave_members(enclave) {
+        if m.is_none() || m == player {
+            continue;
+        }
+        if political_attitude(host, m, player) == Attitude::Friendly {
+            continue;
+        }
+        match host.ai_mode(m) {
+            AiMode::Talk | AiMode::Dead | AiMode::Down => down += 1,
+            _ => {
+                if host.in_processing_range(m) {
+                    able.push(m);
+                }
+            }
+        }
+    }
+    let new = if able.len() * 5 < down {
+        EnclaveStatus::Flee
+    } else {
+        EnclaveStatus::Attack
+    };
+    let changed = change_enclave_status(host, enclave, new);
+    if new == EnclaveStatus::Attack && changed {
+        able.sort_by(|a, b| {
+            host.distance(witness, *a)
+                .partial_cmp(&host.distance(witness, *b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for m in able.into_iter().take(10) {
+            host.full_stop(m);
+            crate::perception::assess_target(host, m, player, AttackReason::Enemy);
+        }
+    }
+    changed
 }
 
 /// Put a dead witness to rest: the `AssessTarget` prologue of dead NPCs (`ZS_Dead`).
@@ -441,14 +490,36 @@ mod tests {
     }
 
     #[test]
+    fn a_beaten_enclave_flees_a_strong_one_attacks() {
+        // Hostile members that are down or dead outnumber the able ones five to one: flight.
+        let (mut w, guard, enc) = guard_world();
+        w.set_alignment(w.player(), Alignment::Orc);
+        let mut downed = Vec::new();
+        for i in 0..6 {
+            let m = w.spawn_npc(&format!("Down{i}"), Species::Human, 5, 5);
+            w.set_alignment(m, Alignment::Reb);
+            w.set_enclave(m, enc);
+            w.add_member(enc, m);
+            w.set_ai_mode(m, AiMode::Down);
+            downed.push(m);
+        }
+        w.add_member(enc, guard);
+        assert!(notify_enclave(&mut w, guard, 3));
+        assert_eq!(w.enclave_status(enc), EnclaveStatus::Flee);
+        // A fresh enclave with able members attacks and sends them against the player.
+        let (mut w, guard, enc) = guard_world();
+        w.set_alignment(w.player(), Alignment::Orc);
+        w.add_member(enc, guard);
+        assert!(notify_enclave(&mut w, guard, 2));
+        assert_eq!(w.enclave_status(enc), EnclaveStatus::Attack);
+        assert_eq!(w.current_target(guard), w.player());
+    }
+
+    #[test]
     fn notify_mode_one_sets_murder() {
         let (mut w, guard, enc) = guard_world();
         assert!(notify_enclave(&mut w, guard, 1));
         assert_eq!(w.enclave_known_crime(enc), PlayerCrime::Murder);
-        assert!(
-            !notify_enclave(&mut w, guard, 2),
-            "modes 2 and 3 are not ported"
-        );
         w.set_enclave_status(enc, EnclaveStatus::Flee);
         assert!(
             !notify_enclave(&mut w, guard, 1),

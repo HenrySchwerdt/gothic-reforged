@@ -24,10 +24,7 @@ use crate::rng::Rng;
 use crate::routine::{
     GameClock, RoutineResolver, TaskContext, follow_distance, routine_time, select_routine_task,
 };
-use crate::tactics::{
-    RangedDecision, TacticsCtx, attack_range, follow_time_secs, ranged_move, select_combat_move,
-    wants_potion, wants_to_flee,
-};
+use crate::tactics::{attack_range, wants_to_flee};
 use crate::types::*;
 use crate::vitals::{self, TickEnv, stamina_cost};
 use crate::world::{Pos, WorldQuery, in_fov};
@@ -37,11 +34,11 @@ use gothic_gameplay::{GameDatabase, GameState};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+mod ai_exec;
+
 /// Run speed and walk speed in game units per second [I].
 pub const RUN_SPEED: f32 = 550.0;
 pub const WALK_SPEED: f32 = 180.0;
-/// `MinHitDuration` unit in milliseconds [CA 0.2, I].
-const HIT_DURATION_UNIT_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
@@ -440,8 +437,9 @@ impl<W: WorldQuery> Sim<W> {
             Task::Unconscious => self.unconscious_think(i, now),
             _ if now < self.actors[i].brain.busy_until_ms && task != Task::Attack => {}
             Task::Attack | Task::AttackWaitForFlee => self.attack_think(i, now),
-            Task::Flee => self.flee_think(i, now),
-            Task::Threaten | Task::ReactToWeapon => self.reaction_think(i, now),
+            Task::Flee | Task::Threaten | Task::ReactToWeapon | Task::Reaction => {
+                self.script_task_think(i, now)
+            }
             Task::FollowPlayer | Task::WaitForPlayer => {
                 self.follow_think(i, now);
                 self.perception_poll(i, now);
@@ -923,6 +921,7 @@ impl<W: WorldQuery> Sim<W> {
         if tp {
             a.last_fight_vs_player = FightVsPlayer::Running;
         }
+        self.script_begin_attack(npc);
         self.push(EventKind::AttackStarted {
             actor: npc,
             target,
@@ -941,6 +940,7 @@ impl<W: WorldQuery> Sim<W> {
         a.brain.since_ms = now;
         a.target = Some(from);
         a.brain.strike = None;
+        self.script_enter(npc, gothic_script::routine::state::State::Flee);
         self.push(EventKind::Fled { actor: npc, from });
     }
 
@@ -969,8 +969,16 @@ impl<W: WorldQuery> Sim<W> {
         self.world.face_towards(self.actors[i].id, p);
     }
 
+    /// The combat brain: the ported `ZS_Attack` state machine of `gothic-script` decides, the
+    /// simulation animates ([`ai_exec`]).
     fn attack_think(&mut self, i: usize, now: u64) {
         let id = self.actors[i].id;
+        let dt = self.dt();
+        {
+            let s = self.script.npc_mut(id);
+            s.state_time += dt;
+            s.task_time += dt;
+        }
         // Animations finish.
         {
             let a = &mut self.actors[i];
@@ -979,8 +987,8 @@ impl<W: WorldQuery> Sim<W> {
             }
             if a.brain.strike.is_none()
                 && now >= a.brain.busy_until_ms
-                && a.action != Action::None
-                && a.action != Action::Parade
+                && a.action == a.brain.last_move
+                && (a.action.is_melee_attack() || a.action == Action::JumpBack)
             {
                 a.action = Action::None;
             }
@@ -995,226 +1003,43 @@ impl<W: WorldQuery> Sim<W> {
                 return;
             }
         }
+        if self.actors[i].brain.goto.is_some() {
+            self.goto_tick(i, now);
+            if self.actors[i].brain.goto.is_some() {
+                return;
+            }
+            if self.actors[i].brain.task != Task::Attack {
+                return;
+            }
+        }
         if now < self.actors[i].brain.busy_until_ms {
             if let Some(t) = self.actors[i].target {
                 self.face(i, t);
             }
             return;
         }
-        // Target checks.
-        let Some(tid) = self.actors[i].target else {
-            self.end_attack(i, now);
-            return;
-        };
-        let tmode = self.actors[tid.0 as usize].ai_mode;
-        if matches!(tmode, AiMode::Dead | AiMode::Down) {
-            self.end_attack(i, now);
-            return;
-        }
-        let dist = self.dist(id, tid);
-        let (sp, fist) = {
-            let a = &self.actors[i];
-            (a.species, a.equipment.weapon_damage().is_none())
-        };
-        let range = attack_range(sp, fist, Action::Attack);
-
-        // Give-up rule [CA 9.1].
-        if self.actors[i].brain.task == Task::AttackWaitForFlee {
-            if now - self.actors[i].brain.since_ms >= 500 {
-                if dist > 2000.0 {
-                    if self.actors[tid.0 as usize].is_player {
-                        self.actors[i].last_fight_vs_player = FightVsPlayer::Cancel;
-                    }
-                    self.back_to_routine(i, now);
-                } else {
-                    self.actors[i].brain.task = Task::Attack;
-                    self.actors[i].brain.chase_since_ms = None;
-                }
-            }
-            return;
-        }
-        if dist > range {
-            match self.actors[i].brain.chase_since_ms {
-                None => self.actors[i].brain.chase_since_ms = Some(now),
-                Some(t0) => {
-                    if now - t0 > (follow_time_secs(&self.cfg, sp) * 1000.0) as u64 {
-                        self.actors[i].brain.task = Task::AttackWaitForFlee;
-                        self.actors[i].brain.since_ms = now;
-                        return;
-                    }
-                }
-            }
-        } else {
-            self.actors[i].brain.chase_since_ms = None;
-        }
-
-        // Optional variant: flee on low HP.
-        if wants_to_flee(&self.cfg, &self.actors[i]) {
+        // Optional variant (off by default): flee on low hit points. The shipped
+        // `WantToFlee` is a stub, so this is not part of the script port.
+        if let Some(tid) = self.actors[i].target
+            && wants_to_flee(&self.cfg, &self.actors[i])
+        {
             self.start_flee(id, tid);
             return;
         }
-        // The potion rule [CA 9.1].
-        if wants_potion(&self.cfg, &self.actors[i], dist) {
-            self.drink_potion(i, now);
-            return;
+        // The engine keeps `LastDistToTarget` up to date except while the script uses it.
+        if !matches!(
+            self.script.npc(id).state,
+            Some(gothic_script::routine::state::State::AttackWaitForFlee)
+                | Some(gothic_script::routine::state::State::AttackWaitForFleeLoop)
+        ) {
+            let d = self.actors[i].target.map(|t| self.dist(id, t));
+            self.script.npc_mut(id).last_dist = d;
         }
-
-        match self.actors[i].equipment.weapon_mode() {
-            crate::item::WeaponMode::Ranged => {
-                let los = self.world.line_of_sight(self.pos(id), self.pos(tid));
-                match ranged_move(dist, los) {
-                    RangedDecision::Approach => {
-                        self.world
-                            .move_towards(id, self.pos(tid), RUN_SPEED * self.dt());
-                    }
-                    RangedDecision::NewTarget => {
-                        self.world
-                            .move_towards(id, self.pos(tid), WALK_SPEED * self.dt());
-                    }
-                    RangedDecision::Shoot => {
-                        self.face(i, tid);
-                        let ammo =
-                            if self.actors[i].equipment.left_use() == crate::item::Use::CrossBow {
-                                "It_Bolt"
-                            } else {
-                                "It_Arrow"
-                            };
-                        if self.shoot(id, tid, 2.0, ammo).is_none() {
-                            self.actors[i].brain.busy_until_ms = now + 1500;
-                        }
-                    }
-                }
-            }
-            crate::item::WeaponMode::Magic => {
-                // NPC spell casting needs per-spell data; hosts drive it through `cast`. [stub]
-                self.face(i, tid);
-            }
-            _ => self.melee_decision(i, tid, now, dist),
-        }
+        self.run_combat_script(i, now);
     }
 
     fn dt(&self) -> f32 {
         self.cfg.tick_ms as f32 / 1000.0
-    }
-
-    fn melee_decision(&mut self, i: usize, tid: ActorId, now: u64, dist: f32) {
-        let id = self.actors[i].id;
-        let (sp, fist) = {
-            let a = &self.actors[i];
-            (a.species, a.equipment.weapon_damage().is_none())
-        };
-        let ctx = {
-            let t = &self.actors[tid.0 as usize];
-            let can_hit = self.actors[i].brain.last_hit_taken_ms.is_none_or(|t0| {
-                now.saturating_sub(t0)
-                    >= u64::from(self.cfg.min_hit_duration) * HIT_DURATION_UNIT_MS
-            });
-            TacticsCtx {
-                dist,
-                attack_range: attack_range(sp, fist, Action::Attack),
-                target_attacking: t
-                    .brain
-                    .strike
-                    .is_some_and(|s| s.target == id && s.at_ms >= now),
-                target_parading: t.is_parading(),
-                los: self.world.line_of_sight(self.pos(id), self.pos(tid)),
-                target_is_player: t.is_player,
-                target_is_mage: t.class == NpcClass::Mage,
-                arena: self.actors[i].ai_mode == AiMode::Arena,
-                party_condition: false,
-                can_hit,
-                current_move: self.actors[i].brain.last_move,
-                defensive: self.actors[i].stamina * 100
-                    < self.actors[i].stamina_max(&self.cfg) * 15,
-            }
-        };
-        let mv = if self.actors[i].combat_state_active {
-            select_combat_move(&self.cfg, &mut self.rng, &self.actors[i], &ctx)
-        } else {
-            crate::tactics::passive_move(dist)
-        };
-        self.execute_move(i, tid, mv, now, dist);
-    }
-
-    fn execute_move(&mut self, i: usize, tid: ActorId, mv: Action, now: u64, dist: f32) {
-        let id = self.actors[i].id;
-        let tp = self.pos(tid);
-        let (sp, fist) = {
-            let a = &self.actors[i];
-            (a.species, a.equipment.weapon_damage().is_none())
-        };
-        let dt = self.dt();
-        match mv {
-            Action::Fwd => {
-                let stop = attack_range(sp, fist, Action::Attack) * 0.8;
-                let step = (RUN_SPEED * dt).min((dist - stop).max(0.0));
-                if step > 0.0 {
-                    self.world.move_towards(id, tp, step);
-                }
-                self.face(i, tid);
-                self.actors[i].brain.last_move = Action::Fwd;
-            }
-            Action::Left | Action::Right | Action::Back | Action::JumpBack => {
-                let me = self.pos(id);
-                let dir = me.yaw_to(tp);
-                let (dx, dz) = match mv {
-                    Action::Back | Action::JumpBack => (-dir.cos(), -dir.sin()),
-                    Action::Left => (dir.sin(), -dir.cos()),
-                    _ => (-dir.sin(), dir.cos()),
-                };
-                let len = if mv == Action::JumpBack { 250.0 } else { 120.0 };
-                let to = Pos::new(me.x + dx * len, me.y, me.z + dz * len);
-                self.world.move_towards(id, to, len);
-                self.face(i, tid);
-                let a = &mut self.actors[i];
-                a.brain.busy_until_ms = now + if mv == Action::JumpBack { 600 } else { 400 };
-                a.brain.last_move = mv;
-                a.stamina = (a.stamina - stamina_cost(&self.cfg, mv)).max(0);
-            }
-            Action::TurnLeft | Action::TurnRight | Action::Wait => {
-                self.face(i, tid);
-                self.actors[i].brain.busy_until_ms = now + 200;
-                self.actors[i].brain.last_move = mv;
-            }
-            Action::Parade => {
-                self.face(i, tid);
-                let a = &mut self.actors[i];
-                a.action = Action::Parade;
-                a.brain.parade_until_ms = now + 500;
-                a.brain.busy_until_ms = now + 600;
-                a.brain.last_move = Action::Parade;
-            }
-            m if m.is_melee_attack() => {
-                let reach = attack_range(sp, fist, m);
-                if dist > reach {
-                    // Not in reach: close the distance instead.
-                    let step = (RUN_SPEED * dt).min(dist - reach * 0.8);
-                    self.world.move_towards(id, tp, step.max(0.0));
-                    self.face(i, tid);
-                    return;
-                }
-                let cost = stamina_cost(&self.cfg, m);
-                self.face(i, tid);
-                let a = &mut self.actors[i];
-                if a.stamina <= 0 && cost > 0 {
-                    // Exhausted: catch breath.
-                    a.brain.busy_until_ms = now + 500;
-                    return;
-                }
-                a.stamina = (a.stamina - cost).max(0);
-                a.action = m;
-                a.brain.last_move = m;
-                a.brain.strike = Some(Strike {
-                    at_ms: now + (vitals::hit_window_secs(m) * 1000.0) as u64,
-                    action: m,
-                    target: tid,
-                });
-                a.brain.busy_until_ms = now + move_duration_ms(m);
-            }
-            _ => {
-                self.actors[i].brain.busy_until_ms = now + 200;
-            }
-        }
     }
 
     fn resolve_strike(&mut self, i: usize, st: Strike) {
@@ -1240,6 +1065,11 @@ impl<W: WorldQuery> Sim<W> {
             return;
         }
         self.actors[i].action = st.action;
+        let second = vitals::second_stage_cost(st.action);
+        if second > 0 {
+            let a = &mut self.actors[i];
+            a.stamina = (a.stamina - second).max(0);
+        }
         let attack = Attack::melee(&self.actors[i]);
         self.hit(id, st.target, attack);
     }
@@ -1263,92 +1093,6 @@ impl<W: WorldQuery> Sim<W> {
         a.brain.potions_used += 1;
         let healed = a.hp - before;
         self.push(EventKind::Potion { actor: id, healed });
-    }
-
-    /// `ZS_Attack_End` (S:1a610): finish a defeated target that deserves it, return to routine.
-    fn end_attack(&mut self, i: usize, now: u64) {
-        let id = self.actors[i].id;
-        if let Some(t) = self.actors[i].target {
-            let (down, can_kill) = {
-                let tv = &self.actors[t.0 as usize];
-                (tv.ai_mode == AiMode::Down, tv.can_be_killed())
-            };
-            let zone_friendly = false;
-            if down && can_kill && self.actors[i].attack_reason.to_kill(zone_friendly) {
-                // FinishingAttack
-                self.actors[i].action = Action::FinishingAttack;
-                self.kill(t, Some(id));
-            }
-            if self.actors[t.0 as usize].is_player
-                && self.actors[i].last_fight_vs_player == FightVsPlayer::Running
-            {
-                self.actors[i].last_fight_vs_player =
-                    if self.actors[t.0 as usize].ai_mode == AiMode::Dead {
-                        FightVsPlayer::Won
-                    } else {
-                        FightVsPlayer::Lost
-                    };
-            }
-        }
-        self.back_to_routine(i, now);
-    }
-
-    fn flee_think(&mut self, i: usize, now: u64) {
-        let id = self.actors[i].id;
-        let Some(from) = self.actors[i].target else {
-            self.back_to_routine(i, now);
-            return;
-        };
-        let dist = self.dist(id, from);
-        let elapsed = now - self.actors[i].brain.since_ms;
-        if dist > 3000.0 || elapsed > 20_000 || self.actors[from.0 as usize].ai_mode == AiMode::Dead
-        {
-            self.back_to_routine(i, now);
-            return;
-        }
-        let me = self.pos(id);
-        let dir = me.yaw_to(self.pos(from));
-        let to = Pos::new(me.x - dir.cos() * 1000.0, me.y, me.z - dir.sin() * 1000.0);
-        self.world.move_towards(id, to, RUN_SPEED * self.dt());
-    }
-
-    fn reaction_think(&mut self, i: usize, now: u64) {
-        let id = self.actors[i].id;
-        let Some(t) = self.actors[i].target else {
-            self.back_to_routine(i, now);
-            return;
-        };
-        let dist = self.dist(id, t);
-        let elapsed = now - self.actors[i].brain.since_ms;
-        self.face(i, t);
-        match self.actors[i].brain.task {
-            Task::ReactToWeapon => {
-                // [CA 10.3] second warning at 4 s, attack at 8 s; abort if far or lowered.
-                let drawn = self.actors[t.0 as usize].drawn
-                    && self.actors[t.0 as usize].equipment.weapon_mode()
-                        != crate::item::WeaponMode::None;
-                if dist > 1000.0 || !drawn {
-                    self.back_to_routine(i, now);
-                } else if elapsed >= 8000 {
-                    self.assess_target(id, t, AttackReason::ReactToWeapon);
-                } else if elapsed >= 4000 && self.actors[i].brain.warned < 1 {
-                    self.actors[i].brain.warned = 1;
-                    self.push(EventKind::Warned {
-                        actor: id,
-                        stage: 1,
-                    });
-                }
-            }
-            Task::Threaten => {
-                // [CA 10.3] attack below 700 or after 5 s; give up beyond 1000.
-                if dist < 700.0 || elapsed >= 5000 {
-                    self.assess_target(id, t, AttackReason::Enemy);
-                } else if dist > 1000.0 {
-                    self.back_to_routine(i, now);
-                }
-            }
-            _ => {}
-        }
     }
 
     fn follow_think(&mut self, i: usize, now: u64) {
@@ -1473,6 +1217,7 @@ impl<W: WorldQuery> Sim<W> {
                     a.brain.task = Task::Threaten;
                     a.brain.since_ms = now;
                     a.target = Some(tid);
+                    self.script_enter(id, gothic_script::routine::state::State::Threaten);
                     return;
                 }
                 _ => {}
@@ -1495,6 +1240,7 @@ impl<W: WorldQuery> Sim<W> {
                 a.brain.since_ms = now;
                 a.brain.warned = 0;
                 a.target = Some(tid);
+                self.script_enter(id, gothic_script::routine::state::State::ReactToWeapon);
                 return;
             }
         }

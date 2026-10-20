@@ -204,10 +204,13 @@ fn drawing_a_weapon_is_a_warning_not_a_crime() {
     sim.run_until(100, |s| s.actor(guard).brain.warned == 1);
     let t = sim.now_ms();
     assert!((4000..4300).contains(&t), "warned at {t}");
-    // Lowering the weapon ends it without a fight.
+    // Lowering the weapon ends it without a fight: "WiseMove", then the guard keeps an eye on the
+    // suspect (`ZS_ObserveSuspect`) until it loses interest and resumes its routine.
     sim.actor_mut(hero).drawn = false;
     sim.run_ticks(10);
-    assert_eq!(sim.actor(guard).brain.task, Task::Routine);
+    assert_eq!(sim.actor(guard).brain.task, Task::Reaction);
+    assert!(sim.run_until(400, |s| s.actor(guard).brain.task == Task::Routine));
+    assert!(sim.now_ms() < 15_000, "back to work at {}", sim.now_ms());
     assert_eq!(sim.actor(guard).last_player_crime, Crime::None);
     assert!(
         sim.enclaves.is_empty(),
