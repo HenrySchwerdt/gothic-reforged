@@ -45,6 +45,8 @@ pub struct PendingNpc {
     pub record: gothic_sim::data::NpcRecord,
     /// Mirrored, origin-relative centimetres (the space the world is built in).
     pub pos_cm: Vec3,
+    /// Appearance data (visual body parts + equipped item visuals) of this entity.
+    pub look: Option<gothic_formats::props::records::NpcLook>,
 }
 
 #[derive(Resource, Default)]
@@ -119,6 +121,8 @@ pub const HERO_START: Vec3 = Vec3::new(92_400.0 - 87_984.94, 5_145.56, -10_197.4
 #[derive(Resource)]
 pub struct HeroKit {
     pub sword_mesh: Option<String>,
+    /// `PC_Hero` appearance from the NPC database.
+    pub look: Option<gothic_formats::props::records::NpcLook>,
 }
 
 /// New-game character: `PC_Hero` only wears Head_Player / Body_Player; the start kit is granted
@@ -205,7 +209,9 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         .filter(|m| !library.static_mesh_names(m).is_empty());
     let session = GameSession::new(db, state, catalog);
 
-    let roster = npcs::select_roster(&npcs);
+    let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;
+    let hero_look = looks.pc_hero();
+    let roster = npcs::select_roster(&npcs, &looks);
     eprintln!("play: {} NPCs near Ardea", roster.pending.len());
 
     {
@@ -223,19 +229,22 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         units_per_meter: 1.0,
         ..audio.settings
     };
-    app.insert_resource(HeroKit { sword_mesh })
-        .insert_resource(library)
-        .insert_resource(CoreRes(core))
-        .insert_resource(session)
-        .insert_resource(UiConfig {
-            install_dir,
-            drive_dialog: false,
-            ..default()
-        })
-        .insert_resource(roster)
-        .init_resource::<PlayState>()
-        .init_resource::<ScriptInput>()
-        .add_plugins((AnimationPlugin, GothicUiPlugin, audio, CorePlugin));
+    app.insert_resource(HeroKit {
+        sword_mesh,
+        look: hero_look,
+    })
+    .insert_resource(library)
+    .insert_resource(CoreRes(core))
+    .insert_resource(session)
+    .insert_resource(UiConfig {
+        install_dir,
+        drive_dialog: false,
+        ..default()
+    })
+    .insert_resource(roster)
+    .init_resource::<PlayState>()
+    .init_resource::<ScriptInput>()
+    .add_plugins((AnimationPlugin, GothicUiPlugin, audio, CorePlugin));
 
     hero::register(app);
     npcs::register(app);

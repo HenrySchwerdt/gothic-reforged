@@ -6,7 +6,7 @@
 use crate::props::{enums, tails::ScriptLine, tails::Tail};
 use crate::propstream::{PropValue, PropertySet};
 use crate::template::{TemplateDocument, TemplateEntity};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Name/GUID index over all templates, so entity references (`eCTemplateEntityProxy`, inventory
@@ -16,6 +16,61 @@ pub struct TemplateCatalog {
     by_guid: HashMap<String, usize>,
     names: Vec<String>,
     paths: Vec<String>,
+    /// Visual of every template that carries one (item body parts, hair, beards, helmets).
+    visuals: HashMap<String, ItemVisual>,
+}
+
+/// One `eCVisualAnimation_PS` slot: an actor resource plus its material switch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct VisualPart {
+    /// `Slot_Head` / `Slot_Body` for NPC body parts, empty for an item's own actor.
+    pub slot: String,
+    pub file: String,
+    /// `MaterialSwitch` of the actor (texture variant index, see ACTOR_ANIMATION_FORMAT.md).
+    pub switch: i32,
+    /// Animated (facial) variant of the actor and its switch.
+    pub file2: Option<String>,
+    pub switch2: i32,
+}
+
+/// What an item template contributes to a character's appearance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ItemVisual {
+    /// Skinned actor (`eCVisualAnimation_PS`): `Head_*`, `*Body_*`, armour templates.
+    pub actor: Option<VisualPart>,
+    /// Static or dynamic mesh (`eCVisualMesh*_PS.ResourceFileName`): hair, beards, helmets.
+    pub mesh: Option<String>,
+    /// `MaterialSwitch` of the mesh visual.
+    pub mesh_switch: i32,
+}
+
+impl ItemVisual {
+    fn from_header(header: &TemplateEntity) -> Option<Self> {
+        let mut v = Self::default();
+        if let Some(anim) = header.set("eCVisualAnimation_PS")
+            && let Tail::Animation { fxa, .. } = &anim.tail
+            && !fxa.file.is_empty()
+        {
+            v.actor = Some(VisualPart {
+                slot: String::new(),
+                file: fxa.file.clone(),
+                switch: fxa.switch,
+                file2: fxa.file2.clone(),
+                switch2: fxa.switch2,
+            });
+        }
+        if let Some(set) = ["eCVisualMeshDynamic_PS", "eCVisualMeshStatic_PS"]
+            .iter()
+            .filter_map(|c| header.set(c))
+            .find(|s| s.string("ResourceFileName").is_some_and(|v| !v.is_empty()))
+        {
+            v.mesh = set.string("ResourceFileName").map(str::to_owned);
+            v.mesh_switch = set.int("MaterialSwitch").unwrap_or(0);
+        }
+        (v.actor.is_some() || v.mesh.is_some()).then_some(v)
+    }
 }
 
 impl TemplateCatalog {
@@ -27,6 +82,11 @@ impl TemplateCatalog {
         let id = self.names.len();
         self.names.push(header.name.clone());
         self.paths.push(path.to_owned());
+        if let Some(v) = ItemVisual::from_header(header) {
+            self.visuals
+                .entry(header.name.to_ascii_lowercase())
+                .or_insert(v);
+        }
         for e in &doc.entities {
             self.by_guid.entry(e.guid.clone()).or_insert(id);
         }
@@ -36,6 +96,10 @@ impl TemplateCatalog {
     }
     pub fn path_of(&self, guid: &str) -> Option<&str> {
         self.by_guid.get(guid).map(|&i| self.paths[i].as_str())
+    }
+    /// Visual of the template called `name` (case-insensitive).
+    pub fn visual_of(&self, name: &str) -> Option<&ItemVisual> {
+        self.visuals.get(&name.to_ascii_lowercase())
     }
     pub fn len(&self) -> usize {
         self.names.len()
@@ -322,13 +386,17 @@ pub struct InventoryEntry {
     pub quick_slot: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct EquippedItem {
     /// `gESlot` name (`RightHand`, `Armor`, `Head`, ...).
     pub slot: String,
     pub template: String,
     /// Concrete item entity GUID if the slot holds a materialised item.
     pub item_entity: Option<String>,
+    /// Visual resolved from the item template (actor + switch, or mesh + switch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual: Option<ItemVisual>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -354,13 +422,20 @@ pub struct NpcRoutine {
     pub script_routine: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ActorVisual {
     /// Skeleton resource (`eCVisualAnimation_PS.ResourceFilePath`, an `.fxa`).
     pub skeleton: Option<String>,
     pub facial_animation: Option<String>,
     /// (slot name, first resource, optional animated variant) of the body parts.
     pub body_parts: Vec<(String, String, Option<String>)>,
+    /// `MaterialSwitch` of the skeleton resource (whole-body creatures: wolf, orc skin...).
+    pub skeleton_switch: i32,
+    /// Body parts with their material switches (same order as `body_parts`).
+    pub parts: Vec<VisualPart>,
+    /// Attachment bindings (item entity GUID, bone / slot name).
+    pub attachments: Vec<(Option<String>, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -458,6 +533,7 @@ impl NpcData {
                                 .to_owned(),
                             template: catalog.resolve(t),
                             item_entity: item.clone(),
+                            visual: catalog.visual_of(&catalog.resolve(t)).cloned(),
                         });
                     }
                 }
@@ -492,8 +568,23 @@ impl NpcData {
                 .string("FacialAnimFilePath")
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned);
-            if let Tail::Animation { body_parts, .. } = &anim.tail {
+            if let Tail::Animation {
+                body_parts,
+                fxa,
+                attachments,
+                ..
+            } = &anim.tail
+            {
+                visual.skeleton_switch = fxa.switch;
+                visual.attachments = attachments.clone();
                 for p in body_parts {
+                    visual.parts.push(VisualPart {
+                        slot: p.name.clone().unwrap_or_default(),
+                        file: p.file.clone(),
+                        switch: p.switch,
+                        file2: p.file2.clone(),
+                        switch2: p.switch2,
+                    });
                     visual.body_parts.push((
                         p.name.clone().unwrap_or_default(),
                         p.file.clone(),
@@ -543,6 +634,25 @@ impl NpcData {
             visual,
         })
     }
+}
+
+/// Appearance-relevant slice of an `npcs.json` entity record (what the game needs to dress an
+/// NPC without loading the whole database type).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct NpcLook {
+    pub name: String,
+    pub document: String,
+    pub position: [f32; 3],
+    pub species: String,
+    pub visual: ActorVisual,
+    pub inventory: LookInventory,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct LookInventory {
+    pub equipped: Vec<EquippedItem>,
 }
 
 /// An NPC definition from `Templates.pak`.

@@ -7,7 +7,7 @@ use crate::walk::{Player, PlayerBody, PlayerCamera, player_motion, update_camera
 use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use gothic_animation::{ActorSpawner, LocomotionInput, NpcSpec, Stance, WeaponSpec};
+use gothic_animation::{ActorSpawner, LocomotionInput, Stance, WeaponSpec};
 use gothic_runtime::{Command, CoreCommand, CoreRes, HERO_REACH, SavePath};
 use gothic_sim::world::Pos;
 use gothic_ui::UiState;
@@ -34,10 +34,22 @@ pub fn register(app: &mut App) {
 }
 
 fn spawn_hero(mut spawner: ActorSpawner, mut state: ResMut<PlayState>, kit: Res<super::HeroKit>) {
-    // PC_Hero wears Head_Player and Body_Player only; the sword is the start-kit item.
-    let mut spec = NpcSpec::new("G3_Hero_Body_Player")
-        .with_part("G3_Hero_Head_Player")
-        .with_stance(Stance::Unarmed);
+    // PC_Hero wears Head_Player and Body_Player only (resolved from its entity data); the
+    // sword is the start-kit item.
+    let resolved = kit
+        .look
+        .as_ref()
+        .map(|l| gothic_animation::appearance::resolve(&spawner.library, l));
+    let mut spec = match resolved {
+        Some(Ok(spec)) => spec,
+        other => {
+            if let Some(Err(why)) = other {
+                eprintln!("play: PC_Hero appearance unresolved: {why}");
+            }
+            return;
+        }
+    }
+    .with_stance(Stance::Unarmed);
     if let Some(mesh) = &kit.sword_mesh {
         spec = spec.with_weapon(WeaponSpec::one_hand_sword(mesh));
     }

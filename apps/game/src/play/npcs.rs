@@ -4,10 +4,10 @@ use super::{NpcActor, PendingNpc, Roster, angle_delta, sim_to_bevy_yaw};
 use crate::walk::{Collision, ORIGIN, Stream, tile_chunk_id, update_camera};
 use crate::world_loader::Origin;
 use bevy::prelude::*;
-use gothic_animation::library::template_actor_candidates;
 use gothic_animation::{
     ActorLibrary, ActorSpawner, Animator, LocomotionInput, NpcSpec, Stance, WeaponSpec,
 };
+use gothic_formats::props::records::NpcLook;
 use gothic_runtime::{Command, CoreCommand, CoreRes};
 use gothic_sim::data::{NpcFile, NpcRecord};
 use gothic_sim::types::{AiMode, Species};
@@ -18,7 +18,46 @@ const CM: f32 = 0.01;
 const ARDEA_CENTRE: Vec2 = Vec2::new(91_000.0, -11_000.0);
 const ARDEA_RADIUS: f32 = 7_000.0;
 
-pub fn select_roster(file: &NpcFile) -> Roster {
+/// Appearance records of `npcs.json`, keyed by document, name and position.
+pub struct Looks {
+    map: std::collections::HashMap<(String, String, [u32; 3]), NpcLook>,
+    hero: Option<NpcLook>,
+}
+
+impl Looks {
+    pub fn pc_hero(&self) -> Option<NpcLook> {
+        self.hero.clone()
+    }
+}
+
+fn look_key(document: &str, name: &str, p: [f32; 3]) -> (String, String, [u32; 3]) {
+    (
+        document.to_string(),
+        name.to_string(),
+        [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()],
+    )
+}
+
+/// Reads the appearance slice of every world NPC entity in `npcs.json`.
+pub fn load_looks(path: &std::path::Path) -> anyhow::Result<Looks> {
+    let root: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    let entities: Vec<NpcLook> = root["entities"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let hero = entities.iter().find(|e| e.name == "PC_Hero").cloned();
+    let map = entities
+        .into_iter()
+        .map(|l| (look_key(&l.document, &l.name, l.position), l))
+        .collect();
+    Ok(Looks { map, hero })
+}
+
+pub fn select_roster(file: &NpcFile, looks: &Looks) -> Roster {
     let origin = Origin(ORIGIN);
     let mut r = Roster::default();
     for e in &file.entities {
@@ -39,6 +78,10 @@ pub fn select_roster(file: &NpcFile) -> Roster {
         r.pending.push(PendingNpc {
             record: e.clone(),
             pos_cm: origin.point(p),
+            look: looks
+                .map
+                .get(&look_key(&e.document, &e.name, e.position))
+                .cloned(),
         });
     }
     // Hamlar first so the showcase finds him quickly.
@@ -110,72 +153,10 @@ pub struct NpcMotion {
     pub fallen: bool,
 }
 
-fn part_for(lib: &ActorLibrary, template: &str) -> Option<String> {
-    template_actor_candidates(template)
-        .into_iter()
-        .find(|c| lib.has_actor(c))
-}
-
-/// Stand-in bodies for item templates whose mesh is not installed under a derivable name
-/// (the template to mesh link lives in undecoded engine data).
-fn body_fallbacks(template: &str) -> &'static [&'static str] {
-    let l = template.to_ascii_lowercase();
-    if l.contains("cook") {
-        &["G3_Fat_Body_Smith", "G3_Fat_Body_Slave"]
-    } else if l.contains("babe") && l.contains("_02") {
-        &["G3_Hero_Body_Babe_Myrtana_02"]
-    } else if l.contains("babe") {
-        &["G3_Hero_Body_Babe_Myrtana_01"]
-    } else if l.contains("rebelite") {
-        &["G3_Hero_Body_Ranger", "G3_Hero_Body_Mercenary"]
-    } else if l.contains("rebwarrior") {
-        &["G3_Hero_Body_RebBanditMed", "G3_Hero_Body_Mercenary"]
-    } else if l.contains("rebbandit") || l.contains("novice") {
-        &["G3_Hero_Body_RebBandit"]
-    } else {
-        &["G3_Hero_Body_Peasant"]
-    }
-}
-
-/// Body + head (+ hair / beard) from the equipped item templates.
-fn assemble(lib: &ActorLibrary, rec: &NpcRecord) -> Option<NpcSpec> {
-    let mut body = None;
-    let mut extras = Vec::new();
-    for e in &rec.inventory.equipped {
-        let is_body = e.slot.eq_ignore_ascii_case("Body");
-        let part = part_for(lib, &e.template).or_else(|| {
-            is_body
-                .then(|| {
-                    body_fallbacks(&e.template)
-                        .iter()
-                        .find(|n| lib.has_actor(n))
-                        .map(|n| (*n).to_string())
-                })
-                .flatten()
-        });
-        let Some(part) = part else {
-            continue;
-        };
-        if is_body {
-            body = Some(part);
-        } else {
-            extras.push(part);
-        }
-    }
-    let mut spec = NpcSpec::new(body?);
-    // Heads first, then hair and beards.
-    extras.sort_by_key(|p| {
-        let l = p.to_ascii_lowercase();
-        if l.contains("hair") || l.contains("beard") {
-            1
-        } else {
-            0
-        }
-    });
-    for p in extras {
-        spec = spec.with_part(p);
-    }
-    Some(spec)
+/// Character description from the entity's visual data; `Err` names what did not resolve.
+fn assemble(lib: &ActorLibrary, rec: &PendingNpc) -> Result<NpcSpec, String> {
+    let look = rec.look.as_ref().ok_or("no appearance record")?;
+    gothic_animation::appearance::resolve(lib, look)
 }
 
 fn hash01(i: usize, salt: u64) -> f32 {
@@ -212,7 +193,6 @@ fn spawn_npcs(
     collision: Res<Collision>,
     mut spawner: ActorSpawner,
     mut commands: MessageWriter<CoreCommand>,
-    warned: Local<bool>,
 ) {
     let mut budget = 6;
     let mut i = 0;
@@ -236,21 +216,13 @@ fn spawn_npcs(
         };
         let p = roster.pending.remove(i);
         budget -= 1;
-        let Some(mut spec) = assemble(&spawner.library, &p.record) else {
-            if !*warned && !p.record.inventory.equipped.is_empty() {
-                eprintln!(
-                    "play: cannot assemble {} ({:?})",
-                    p.record.name,
-                    p.record
-                        .inventory
-                        .equipped
-                        .iter()
-                        .map(|e| e.template.as_str())
-                        .collect::<Vec<_>>()
-                );
+        let mut spec = match assemble(&spawner.library, &p) {
+            Ok(spec) => spec,
+            Err(why) => {
+                eprintln!("play: appearance of {} unresolved: {why}", p.record.name);
+                roster.total -= 1;
+                continue;
             }
-            roster.total -= 1;
-            continue;
         };
         let idx = roster.spawned;
         spec = spec.with_start_time(hash01(idx, 4) * 2.0);
@@ -267,19 +239,9 @@ fn spawn_npcs(
         let entity = match spawner.spawn(&spec, tf) {
             Ok(e) => e,
             Err(e) => {
-                // Retry with body and head only (a hair / beard part may not bind).
-                let mut slim = NpcSpec::new(spec.parts[0].clone());
-                if let Some(h) = spec.parts.get(1) {
-                    slim = slim.with_part(h.clone());
-                }
-                match spawner.spawn(&slim, tf) {
-                    Ok(e2) => e2,
-                    Err(_) => {
-                        eprintln!("play: spawn {} failed: {e:#}", p.record.name);
-                        roster.total -= 1;
-                        continue;
-                    }
-                }
+                eprintln!("play: spawn {} failed: {e:#}", p.record.name);
+                roster.total -= 1;
+                continue;
             }
         };
         let stance = if Species::from_name(&p.record.species) == Species::Orc {

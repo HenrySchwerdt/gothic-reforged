@@ -107,6 +107,16 @@ impl WeaponSpec {
     }
 }
 
+/// A static mesh (hair, beard, helmet) fixed to a skeleton slot joint of the character.
+#[derive(Clone, Debug)]
+pub struct AttachSpec {
+    pub mesh: String,
+    /// `MaterialSwitch` applied to the mesh textures.
+    pub switch: i32,
+    /// Skeleton node (`Slot_Hair`, `Slot_Beard`, ...).
+    pub slot: String,
+}
+
 /// Description of a human NPC: body skeleton first, then any number of parts bound to the body
 /// skeleton by node name (head, hair, armor pieces).
 #[derive(Clone, Debug)]
@@ -114,6 +124,8 @@ pub struct NpcSpec {
     pub parts: Vec<String>,
     pub stance: Stance,
     pub weapons: Vec<WeaponSpec>,
+    /// Static meshes bound to slot joints (hair, beards).
+    pub attachments: Vec<AttachSpec>,
     /// Initial playback offset in seconds (desynchronises crowds).
     pub start_time: f32,
     /// Scripted motion (exact name) played in a loop instead of locomotion; the character
@@ -127,6 +139,7 @@ impl NpcSpec {
             parts: vec![body.into()],
             stance: Stance::Unarmed,
             weapons: Vec::new(),
+            attachments: Vec::new(),
             start_time: 0.0,
             motion: None,
         }
@@ -147,6 +160,11 @@ impl NpcSpec {
         self
     }
 
+    pub fn with_attachment(mut self, attachment: AttachSpec) -> Self {
+        self.attachments.push(attachment);
+        self
+    }
+
     pub fn with_motion(mut self, name: impl Into<String>) -> Self {
         self.motion = Some(name.into());
         self
@@ -155,27 +173,6 @@ impl NpcSpec {
     pub fn with_start_time(mut self, t: f32) -> Self {
         self.start_time = t;
         self
-    }
-
-    /// Composes body and head from NPC item-template names such as `Body_AssWarrior` and
-    /// `Head_Hero_05_S24` (see [`crate::library::template_actor_candidates`]). Parts are
-    /// resolved against the installed actors at spawn time.
-    pub fn from_item_templates(
-        library: &ActorLibrary,
-        body: &str,
-        head: Option<&str>,
-    ) -> Result<Self> {
-        let pick = |template: &str| -> Result<String> {
-            crate::library::template_actor_candidates(template)
-                .into_iter()
-                .find(|c| library.has_actor(c))
-                .ok_or_else(|| anyhow!("no installed actor matches template {template:?}"))
-        };
-        let mut spec = Self::new(pick(body)?);
-        if let Some(head) = head {
-            spec.parts.push(pick(head)?);
-        }
-        Ok(spec)
     }
 }
 
@@ -305,6 +302,29 @@ impl ActorSpawner<'_, '_> {
                         drawn_joint: drawn,
                         holster_joint: holster,
                     },
+                    Transform::default(),
+                    Visibility::default(),
+                    NoFrustumCulling,
+                    ChildOf(root),
+                ));
+            }
+        }
+        for a in &spec.attachments {
+            let asset = library.static_mesh_variant(&a.mesh, Some(a.switch), &mut stores)?;
+            let lower = a.slot.to_lowercase();
+            let (joint, offset) = match composition.joint_by_name.get(&lower) {
+                Some(&j) => (j, Affine3A::IDENTITY),
+                None => composition
+                    .slot_mounts
+                    .get(&lower)
+                    .copied()
+                    .ok_or_else(|| anyhow!("no part defines slot {:?}", a.slot))?,
+            };
+            for m in &asset.meshes {
+                commands.spawn((
+                    Mesh3d(m.mesh.clone()),
+                    MeshMaterial3d(m.material.clone()),
+                    Attachment { joint, offset },
                     Transform::default(),
                     Visibility::default(),
                     NoFrustumCulling,

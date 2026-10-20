@@ -20,6 +20,7 @@ use bevy::{
 };
 
 pub mod animator;
+pub mod appearance;
 pub mod clip;
 pub mod library;
 pub mod locomotion;
@@ -31,7 +32,7 @@ pub mod runtime;
 pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
 pub use library::{ActorLibrary, AssetStores, Composition};
 pub use locomotion::{Locomotion, LocomotionInput, Stance};
-pub use runtime::{ActorSpawner, AnimationStats, NpcSpec, WeaponSpec};
+pub use runtime::{ActorSpawner, AnimationStats, AttachSpec, NpcSpec, WeaponSpec};
 
 #[derive(Default)]
 pub struct AnimationPlugin;

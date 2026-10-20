@@ -89,6 +89,9 @@ pub struct Composition {
     pub facing_fix: Quat,
     /// Lower-case node name to joint index, for slots and any other joint.
     pub joint_by_name: HashMap<String, u16>,
+    /// `Slot_*` nodes that exist only in an extra part (`Slot_Hair`, `Slot_Beard` live in the
+    /// head actor): lower-case name to (joint index, offset from that joint, bind pose).
+    pub slot_mounts: HashMap<String, (u16, Affine3A)>,
 }
 
 #[derive(Resource)]
@@ -287,14 +290,14 @@ impl ActorLibrary {
         ))
     }
 
-    fn actor_material(
+    /// Diffuse stem (switch applied) and blend hint of an actor material, plus whether the
+    /// switch found its variant image.
+    fn material_stem(
         &mut self,
         actor: &Actor,
         index: usize,
-        path: &str,
-        skin: Option<u32>,
-        stores: &mut AssetStores,
-    ) -> Handle<StandardMaterial> {
+        switch: Option<i32>,
+    ) -> (Option<String>, Option<(u32, u8)>, bool) {
         let material = &actor.materials[index];
         // The string table order of material files does not always follow the material
         // order (heads), so a file named like the material wins over the positional entry.
@@ -329,59 +332,29 @@ impl ActorLibrary {
         if stem.is_none() {
             stem = material.diffuse_texture().map(str::to_string);
         }
+        let mut variant_found = true;
+        if let (Some(base), Some(sw)) = (stem.as_deref(), switch) {
+            let switched = self.switch_stem(base, sw);
+            variant_found = switched != base || base.rsplit_once("_S").is_none() || sw == 0;
+            stem = Some(switched);
+        }
+        (stem, blend, variant_found)
+    }
+
+    fn actor_material(
+        &mut self,
+        actor: &Actor,
+        index: usize,
+        path: &str,
+        switch: Option<i32>,
+        stores: &mut AssetStores,
+    ) -> Handle<StandardMaterial> {
+        let (stem, blend, _) = self.material_stem(actor, index, switch);
+        let material = &actor.materials[index];
         let resolves = stem.as_ref().is_some_and(|s| {
             self.image_index
                 .contains_key(&format!("{}.ximg", s.to_lowercase()))
         });
-        let hair_like = {
-            let n = material.name.to_lowercase();
-            n.contains("hair")
-                || n.contains("beard")
-                || n.contains("material")
-                || n.contains("lash")
-        };
-        if (!resolves || hair_like) && path.to_lowercase().contains("head") {
-            // Head materials carry exporter leftovers; map them by role.
-            let n = skin.unwrap_or(1).max(1);
-            let name = material.name.to_lowercase();
-            let babe = path.to_lowercase().contains("babe");
-            if name.contains("lash") {
-                return self.flat_material(
-                    "lashes",
-                    Color::srgba(0.0, 0.0, 0.0, 0.0),
-                    AlphaMode::Blend,
-                    stores,
-                );
-            } else if name.contains("eye") {
-                return self.shared_material(
-                    Some(format!("G3_Animation_Head_Eyes_01_S{}", (n - 1) % 8 + 1)),
-                    None,
-                    stores,
-                );
-            } else if name.contains("hair") || name.contains("beard") || name.contains("material") {
-                let tones = [
-                    (0.16, 0.11, 0.07),
-                    (0.30, 0.20, 0.10),
-                    (0.08, 0.07, 0.06),
-                    (0.42, 0.33, 0.18),
-                    (0.24, 0.12, 0.06),
-                ];
-                let t = tones[(n as usize) % tones.len()];
-                return self.flat_material(
-                    &format!("hair{}", n as usize % tones.len()),
-                    Color::srgb(t.0, t.1, t.2),
-                    AlphaMode::Opaque,
-                    stores,
-                );
-            } else if name.contains("face") || name.contains("neck") || name.contains("skin") {
-                let skin_stem = if babe {
-                    format!("G3_Animation_Head_Women_01_S{}", (n - 1) % 2 + 1)
-                } else {
-                    format!("G3_Animation_Head_Main_01_S{}", (n - 1) % 30 + 1)
-                };
-                return self.shared_material(Some(skin_stem), None, stores);
-            }
-        }
         if stem.is_none() || !resolves {
             eprintln!(
                 "animation: material {:?} of {path}: no resolvable texture (stem {:?})",
@@ -391,26 +364,64 @@ impl ActorLibrary {
         self.shared_material(stem, blend, stores)
     }
 
-    fn flat_material(
-        &mut self,
-        id: &str,
-        color: Color,
-        alpha_mode: AlphaMode,
-        stores: &mut AssetStores,
-    ) -> Handle<StandardMaterial> {
-        let key = (format!("flat:{id}"), 0, 0);
-        if let Some(h) = self.shared_materials.get(&key) {
-            return h.clone();
+    /// Texture problems of actor `name` (optionally `@M<n>`): materials without a resolvable
+    /// image and switches whose variant image does not exist. Empty when everything resolves.
+    pub fn texture_problems(&mut self, name: &str) -> Vec<String> {
+        let (base, switch) = match name.rsplit_once("@M") {
+            Some((n, s)) if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) => {
+                (n, s.parse::<i32>().ok())
+            }
+            _ => (name, None),
+        };
+        let mut out = Vec::new();
+        let parsed = self
+            .find_actor(base)
+            .and_then(|at| Actor::parse(&self.animation.read_payload(at)?));
+        let actor = match parsed {
+            Ok(a) => a,
+            Err(e) => return vec![format!("{base}: {e:#}")],
+        };
+        for index in 1..actor.materials.len() {
+            let (stem, _, variant) = self.material_stem(&actor, index, switch);
+            let ok = stem.as_ref().is_some_and(|s| {
+                self.image_index
+                    .contains_key(&format!("{}.ximg", s.to_lowercase()))
+            });
+            if !ok {
+                out.push(format!("{base}: material {index} no image ({stem:?})"));
+            } else if !variant {
+                out.push(format!("variant-missing {base} material {index}"));
+            }
         }
-        let handle = stores.materials.add(StandardMaterial {
-            base_color: color,
-            perceptual_roughness: 0.9,
-            alpha_mode,
-            cull_mode: None,
-            ..Default::default()
-        });
-        self.shared_materials.insert(key, handle.clone());
-        handle
+        out
+    }
+
+    /// Applies a `MaterialSwitch` to a texture stem: the trailing `_S<k>` variant index becomes
+    /// `_S<switch + 1>` (switch 0 is the first variant). A stem without variant suffix, or a
+    /// variant the archive does not hold, keeps the authored texture.
+    pub fn switch_stem(&self, stem: &str, switch: i32) -> String {
+        let Some((head, tail)) = stem.rsplit_once("_S") else {
+            return stem.to_string();
+        };
+        if tail.is_empty() || !tail.chars().all(|c| c.is_ascii_digit()) || switch < 0 {
+            return stem.to_string();
+        }
+        let wanted = format!("{head}_S{}", switch + 1);
+        if self
+            .image_index
+            .contains_key(&format!("{}.ximg", wanted.to_lowercase()))
+        {
+            wanted
+        } else {
+            stem.to_string()
+        }
+    }
+
+    /// True when the mesh archive holds `name` (`.xcmsh`, case-insensitive).
+    pub fn has_mesh(&self, name: &str) -> bool {
+        let key = name.to_lowercase();
+        self.mesh_index
+            .contains_key(&format!("{}.xcmsh", key.trim_end_matches(".xcmsh")))
     }
 
     fn shared_material(
@@ -449,19 +460,17 @@ impl ActorLibrary {
 
     /// Loads (or returns the cached) skinned part `name` (a `.xact` actor).
     ///
-    /// `name` may end in `@S<n>`: skin variant `n` for head parts whose face materials do not
-    /// resolve to a texture (the generic `G3_Hero_Head_HeadNN` heads use the shared skin
-    /// atlas `G3_Animation_Head_Main_01_S<n>`).
+    /// `name` may end in `@M<n>`: the actor's `MaterialSwitch` (see [`Self::switch_stem`]).
     pub fn part(&mut self, name: &str, stores: &mut AssetStores) -> Result<Arc<PartAsset>> {
-        let (name, skin) = match name.rsplit_once("@S") {
+        let (name, skin) = match name.rsplit_once("@M") {
             Some((n, s)) if s.chars().all(|c| c.is_ascii_digit()) && !s.is_empty() => {
-                (n, s.parse::<u32>().ok())
+                (n, s.parse::<i32>().ok())
             }
             _ => (name, None),
         };
         let at = self.find_actor(name)?;
         let path = self.animation.entries[at].path.clone();
-        let key = format!("{}#{}", path.to_lowercase(), skin.unwrap_or(0));
+        let key = format!("{}#{}", path.to_lowercase(), skin.unwrap_or(-1));
         if let Some(p) = self.parts.get(&key) {
             return Ok(p.clone());
         }
@@ -530,7 +539,7 @@ impl ActorLibrary {
         let pad = (max - min) * 0.35 + Vec3::splat(20.0);
         let part = Arc::new(PartAsset {
             name: match skin {
-                Some(n) => format!("{}@S{n}", path.trim_end_matches(".xact")),
+                Some(n) => format!("{}@M{n}", path.trim_end_matches(".xact")),
                 None => path.trim_end_matches(".xact").to_string(),
             },
             rig,
@@ -585,6 +594,20 @@ impl ActorLibrary {
                 master.insert(i as u16);
             }
         }
+        // Slots that only extra parts define hang off the nearest shared joint at their bind
+        // offset.
+        let mut part_slots: Vec<(String, u16, Affine3A)> = Vec::new();
+        for part in parts.iter().skip(1) {
+            for (i, name) in part.rig.names.iter().enumerate() {
+                if !name.starts_with("Slot_") || rig.index.contains_key(&name.to_lowercase()) {
+                    continue;
+                }
+                let m = map_node(&rig, &part.rig, i as u16);
+                master.insert(m);
+                let offset = rig.bind_world[m as usize].inverse() * part.rig.bind_world[i];
+                part_slots.push((name.to_lowercase(), m, Affine3A::from_mat4(offset)));
+            }
+        }
         let joint_nodes: Vec<u16> = master.into_iter().collect();
         let position: HashMap<u16, u16> = joint_nodes
             .iter()
@@ -601,6 +624,10 @@ impl ActorLibrary {
             .enumerate()
             .map(|(i, &n)| (rig.names[n as usize].to_lowercase(), i as u16))
             .collect();
+        let slot_mounts = part_slots
+            .into_iter()
+            .map(|(name, m, offset)| (name, (position[&m], offset)))
+            .collect();
         let facing_fix = self.facing_fix(&rig, &plan);
         let composition = Arc::new(Composition {
             key: key.clone(),
@@ -611,6 +638,7 @@ impl ActorLibrary {
             plan,
             facing_fix,
             joint_by_name,
+            slot_mounts,
         });
         self.compositions.insert(key, composition.clone());
         Ok(composition)
@@ -727,13 +755,30 @@ impl ActorLibrary {
         name: &str,
         stores: &mut AssetStores,
     ) -> Result<Arc<StaticAsset>> {
-        let key = name.to_lowercase().trim_end_matches(".xcmsh").to_string();
+        self.static_mesh_variant(name, None, stores)
+    }
+
+    /// Like [`Self::static_mesh`] with a `MaterialSwitch` applied to the diffuse textures
+    /// (hair and beards).
+    pub fn static_mesh_variant(
+        &mut self,
+        name: &str,
+        switch: Option<i32>,
+        stores: &mut AssetStores,
+    ) -> Result<Arc<StaticAsset>> {
+        let base = name.to_lowercase().trim_end_matches(".xcmsh").to_string();
+        let key = match switch {
+            Some(n) => format!("{base}@M{n}"),
+            None => base.clone(),
+        };
+        let name = base.as_str();
         if let Some(s) = self.statics.get(&key) {
             return Ok(s.clone());
         }
+        let key_mesh = base.clone();
         let at = *self
             .mesh_index
-            .get(&format!("{key}.xcmsh"))
+            .get(&format!("{key_mesh}.xcmsh"))
             .ok_or_else(|| anyhow!("no .xcmsh mesh named {name:?}"))?;
         let bytes = self.mesh_pak.read_payload(at)?;
         let xcmsh = Xcmsh::parse(&bytes).with_context(|| format!("parsing {name}"))?;
@@ -766,7 +811,10 @@ impl ActorLibrary {
             } else {
                 format!("{}.xshmat", sub.material)
             };
-            let (stem, blend) = self.material_file(&file).unwrap_or((None, None));
+            let (mut stem, blend) = self.material_file(&file).unwrap_or((None, None));
+            if let (Some(base), Some(sw)) = (stem.as_deref(), switch) {
+                stem = Some(self.switch_stem(base, sw));
+            }
             let material = self.shared_material(stem, blend, stores);
             meshes.push(PartMesh {
                 mesh: stores.meshes.add(mesh),
@@ -888,90 +936,9 @@ fn texture_image(image: &Ximg) -> Option<Image> {
     Some(out)
 }
 
-// ---- NPC naming heuristics ----------------------------------------------------------------
-
-/// Candidate actor names for an item template such as `Body_AssWarrior`, `Fat_Body_Smith`,
-/// `Orc_Body_Warrior_Outlaw`, `Head_Hero_05_S24` or `Orc_Head_S08`, best first. The real
-/// template to mesh link lives in engine data that is not decoded yet; this follows the
-/// naming of the installed `.xact` files.
-pub fn template_actor_candidates(template: &str) -> Vec<String> {
-    let tokens: Vec<&str> = template.split('_').collect();
-    let mut out: Vec<String> = Vec::new();
-    let is_skin =
-        |t: &str| t.len() >= 2 && t.starts_with('S') && t[1..].chars().all(|c| c.is_ascii_digit());
-    let is_num = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
-    if let Some(pos) = tokens.iter().position(|t| *t == "Body") {
-        let family = if pos == 0 {
-            vec!["Hero"]
-        } else {
-            tokens[..pos].to_vec()
-        };
-        let name = &tokens[pos + 1..];
-        for k in (1..=name.len()).rev() {
-            let joined = name[..k].join("_");
-            out.push(format!("G3_{}_Body_{joined}", family.join("_")));
-            if family[0] != "Hero" {
-                out.push(format!("G3_Hero_Body_{}{joined}", family[0]));
-            }
-        }
-    } else if let Some(pos) = tokens.iter().position(|t| *t == "Head") {
-        let before = tokens[..pos].to_vec();
-        let name: Vec<&str> = tokens[pos + 1..]
-            .iter()
-            .copied()
-            .filter(|t| !is_skin(t))
-            .collect();
-        if before.is_empty() {
-            // Head_Hero_05_S24 / Head_Hero_Babe_01 / Head_Slave_03_S14
-            let joined = name.join("_");
-            out.push(format!("G3_Head_{joined}"));
-            if let (Some(&"Hero"), Some(num)) = (name.first(), name.get(1).filter(|t| is_num(t))) {
-                out.push(format!("G3_Hero_Head_Head{num}"));
-            }
-            if let (Some(&fam), Some(num)) = (name.first(), name.last().filter(|t| is_num(t))) {
-                out.push(format!("G3_{fam}_Head_Head{num}"));
-                out.push(format!("G3_Head_{fam}_Myrtana_{num}"));
-            }
-        } else {
-            // Orc_Head_S08: the S-number is a skin, the geometry is Head01 of that family.
-            let family = before.join("_");
-            out.push(format!("G3_{family}_Head_Head01"));
-            out.push(format!("G3_{family}_Head_{}", name.join("_")));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn template_names_map_to_actor_candidates() {
-        assert_eq!(
-            template_actor_candidates("Body_AssWarrior")[0],
-            "G3_Hero_Body_AssWarrior"
-        );
-        assert_eq!(
-            template_actor_candidates("Fat_Body_Smith")[0],
-            "G3_Fat_Body_Smith"
-        );
-        let orc = template_actor_candidates("Orc_Body_Warrior_Outlaw");
-        assert_eq!(orc[0], "G3_Orc_Body_Warrior_Outlaw");
-        assert!(orc.contains(&"G3_Orc_Body_Warrior".to_string()));
-        let head = template_actor_candidates("Head_Hero_05_S24");
-        assert!(
-            head.contains(&"G3_Hero_Head_Head05".to_string()),
-            "{head:?}"
-        );
-        let babe = template_actor_candidates("Head_Hero_Babe_01");
-        assert_eq!(babe[0], "G3_Head_Hero_Babe_01");
-        assert_eq!(
-            template_actor_candidates("Orc_Head_S08")[0],
-            "G3_Orc_Head_Head01"
-        );
-        assert!(template_actor_candidates("It_Weapon").is_empty());
-    }
 
     #[test]
     fn part_names_normalise() {
