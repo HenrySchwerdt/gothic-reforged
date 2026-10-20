@@ -5,7 +5,10 @@ use crate::{
     pose::Trs,
     rig::{EvalStep, Rig},
 };
-use bevy::{ecs::component::Component, math::Affine3A};
+use bevy::{
+    ecs::component::Component,
+    math::{Affine3A, Quat},
+};
 use std::sync::Arc;
 
 /// Default cross-fade time in seconds.
@@ -45,6 +48,8 @@ pub struct Animator {
     pub rig: Arc<Rig>,
     plan: Arc<[EvalStep]>,
     joint_nodes: Arc<[u16]>,
+    /// Rotation from the authored skeleton frame to the entity frame (facing fix).
+    facing: Affine3A,
     layers: Vec<Layer>,
     pub overlay: Option<Overlay>,
     /// Global playback speed multiplier.
@@ -67,17 +72,27 @@ fn smooth(x: f32) -> f32 {
 }
 
 impl Animator {
-    pub fn new(rig: Arc<Rig>, plan: Arc<[EvalStep]>, joint_nodes: Arc<[u16]>) -> Self {
+    pub fn new(
+        rig: Arc<Rig>,
+        plan: Arc<[EvalStep]>,
+        joint_nodes: Arc<[u16]>,
+        facing: Quat,
+    ) -> Self {
         let slots = rig.slot_node.len();
         let nodes = rig.names.len();
         let mut model = vec![Affine3A::IDENTITY; nodes];
         let pose = rig.rest.clone();
         crate::rig::evaluate(&plan, &pose, &mut model);
-        let joints = joint_nodes.iter().map(|&n| model[n as usize]).collect();
+        let facing = Affine3A::from_quat(facing);
+        let joints = joint_nodes
+            .iter()
+            .map(|&n| facing * model[n as usize])
+            .collect();
         Self {
             rig,
             plan,
             joint_nodes,
+            facing,
             layers: Vec::with_capacity(MAX_LAYERS),
             overlay: None,
             speed: 1.0,
@@ -179,12 +194,14 @@ impl Animator {
                     l.time = l.time.min(l.motion.clip.duration.max(0.0));
                 }
                 if i == top && self.root_motion_enabled {
-                    self.root_motion = RootMotionSource::delta(
+                    let mut rm = RootMotionSource::delta(
                         &l.motion.binding,
                         &l.motion.clip,
                         before,
                         l.time,
                     );
+                    rm.translation = self.facing.transform_vector3(rm.translation);
+                    self.root_motion = rm;
                 }
                 if i > 0 {
                     l.fade = if l.fade_len > 1e-4 {
@@ -245,7 +262,7 @@ impl Animator {
         }
         crate::rig::evaluate(&self.plan, &self.pose, &mut self.model);
         for (j, &n) in self.joint_nodes.iter().enumerate() {
-            self.joints[j] = self.model[n as usize];
+            self.joints[j] = self.facing * self.model[n as usize];
         }
     }
 
@@ -273,7 +290,7 @@ mod tests {
         let rig = Arc::new(synthetic());
         let plan: Arc<[EvalStep]> = rig.plan(&[1, 3, 4]).into();
         let joints: Arc<[u16]> = vec![1u16, 3, 4].into();
-        (Animator::new(rig.clone(), plan, joints), rig)
+        (Animator::new(rig.clone(), plan, joints, Quat::IDENTITY), rig)
     }
 
     #[test]

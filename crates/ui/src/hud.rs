@@ -19,7 +19,7 @@ pub(crate) struct CompassMark(f32);
 
 const TOAST_SECONDS: f32 = 4.5;
 const MAX_TOASTS: usize = 6;
-const COMPASS_W: f32 = 520.0;
+const COMPASS_W: f32 = 480.0;
 
 pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
     let font = &assets.font;
@@ -107,7 +107,13 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
                             font,
                             *label,
                             if major { 22.0 } else { 16.0 },
-                            if i == 0 { RED } else if major { GOLD } else { DIM },
+                            if i == 0 {
+                                RED
+                            } else if major {
+                                GOLD
+                            } else {
+                                DIM
+                            },
                         )],
                     ));
                 }
@@ -131,7 +137,7 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
         Node {
             position_type: PositionType::Absolute,
             right: px(24),
-            top: px(90),
+            bottom: px(30),
             width: px(360),
             flex_direction: FlexDirection::Column,
             row_gap: px(6),
@@ -150,7 +156,7 @@ pub(crate) fn update_hud(
     mut marks: Query<(&CompassMark, &mut Node), Without<HudBar>>,
 ) {
     for mut v in &mut root {
-        *v = if ui.screen == Screen::Dialog {
+        *v = if ui.screen != Screen::None {
             Visibility::Hidden
         } else {
             Visibility::Inherited

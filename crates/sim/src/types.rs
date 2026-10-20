@@ -143,7 +143,10 @@ impl Species {
         !self.is_humanoid()
             && !self.is_evil()
             && !self.is_game_animal()
-            && !matches!(self, Goblin | Troll | Ogre | Stalker | Dragon | Minecrawler | Other)
+            && !matches!(
+                self,
+                Goblin | Troll | Ogre | Stalker | Dragon | Minecrawler | Other
+            )
     }
 
     /// Humanoid species list used by the tactic selector [CA 9.3].

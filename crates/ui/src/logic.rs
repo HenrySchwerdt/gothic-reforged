@@ -197,7 +197,10 @@ fn absorb(
                     QuestStatus::Failed => "Aufgabe gescheitert",
                     _ => continue,
                 };
-                toast(format!("{verb}: {}", quest_title(db, quest)), ToastKind::Quest);
+                toast(
+                    format!("{verb}: {}", quest_title(db, quest)),
+                    ToastKind::Quest,
+                );
             }
             Output::QuestLog { quest, .. } => toast(
                 format!("Tagebuch: {}", quest_title(db, quest)),

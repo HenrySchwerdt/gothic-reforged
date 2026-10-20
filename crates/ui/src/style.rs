@@ -38,6 +38,7 @@ pub fn txt(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -
             ..default()
         },
         TextColor(color),
+        bevy::text::LineHeight::RelativeToFont(1.3),
     )
 }
 
@@ -74,9 +75,7 @@ pub fn scroll_area(name: &'static str, y: f32) -> impl Bundle {
     )
 }
 
-pub fn hover_style(
-    mut q: Query<(&Hovered, &HoverStyle, &mut BackgroundColor), Changed<Hovered>>,
-) {
+pub fn hover_style(mut q: Query<(&Hovered, &HoverStyle, &mut BackgroundColor), Changed<Hovered>>) {
     for (h, s, mut bg) in &mut q {
         bg.0 = if h.get() { s.hover } else { s.normal };
     }

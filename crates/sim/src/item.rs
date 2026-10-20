@@ -157,6 +157,16 @@ impl ItemDef {
         self.modifier(ty.protection_tag())
     }
 
+    /// HP restored when used: the `HP` modifiers with operation 2 (add to current) [I]
+    /// (`It_Potion_Health` carries `HP op 2 value 50`).
+    pub fn heal_amount(&self) -> i32 {
+        self.modifiers
+            .iter()
+            .filter(|m| m.tag.eq_ignore_ascii_case("HP") && m.op == 2)
+            .map(|m| m.value)
+            .sum()
+    }
+
     pub fn modifier(&self, tag: &str) -> i32 {
         self.modifiers
             .iter()
@@ -264,7 +274,12 @@ impl Equipment {
     pub fn equip(&mut self, item: ItemDef) {
         match item.use_kind() {
             Use::Shield | Use::Torch | Use::Bow | Use::CrossBow => self.left = Some(item),
-            Use::OneH if self.right.as_ref().is_some_and(|r| r.use_kind() == Use::OneH) => {
+            Use::OneH
+                if self
+                    .right
+                    .as_ref()
+                    .is_some_and(|r| r.use_kind() == Use::OneH) =>
+            {
                 self.left = Some(item)
             }
             Use::OneH

@@ -8,6 +8,8 @@
 //! records with known names; each candidate must match name, type, version and a
 //! payload size that fits the body, so unrelated bytes are very unlikely to match.
 //! See `docs/research/XSHMAT_FORMAT.md` for evidence and limits.
+pub mod graph;
+
 use crate::genome::GenomeFile;
 use anyhow::{Result, ensure};
 use serde::Serialize;

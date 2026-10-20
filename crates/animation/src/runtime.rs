@@ -11,7 +11,9 @@
 use crate::{
     animator::{Animator, Overlay},
     library::{ActorLibrary, AssetStores, Composition},
-    locomotion::{LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveDir, MoveKind, Stance},
+    locomotion::{
+        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveDir, MoveKind, RIGHT, Stance,
+    },
 };
 use anyhow::{Result, anyhow};
 use bevy::{
@@ -197,6 +199,7 @@ impl ActorSpawner<'_, '_> {
             rig.clone(),
             composition.plan.clone(),
             composition.joint_nodes.clone(),
+            composition.facing_fix,
         );
         let mut locomotion = Locomotion::default();
         locomotion.key.stance = spec.stance;
@@ -331,8 +334,8 @@ pub fn locomotion_system(
         let inverse = global.rotation().inverse();
         let local: Vec3 = inverse * input.velocity;
         let v = LocalMotion {
-            forward: local.dot(rig.forward),
-            right: local.dot(rig.right()),
+            forward: local.dot(FORWARD),
+            right: local.dot(RIGHT),
             up: local.y,
         };
         let finished = animator.finished();

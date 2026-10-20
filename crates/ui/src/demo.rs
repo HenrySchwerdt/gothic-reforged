@@ -113,10 +113,10 @@ pub fn run(args: &[String]) -> Result<()> {
         .to_string();
     let default_install = UiConfig::default().install_dir;
     let install = flag(args, "--install").map_or(default_install, std::path::PathBuf::from);
-    let data = flag(args, "--data")
-        .map_or_else(|| install.join("Data"), std::path::PathBuf::from);
+    let data = flag(args, "--data").map_or_else(|| install.join("Data"), std::path::PathBuf::from);
     let items_path = flag(args, "--items").unwrap_or(".local/items.json");
-    let db = GameDatabase::load_install(&data, "German").map_err(|e| anyhow!("loading game database: {e:#}"))?;
+    let db = GameDatabase::load_install(&data, "German")
+        .map_err(|e| anyhow!("loading game database: {e:#}"))?;
     let items = ItemCatalog::load(std::path::Path::new(items_path))
         .map_err(|e| anyhow!("{items_path}: {e:#} (run `gothic-inspector item-dump` first)"))?;
     let state = demo_state(&db, &items);
@@ -156,7 +156,11 @@ pub fn run(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn use_item_toast(mut r: MessageReader<UseItem>, s: Res<GameSession>, mut n: MessageWriter<Notify>) {
+fn use_item_toast(
+    mut r: MessageReader<UseItem>,
+    s: Res<GameSession>,
+    mut n: MessageWriter<Notify>,
+) {
     for u in r.read() {
         n.write(Notify {
             text: format!("Benutzt: {}", style::item_name(&s.db, &u.item)),

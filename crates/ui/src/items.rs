@@ -91,3 +91,21 @@ impl ItemCatalog {
         self.map.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_item_records() {
+        let c = ItemCatalog::from_json(
+            r#"[{"name":"It_Test","category_id":1,"value":7,"damage":{"amount":12,"damage_type":"Blade"},
+                 "requirements":[{"tag":"STR","value":50}],"modifiers":[],"use_type":"1H"}]"#,
+        )
+        .unwrap();
+        let i = c.get("it_TEST").unwrap();
+        assert_eq!((i.category, i.value), (1, 7));
+        assert_eq!(i.damage, Some((12, "Blade".into())));
+        assert_eq!(i.requirements, vec![("STR".to_string(), 50)]);
+    }
+}

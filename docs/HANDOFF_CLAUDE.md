@@ -97,3 +97,13 @@ REA ist installiert und die Ghidra-Analyse kleiner Binaries funktioniert. Eine g
 5. Parallel Daten-/ID-/Questverträge aus den vorhandenen Spezifikationen konkretisieren. Keine Mechanik durch frei erfundene Ersatzdaten als fertig erklären.
 
 M1 gilt erst mit echter importierter Ardea-Geometrie, Held/Animation/Kollision, belegter Interaktion und Save/Reload als erreicht. Ziel ist eine vollständige, veränderbare Implementierung; dieser Start ist bewusst eine belastbare Import- und Enginegrundlage.
+
+## Stand 20.10.2026 nachmittags (Claude-Sitzung)
+
+Build: Git Bash `source .local/env.sh && cargo +stable-x86_64-pc-windows-gnu <cmd> --locked` (dev.ps1 bricht bei cargo-stderr ab). Branch `dev/engine-continuation`, lokal, nicht gepusht.
+
+Fertig (geprüft): Materialien/Texturen (xshmat), VFS + Weltindex, Spieldaten (Strings/Quests/Infos/Templates/Terrain), Property-Streams (Items/NPCs typisiert), Actors/Motions (Held animiert), begehbares Ardea (`--walk`, ~4 ms/Frame), crates/gameplay (Quest-/Dialog-Engine, questlint 559/570), crates/ui (Dialog/Journal/Inventar/HUD), crates/audio (Voice 97 %, Musik, SFX). Regeln: docs/research/GAME_RULES.md, COMBAT_AI_RULES.md.
+
+Bei Sitzungsende evtl. unfertig (Arbeitsbaum prüfen!): crates/animation (Blending/Locomotion/Crowd), Terrain-Blending/Vegetation/Wasser (walk.rs/world_loader.rs), crates/sim (Kampf/KI).
+
+Nächster Schritt: Integration — Held+Animation in Ardea, NPCs aus npcs.json mit Routinen, Ansprechen (E) → crates/ui Dialog + crates/audio Voice, Quest-Log; danach Kampf aus crates/sim. Screenshots unter .local/milestones/.

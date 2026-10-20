@@ -25,6 +25,12 @@
 use crate::names::{MotionCatalog, MotionQuery};
 use bevy::{ecs::component::Component, math::Vec3};
 
+/// Entity-local forward axis of an animated character (Bevy convention, `Transform::forward`);
+/// the animator rotates the skeleton so the authored facing direction ends up here.
+pub const FORWARD: Vec3 = Vec3::NEG_Z;
+/// Entity-local right axis (`FORWARD x Y`).
+pub const RIGHT: Vec3 = Vec3::X;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Stance {
     #[default]

@@ -11,7 +11,7 @@
 //! the stance). `--crowd N` spawns N different human NPCs (body, head, stance, weapons) that
 //! follow scripted `LocomotionInput` sequences; `--bench` prints frame and animation timings.
 //! Explicit archives only (`--data-dir`), no patch overlay.
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     prelude::*,
@@ -20,6 +20,7 @@ use bevy::{
 use gothic_animation::{
     ActorLibrary, ActorSpawner, AnimationPlugin, AnimationStats, Animator, Locomotion,
     LocomotionInput, NpcSpec, Stance, WeaponSpec,
+    locomotion::{FORWARD, RIGHT},
 };
 use std::path::PathBuf;
 
@@ -125,7 +126,7 @@ pub fn run() -> Result<()> {
         ],
     };
     let library = ActorLibrary::open(&data_dir)
-        .with_context(|| format!("opening archives in {}", data_dir.display()))?;
+        .map_err(|e| e.context(format!("opening archives in {}", data_dir.display())))?;
     eprintln!(
         "motion catalog: {} named motions; actors: {}",
         library.catalog.len(),
@@ -181,7 +182,8 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
     let mut center = Vec3::new(0.0, 95.0, 0.0);
     let mut distance = 300.0;
     let mut pitch = 0.08;
-    let mut yaw = config.yaw_degrees.to_radians();
+    // The authored facing is rotated to -Z (Bevy forward), so the front is seen from -Z.
+    let mut yaw = config.yaw_degrees.to_radians() + std::f32::consts::PI;
     if config.crowd == 0 {
         let mut spec = NpcSpec::new("G3_Hero_Body_Player")
             .with_part("G3_Hero_Head_Player")
@@ -217,7 +219,11 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
         let mut spawned = 0;
         for i in 0..config.crowd {
             let body = &bodies[(hash01(i, 1) * bodies.len() as f32) as usize % bodies.len()];
-            let head = &heads[(hash01(i, 2) * heads.len() as f32) as usize % heads.len()];
+            let head = &format!(
+                "{}@S{}",
+                heads[(hash01(i, 2) * heads.len() as f32) as usize % heads.len()],
+                1 + (hash01(i, 5) * 30.0) as u32
+            );
             let stance = stances[(hash01(i, 3) * stances.len() as f32) as usize % stances.len()];
             let mut spec = NpcSpec::new(body.clone())
                 .with_part(head.clone())
@@ -262,7 +268,7 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
         center = Vec3::new(0.0, 90.0, -depth * 0.5 + spacing * 0.5);
         distance = (width.max(depth) * 1.15).max(400.0);
         pitch = 0.55;
-        yaw = 0.0;
+        yaw = std::f32::consts::PI;
     }
     spawner.commands.spawn((
         Camera3d::default(),
@@ -279,7 +285,7 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
             illuminance: 20000.0,
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.7, 0.6, 0.0)),
+        Transform::from_xyz(-300.0, 500.0, -500.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     spawner.commands.insert_resource(GlobalAmbientLight {
         brightness: 900.0,
@@ -338,8 +344,8 @@ fn crowd_script(time: Res<Time>, mut query: Query<(&CrowdMember, &mut Locomotion
         let (_, speed, strafe, sneak, air, turn) = step;
         // Character frame: the controller would use the world velocity; here the entity keeps
         // its rotation, so rig-forward is the entity's local direction.
-        let forward = Vec3::Z;
-        let right = forward.cross(Vec3::Y);
+        let forward = gothic_animation::locomotion::FORWARD;
+        let right = gothic_animation::locomotion::RIGHT;
         let mut velocity = forward * speed + right * strafe;
         if air {
             velocity.y = if t < 0.9 { 260.0 } else { -200.0 };
@@ -359,8 +365,7 @@ fn hero_keys(
 ) {
     for mut input in &mut query {
         let preset = |input: &mut LocomotionInput, speed: f32, strafe: f32, sneak: bool, grounded: bool, up: f32, turn: f32| {
-            let right = Vec3::Z.cross(Vec3::Y);
-            input.velocity = Vec3::Z * speed + right * strafe + Vec3::Y * up;
+            input.velocity = FORWARD * speed + RIGHT * strafe + Vec3::Y * up;
             input.sneak = sneak;
             input.grounded = grounded;
             input.turn_error = turn;

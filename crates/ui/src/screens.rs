@@ -131,9 +131,24 @@ fn window(
                 })
                 .with_children(|h| {
                     h.spawn(txt(font, title, 32.0, GOLD));
-                    h.spawn(Node {
-                        column_gap: px(8),
-                        align_items: AlignItems::Center,
+                    h.spawn((
+                        button(Action::Close, BG_ROW, BG_HOVER),
+                        Node {
+                            width: px(34),
+                            height: px(34),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(px(1)),
+                            ..default()
+                        },
+                        BorderColor::all(GOLD_DIM),
+                    ))
+                    .with_child(txt(font, "X", 18.0, PARCH));
+                });
+                if !tabs.is_empty() {
+                    p.spawn(Node {
+                        column_gap: px(6),
+                        flex_shrink: 0.0,
                         ..default()
                     })
                     .with_children(|t| {
@@ -141,30 +156,21 @@ fn window(
                             t.spawn((
                                 button(act, if sel { BG_SEL } else { BG_ROW }, BG_HOVER),
                                 Node {
-                                    padding: UiRect::axes(px(14), px(6)),
+                                    padding: UiRect::axes(px(9), px(5)),
                                     border: UiRect::all(px(1)),
                                     ..default()
                                 },
                                 BorderColor::all(if sel { GOLD } else { GOLD_DIM }),
                             ))
-                            .with_child(txt(font, label, 18.0, if sel { GOLD } else { PARCH }));
+                            .with_child(txt(
+                                font,
+                                label,
+                                17.0,
+                                if sel { GOLD } else { PARCH },
+                            ));
                         }
-                        t.spawn((
-                            button(Action::Close, BG_ROW, BG_HOVER),
-                            Node {
-                                width: px(34),
-                                height: px(34),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(px(1)),
-                                margin: UiRect::left(px(10)),
-                                ..default()
-                            },
-                            BorderColor::all(GOLD_DIM),
-                        ))
-                        .with_child(txt(font, "X", 18.0, PARCH));
                     });
-                });
+                }
                 separator(p);
                 p.spawn(Node {
                     flex_grow: 1.0,
@@ -250,7 +256,7 @@ fn dialog(commands: &mut Commands, cx: &Cx) {
             r.spawn((
                 Node {
                     width: percent(100),
-                    height: px(330),
+                    height: px(380),
                     flex_direction: FlexDirection::Column,
                     padding: UiRect::axes(px(120), px(14)),
                     row_gap: px(8),
@@ -263,7 +269,7 @@ fn dialog(commands: &mut Commands, cx: &Cx) {
                 b.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: px(4),
-                    height: px(126),
+                    height: px(150),
                     flex_shrink: 0.0,
                     overflow: Overflow::clip(),
                     justify_content: JustifyContent::FlexEnd,
@@ -271,7 +277,7 @@ fn dialog(commands: &mut Commands, cx: &Cx) {
                 })
                 .with_children(|s| {
                     let n = view.lines.len();
-                    for l in &view.lines[n.saturating_sub(4)..] {
+                    for l in &view.lines[n.saturating_sub(3)..] {
                         let color = if l.player { BLUE } else { PARCH };
                         let who = if l.speaker.is_empty() {
                             String::new()
@@ -282,12 +288,18 @@ fn dialog(commands: &mut Commands, cx: &Cx) {
                             Text::new(who),
                             TextFont {
                                 font: font.clone().into(),
-                                font_size: FontSize::Px(22.0),
+                                font_size: FontSize::Px(21.0),
                                 ..default()
                             },
                             TextColor(if l.player { BLUE } else { GOLD }),
+                            bevy::text::LineHeight::RelativeToFont(1.3),
                         ))
-                        .with_child(span(font, l.text.clone(), 22.0, color));
+                        .with_child(span(
+                            font,
+                            l.text.clone(),
+                            21.0,
+                            color,
+                        ));
                     }
                 });
                 separator(b);
@@ -375,10 +387,7 @@ fn dialog_excerpt(db: &gothic_gameplay::GameDatabase, info: &str) -> Vec<String>
             let t = db.text(&s.text)?;
             let player = s.entity1.eq_ignore_ascii_case("player")
                 || s.entity1.eq_ignore_ascii_case("pc_hero");
-            Some(format!(
-                "{}: {t}",
-                if player { "Du" } else { "Gegenüber" }
-            ))
+            Some(format!("{}: {t}", if player { "Du" } else { "Gegenüber" }))
         })
         .collect()
 }
@@ -410,109 +419,118 @@ fn journal(commands: &mut Commands, cx: &Cx) {
         .filter(|s| list.iter().any(|(_, n)| n == s))
         .or_else(|| list.first().map(|(_, n)| n.clone()));
     let font = cx.font;
-    window(
-        commands,
-        cx,
-        &cx.t("HUD_Quests", "Missionen"),
-        tabs,
-        |p| {
-            p.spawn((
-                Node {
-                    width: px(360),
-                    height: percent(100),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(3),
-                    overflow: Overflow::scroll_y(),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                scroll_area("quests", cx.scroll_y("quests")),
-            ))
-            .with_children(|l| {
-                if list.is_empty() {
-                    l.spawn(txt(font, cx.t("HUD_NoQuests", "Keine Missionen vorhanden"), 19.0, DIM));
+    window(commands, cx, &cx.t("HUD_Quests", "Missionen"), tabs, |p| {
+        p.spawn((
+            Node {
+                width: px(360),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(3),
+                overflow: Overflow::scroll_y(),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            scroll_area("quests", cx.scroll_y("quests")),
+        ))
+        .with_children(|l| {
+            if list.is_empty() {
+                l.spawn(txt(
+                    font,
+                    cx.t("HUD_NoQuests", "Keine Missionen vorhanden"),
+                    19.0,
+                    DIM,
+                ));
+            }
+            for (title, name) in &list {
+                let sel = selected.as_deref() == Some(name.as_str());
+                l.spawn((
+                    button(
+                        Action::SelectQuest(name.clone()),
+                        if sel { BG_SEL } else { BG_ROW },
+                        BG_HOVER,
+                    ),
+                    Node {
+                        padding: UiRect::axes(px(10), px(6)),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ))
+                .with_child(txt(
+                    font,
+                    title.clone(),
+                    19.0,
+                    if sel { GOLD } else { PARCH },
+                ));
+            }
+        });
+        p.spawn((
+            Node {
+                height: percent(100),
+                flex_grow: 1.0,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(8),
+                padding: UiRect::all(px(8)),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+            scroll_area("quest_detail", cx.scroll_y("quest_detail")),
+        ))
+        .with_children(|d| {
+            let Some(name) = &selected else {
+                d.spawn(txt(
+                    font,
+                    cx.t("HUD_NoQuestSelected", "Keine Mission ausgewählt"),
+                    19.0,
+                    DIM,
+                ));
+                return;
+            };
+            d.spawn(txt(font, quest_title(db, name), 28.0, GOLD));
+            if let Some(q) = db.quest_by_name(name) {
+                let mut meta = Vec::new();
+                if !q.folder.is_empty() {
+                    meta.push(q.folder.trim_end_matches('/').replace('/', " / "));
                 }
-                for (title, name) in &list {
-                    let sel = selected.as_deref() == Some(name.as_str());
-                    l.spawn((
-                        button(
-                            Action::SelectQuest(name.clone()),
-                            if sel { BG_SEL } else { BG_ROW },
-                            BG_HOVER,
-                        ),
-                        Node {
-                            padding: UiRect::axes(px(10), px(6)),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                    ))
-                    .with_child(txt(font, title.clone(), 19.0, if sel { GOLD } else { PARCH }));
+                if q.experience_points > 0 {
+                    meta.push(format!("Belohnung: {} EP", q.experience_points));
                 }
-            });
-            p.spawn((
-                Node {
-                    height: percent(100),
-                    flex_grow: 1.0,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(8),
-                    padding: UiRect::all(px(8)),
-                    overflow: Overflow::scroll_y(),
-                    ..default()
-                },
-                scroll_area("quest_detail", cx.scroll_y("quest_detail")),
-            ))
-            .with_children(|d| {
-                let Some(name) = &selected else {
-                    d.spawn(txt(font, cx.t("HUD_NoQuestSelected", "Keine Mission ausgewählt"), 19.0, DIM));
-                    return;
-                };
-                d.spawn(txt(font, quest_title(db, name), 28.0, GOLD));
-                if let Some(q) = db.quest_by_name(name) {
-                    let mut meta = Vec::new();
-                    if !q.folder.is_empty() {
-                        meta.push(q.folder.trim_end_matches('/').replace('/', " / "));
-                    }
-                    if q.experience_points > 0 {
-                        meta.push(format!("Belohnung: {} EP", q.experience_points));
-                    }
-                    if !meta.is_empty() {
-                        d.spawn(txt(font, meta.join("   -   "), 16.0, DIM));
-                    }
+                if !meta.is_empty() {
+                    d.spawn(txt(font, meta.join("   -   "), 16.0, DIM));
                 }
-                separator(d);
-                let mut any = false;
-                for e in st.log.iter().filter(|e| &e.quest == name) {
-                    match &e.kind {
-                        LogKind::Status(s) => {
-                            let t = match s {
-                                QuestStatus::Running => "Aufgabe begonnen",
-                                QuestStatus::Success | QuestStatus::Won => "Aufgabe erfüllt",
-                                QuestStatus::Failed => "Aufgabe gescheitert",
-                                _ => continue,
-                            };
-                            d.spawn(txt(font, format!("- {t} -"), 17.0, GOLD_DIM));
+            }
+            separator(d);
+            let mut any = false;
+            for e in st.log.iter().filter(|e| &e.quest == name) {
+                match &e.kind {
+                    LogKind::Status(s) => {
+                        let t = match s {
+                            QuestStatus::Running => "Aufgabe begonnen",
+                            QuestStatus::Success | QuestStatus::Won => "Aufgabe erfüllt",
+                            QuestStatus::Failed => "Aufgabe gescheitert",
+                            _ => continue,
+                        };
+                        d.spawn(txt(font, format!("- {t} -"), 17.0, GOLD_DIM));
+                        any = true;
+                    }
+                    LogKind::Text(key) => {
+                        if let Some(t) = db.text(key) {
+                            d.spawn(txt(font, t, 19.0, PARCH));
                             any = true;
                         }
-                        LogKind::Text(key) => {
-                            if let Some(t) = db.text(key) {
-                                d.spawn(txt(font, t, 19.0, PARCH));
-                                any = true;
-                            }
-                        }
-                        LogKind::Dialog(info) => {
-                            for l in dialog_excerpt(db, info) {
-                                d.spawn(txt(font, l, 18.0, DIM));
-                                any = true;
-                            }
+                    }
+                    LogKind::Dialog(info) => {
+                        for l in dialog_excerpt(db, info) {
+                            d.spawn(txt(font, l, 18.0, DIM));
+                            any = true;
                         }
                     }
                 }
-                if !any {
-                    d.spawn(txt(font, "Noch keine Einträge.", 18.0, DIM));
-                }
-            });
-        },
-    );
+            }
+            if !any {
+                d.spawn(txt(font, "Noch keine Einträge.", 18.0, DIM));
+            }
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------- inventory
@@ -525,7 +543,7 @@ const INV_TABS: [(&str, Option<i32>); 9] = [
     ("Sonstiges", Some(6)),
     ("Schriften", Some(7)),
     ("Zauber", Some(9)),
-    ("Fertigk.", Some(10)),
+    ("Talente", Some(10)),
 ];
 
 fn category_name(c: i32) -> &'static str {
@@ -563,7 +581,13 @@ fn item_list(
     v
 }
 
-fn item_rows(p: &mut P, cx: &Cx, list: &[(String, String, u32)], sel: Option<&str>, mk: impl Fn(&str) -> Action) {
+fn item_rows(
+    p: &mut P,
+    cx: &Cx,
+    list: &[(String, String, u32)],
+    sel: Option<&str>,
+    mk: impl Fn(&str) -> Action,
+) {
     let font = cx.font;
     if list.is_empty() {
         p.spawn(txt(font, "Nichts vorhanden.", 19.0, DIM));
@@ -624,13 +648,12 @@ fn item_details(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
             kv(k, cx, &attrib_name(db, tag), format!("{v:+}"), GREEN);
         }
         for (tag, need) in &info.requirements {
-            let have = cx
-                .s
-                .state
-                .attributes
-                .get(&tag.to_ascii_lowercase())
-                .copied()
-                .unwrap_or(0);
+            let have =
+                cx.s.state
+                    .attributes
+                    .get(&tag.to_ascii_lowercase())
+                    .copied()
+                    .unwrap_or(0);
             kv(
                 k,
                 cx,
@@ -680,62 +703,68 @@ fn inventory(commands: &mut Commands, cx: &Cx) {
         .filter(|s| list.iter().any(|(_, k, _)| k == s))
         .or_else(|| list.first().map(|(_, k, _)| k.clone()));
     let font = cx.font;
-    window(commands, cx, &cx.t("HUD_SessionKey_InventoryMode", "Inventar"), tabs, |p| {
-        p.spawn(Node {
-            width: px(470),
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            flex_shrink: 0.0,
-            ..default()
-        })
-        .with_children(|l| {
-            l.spawn(Node {
-                justify_content: JustifyContent::SpaceBetween,
+    window(
+        commands,
+        cx,
+        &cx.t("HUD_SessionKey_InventoryMode", "Inventar"),
+        tabs,
+        |p| {
+            p.spawn(Node {
+                width: px(470),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(6),
+                flex_shrink: 0.0,
                 ..default()
             })
-            .with_children(|g| {
-                g.spawn(txt(font, cx.t("HUD_GoldAmount", "Gold"), 21.0, GOLD));
-                g.spawn(txt(font, st.gold().to_string(), 21.0, GOLD));
+            .with_children(|l| {
+                l.spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    ..default()
+                })
+                .with_children(|g| {
+                    g.spawn(txt(font, cx.t("HUD_GoldAmount", "Gold"), 21.0, GOLD));
+                    g.spawn(txt(font, st.gold().to_string(), 21.0, GOLD));
+                });
+                l.spawn((
+                    Node {
+                        flex_grow: 1.0,
+                        min_height: px(0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(3),
+                        overflow: Overflow::scroll_y(),
+                        ..default()
+                    },
+                    scroll_area("items", cx.scroll_y("items")),
+                ))
+                .with_children(|rows| {
+                    item_rows(rows, cx, &list, sel.as_deref(), |k| {
+                        Action::SelectItem(k.to_string())
+                    });
+                });
             });
-            l.spawn((
+            p.spawn((
                 Node {
                     flex_grow: 1.0,
-                    min_height: px(0),
+                    height: percent(100),
                     flex_direction: FlexDirection::Column,
-                    row_gap: px(3),
+                    row_gap: px(8),
+                    padding: UiRect::all(px(8)),
                     overflow: Overflow::scroll_y(),
                     ..default()
                 },
-                scroll_area("items", cx.scroll_y("items")),
+                scroll_area("item_detail", cx.scroll_y("item_detail")),
             ))
-            .with_children(|rows| {
-                item_rows(rows, cx, &list, sel.as_deref(), |k| {
-                    Action::SelectItem(k.to_string())
-                });
+            .with_children(|d| {
+                if let Some(k) = &sel {
+                    let info = cx.s.items.get(k);
+                    let equip = info.is_some_and(|i| matches!(i.category, 1 | 2));
+                    let label = if equip { "Anlegen" } else { "Benutzen" };
+                    item_details(d, cx, k, vec![(label.into(), Action::UseItem(k.clone()))]);
+                }
             });
-        });
-        p.spawn((
-            Node {
-                flex_grow: 1.0,
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8),
-                padding: UiRect::all(px(8)),
-                overflow: Overflow::scroll_y(),
-                ..default()
-            },
-            scroll_area("item_detail", cx.scroll_y("item_detail")),
-        ))
-        .with_children(|d| {
-            if let Some(k) = &sel {
-                let info = cx.s.items.get(k);
-                let equip = info.is_some_and(|i| matches!(i.category, 1 | 2));
-                let label = if equip { "Anlegen" } else { "Benutzen" };
-                item_details(d, cx, k, vec![(label.into(), Action::UseItem(k.clone()))]);
-            }
-        });
-    });
+        },
+    );
 }
 
 // ---------------------------------------------------------------------------- character
@@ -788,7 +817,13 @@ fn character(commands: &mut Commands, cx: &Cx) {
                 (attrib_name(db, "SP"), v.sp, v.sp_max, GREEN),
             ] {
                 kv(l, cx, &name, format!("{:.0} / {:.0}", cur, max), PARCH);
-                bar(l, percent(100), 8.0, if max > 0.0 { cur / max } else { 0.0 }, c);
+                bar(
+                    l,
+                    percent(100),
+                    8.0,
+                    if max > 0.0 { cur / max } else { 0.0 },
+                    c,
+                );
             }
             l.spawn(Node {
                 height: px(8),
@@ -796,7 +831,11 @@ fn character(commands: &mut Commands, cx: &Cx) {
             });
             separator(l);
             for tag in ATTRS {
-                let v = st.attributes.get(&tag.to_ascii_lowercase()).copied().unwrap_or(0);
+                let v = st
+                    .attributes
+                    .get(&tag.to_ascii_lowercase())
+                    .copied()
+                    .unwrap_or(0);
                 kv(l, cx, &attrib_name(db, tag), v.to_string(), PARCH);
             }
         });
@@ -882,12 +921,7 @@ fn trade(commands: &mut Commands, cx: &Cx) {
         Vec::new(),
         |p| {
             for (title, list, buy, scroll) in [
-                (
-                    cx.t("HUD_Trade", "Tauschen"),
-                    &mine,
-                    false,
-                    "trade_mine",
-                ),
+                (cx.t("HUD_Trade", "Tauschen"), &mine, false, "trade_mine"),
                 (npc.replace('_', " "), &theirs, true, "trade_theirs"),
             ] {
                 p.spawn(Node {
@@ -904,7 +938,16 @@ fn trade(commands: &mut Commands, cx: &Cx) {
                         ..default()
                     })
                     .with_children(|h| {
-                        h.spawn(txt(font, if buy { title.clone() } else { "Dein Inventar".into() }, 23.0, GOLD));
+                        h.spawn(txt(
+                            font,
+                            if buy {
+                                title.clone()
+                            } else {
+                                "Dein Inventar".into()
+                            },
+                            23.0,
+                            GOLD,
+                        ));
                         if !buy {
                             h.spawn(txt(font, format!("{} Gold", st.gold()), 21.0, GOLD));
                         }

@@ -12,6 +12,9 @@
 //! This module only extracts the *placement index* from already-parsed world
 //! documents and bakes a cell mesh into world space. Mesh decoding is
 //! [`crate::xcmsh`], entity decoding is [`crate::world_node`].
+pub mod spt;
+pub mod vegetation;
+
 use crate::{world_node::WorldDocument, xcmsh::Xcmsh};
 use anyhow::{Result, ensure};
 use serde::Serialize;

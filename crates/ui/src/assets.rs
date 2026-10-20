@@ -20,7 +20,10 @@ pub fn dds_image(bytes: &[u8]) -> Result<Image> {
     ensure!(bytes.get(..4) == Some(b"DDS "), "not a DDS file");
     let word = |o: usize| -> Result<u32> {
         Ok(u32::from_le_bytes(
-            bytes.get(o..o + 4).ok_or_else(|| anyhow!("short DDS"))?.try_into()?,
+            bytes
+                .get(o..o + 4)
+                .ok_or_else(|| anyhow!("short DDS"))?
+                .try_into()?,
         ))
     };
     let (h, w) = (word(12)?, word(16)?);
@@ -30,9 +33,16 @@ pub fn dds_image(bytes: &[u8]) -> Result<Image> {
         Some(b"DXT5") => TextureFormat::Bc3RgbaUnormSrgb,
         other => bail!("unsupported DDS format {other:?}"),
     };
-    let block = if format == TextureFormat::Bc1RgbaUnormSrgb { 8 } else { 16 };
+    let block = if format == TextureFormat::Bc1RgbaUnormSrgb {
+        8
+    } else {
+        16
+    };
     let size = (w.div_ceil(4) * h.div_ceil(4)) as usize * block;
-    let data = bytes.get(128..128 + size).ok_or_else(|| anyhow!("short DDS payload"))?.to_vec();
+    let data = bytes
+        .get(128..128 + size)
+        .ok_or_else(|| anyhow!("short DDS payload"))?
+        .to_vec();
     Ok(Image::new(
         Extent3d {
             width: w,

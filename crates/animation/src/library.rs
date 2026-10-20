@@ -16,7 +16,7 @@ use bevy::{
     camera::primitives::Aabb,
     ecs::resource::Resource,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
-    math::Vec3,
+    math::{Affine3A, Quat, Vec3},
     mesh::{
         Indices, Mesh, PrimitiveTopology, VertexAttributeValues,
         skinning::SkinnedMeshInverseBindposes,
@@ -81,6 +81,9 @@ pub struct Composition {
     /// For each part: compact joint -> index into `joint_nodes`.
     pub part_joints: Vec<Vec<u16>>,
     pub plan: Arc<[crate::rig::EvalStep]>,
+    /// Rotation about Y that turns the authored animation facing onto the entity's forward
+    /// axis ([`crate::locomotion::FORWARD`]).
+    pub facing_fix: Quat,
     /// Lower-case node name to joint index, for slots and any other joint.
     pub joint_by_name: HashMap<String, u16>,
 }
@@ -243,13 +246,26 @@ impl ActorLibrary {
         &mut self,
         actor: &Actor,
         index: usize,
+        path: &str,
+        skin: Option<u32>,
         stores: &mut AssetStores,
     ) -> Handle<StandardMaterial> {
         let material = &actor.materials[index];
-        let listed = actor
-            .material_file(index)
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("{}.xshmat", material.name.trim_end_matches('|')));
+        // The string table order of material files does not always follow the material
+        // order (heads), so a file named like the material wins over the positional entry.
+        let by_name = format!("{}.xshmat", material.name.trim_end_matches('|'));
+        let listed = if actor
+            .material_files
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(&by_name))
+        {
+            by_name
+        } else {
+            actor
+                .material_file(index)
+                .map(str::to_string)
+                .unwrap_or(by_name)
+        };
         // The listed file can be a generic exporter name that belongs to another model, so the
         // layer texture's own `_A.xshmat` / `.xshmat` are tried first.
         let mut candidates = Vec::new();
@@ -268,7 +284,58 @@ impl ActorLibrary {
         if stem.is_none() {
             stem = material.diffuse_texture().map(str::to_string);
         }
+        let resolves = stem
+            .as_ref()
+            .is_some_and(|s| self.image_index.contains_key(&format!("{}.ximg", s.to_lowercase())));
+        let hair_like = {
+            let n = material.name.to_lowercase();
+            n.contains("hair") || n.contains("beard") || n.contains("material") || n.contains("lash")
+        };
+        if (!resolves || hair_like) && path.to_lowercase().contains("head") {
+            // Head materials carry exporter leftovers; map them by role.
+            let n = skin.unwrap_or(1).max(1);
+            let name = material.name.to_lowercase();
+            let babe = path.to_lowercase().contains("babe");
+            if name.contains("lash") {
+                return self.flat_material("lashes", Color::srgba(0.0, 0.0, 0.0, 0.0), AlphaMode::Blend, stores);
+            } else if name.contains("eye") {
+                return self.shared_material(Some(format!("G3_Animation_Head_Eyes_01_S{}", (n - 1) % 8 + 1)), None, stores);
+            } else if name.contains("hair") || name.contains("beard") || name.contains("material") {
+                let tones = [(0.16, 0.11, 0.07), (0.30, 0.20, 0.10), (0.08, 0.07, 0.06), (0.42, 0.33, 0.18), (0.24, 0.12, 0.06)];
+                let t = tones[(n as usize) % tones.len()];
+                return self.flat_material(&format!("hair{}", n as usize % tones.len()), Color::srgb(t.0, t.1, t.2), AlphaMode::Opaque, stores);
+            } else if name.contains("face") || name.contains("neck") || name.contains("skin") {
+                let skin_stem = if babe {
+                    format!("G3_Animation_Head_Women_01_S{}", (n - 1) % 2 + 1)
+                } else {
+                    format!("G3_Animation_Head_Main_01_S{}", (n - 1) % 30 + 1)
+                };
+                return self.shared_material(Some(skin_stem), None, stores);
+            }
+        }
         self.shared_material(stem, blend, stores)
+    }
+
+    fn flat_material(
+        &mut self,
+        id: &str,
+        color: Color,
+        alpha_mode: AlphaMode,
+        stores: &mut AssetStores,
+    ) -> Handle<StandardMaterial> {
+        let key = (format!("flat:{id}"), 0, 0);
+        if let Some(h) = self.shared_materials.get(&key) {
+            return h.clone();
+        }
+        let handle = stores.materials.add(StandardMaterial {
+            base_color: color,
+            perceptual_roughness: 0.9,
+            alpha_mode,
+            cull_mode: None,
+            ..Default::default()
+        });
+        self.shared_materials.insert(key, handle.clone());
+        handle
     }
 
     fn shared_material(
@@ -306,10 +373,20 @@ impl ActorLibrary {
     // ---- actors -----------------------------------------------------------------------
 
     /// Loads (or returns the cached) skinned part `name` (a `.xact` actor).
+    ///
+    /// `name` may end in `@S<n>`: skin variant `n` for head parts whose face materials do not
+    /// resolve to a texture (the generic `G3_Hero_Head_HeadNN` heads use the shared skin
+    /// atlas `G3_Animation_Head_Main_01_S<n>`).
     pub fn part(&mut self, name: &str, stores: &mut AssetStores) -> Result<Arc<PartAsset>> {
+        let (name, skin) = match name.rsplit_once("@S") {
+            Some((n, s)) if s.chars().all(|c| c.is_ascii_digit()) && !s.is_empty() => {
+                (n, s.parse::<u32>().ok())
+            }
+            _ => (name, None),
+        };
         let at = self.find_actor(name)?;
         let path = self.animation.entries[at].path.clone();
-        let key = path.to_lowercase();
+        let key = format!("{}#{}", path.to_lowercase(), skin.unwrap_or(0));
         if let Some(p) = self.parts.get(&key) {
             return Ok(p.clone());
         }
@@ -356,7 +433,7 @@ impl ActorLibrary {
                         let h = if sub.material == 0 || sub.material as usize >= actor.materials.len() {
                             self.shared_material(None, None, stores)
                         } else {
-                            self.actor_material(&actor, sub.material as usize, stores)
+                            self.actor_material(&actor, sub.material as usize, &path, skin, stores)
                         };
                         sub_materials.insert(sub.material, h.clone());
                         h
@@ -375,7 +452,10 @@ impl ActorLibrary {
         // Generous bounds: poses (jumps, attacks, falls) leave the bind-pose box.
         let pad = (max - min) * 0.35 + Vec3::splat(20.0);
         let part = Arc::new(PartAsset {
-            name: path.trim_end_matches(".xact").to_string(),
+            name: match skin {
+                Some(n) => format!("{}@S{n}", path.trim_end_matches(".xact")),
+                None => path.trim_end_matches(".xact").to_string(),
+            },
             rig,
             joint_nodes,
             inverse_bindposes,
@@ -444,6 +524,7 @@ impl ActorLibrary {
             .enumerate()
             .map(|(i, &n)| (rig.names[n as usize].to_lowercase(), i as u16))
             .collect();
+        let facing_fix = self.facing_fix(&rig, &plan);
         let composition = Arc::new(Composition {
             key: key.clone(),
             rig,
@@ -451,10 +532,39 @@ impl ActorLibrary {
             joint_nodes: joint_nodes.into(),
             part_joints,
             plan,
+            facing_fix,
             joint_by_name,
         });
         self.compositions.insert(key, composition.clone());
         Ok(composition)
+    }
+
+    /// Facing correction measured on the family's idle clip (identity when it cannot be
+    /// determined).
+    fn facing_fix(&mut self, rig: &Arc<Rig>, plan: &[crate::rig::EvalStep]) -> Quat {
+        let query = crate::names::MotionQuery {
+            pose: Some("Stand"),
+            left: Some("None"),
+            right: Some("None"),
+            pn: Some("P0"),
+            action: Some("Ambient"),
+            phase: Some("Loop"),
+            ..Default::default()
+        };
+        let Some(name) = self.catalog.find(&rig.family, &query).map(str::to_string) else {
+            return Quat::IDENTITY;
+        };
+        let Ok(motion) = self.motion(rig, &name) else {
+            return Quat::IDENTITY;
+        };
+        let mut pose = rig.rest.clone();
+        motion.binding.sample(&motion.clip, &rig.rest, 0.0, &mut pose);
+        let mut model = vec![Affine3A::IDENTITY; rig.names.len()];
+        crate::rig::evaluate(plan, &pose, &mut model);
+        match rig.facing_in_pose(&model) {
+            Some(facing) => Quat::from_rotation_arc(facing, crate::locomotion::FORWARD),
+            None => Quat::IDENTITY,
+        }
     }
 
     // ---- motions ------------------------------------------------------------------------
@@ -544,9 +654,12 @@ impl ActorLibrary {
             if sub.uvs.len() == sub.positions.len() {
                 mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, sub.uvs.clone());
             }
-            let (stem, blend) = self
-                .material_file(&format!("{}.xshmat", sub.material))
-                .unwrap_or((None, None));
+            let file = if sub.material.to_lowercase().ends_with(".xshmat") {
+                sub.material.clone()
+            } else {
+                format!("{}.xshmat", sub.material)
+            };
+            let (stem, blend) = self.material_file(&file).unwrap_or((None, None));
             let material = self.shared_material(stem, blend, stores);
             meshes.push(PartMesh {
                 mesh: stores.meshes.add(mesh),

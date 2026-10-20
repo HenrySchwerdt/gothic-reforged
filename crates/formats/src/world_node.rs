@@ -94,6 +94,12 @@ impl WorldDocument {
         Ok((doc, sets))
     }
 
+    /// Parse and return the byte ranges of every entity's property sets (entity order), so
+    /// callers can decode class tails this module skips.
+    pub fn parse_with_spans(bytes: &[u8]) -> Result<(Self, Vec<Vec<PropertySetSpan>>)> {
+        Self::parse_inner(bytes)
+    }
+
     fn parse_inner(bytes: &[u8]) -> Result<(Self, Vec<Vec<PropertySetSpan>>)> {
         // Observed empty placeholder: raw "GENOMEDL" + u16 version, nothing else
         // (ten bytes, e.g. GUID-named .lrentdat stubs). Represents zero entities.

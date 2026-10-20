@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-bevy = { workspace = true, features = ["std", "async_executor", "bevy_audio", "vorbis"] }
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_audio", "bevy_asset", "bevy_log", "vorbis", "wav"] }
 gothic-formats = { path = "../formats" }
 gothic-gameplay = { path = "../gameplay" }
 anyhow.workspace = true

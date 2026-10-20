@@ -39,8 +39,6 @@ pub struct Rig {
     pub topo: Vec<u16>,
     /// Skeleton family prefix of the motion names (`Hero`, `Orc`, ...).
     pub family: String,
-    /// Model-space horizontal direction the character faces (detected from foot to toe).
-    pub forward: Vec3,
 }
 
 pub fn is_helper(name: &str) -> bool {
@@ -140,7 +138,7 @@ impl Rig {
             .and_then(|(n, _)| n.split('_').next())
             .unwrap_or("")
             .to_string();
-        let mut rig = Rig {
+        Rig {
             name: name.to_string(),
             names,
             parent,
@@ -153,37 +151,27 @@ impl Rig {
             rest,
             topo,
             family,
-            forward: Vec3::Z,
-        };
-        rig.forward = rig.detect_forward();
-        rig
+        }
     }
 
     pub fn node(&self, name: &str) -> Option<u16> {
         self.index.get(&name.to_lowercase()).copied()
     }
 
-    /// Horizontal direction from the left foot joint to its toe joint in the bind pose.
-    fn detect_forward(&self) -> Vec3 {
+    /// Model-space horizontal direction the *animated* skeleton faces, measured from the left
+    /// foot joint to its toe joint in the pose held in `model` (planned nodes only). `None`
+    /// when the rig has no such joints. Motions are authored facing -X in this data set, so
+    /// the animator rotates the result to the entity's forward axis.
+    pub fn facing_in_pose(&self, model: &[Affine3A]) -> Option<Vec3> {
         let find = |suffix: &str| {
             self.names
                 .iter()
                 .position(|n| n.to_lowercase().ends_with(suffix))
         };
-        if let (Some(foot), Some(toe)) = (find("left_foot_foot_1"), find("left_foot_toe_1")) {
-            let d =
-                self.bind_world[toe].w_axis.truncate() - self.bind_world[foot].w_axis.truncate();
-            let h = Vec3::new(d.x, 0.0, d.z);
-            if h.length() > 1e-3 {
-                return h.normalize();
-            }
-        }
-        Vec3::Z
-    }
-
-    /// Character's right-hand direction in model space (Y up, right-handed).
-    pub fn right(&self) -> Vec3 {
-        self.forward.cross(Vec3::Y)
+        let (foot, toe) = (find("left_foot_foot_1")?, find("left_foot_toe_1")?);
+        let d = Vec3::from(model[toe].translation) - Vec3::from(model[foot].translation);
+        let h = Vec3::new(d.x, 0.0, d.z);
+        (h.length() > 1e-3).then(|| h.normalize())
     }
 
     /// Per-slot weights for an upper-body layer: 1 for everything below `Spine_2` (including
