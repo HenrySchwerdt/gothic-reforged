@@ -571,26 +571,14 @@ impl<W: WorldQuery> Sim<W> {
         ammo: &str,
     ) -> Option<HitOutcome> {
         let ammo_def = self.items.get(ammo).cloned()?;
-        let mult = if self.actor(att).equipment.left_use() == crate::item::Use::CrossBow
-            || !self.actor(att).is_player
-        {
-            // crossbows and NPC archers use full power [CA 9.6]
-            if self.actor(att).equipment.left_use() == crate::item::Use::CrossBow {
-                1.0
-            } else {
-                bow_hit_multiplier(held_secs.max(1.95))
-            }
-        } else {
-            bow_hit_multiplier(held_secs)
-        };
-        if !self.actors[att.0 as usize].is_player {
-            // NPC archers re-supply ammunition automatically [CA 9.6]
-        } else {
-            let n = self.actors[att.0 as usize]
-                .inventory
-                .entry(ammo.to_ascii_lowercase())
-                .or_insert(0);
-            *n = n.saturating_sub(1);
+        // Crossbows and NPC archers shoot at full power; the player's bow draw sets the
+        // multiplier [CA 9.6].
+        let full_power = self.actor(att).equipment.left_use() == crate::item::Use::CrossBow
+            || !self.actor(att).is_player;
+        let mult = bow_hit_multiplier(if full_power { 2.0 } else { held_secs });
+        if self.actor(att).is_player {
+            // NPC archers re-supply ammunition automatically [CA 9.6].
+            self.state.take_item(ammo, 1);
         }
         let now = self.now_ms();
         self.actors[att.0 as usize].action = Action::Shoot;
