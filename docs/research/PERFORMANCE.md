@@ -70,3 +70,11 @@ Main-thread gameplay (core tick at 30 Hz, perception, UI, focus, camera) is belo
 
 ### Still GPU/render-bound (look agent / tree agent)
 Remaining ~9 ms is shadow bins: merge static props into fewer meshes or instance them (one bin per mesh per cascade is the unit cost), drop shadows for vegetation beyond ~40 m, consider 2 cascades. UI: `ui::hud::update_hud` assigns bar widths, visibilities and rose rotation every frame (flags layout); compare before writing. `walk.rs` calls `std::env::var_os("GR_NOSKY")` every frame in `sky_follow`.
+
+## Update: merge experiment, shadows, sea
+- Merging statics per tile+material (`GR_MERGE=1`, `merge_statics`) cut entities 9.4k -> 5.9k but was ~4 ms SLOWER
+  (unculled tile-sized meshes in every shadow cascade); disabled by default, kept for later per-cluster merging.
+- Small statics (<3 m radius, `GR_SHMIN`) no longer cast shadows; defaults: 3 cascades, 90 m. Median ~9.5-10.5 ms on a
+  loaded machine (statics+shadows are still ~5 ms; without shadows ~6 ms).
+- Sea: one camera-following 8 km water plane at sea level; sea-level tile water is hidden.
+- Sky: clouds sampled from the original `sky/Wolkentest_01` density texture (loaded through the loader thread).

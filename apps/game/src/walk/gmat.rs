@@ -157,6 +157,9 @@ pub struct SkyParams {
 pub struct SkyMaterial {
     #[uniform(0)]
     pub params: SkyParams,
+    #[texture(1)]
+    #[sampler(2)]
+    pub clouds: Option<Handle<Image>>,
 }
 
 impl Material for SkyMaterial {

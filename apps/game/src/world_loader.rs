@@ -141,11 +141,14 @@ pub struct VegPayload {
 pub enum Request {
     Tile(TileKey),
     Vegetation(TileKey),
+    /// A texture by stem (e.g. sky clouds).
+    Texture(String),
 }
 pub enum Response {
     Ready { records: usize, millis: u128 },
     Tile(Box<TilePayload>),
     Vegetation(Box<VegPayload>),
+    Texture(String, Option<Arc<TexData>>),
     Failed(String),
 }
 
@@ -198,6 +201,12 @@ pub fn spawn_loader(data_dir: std::path::PathBuf, origin: Origin) -> LoaderHandl
                                     })));
                                 }
                             },
+                            Request::Texture(stem) => {
+                                let t = loader.texture(&stem);
+                                if resp_tx.send(Response::Texture(stem, t)).is_err() {
+                                    break;
+                                }
+                            }
                             Request::Vegetation(key) => {
                                 let p = loader.load_vegetation(key);
                                 if resp_tx.send(Response::Vegetation(Box::new(p))).is_err() {

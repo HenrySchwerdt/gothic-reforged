@@ -335,17 +335,20 @@ fn setup(
     sun: Res<SunDir>,
 ) {
     let fog_color = Color::srgb(0.60, 0.74, 0.92);
+    let sky_handle = skies.add(SkyMaterial {
+        clouds: None,
+        params: SkyParams {
+            sun_dir: sun.0.extend(0.0),
+            zenith: Vec4::new(0.10, 0.30, 0.82, 1.0),
+            horizon: Vec4::new(0.52, 0.70, 0.95, 1.0),
+            ground: Vec4::new(0.60, 0.74, 0.92, 1.0),
+            sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
+        },
+    });
+    commands.insert_resource(SkyHandle(sky_handle.clone()));
     commands.spawn((
         Mesh3d(meshes.add(Sphere::new(1.0).mesh().uv(48, 24))),
-        MeshMaterial3d(skies.add(SkyMaterial {
-            params: SkyParams {
-                sun_dir: sun.0.extend(0.0),
-                zenith: Vec4::new(0.10, 0.30, 0.82, 1.0),
-                horizon: Vec4::new(0.52, 0.70, 0.95, 1.0),
-                ground: Vec4::new(0.60, 0.74, 0.92, 1.0),
-                sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
-            },
-        })),
+        MeshMaterial3d(sky_handle),
         Transform::from_scale(Vec3::splat(3500.0)),
         NotShadowCaster,
         SkyDome,
@@ -398,7 +401,17 @@ fn setup(
     ));
 }
 
-fn receive_tiles(loader: Res<LoaderRes>, mut stream: ResMut<Stream>, mut veg: ResMut<VegStream>) {
+#[derive(Resource)]
+struct SkyHandle(Handle<SkyMaterial>);
+
+fn receive_tiles(
+    loader: Res<LoaderRes>,
+    mut stream: ResMut<Stream>,
+    mut veg: ResMut<VegStream>,
+    sky: Res<SkyHandle>,
+    mut skies: ResMut<Assets<SkyMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
     let rx = loader.responses.lock().expect("loader channel");
     while let Ok(msg) = rx.try_recv() {
         match msg {
@@ -407,6 +420,17 @@ fn receive_tiles(loader: Res<LoaderRes>, mut stream: ResMut<Stream>, mut veg: Re
                 stream.records = records;
                 stream.loader_ms = millis;
                 eprintln!("loader ready: {records} placed meshes indexed in {millis} ms");
+                let _ = loader
+                    .requests
+                    .send(Request::Texture("wolkentest_01".into()));
+            }
+            Response::Texture(_, tex) => {
+                if let Some(img) = tex.and_then(|t| texture_image(&t, false))
+                    && let Some(mut mat) = skies.get_mut(&sky.0)
+                {
+                    mat.clouds = Some(images.add(img));
+                    mat.params.ground.w = 1.0;
+                }
             }
             Response::Failed(e) => eprintln!("loader: {e}"),
             Response::Vegetation(payload) => {
@@ -795,13 +819,20 @@ fn spawn_part(
             &mut gpu.images,
             gpu.sun.0,
         );
-        gpu.caches.sea_y.get_or_insert(transform.translation.y);
+        let sea = *gpu.caches.sea_y.get_or_insert(transform.translation.y);
+        // Sea-level tile water is replaced by the single camera-following ocean plane.
+        let visibility = if (transform.translation.y - sea).abs() < 0.3 {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
         return commands
             .spawn((
                 Mesh3d(mesh),
                 MeshMaterial3d(material),
                 transform,
                 NotShadowCaster,
+                visibility,
             ))
             .id();
     }
@@ -866,7 +897,7 @@ fn spawn_part(
                 );
             }
         }
-        if radius_m < env_f32("GR_SHMIN", 1.5) {
+        if radius_m < env_f32("GR_SHMIN", 3.0) {
             e.insert(NotShadowCaster);
         }
         let end = (radius_m * 60.0).clamp(40.0, 400.0);

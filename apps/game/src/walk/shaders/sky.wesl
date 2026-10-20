@@ -15,6 +15,8 @@ struct SkyParams {
     sun_color: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> sky: SkyParams;
+@group(3) @binding(1) var clouds: texture_2d<f32>;
+@group(3) @binding(2) var clouds_s: sampler;
 
 fn hash21(p: vec2<f32>) -> f32 {
     var q = fract(p * vec2<f32>(123.34, 456.21));
@@ -61,11 +63,22 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     if h > 0.015 {
         let plane = dir.xz / (h + 0.18);
         let tt = globals.time * 0.004;
-        let n = fbm(plane * 0.9 + vec2<f32>(tt, tt * 0.4));
-        let cover = smoothstep(0.50, 0.78, n);
-        let shade = mix(vec3<f32>(0.78, 0.82, 0.9), vec3<f32>(1.0, 0.97, 0.92), smoothstep(0.55, 0.95, fbm(plane * 1.7 + 3.1)));
-        let lit = shade * (0.85 + 0.35 * pow(sun_amount, 3.0));
-        col = mix(col, lit, cover * smoothstep(0.015, 0.25, h) * 0.85);
+        var d = 0.0;
+        var tone = 0.0;
+        if sky.ground.w > 0.5 {
+            let lod = clamp((1.0 - h) * 4.0, 0.0, 5.0);
+            let c0 = textureSampleLevel(clouds, clouds_s, plane * 0.16 + vec2<f32>(tt, tt * 0.4), lod).r;
+            let c1 = textureSampleLevel(clouds, clouds_s, plane * 0.37 + vec2<f32>(0.37 - tt, 0.11), lod + 1.0).r;
+            d = c0 * 0.7 + c1 * 0.5;
+            tone = c0;
+        } else {
+            d = fbm(plane * 0.9 + vec2<f32>(tt, tt * 0.4)) * 1.4;
+            tone = fbm(plane * 1.7 + 3.1);
+        }
+        let cover = smoothstep(0.62, 0.95, d);
+        let shade = mix(vec3<f32>(0.62, 0.68, 0.80), vec3<f32>(1.0, 0.98, 0.94), smoothstep(0.45, 0.9, tone));
+        let lit = shade * (0.9 + 0.3 * pow(sun_amount, 3.0));
+        col = mix(col, lit, cover * smoothstep(0.015, 0.2, h));
     }
     // Below the horizon blend into the ground/fog colour.
     col = mix(col, sky.ground.rgb, smoothstep(0.0, -0.12, h));
