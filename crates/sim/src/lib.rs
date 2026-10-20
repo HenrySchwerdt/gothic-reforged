@@ -17,6 +17,8 @@
 //! * Stubbed: NPC spell casting AI (the `cast` API exists), `NotifyEnclave` modes, revolution
 //!   attitude, bribe price, sneaking reactions, zone reactions, burn / poison damage rates,
 //!   routine-name resolution (the [`routine::RoutineResolver`] hook), arena.
+pub use gothic_script as script;
+
 pub mod actor;
 pub mod attitude;
 pub mod brain;
@@ -30,6 +32,7 @@ pub mod perception;
 pub mod rng;
 pub mod routine;
 pub mod script_host;
+pub mod script_player;
 pub mod sim;
 pub mod tactics;
 pub mod types;

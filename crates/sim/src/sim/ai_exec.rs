@@ -291,6 +291,12 @@ impl<W: WorldQuery> Sim<W> {
                     self.actors[i].drawn = false;
                 }
             }
+            AiCommand::SayLine { key } => {
+                self.push(EventKind::Voice {
+                    actor: id,
+                    key: key.to_string(),
+                });
+            }
             AiCommand::SaySvm { family, .. } => {
                 let stage = match family {
                     "WeaponDown" | "StopMagic" | "LookingForTroubleAgain" => Some(0),

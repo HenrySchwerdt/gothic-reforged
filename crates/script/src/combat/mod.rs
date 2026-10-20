@@ -18,6 +18,7 @@ pub fn definition(state: State) -> Option<Def> {
     attack::definition(state)
         .or_else(|| react::definition(state))
         .or_else(|| misc::definition(state))
+        .or_else(|| crate::player::definition(state))
 }
 
 /// Does this task belong to the fight and reaction machinery of this module?

@@ -231,6 +231,8 @@ pub struct TestWorld {
     pub hit_blocked: HashSet<EntityId>,
     /// There is no room to evade for these NPCs.
     pub evade_blocked: HashSet<EntityId>,
+    /// State of the player-side host.
+    pub pl: crate::testhost_player::PlayerSide,
     /// `LastDistToTarget` per NPC.
     pub last_dist: HashMap<EntityId, f32>,
     /// `GetLastHitTimestamp` per NPC.
@@ -246,6 +248,30 @@ pub struct TestWorld {
 impl Default for TestWorld {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl TestWorld {
+    pub(crate) fn items_mut(&mut self, e: EntityId) -> Option<&mut Vec<String>> {
+        self.npcs.get_mut(&e).map(|n| &mut n.items)
+    }
+    pub(crate) fn items_of(&self, e: EntityId) -> Vec<String> {
+        self.npcs.get(&e).map(|n| n.items.clone()).unwrap_or_default()
+    }
+    pub(crate) fn is_npc(&self, e: EntityId) -> bool {
+        self.npcs.contains_key(&e)
+    }
+    pub(crate) fn is_item(&self, e: EntityId) -> bool {
+        self.items_by_id.contains_key(&e)
+    }
+    pub(crate) fn is_point(&self, e: EntityId) -> bool {
+        self.points.contains_key(&e)
+    }
+    pub(crate) fn item_name(&self, e: EntityId) -> String {
+        self.items_by_id.get(&e).map(|i| i.name.clone()).unwrap_or_default()
+    }
+    pub(crate) fn remove_item_entity(&mut self, e: EntityId) {
+        self.items_by_id.remove(&e);
     }
 }
 
@@ -273,6 +299,7 @@ impl TestWorld {
             smalltalk_partner: EntityId::NONE,
             hit_blocked: HashSet::new(),
             evade_blocked: HashSet::new(),
+            pl: Default::default(),
             last_dist: HashMap::new(),
             last_hit_ts: HashMap::new(),
             hit_stamped: Vec::new(),

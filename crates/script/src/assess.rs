@@ -8,7 +8,7 @@
 
 use crate::attitude::get_attitude;
 use crate::enums::{AiMode, AttackReason, Attitude, EnclaveStatus, NpcType, SecurityLevel};
-use crate::host::{AiCommand, EntityId, ScriptHost};
+use crate::host::{EntityId, ScriptHost};
 use crate::perception::{
     NOTICE_RANGE, THEFT_RANGE, assess_player_sneaking, assess_player_weapon, assess_target,
     can_receive_perception_from, can_see, is_bothered_by_player_theft_of,
@@ -309,14 +309,7 @@ pub fn assess_defeat(
         return false;
     }
     if is_humanoid(host, witness) && get_attitude(host, witness, loser) == Attitude::Friendly {
-        host.queue_ai(
-            witness,
-            AiCommand::SaySvm {
-                family: "DefeatComment",
-                index: 0,
-            },
-        );
-        return true;
+        return crate::speech::start_say_defeat_comment(host, witness, loser);
     }
     false
 }

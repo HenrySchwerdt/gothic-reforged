@@ -136,6 +136,13 @@ pub enum EventKind {
     TradeOpened {
         npc: ActorId,
     },
+    /// A character says a stock voice line (`SVM_<voice>_<key>`).
+    Voice {
+        actor: ActorId,
+        key: String,
+    },
+    /// Something the player did or was told (windows, doors, locks, crafting, sleep).
+    Player(gothic_script::player::api::PlayerEvent),
     /// A forwarded effect the simulation does not act on (yet).
     Unhandled {
         command: String,
@@ -266,7 +273,7 @@ impl<W: WorldQuery> Sim<W> {
         self.tick * u64::from(self.cfg.tick_ms)
     }
 
-    fn push(&mut self, kind: EventKind) {
+    pub(crate) fn push(&mut self, kind: EventKind) {
         let t_ms = self.now_ms();
         self.events.push(Event { t_ms, kind });
     }
@@ -390,6 +397,7 @@ impl<W: WorldQuery> Sim<W> {
         for i in 0..self.actors.len() {
             self.think(i, now);
         }
+        self.drive_player();
     }
 
     pub fn run_ticks(&mut self, n: u64) {

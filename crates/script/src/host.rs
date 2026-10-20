@@ -13,6 +13,7 @@ use crate::enums::{
     GuardStatus, LastFight, NpcClass, NpcType, PartyMemberType, PlayerCrime, SecurityLevel, Slot,
     Species, SpellDeity, UseType,
 };
+use crate::player::api::PlayerApi;
 use crate::routine::state::{Callback, State};
 use crate::routine::time::RoutineTime;
 
@@ -171,6 +172,12 @@ pub enum AiCommand {
         /// Sample index.
         index: i32,
     },
+    /// `_AI_SaySVM` with a complete sample id (`Confirm_01`, `NoFriendOfORC`): the host plays
+    /// `SVM_<voice>_<key>` for the speaker.
+    SayLine {
+        /// Sample id after the voice prefix.
+        key: &'static str,
+    },
     /// `_AI_UseItem`.
     UseItem(&'static str),
     /// `_AI_Cast`: cast the spell on the hand slot.
@@ -253,6 +260,8 @@ pub enum GotoKind {
 
 /// `gEDirection` values `Entity::CanEvade` takes.
 pub mod dir {
+    /// Evade forward (`ZS_EvadeForward`) [I]: the value next to `BACK`.
+    pub const FORWARD: u32 = 1;
     /// Straight back.
     pub const BACK: u32 = 2;
     /// Sidestep probe used before turning right.
@@ -780,10 +789,11 @@ pub trait CombatApi {
 
 /// Everything a ported script function can call.
 pub trait ScriptHost:
-    ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi
+    ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi + PlayerApi
 {
 }
-impl<T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi> ScriptHost
-    for T
+impl<
+    T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi + PlayerApi,
+> ScriptHost for T
 {
 }

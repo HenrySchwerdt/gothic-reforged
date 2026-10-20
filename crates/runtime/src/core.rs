@@ -9,6 +9,7 @@ use gothic_gameplay::script::{ExecResult, Output};
 use gothic_gameplay::{Assumptions, Engine, GameDatabase, GameState};
 use gothic_sim::data::NpcRecord;
 use gothic_sim::item::ItemDb;
+use gothic_sim::script::host::EntityId;
 use gothic_sim::sim::{EventKind, Sim};
 use gothic_sim::types::{Action, ActorId, AiMode};
 use gothic_sim::world::{Pos, WorldQuery};
@@ -49,6 +50,64 @@ pub enum Command {
     },
     /// Draw or holster the hero's weapon.
     SetDrawn(bool),
+    // ---- player interaction (ported PS_* states, see `gothic_script::player`) ----------
+    /// The confirm key on the focused entity (`Event::Confirmed` reports what it did).
+    Confirm {
+        /// Raw script entity id: actor `n` is `n + 1`, objects and items come from the
+        /// simulation's script tables.
+        focus: u32,
+    },
+    /// Walk into `PS_Interact` for an interact object (chest, door, work station, bed, ...).
+    UseInteractObject {
+        /// Raw script entity id of the object.
+        object: u32,
+    },
+    /// Leave a seat, a bed or a work station.
+    EndInteraction,
+    /// Pick a loose item up (`PS_Normal_Take`).
+    PickUp {
+        /// Raw script entity id of the item.
+        item: u32,
+    },
+    /// Open a lock with key or lockpick (`_AI_Unlock`); `success` is the UI mini-game result,
+    /// `None` lets the script roll.
+    Lockpick {
+        /// Raw script entity id of the lock owner.
+        object: u32,
+        /// Mini-game result.
+        success: Option<bool>,
+    },
+    /// Make a recipe at a work station (`OnPlayerSynthRecipe`).
+    Craft {
+        /// Recipe id.
+        recipe: i32,
+    },
+    /// Use an inventory item (`OnPlayerUseStack`).
+    UseItem {
+        /// Item template.
+        template: String,
+    },
+    /// Take everything from a body.
+    QuickLoot {
+        /// Raw script entity id of the body.
+        body: u32,
+    },
+    /// Toggle sneaking.
+    ToggleSneak,
+    /// Jump.
+    Jump,
+    /// Dodge (`ZS_Evade*`).
+    Dodge {
+        /// Direction.
+        direction: gothic_sim::script::player::evade::Direction,
+    },
+    /// A melee move of the `PS_Melee_*` family against an actor.
+    MeleeMove {
+        /// Attack action (`QuickAttack`, `PowerAttack`, ...).
+        action: gothic_sim::script::enums::Action,
+        /// Opponent.
+        target: ActorId,
+    },
     Save(std::path::PathBuf),
     Load(std::path::PathBuf),
 }
@@ -99,6 +158,22 @@ pub enum Event {
     Notice(String),
     /// A simulation event (hit, kill, aggro, ...).
     Sim(EventKind),
+    /// A character says a stock voice line: play `SVM_<voice>_<key>`
+    /// (`gothic_audio::PlayVoice::svm(voice, key)`).
+    Voice {
+        /// The speaker (the hero for the player's own lines).
+        actor: ActorId,
+        /// Sample id after the voice prefix, e.g. `Confirm_01`.
+        key: String,
+    },
+    /// The player acted or was refused: windows to open, doors, locks, crafting, sleep.
+    Player(gothic_sim::script::player::api::PlayerEvent),
+    /// What the confirm key did.
+    Confirmed(gothic_sim::script::player::normal::Confirm),
+    /// Result of a `Craft` command.
+    CraftResult(gothic_sim::script::player::craft::Synth),
+    /// Result of a `UseItem` command.
+    ItemUsed(gothic_sim::script::player::use_item::UseOutcome),
     /// A save game was written or read.
     Saved(std::path::PathBuf),
     Loaded {
@@ -228,6 +303,11 @@ impl Core {
                     quest: quest.clone(),
                     to: *to,
                 }),
+                EventKind::Voice { actor, key } => out.push(Event::Voice {
+                    actor: *actor,
+                    key: key.clone(),
+                }),
+                EventKind::Player(p) => out.push(Event::Player(p.clone())),
                 _ => out.push(Event::Sim(e.kind)),
             }
         }
@@ -260,6 +340,40 @@ impl Core {
             Command::EndDialog => self.end_dialog(out),
             Command::Attack { target } => self.hero_attack(*target),
             Command::SetDrawn(d) => self.sim.actor_mut(self.hero).drawn = *d,
+            Command::Confirm { focus } => {
+                if let Some(c) = self.sim.player_confirm(EntityId(*focus)) {
+                    out.push(Event::Confirmed(c));
+                }
+            }
+            Command::UseInteractObject { object } => {
+                self.sim.player_use_object(EntityId(*object));
+            }
+            Command::EndInteraction => self.sim.player_end_interaction(),
+            Command::PickUp { item } => self.sim.player_pick_up(EntityId(*item)),
+            Command::Lockpick { object, success } => {
+                self.sim.player_lockpick(EntityId(*object), *success);
+            }
+            Command::Craft { recipe } => {
+                if let Some(r) = self.sim.player_craft(*recipe) {
+                    out.push(Event::CraftResult(r));
+                }
+            }
+            Command::UseItem { template } => {
+                if let Some(r) = self.sim.player_use_item(template) {
+                    out.push(Event::ItemUsed(r));
+                }
+            }
+            Command::QuickLoot { body } => {
+                self.sim.player_quick_loot(EntityId(*body));
+            }
+            Command::ToggleSneak => self.sim.player_toggle_sneak(),
+            Command::Jump => self.sim.player_jump(),
+            Command::Dodge { direction } => {
+                self.sim.player_dodge(*direction);
+            }
+            Command::MeleeMove { action, target } => {
+                self.sim.player_melee(*action, *target);
+            }
             Command::Save(p) => match self.save_to(p) {
                 Ok(()) => out.push(Event::Saved(p.clone())),
                 Err(e) => out.push(Event::Failed(format!("save: {e:#}"))),

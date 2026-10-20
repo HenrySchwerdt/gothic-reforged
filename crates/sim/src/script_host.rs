@@ -34,18 +34,18 @@ use crate::sim::Sim;
 use crate::types::{ActorId, AiMode, Alignment, Crime, DamageType};
 use crate::world::{Pos, WorldQuery, ZoneSecurity, in_fov};
 
-const KIND_SHIFT: u32 = 24;
-const KIND_POINT: u32 = 1;
-const KIND_ANCHOR: u32 = 2;
-const KIND_ENCLAVE: u32 = 3;
-const KIND_ITEM: u32 = 4;
-const KIND_ZONE: u32 = 5;
+pub(crate) const KIND_SHIFT: u32 = 24;
+pub(crate) const KIND_POINT: u32 = 1;
+pub(crate) const KIND_ANCHOR: u32 = 2;
+pub(crate) const KIND_ENCLAVE: u32 = 3;
+pub(crate) const KIND_ITEM: u32 = 4;
+pub(crate) const KIND_ZONE: u32 = 5;
 
-fn table_id(kind: u32, index: usize) -> EntityId {
+pub(crate) fn table_id(kind: u32, index: usize) -> EntityId {
     EntityId((kind << KIND_SHIFT) | (index as u32 + 1))
 }
 
-fn table_index(e: EntityId, kind: u32) -> Option<usize> {
+pub(crate) fn table_index(e: EntityId, kind: u32) -> Option<usize> {
     if e.0 >> KIND_SHIFT == kind {
         Some((e.0 & ((1 << KIND_SHIFT) - 1)) as usize - 1)
     } else {
@@ -128,6 +128,8 @@ pub struct NpcScript {
     pub last_attacker: EntityId,
     /// `PSNpc.LastDistToTarget` as the script wrote it (`None`: the live distance).
     pub last_dist: Option<f32>,
+    /// Current target when it is not an actor (interact object, loose item).
+    pub obj_target: EntityId,
 }
 
 impl Default for NpcScript {
@@ -169,15 +171,16 @@ impl Default for NpcScript {
             last_player_ar: se::AttackReason::None,
             last_attacker: EntityId::NONE,
             last_dist: None,
+            obj_target: EntityId::NONE,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-struct PointRec {
-    use_type: se::UseType,
+pub(crate) struct PointRec {
+    pub(crate) use_type: se::UseType,
     anchor: EntityId,
-    user: EntityId,
+    pub(crate) user: EntityId,
     owner: EntityId,
     pos: Pos,
 }
@@ -200,21 +203,21 @@ struct EnclaveExtra {
 }
 
 #[derive(Debug, Clone)]
-struct ItemRec {
-    name: String,
-    dropped: bool,
-    pos: Pos,
+pub(crate) struct ItemRec {
+    pub(crate) name: String,
+    pub(crate) dropped: bool,
+    pub(crate) pos: Pos,
 }
 
 /// All script-only state of a simulation.
 #[derive(Debug, Clone, Default)]
 pub struct ScriptTables {
     npcs: BTreeMap<u32, NpcScript>,
-    points: Vec<PointRec>,
+    pub(crate) points: Vec<PointRec>,
     anchors: Vec<AnchorRec>,
     enclave_names: Vec<String>,
     enclave_extra: BTreeMap<String, EnclaveExtra>,
-    items: Vec<ItemRec>,
+    pub(crate) items: Vec<ItemRec>,
     zones: Vec<(ZoneSecurity, bool)>,
     roaming: BTreeMap<String, Vec<EntityId>>,
     political_crimes: BTreeMap<se::Alignment, i32>,
@@ -232,6 +235,8 @@ pub struct ScriptTables {
     pub dropped: Vec<(ActorId, se::Slot)>,
     /// Number of `StopAIGoto` calls.
     pub stopped_goto: u32,
+    /// Player-side state (interact objects, recipes, speech counters).
+    pub player: crate::script_player::PlayerTables,
 }
 
 impl ScriptTables {
@@ -346,7 +351,7 @@ const fn time_slot(t: RoutineTime) -> usize {
     }
 }
 
-fn actor_of(e: EntityId) -> Option<ActorId> {
+pub(crate) fn actor_of(e: EntityId) -> Option<ActorId> {
     if e.0 == 0 || e.0 >> KIND_SHIFT != 0 {
         None
     } else {
@@ -354,7 +359,7 @@ fn actor_of(e: EntityId) -> Option<ActorId> {
     }
 }
 
-fn entity_of(a: ActorId) -> EntityId {
+pub(crate) fn entity_of(a: ActorId) -> EntityId {
     EntityId(a.0 + 1)
 }
 
@@ -491,11 +496,11 @@ impl<'a, W: WorldQuery> SimHost<'a, W> {
         }
     }
 
-    fn actor(&self, e: EntityId) -> Option<&Actor> {
+    pub(crate) fn actor(&self, e: EntityId) -> Option<&Actor> {
         actor_of(e).and_then(|a| self.sim.actors.get(a.0 as usize))
     }
 
-    fn actor_mut(&mut self, e: EntityId) -> Option<&mut Actor> {
+    pub(crate) fn actor_mut(&mut self, e: EntityId) -> Option<&mut Actor> {
         actor_of(e).and_then(|a| self.sim.actors.get_mut(a.0 as usize))
     }
 
@@ -805,11 +810,19 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
         }
     }
     fn current_target(&self, npc: EntityId) -> EntityId {
+        let obj = self.script(npc).obj_target;
+        if obj.is_some() {
+            return obj;
+        }
         opt_entity(self.actor(npc).and_then(|a| a.target))
     }
     fn set_current_target(&mut self, npc: EntityId, target: EntityId) {
+        let actor_target = actor_of(target);
         if let Some(a) = self.actor_mut(npc) {
-            a.target = actor_of(target);
+            a.target = actor_target;
+        }
+        if let Some(s) = self.script_mut(npc) {
+            s.obj_target = if actor_target.is_none() { target } else { EntityId::NONE };
         }
     }
     fn enclave(&self, npc: EntityId) -> EntityId {
