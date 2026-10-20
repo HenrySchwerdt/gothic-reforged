@@ -49,6 +49,8 @@ struct LoaderRes {
 /// World-units (metres) distances for ground-cover fade and streaming.
 const FOLIAGE_FADE: (f32, f32) = (42.0, 62.0);
 const VEG_RADIUS: i32 = 3;
+/// SpeedTree near/far cross-fade range in metres.
+const TREE_LOD: (f32, f32) = (40.0, 55.0);
 /// Sign applied to the normal-map green channel (D3D convention vs. the mirrored world).
 const NORMAL_Y_SIGN: f32 = 1.0;
 
@@ -59,6 +61,8 @@ struct Caches {
     water: Option<Handle<WaterMaterial>>,
     fallback: Option<Handle<GothicMaterial>>,
     images: HashMap<(u64, bool), Option<Handle<Image>>>,
+    /// Bounding radius (metres, unscaled mesh) per geometry id, for distance culling.
+    radius: HashMap<u64, f32>,
 }
 
 #[derive(Resource, Default)]
@@ -199,31 +203,32 @@ pub fn run(args: &[String]) -> Result<()> {
     };
     let fog_end = radius as f32 * TILE_CM * CM * 0.92;
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Gothic Reforged / Ardea walk".into(),
-            resolution: std::env::var("GR_RES")
-                .ok()
-                .and_then(|s| {
-                    let (w, h) = s.split_once('x')?;
-                    Some(WindowResolution::new(w.parse().ok()?, h.parse().ok()?))
-                })
-                .unwrap_or_else(|| WindowResolution::new(1280, 720)),
-            present_mode: if smoke {
-                PresentMode::AutoNoVsync
-            } else {
-                PresentMode::AutoVsync
-            },
+    app.add_plugins(
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Gothic Reforged / Ardea walk".into(),
+                resolution: std::env::var("GR_RES")
+                    .ok()
+                    .and_then(|s| {
+                        let (w, h) = s.split_once('x')?;
+                        Some(WindowResolution::new(w.parse().ok()?, h.parse().ok()?))
+                    })
+                    .unwrap_or_else(|| WindowResolution::new(1280, 720)),
+                present_mode: if smoke {
+                    PresentMode::AutoNoVsync
+                } else {
+                    PresentMode::AutoVsync
+                },
+                ..default()
+            }),
             ..default()
         }),
-        ..default()
-    }))
+    )
     .add_plugins(GothicMaterialsPlugin);
     if std::env::var_os("GR_PROF").is_some() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
-    app
-    .insert_resource(LoaderRes {
+    app.insert_resource(LoaderRes {
         requests: handle.requests,
         responses: Mutex::new(handle.responses),
     })
@@ -306,6 +311,9 @@ pub fn run(args: &[String]) -> Result<()> {
     if play::requested(args) {
         play::install(&mut app, args)?;
     }
+    app.add_plugins(crate::perf::PerfPlugin {
+        args: args.to_vec(),
+    });
     app.run();
     Ok(())
 }
@@ -366,10 +374,10 @@ fn setup(
             ..default()
         },
         CascadeShadowConfigBuilder {
-            num_cascades: env_f32("GR_CASC", 4.0) as usize,
+            num_cascades: env_f32("GR_CASC", 3.0) as usize,
             minimum_distance: 0.1,
-            maximum_distance: env_f32("GR_SHDIST", 160.0),
-            first_cascade_far_bound: env_f32("GR_SHFIRST", 10.0),
+            maximum_distance: env_f32("GR_SHDIST", 90.0),
+            first_cascade_far_bound: env_f32("GR_SHFIRST", 12.0),
             overlap_proportion: 0.2,
         }
         .build(),
@@ -553,7 +561,7 @@ fn surface_material(
     if let Some(h) = caches.surfaces.get(&cache_key) {
         return h.clone();
     }
-    let foliage = matches!(kind, PartKind::Foliage | PartKind::Tree);
+    let foliage = matches!(kind, PartKind::Foliage | PartKind::Tree | PartKind::TreeFar);
     let mut params = GothicParams::default();
     let mut flags = 0;
     let (l0, l1) = (data.layers.first(), data.layers.get(1));
@@ -563,7 +571,7 @@ fn surface_material(
     if let Some(l) = l0 {
         params.tint_a = Vec4::new(l.tint[0], l.tint[1], l.tint[2], 1.0);
         params.scale_a = Vec4::new(l.scale[0][0], l.scale[0][1], l.scale[1][0], l.scale[1][1]);
-        if l.tex[1].is_some() {
+        if l.tex[1].is_some() && std::env::var_os("GR_NOA1").is_none() {
             a1 = image_handle(&l.tex[1], true, caches, images);
             flags |= F_A1;
         }
@@ -625,7 +633,13 @@ fn surface_material(
     }
     params.misc.w = NORMAL_Y_SIGN;
     params.flags = flags;
-    params.ao_strength = if kind == PartKind::Terrain { 0.55 } else { 0.7 };
+    params.ao_strength = if std::env::var_os("GR_NOAO").is_some() {
+        0.0
+    } else if kind == PartKind::Terrain {
+        0.55
+    } else {
+        0.7
+    };
     params.roughness = if kind == PartKind::Terrain {
         0.95
     } else {
@@ -645,7 +659,9 @@ fn surface_material(
         na,
         nb,
         alpha_mode,
-        two_sided: two_sided || force_two_sided,
+        two_sided: two_sided
+            || force_two_sided
+            || matches!(kind, PartKind::TreeBark | PartKind::TreeFarBark),
     });
     caches.surfaces.insert(cache_key, handle.clone());
     handle
@@ -734,7 +750,7 @@ fn profile_hidden(kind: PartKind) -> bool {
     let name = match kind {
         PartKind::Terrain => "terrain",
         PartKind::Static => "static",
-        PartKind::Tree => "tree",
+        PartKind::Tree | PartKind::TreeBark | PartKind::TreeFar | PartKind::TreeFarBark => "tree",
         PartKind::Foliage => "foliage",
         PartKind::Water => "water",
     };
@@ -782,11 +798,77 @@ fn spawn_part(
         force_two_sided,
     );
     let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform));
+    if part.kind == PartKind::Static && std::env::var_os("GR_NOCULL").is_none() {
+        // Small props vanish well before the fog end; saves per-entity render work.
+        let r = *gpu.caches.radius.entry(part.geom.id).or_insert_with(|| {
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for p in &part.geom.positions {
+                lo = lo.min(Vec3::from(*p));
+                hi = hi.max(Vec3::from(*p));
+            }
+            ((hi - lo).length() * 0.5).max(0.0)
+        });
+        let scale = transform.scale.max_element().abs();
+        let radius_m = r * scale;
+        if std::env::var_os("GR_DUMP").is_some() && radius_m > 3.0 {
+            let t = transform.translation;
+            if (t.x - 40.0).abs() < 30.0 && (t.z - 40.0).abs() < 30.0 {
+                let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+                for u in &part.geom.uvs {
+                    for k in 0..2 {
+                        lo[k] = lo[k].min(u[k]);
+                        hi[k] = hi[k].max(u[k]);
+                    }
+                }
+                let m = part.material.as_ref().map(|m| {
+                    (
+                        m.layer_names.clone(),
+                        m.layers
+                            .iter()
+                            .map(|l| (l.scale, l.tex[0].as_ref().map(|t| (t.width, t.height))))
+                            .collect::<Vec<_>>(),
+                        m.vertex_blend,
+                    )
+                });
+                eprintln!(
+                    "DUMP t={t:?} r={radius_m:.1} verts={} uv {lo:?}..{hi:?} mat={m:?}",
+                    part.geom.positions.len()
+                );
+            }
+        }
+        let end = (radius_m * 60.0).clamp(40.0, 400.0);
+        e.insert(bevy::camera::visibility::VisibilityRange {
+            start_margin: 0.0..0.0,
+            end_margin: end..end,
+            use_aabb: true,
+        });
+    }
     if profile_hidden(part.kind) {
         e.insert(Visibility::Hidden);
     }
-    if matches!(part.kind, PartKind::Foliage | PartKind::Tree) {
+    if matches!(
+        part.kind,
+        PartKind::Foliage | PartKind::Tree | PartKind::TreeFar
+    ) {
         e.insert(NotShadowCaster);
+    }
+    // SpeedTree LOD: full geometry near, whole-tree billboard far, dither cross-fade between.
+    match part.kind {
+        PartKind::Tree | PartKind::TreeBark => {
+            e.insert(bevy::camera::visibility::VisibilityRange {
+                start_margin: 0.0..0.0,
+                end_margin: TREE_LOD.0..TREE_LOD.1,
+                use_aabb: false,
+            });
+        }
+        PartKind::TreeFar | PartKind::TreeFarBark => {
+            e.insert(bevy::camera::visibility::VisibilityRange {
+                start_margin: TREE_LOD.0..TREE_LOD.1,
+                end_margin: 1.0e6..1.0e6,
+                use_aabb: false,
+            });
+        }
+        _ => {}
     }
     e.id()
 }
@@ -1028,10 +1110,16 @@ fn player_motion(
     if !tile_ready {
         return; // never integrate gravity into a void
     }
-    let speed = if sprint { 650.0 } else { 380.0 };
-    let wish = wish.normalize_or_zero() * speed;
+    // Speeds come from the PC_Hero movement template (Run 400 cm/s, Sprint 600 cm/s), with the
+    // slower strafe / backward limits relative to the facing; see PHYSICS_MOVEMENT.md.
+    let gait = if sprint {
+        gothic_physics::Gait::Sprint
+    } else {
+        gothic_physics::Gait::Run
+    };
+    player.ctrl.facing = Some(Vec2::new(forward.x, forward.z));
     let jump = keys.just_pressed(KeyCode::Space);
-    player.ctrl.step(&collision.0, wish, jump, dt);
+    player.ctrl.step_gait(&collision.0, wish, gait, jump, dt);
 }
 
 fn update_camera(
@@ -1145,8 +1233,9 @@ fn smoke_script(
                     .iter()
                     .filter(|d| d.path().as_str().starts_with("render/"))
                     .filter_map(|d| {
-                        d.average()
-                            .map(|a| format!("{}={:.3}", d.path().as_str().replace("render/", ""), a))
+                        d.average().map(|a| {
+                            format!("{}={:.3}", d.path().as_str().replace("render/", ""), a)
+                        })
                     })
                     .collect();
                 lines.sort();

@@ -33,6 +33,9 @@ use std::{
 
 /// Tile edge in centimetres (25 m), in origin-relative, mirrored space.
 pub const TILE_CM: f32 = 2500.0;
+/// Brightness multiplier of the (dark) SpeedTree composite map and bark textures.
+const TREE_LEAF_TINT: f32 = 0.42;
+const TREE_BARK_TINT: f32 = 2.0;
 pub type TileKey = (i32, i32);
 
 pub struct TexData {
@@ -91,8 +94,14 @@ pub enum PartKind {
     Water,
     /// Scattered ground cover: alpha tested, two sided, distance faded, casts no shadow.
     Foliage,
-    /// Stand-in tree billboards.
+    /// SpeedTree leaf cards and frond ribbons (alpha tested, two sided, near LOD).
     Tree,
+    /// SpeedTree bark tubes (opaque, near LOD).
+    TreeBark,
+    /// SpeedTree whole-tree billboard (far LOD, cross-faded with the near parts).
+    TreeFar,
+    /// Far-LOD bark of species without a billboard (reduced real geometry).
+    TreeFarBark,
 }
 
 pub struct Part {
@@ -227,10 +236,19 @@ struct CellInfo {
     sector: (f32, f32),
 }
 
+struct TreeNearVariant {
+    bark: Option<Arc<GeomData>>,
+    cards: Option<Arc<GeomData>>,
+}
+
 struct TreeKind {
-    geom: Arc<GeomData>,
-    material: Arc<MatData>,
-    radius_cm: f32,
+    variants: Vec<TreeNearVariant>,
+    far_bark: Option<Arc<GeomData>>,
+    far: Arc<GeomData>,
+    bark_mat: Arc<MatData>,
+    card_mat: Arc<MatData>,
+    /// Trunk collision cylinder in cm (radius, height), unscaled.
+    trunk: (f32, f32),
 }
 
 struct Loader {
@@ -251,7 +269,6 @@ struct Loader {
     /// Parsed vegetation documents (`CStat` sector -> trees), by document path.
     tree_docs: HashMap<String, Vec<vegetation::TreeEntity>>,
     tree_kinds: HashMap<String, Option<Arc<TreeKind>>>,
-    atlas_sprites: HashMap<String, Arc<Vec<trees::Sprite>>>,
     cstat_docs: Vec<(String, (f32, f32))>,
     next_id: u64,
 }
@@ -348,7 +365,6 @@ impl Loader {
             collision_meshes: HashMap::new(),
             tree_docs: HashMap::new(),
             tree_kinds: HashMap::new(),
-            atlas_sprites: HashMap::new(),
             cstat_docs,
             next_id: 1,
         })
@@ -794,6 +810,13 @@ impl Loader {
             let mut any_solid = false;
             let mut water_only = true;
             for (geom, material) in &mesh.parts {
+                // Distant-LOD proxy submeshes (low-poly world atlas) overlap the real geometry.
+                if material.as_ref().is_some_and(|m| {
+                    m.name.contains("world_lowpoly")
+                        || m.layer_names.iter().any(|n| n.contains("world_lowpoly"))
+                }) {
+                    continue;
+                }
                 let is_water = material.as_ref().is_some_and(|m| m.kind == MatKind::Water);
                 let solid = !is_water
                     && material
@@ -902,17 +925,50 @@ impl Loader {
                         * m
                         * f;
                 stats.trees += 1;
+                if std::env::var_os("GR_TREE_LOG").is_some() {
+                    let (sc, _, ps) = transform.to_scale_rotation_translation();
+                    eprintln!(
+                        "TREE {} scale {:.2} pos {:.0} {:.0} {:.0}",
+                        tree.spt, sc.y, ps.x, ps.y, ps.z
+                    );
+                }
+                let variant = &kind.variants[(trees::hash_str(&format!("{:.0}{:.0}", t.x, t.z))
+                    % kind.variants.len() as u64)
+                    as usize];
+                if let Some(g) = &variant.bark {
+                    parts.push(Part {
+                        geom: g.clone(),
+                        material: Some(kind.bark_mat.clone()),
+                        transform,
+                        kind: PartKind::TreeBark,
+                    });
+                }
+                if let Some(g) = &variant.cards {
+                    parts.push(Part {
+                        geom: g.clone(),
+                        material: Some(kind.card_mat.clone()),
+                        transform,
+                        kind: PartKind::Tree,
+                    });
+                }
+                if let Some(g) = &kind.far_bark {
+                    parts.push(Part {
+                        geom: g.clone(),
+                        material: Some(kind.bark_mat.clone()),
+                        transform,
+                        kind: PartKind::TreeFarBark,
+                    });
+                }
                 parts.push(Part {
-                    geom: kind.geom.clone(),
-                    material: Some(kind.material.clone()),
+                    geom: kind.far.clone(),
+                    material: Some(kind.card_mat.clone()),
                     transform,
-                    kind: PartKind::Tree,
+                    kind: PartKind::TreeFar,
                 });
-                // Trunk collision: an eight-sided prism.
+                // Trunk collision from the .spt cylinder: an eight-sided prism.
                 let (scale, _, pos) = transform.to_scale_rotation_translation();
-                let r = kind.radius_cm * scale.x;
-                let h = (kind.geom.positions.iter().map(|p| p[1]).fold(0.0, f32::max) * scale.y)
-                    .min(500.0);
+                let r = kind.trunk.0 * scale.x;
+                let h = (kind.trunk.1 * scale.y).min(600.0);
                 for i in 0..8 {
                     let a0 = i as f32 * std::f32::consts::TAU / 8.0;
                     let a1 = (i + 1) as f32 * std::f32::consts::TAU / 8.0;
@@ -934,63 +990,74 @@ impl Loader {
         let kind = (|| {
             let slot = self.vfs.resolve_name(&key)?;
             let spt = Spt::parse(&self.vfs.read(slot).ok()?).ok()?;
-            // Which composite atlas this species uses.
-            let atlas_name = spt
-                .textures
-                .iter()
-                .find(|t| t.to_ascii_lowercase().contains("composite"))?
-                .clone();
-            let atlas_stem = stem_of(&atlas_name);
+            let atlas_stem = stem_of(spt.composite.as_ref()?);
             let atlas = self.texture(&atlas_stem)?;
-            let sprites = if let Some(s) = self.atlas_sprites.get(&atlas_stem) {
-                s.clone()
-            } else {
-                let found = trees::find_sprites(&atlas);
-                let s = Arc::new(trees::tree_sprites(&found, atlas.width));
-                self.atlas_sprites.insert(atlas_stem.clone(), s.clone());
-                s
+            let bark_tex = self.texture(&stem_of(&spt.bark));
+            let mut next = 0u64;
+            let species = {
+                let mut ids = Vec::new();
+                // Reserve ids up front: `build` needs a `FnMut` while `self` is borrowed.
+                for _ in 0..(trees::VARIANTS * 2 + 1) {
+                    ids.push(self.id());
+                }
+                let mut it = ids.into_iter();
+                trees::build(&spt, &atlas, &mut || {
+                    next += 1;
+                    it.next().unwrap_or(1_000_000 + next)
+                })?
             };
-            if sprites.is_empty() {
-                return None;
-            }
-            let lower = key.as_str();
-            let conifer = ["fir", "pine", "cypress", "spruce"]
-                .iter()
-                .any(|n| lower.contains(n));
-            // Prefer narrow-crowned silhouettes for conifers, round ones for broadleaf.
-            let mut pool: Vec<trees::Sprite> = sprites
-                .iter()
-                .copied()
-                .filter(|s| (s.top_width < 0.45) == conifer)
+            let mk = |g: GeomData| Arc::new(g);
+            let variants = species
+                .near
+                .into_iter()
+                .map(|(b, c)| TreeNearVariant {
+                    bark: b.map(mk),
+                    cards: c.map(mk),
+                })
                 .collect();
-            if pool.is_empty() {
-                pool = sprites.to_vec();
-            }
-            let sprite = pool[(trees::hash_str(&key) % pool.len() as u64) as usize];
-            // Species size is the SpeedTree "size" parameter (cm); placement scale comes
-            // from the entity matrix.
-            let height = spt.size.clamp(60.0, 2500.0) * 1.6;
-            let geom = Arc::new(trees::crossed_billboards(self.id(), &sprite, height));
             let id = self.id();
-            let material = Arc::new(MatData {
+            let card_mat = Arc::new(MatData {
                 id,
                 name: format!("tree:{key}"),
                 kind: MatKind::Surface,
                 blend_mode: Some(1),
-                mask_reference: Some(120),
+                mask_reference: Some(110),
                 layers: vec![LayerData {
                     tex: [Some(atlas), None],
                     scale: [[1.0; 2]; 2],
-                    tint: [1.0; 3],
+                    tint: [
+                        TREE_LEAF_TINT * 1.25,
+                        TREE_LEAF_TINT * 1.8,
+                        TREE_LEAF_TINT * 0.9,
+                    ],
                 }],
                 vertex_blend: false,
                 normals: [None, None],
                 layer_names: vec![atlas_stem],
             });
+            let id = self.id();
+            let bark_mat = Arc::new(MatData {
+                id,
+                name: format!("treebark:{key}"),
+                kind: MatKind::Surface,
+                blend_mode: None,
+                mask_reference: None,
+                layers: vec![LayerData {
+                    tex: [bark_tex, None],
+                    scale: [[1.0; 2]; 2],
+                    tint: [TREE_BARK_TINT; 3],
+                }],
+                vertex_blend: false,
+                normals: [None, None],
+                layer_names: Vec::new(),
+            });
             Some(Arc::new(TreeKind {
-                geom,
-                material,
-                radius_cm: (height * 0.018).clamp(6.0, 60.0),
+                variants,
+                far_bark: species.far.0.map(Arc::new),
+                far: Arc::new(species.far.1),
+                bark_mat,
+                card_mat,
+                trunk: species.trunk,
             }))
         })();
         self.tree_kinds.insert(key, kind.clone());
