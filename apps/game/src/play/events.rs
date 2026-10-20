@@ -395,20 +395,73 @@ fn mirror_state(
     mut session: ResMut<GameSession>,
     mut vitals: ResMut<PlayerVitals>,
     mut heading: ResMut<PlayerHeading>,
+    mut slots: ResMut<gothic_ui::QuickSlots>,
+    mut focus_health: ResMut<gothic_ui::FocusHealth>,
+    play: Res<super::PlayState>,
     player: Res<Player>,
     mut rev: Local<u64>,
 ) {
     if *rev != core.0.state_rev {
         *rev = core.0.state_rev;
         session.state = core.0.state().clone();
+        slots.0 = default_quick_slots(&session);
+    }
+    // creature in the fight (or in front of the camera): its health shows in the top bar
+    let target = play.combat_focus.map(|(id, _)| id).or(play.focus);
+    let fh = target.and_then(|id| {
+        let a = core.0.sim.actor(id);
+        (id != core.0.hero && a.hp > 0)
+            .then(|| a.hp as f32 / a.hp_max(&core.0.sim.cfg).max(1) as f32)
+    });
+    if focus_health.0 != fh {
+        focus_health.0 = fh;
     }
     let hero = core.0.sim.actor(core.0.hero);
     let cfg = &core.0.sim.cfg;
-    vitals.hp = hero.hp.max(0) as f32;
-    vitals.hp_max = hero.hp_max(cfg) as f32;
-    vitals.sp = hero.stamina as f32;
-    vitals.sp_max = hero.stamina_max(cfg) as f32;
-    vitals.mp = hero.mana as f32;
-    vitals.mp_max = hero.mana_max() as f32;
-    heading.0 = -player.yaw;
+    // Write only on change: a flagged resource re-runs the UI layout every frame.
+    let v = gothic_ui::PlayerVitals {
+        hp: hero.hp.max(0) as f32,
+        hp_max: hero.hp_max(cfg) as f32,
+        sp: hero.stamina as f32,
+        sp_max: hero.stamina_max(cfg) as f32,
+        mp: hero.mana as f32,
+        mp_max: hero.mana_max() as f32,
+    };
+    if vitals.hp != v.hp
+        || vitals.hp_max != v.hp_max
+        || vitals.sp != v.sp
+        || vitals.sp_max != v.sp_max
+        || vitals.mp != v.mp
+        || vitals.mp_max != v.mp_max
+    {
+        *vitals = v;
+    }
+    if heading.0 != -player.yaw {
+        heading.0 = -player.yaw;
+    }
+}
+
+/// Quick bar contents until the core has real slot bindings: weapons, bow, ammo, then
+/// consumables in inventory order (the original fills the bar the same way at game start).
+fn default_quick_slots(s: &GameSession) -> Vec<Option<gothic_ui::QuickSlot>> {
+    let inv = &s.state.inventory;
+    let mut picked: Vec<gothic_ui::QuickSlot> = Vec::new();
+    let mut take = |f: &dyn Fn(&gothic_ui::ItemInfo) -> bool| {
+        if let Some((k, n)) = inv.iter().find(|(k, n)| {
+            **n > 0 && !picked.iter().any(|p| p.item == **k) && s.items.get(k).is_some_and(f)
+        }) {
+            picked.push(gothic_ui::QuickSlot {
+                item: k.clone(),
+                count: *n,
+            });
+        }
+    };
+    take(&|i| i.category == 1 && matches!(i.use_type.as_str(), "1H" | "2H"));
+    take(&|i| i.category == 1 && i.use_type == "Axe");
+    take(&|i| i.category == 1 && i.use_type == "Bow");
+    take(&|i| i.category == 1 && i.use_type == "Arrow");
+    for _ in 0..6 {
+        take(&|i| matches!(i.category, 4 | 6) && !i.mission_item && i.value > 0);
+    }
+    picked.into_iter().map(Some).collect()
 }

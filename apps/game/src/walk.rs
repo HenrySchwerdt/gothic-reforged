@@ -59,6 +59,8 @@ struct Caches {
     meshes: HashMap<u64, Handle<Mesh>>,
     surfaces: HashMap<(u64, u8), Handle<GothicMaterial>>,
     water: Option<Handle<WaterMaterial>>,
+    /// Sea level (metres) taken from the first water surface spawned.
+    sea_y: Option<f32>,
     fallback: Option<Handle<GothicMaterial>>,
     images: HashMap<(u64, bool), Option<Handle<Image>>>,
     /// Bounding radius (metres, unscaled mesh) per geometry id, for distance culling.
@@ -76,6 +78,9 @@ struct VegStream {
 
 #[derive(Component)]
 struct SkyDome;
+
+#[derive(Component)]
+struct Ocean;
 
 #[derive(Resource, Clone, Copy)]
 struct SunDir(Vec3);
@@ -300,6 +305,7 @@ pub fn run(args: &[String]) -> Result<()> {
             spawn_pending,
             spawn_vegetation,
             sky_follow,
+            ocean_follow,
             input_mode,
             player_motion,
             update_camera,
@@ -720,7 +726,14 @@ fn mesh_handle(part: &Part, caches: &mut Caches, meshes: &mut Assets<Mesh>) -> H
     .with_inserted_indices(Indices::U32(g.indices.clone()));
     let handle = meshes.add(mesh);
     // Terrain tiles and merged ground cover are unique; only shared geometry is worth caching.
-    if !matches!(part.kind, PartKind::Terrain | PartKind::Foliage) {
+    if !matches!(
+        part.kind,
+        PartKind::Terrain
+            | PartKind::Foliage
+            | PartKind::MergedSmall
+            | PartKind::MergedMid
+            | PartKind::MergedBig
+    ) {
         caches.meshes.insert(g.id, handle.clone());
     }
     handle
@@ -749,7 +762,9 @@ fn profile_hidden(kind: PartKind) -> bool {
     let h = HIDE.get_or_init(|| std::env::var("GR_HIDE").unwrap_or_default());
     let name = match kind {
         PartKind::Terrain => "terrain",
-        PartKind::Static => "static",
+        PartKind::Static | PartKind::MergedSmall | PartKind::MergedMid | PartKind::MergedBig => {
+            "static"
+        }
         PartKind::Tree | PartKind::TreeBark | PartKind::TreeFar | PartKind::TreeFarBark => "tree",
         PartKind::Foliage => "foliage",
         PartKind::Water => "water",
@@ -780,6 +795,7 @@ fn spawn_part(
             &mut gpu.images,
             gpu.sun.0,
         );
+        gpu.caches.sea_y.get_or_insert(transform.translation.y);
         return commands
             .spawn((
                 Mesh3d(mesh),
@@ -798,6 +814,20 @@ fn spawn_part(
         force_two_sided,
     );
     let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform));
+    let merged_cull = match part.kind {
+        PartKind::MergedSmall => Some(90.0),
+        PartKind::MergedMid => Some(200.0),
+        _ => None,
+    };
+    if let Some(end) = merged_cull
+        && std::env::var_os("GR_NOCULL").is_none()
+    {
+        e.insert(bevy::camera::visibility::VisibilityRange {
+            start_margin: 0.0..0.0,
+            end_margin: end..end,
+            use_aabb: true,
+        });
+    }
     if part.kind == PartKind::Static && std::env::var_os("GR_NOCULL").is_none() {
         // Small props vanish well before the fog end; saves per-entity render work.
         let r = *gpu.caches.radius.entry(part.geom.id).or_insert_with(|| {
@@ -835,6 +865,9 @@ fn spawn_part(
                     part.geom.positions.len()
                 );
             }
+        }
+        if radius_m < env_f32("GR_SHMIN", 1.5) {
+            e.insert(NotShadowCaster);
         }
         let end = (radius_m * 60.0).clamp(40.0, 400.0);
         e.insert(bevy::camera::visibility::VisibilityRange {
@@ -975,6 +1008,32 @@ fn spawn_vegetation(mut commands: Commands, mut veg: ResMut<VegStream>, mut gpu:
         front.1 += 1;
         let entity = spawn_part(&mut commands, part, &mut gpu, true);
         front.2.push(entity);
+    }
+}
+
+/// One huge water plane at sea level that follows the camera, so the sea reaches the horizon
+/// instead of ending at tile borders.
+fn ocean_follow(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    caches: Res<Caches>,
+    camera: Query<&Transform, (With<PlayerCamera>, Without<Ocean>)>,
+    mut ocean: Query<&mut Transform, With<Ocean>>,
+) {
+    let Ok(cam) = camera.single() else { return };
+    if let Ok(mut t) = ocean.single_mut() {
+        t.translation.x = cam.translation.x;
+        t.translation.z = cam.translation.z;
+        return;
+    }
+    if let (Some(handle), Some(y)) = (&caches.water, caches.sea_y) {
+        commands.spawn((
+            Mesh3d(meshes.add(Plane3d::default().mesh().size(8000.0, 8000.0))),
+            MeshMaterial3d(handle.clone()),
+            Transform::from_xyz(cam.translation.x, y - 0.05, cam.translation.z),
+            NotShadowCaster,
+            Ocean,
+        ));
     }
 }
 

@@ -117,6 +117,32 @@ fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_lowercase()
 }
 
+/// Stand-in image key for a missing actor texture (all keys lower case, with `.ximg`).
+fn alternative_texture(key: &str, index: &HashMap<String, usize>) -> Option<String> {
+    let stem = key.strip_suffix(".ximg")?;
+    // `..._01` / `..._02` -> `..._s1` / `..._s2`.
+    if let Some((head, tail)) = stem.rsplit_once('_')
+        && let Some(n) = tail.strip_prefix('0').filter(|n| n.len() == 1)
+    {
+        let c = format!("{head}_s{n}.ximg");
+        if index.contains_key(&c) {
+            return Some(c);
+        }
+    }
+    let by_keyword: &[(&str, &str)] = &[
+        ("helmet", "g3_armor_helm_myrtana_01_diffuse_s1.ximg"),
+        ("helm", "g3_armor_helm_myrtana_01_diffuse_s1.ximg"),
+        ("cloth", "g3_human_slave_cloth_diffuse_s1.ximg"),
+        ("gargoly", "g3_human_slave_body_diffuse_s1.ximg"),
+        ("slave_body", "g3_human_slave_body_diffuse_s1.ximg"),
+        ("smith_body", "g3_human_smith_body_diffuse_s1.ximg"),
+    ];
+    by_keyword
+        .iter()
+        .find(|(k, v)| stem.contains(k) && index.contains_key(*v))
+        .map(|(_, v)| (*v).to_string())
+}
+
 fn first_index(pak: &PakArchive, suffix: Option<&str>) -> HashMap<String, usize> {
     pak.entries
         .iter()
@@ -222,10 +248,26 @@ impl ActorLibrary {
             return cached.clone();
         }
         let handle = (|| {
-            let at = *self.image_index.get(&key)?;
+            let Some(at) = self
+                .image_index
+                .get(&key)
+                .or_else(|| {
+                    // Variants: `_01` -> `_S1`, then keyword stand-ins (helmets, cloth).
+                    let alt = alternative_texture(&key, &self.image_index)?;
+                    eprintln!("animation: texture {key} -> {alt}");
+                    self.image_index.get(&alt)
+                })
+                .copied()
+            else {
+                eprintln!("animation: texture {key} not in the image archive");
+                return None;
+            };
             let bytes = self.image_pak.read_payload(at).ok()?;
             let ximg = Ximg::parse(&bytes).ok()?;
-            let image = texture_image(&ximg)?;
+            let Some(image) = texture_image(&ximg) else {
+                eprintln!("animation: texture {key} has an unsupported format");
+                return None;
+            };
             Some(images.add(image))
         })();
         self.textures.insert(key, handle.clone());
@@ -339,6 +381,12 @@ impl ActorLibrary {
                 };
                 return self.shared_material(Some(skin_stem), None, stores);
             }
+        }
+        if stem.is_none() || !resolves {
+            eprintln!(
+                "animation: material {:?} of {path}: no resolvable texture (stem {:?})",
+                material.name, stem
+            );
         }
         self.shared_material(stem, blend, stores)
     }

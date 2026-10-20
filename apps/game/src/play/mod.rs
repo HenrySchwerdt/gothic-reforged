@@ -14,6 +14,7 @@ mod events;
 mod hero;
 mod hud;
 mod kit;
+mod nav;
 mod npcs;
 mod record;
 mod script;
@@ -238,6 +239,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     hero::register(app);
     npcs::register(app);
+    nav::register(app);
     events::register(app);
     cam::register(app);
     hud::register(app);

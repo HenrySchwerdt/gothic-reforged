@@ -66,6 +66,12 @@ pub struct Animator {
     model: Vec<Affine3A>,
     /// Model-space matrix of each joint (same order as the composition's joints).
     pub joints: Vec<Affine3A>,
+    /// Set whenever `joints` changed; the joint writer clears it. Lets unchanged (distant,
+    /// idle, off-screen) characters skip the per-joint copies.
+    pub joints_dirty: bool,
+    /// Time not yet applied (update-rate LOD), seconds.
+    pub(crate) pending_dt: f32,
+    pub(crate) lod_seeded: bool,
 }
 
 fn smooth(x: f32) -> f32 {
@@ -105,6 +111,9 @@ impl Animator {
             pose,
             model,
             joints,
+            joints_dirty: true,
+            pending_dt: 0.0,
+            lod_seeded: false,
         }
     }
 
@@ -274,6 +283,7 @@ impl Animator {
         for (j, &n) in self.joint_nodes.iter().enumerate() {
             self.joints[j] = self.facing * self.model[n as usize];
         }
+        self.joints_dirty = true;
     }
 
     /// Model-space matrix of a node of the rig (valid for planned nodes only).

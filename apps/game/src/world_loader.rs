@@ -90,6 +90,10 @@ pub struct GeomData {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PartKind {
     Static,
+    /// Per-tile, per-material merged static props by object size (distance-culled at 90 / 200 m).
+    MergedSmall,
+    MergedMid,
+    MergedBig,
     Terrain,
     Water,
     /// Scattered ground cover: alpha tested, two sided, distance faded, casts no shadow.
@@ -865,6 +869,8 @@ impl Loader {
 
         // SpeedTree placements.
         self.add_trees(key, center, &mut parts, &mut collision, &mut stats);
+        let next_id = self.next_id;
+        self.next_id += merge_statics(&mut parts, next_id + 1);
 
         Ok(TilePayload {
             key,
@@ -1265,4 +1271,111 @@ fn vertex_tangent(sub: &gothic_formats::xcmsh::Submesh, k: usize) -> [f32; 4] {
     sub.tangents
         .get(k)
         .map_or([1.0, 0.0, 0.0, -1.0], |t| [-t[0], t[1], t[2], -1.0])
+}
+
+/// Merge opaque / alpha-tested static props of a tile into one mesh per (size class, material),
+/// baking the instance transform into the vertices. Returns the number of ids consumed.
+fn merge_statics(parts: &mut Vec<Part>, first_id: u64) -> u64 {
+    if std::env::var_os("GR_MERGE").is_none() {
+        return 0;
+    }
+    let mut groups: HashMap<(u8, u64), (Arc<MatData>, GeomData)> = HashMap::new();
+    let mut keep = Vec::with_capacity(parts.len());
+    let mut next = first_id;
+    for part in parts.drain(..) {
+        let mergeable = part.kind == PartKind::Static
+            && part.material.as_ref().is_some_and(|m| {
+                m.kind == MatKind::Surface && !matches!(m.blend_mode, Some(2 | 7 | 8))
+            })
+            && !part.geom.positions.is_empty()
+            && part.geom.normals.len() == part.geom.positions.len()
+            && part.geom.uvs.len() == part.geom.positions.len()
+            && part.geom.colors.len() == part.geom.positions.len()
+            && part.geom.tangents.len() == part.geom.positions.len();
+        if !mergeable {
+            keep.push(part);
+            continue;
+        }
+        let xf = part.transform;
+        let g = &part.geom;
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for p in &g.positions {
+            let w = xf.transform_point3(Vec3::from(*p));
+            lo = lo.min(w);
+            hi = hi.max(w);
+        }
+        let radius_m = (hi - lo).length() * 0.5 * 0.01;
+        let class = if radius_m < 2.5 {
+            0u8
+        } else if radius_m < 8.0 {
+            1
+        } else {
+            2
+        };
+        let material = part.material.clone().expect("checked");
+        let slot = groups.entry((class, material.id)).or_insert_with(|| {
+            (
+                material,
+                GeomData {
+                    id: 0,
+                    positions: vec![],
+                    normals: vec![],
+                    uvs: vec![],
+                    indices: vec![],
+                    colors: vec![],
+                    tangents: vec![],
+                },
+            )
+        });
+        let out = &mut slot.1;
+        if out.positions.len() + g.positions.len() > 4_000_000 {
+            keep.push(part);
+            continue;
+        }
+        let normal_m = xf.inverse().transpose();
+        let det_neg = xf.determinant() < 0.0;
+        let base = out.positions.len() as u32;
+        for k in 0..g.positions.len() {
+            out.positions
+                .push(xf.transform_point3(Vec3::from(g.positions[k])).to_array());
+            out.normals.push(
+                normal_m
+                    .transform_vector3(Vec3::from(g.normals[k]))
+                    .normalize_or_zero()
+                    .to_array(),
+            );
+            out.uvs.push(g.uvs[k]);
+            out.colors.push(g.colors[k]);
+            let t = g.tangents[k];
+            let tv = xf
+                .transform_vector3(Vec3::new(t[0], t[1], t[2]))
+                .normalize_or_zero();
+            out.tangents.push([tv.x, tv.y, tv.z, t[3]]);
+        }
+        for tri in g.indices.as_chunks::<3>().0 {
+            if det_neg {
+                out.indices
+                    .extend([tri[0] + base, tri[2] + base, tri[1] + base]);
+            } else {
+                out.indices.extend(tri.iter().map(|i| i + base));
+            }
+        }
+    }
+    let mut consumed = 0;
+    for ((class, _), (material, mut geom)) in groups {
+        geom.id = next + consumed;
+        consumed += 1;
+        keep.push(Part {
+            geom: Arc::new(geom),
+            material: Some(material),
+            transform: Mat4::IDENTITY,
+            kind: match class {
+                0 => PartKind::MergedSmall,
+                1 => PartKind::MergedMid,
+                _ => PartKind::MergedBig,
+            },
+        });
+    }
+    *parts = keep;
+    consumed
 }

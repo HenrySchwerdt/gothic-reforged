@@ -223,8 +223,14 @@ fn spawn_npcs(
             i += 1;
             continue;
         }
-        let from = Vec3::new(p.pos_cm.x, p.pos_cm.y + 120.0, p.pos_cm.z);
-        let Some(ground) = collision.0.ground_below(from, 800.0) else {
+        // Snap to the surface nearest the original height: a small window first, then the
+        // first hit below the original height (never the topmost hit, which can be a roof).
+        let from = Vec3::new(p.pos_cm.x, p.pos_cm.y + 50.0, p.pos_cm.z);
+        let Some(ground) = collision
+            .0
+            .ground_below(from, 100.0)
+            .or_else(|| collision.0.ground_below(from, 800.0))
+        else {
             i += 1;
             continue;
         };
@@ -363,18 +369,36 @@ fn sync_npcs(
         let delta = angle_delta(m.yaw, target);
         let step = (7.0 * dt).min(delta.abs()) * delta.signum();
         m.yaw += step;
-        tf.translation = Vec3::new(p.x, m.ground_y, p.z) * CM;
-        tf.rotation = Quat::from_rotation_y(m.yaw);
-        tf.scale = Vec3::splat(CM);
+        // Write only on change so idle characters keep their transform un-flagged (transform
+        // propagation, the joint writer and the renderer all skip unchanged entities).
+        let translation = Vec3::new(p.x, m.ground_y, p.z) * CM;
+        if tf.translation != translation {
+            tf.translation = translation;
+        }
+        let rotation = Quat::from_rotation_y(m.yaw);
+        if tf.rotation != rotation {
+            tf.rotation = rotation;
+        }
+        if tf.scale != Vec3::splat(CM) {
+            tf.scale = Vec3::splat(CM);
+        }
         if let Some(mut input) = input {
-            input.velocity = m.velocity;
-            input.grounded = true;
-            input.stance = if actor.drawn { cs.0 } else { Stance::Unarmed };
-            input.turn_error = if m.velocity.length() < 30.0 {
+            let stance = if actor.drawn { cs.0 } else { Stance::Unarmed };
+            let turn_error = if m.velocity.length() < 30.0 {
                 delta - step
             } else {
                 0.0
             };
+            if input.velocity != m.velocity
+                || !input.grounded
+                || input.stance != stance
+                || input.turn_error != turn_error
+            {
+                input.velocity = m.velocity;
+                input.grounded = true;
+                input.stance = stance;
+                input.turn_error = turn_error;
+            }
         }
     }
 }

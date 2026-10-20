@@ -1,6 +1,8 @@
 #[cfg(feature = "viewer")]
 mod actor_viewer;
 #[cfg(feature = "viewer")]
+mod perf;
+#[cfg(feature = "viewer")]
 mod viewer;
 #[cfg(feature = "viewer")]
 mod walk;
@@ -20,6 +22,7 @@ fn main() -> anyhow::Result<()> {
     {
         let args: Vec<String> = std::env::args().collect();
         if args.iter().any(|a| a == "--walk" || a == "--play") {
+            perf::early_init(&args);
             return walk::run(&args);
         }
     }

@@ -52,6 +52,7 @@ impl Plugin for AnimationPlugin {
                         runtime::write_joints_system,
                         runtime::weapon_mount_system,
                         runtime::attachment_system,
+                        runtime::clear_dirty_system,
                     )
                         .chain()
                         .after(TransformSystems::Propagate)

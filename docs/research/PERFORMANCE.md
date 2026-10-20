@@ -22,3 +22,51 @@ GPU (RenderDiagnostics): opaque pass 1.9, shadows 0.65, GPU mesh preprocessing ~
 
 ## Next
 Merge static props per tile/material (fewer entities), cull shadows for small casters, impostors for distant statics.
+
+## CPU profile and fixes (2026-10-20, performance agent)
+
+Tools: `--bench <s> [--bench-warmup s] [--bench-name n] [--bench-walk] [--bench-gpu] [--trace]` (JSON to `.local/bench/`, no vsync), F3 overlay (fps, frame ms avg/p95/max, main-thread CPU, wait, GPU when `--bench-gpu`/`GR_PROF`, entities, visible meshes), `--features trace` (Bevy spans with system names, own aggregating layer; `--trace` writes `.local/bench/trace-*.txt`, F4 dumps it). `cargo build --profile profiling` = release without LTO plus line tables. Scenario: `--play`, 2560x1440, Ardea plaza, 66 NPCs, 13.9k entities. Machine shared with compiling agents (load 60-100 %), so compare only runs taken together.
+
+### Finding: the frame is render-thread CPU bound, not main-thread or GPU bound
+Main thread 5-9 ms, GPU 6-10 ms, yet 38 ms/frame. The render world spends its time in the **shadow pass bookkeeping**: with 4 cascades / 160 m every distinct mesh in each cascade is a bin with its own `Queue::write_buffer` (about 2000 per frame) and `create_bind_group` (about 1350 per frame).
+
+Top costs, baseline trace (ms/frame summed over threads, inflated by span overhead):
+
+| # | Span | ms | Note |
+|---|------|----|------|
+| 1 | `write_binned_instance_buffers<Shadow>` | 15.7 | ~2000 write_buffer calls |
+| 2 | `prepare_preprocess_bind_groups` | 15.1 | ~1350 bind groups |
+| 3 | `submit_pending_command_buffers` | 11.5 | follows from shadow views |
+| 4 | `Queue::write_buffer` total | 17.8 | children of 1 |
+| 5 | `Device::create_bind_group` total | 10.0 | children of 2 |
+| 6 | `write_binned_instance_buffers<Opaque3d>` | 3.1 | |
+| 7 | `camera_driver` (render passes) | 3.4 | |
+| 8 | `per_view_shadow_pass` | 1.6 | |
+| 9 | `prepare_clusters_for_gpu_clustering` | 1.2 | |
+| 10 | `animate_system` | 0.9 (spikes 20) | all 67 animators every frame |
+| 11 | `write_binned<AlphaMask3d>` | 0.85 | |
+| 12 | `write_batched_instance_buffers` | 0.84 | |
+| 13 | `check_dir_light_mesh_visibility` | 0.66 (spike 17) | |
+| 14 | `sync_npcs` | 0.59 | rewrote transforms every frame |
+| 15 | `transform::mark_dirty_trees` / propagate | 0.45 | spikes 8-20 ms on tile spawn |
+
+Main-thread gameplay (core tick at 30 Hz, perception, UI, focus, camera) is below 0.3 ms each; there was no O(N^2) hot spot at 66 NPCs.
+
+### Shadow cost by setting (render thread, same machine, avg ms)
+4 cascades / 160 m: 37.5 | 3 / 100 m (new default): 17 | 2 / 60 m: 15 | none: 11.5 (p50 8.3).
+
+### Changes
+* `perf.rs`: shadow preset 3 cascades / 100 m / first bound 6 m, applied unless `GR_CASC`/`GR_SHDIST`/`GR_SHFIRST` is set. Distance-based `NotShadowCaster` LOD for small props was tried and gave no gain (reverted).
+* Animation update-rate LOD (`crates/animation`): full rate under 12 m, 30 Hz to 30 m, 15 Hz to 60 m, 8 Hz beyond, 10 Hz behind the camera; first updates staggered. Joint and attachment writes are skipped for characters whose pose and root transform did not change (`Animator::joints_dirty`).
+* `sync_npcs` and `mirror_state` write only on change (stops transform/UI change flags every frame).
+* Profiles: `[profile.profiling]` added. `[profile.release]` unchanged (thin LTO); measured fat LTO + codegen-units 1 + panic=abort is a further ~35 % off, see below; recommended for shipping builds, not for iteration (30 min build).
+
+### Before / after (avg frame ms, 2560x1440, load 80 %, two rounds)
+| Scenario | Baseline | New, no LTO | New, fat LTO |
+|----------|----------|-------------|--------------|
+| `--play` standing, Ardea | 23-24 (38 on a quieter-GPU run) | 18 | 11.5-12.3 (p99 13.5) |
+| `--play` walking | 19.2 | n/a | 12.4 |
+| main-thread CPU | 5.4-6.1 | 4.3-5.1 | 3.1-3.3 |
+
+### Still GPU/render-bound (look agent / tree agent)
+Remaining ~9 ms is shadow bins: merge static props into fewer meshes or instance them (one bin per mesh per cascade is the unit cost), drop shadows for vegetation beyond ~40 m, consider 2 cascades. UI: `ui::hud::update_hud` assigns bar widths, visibilities and rose rotation every frame (flags layout); compare before writing. `walk.rs` calls `std::env::var_os("GR_NOSKY")` every frame in `sky_follow`.

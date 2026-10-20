@@ -18,13 +18,21 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use bevy::{
-    camera::visibility::{NoFrustumCulling, Visibility},
+    camera::{
+        Camera3d,
+        visibility::{NoFrustumCulling, Visibility},
+    },
     ecs::{
+        change_detection::Ref,
         component::Component,
         entity::Entity,
         hierarchy::ChildOf,
         resource::Resource,
         system::{Commands, Query, Res, ResMut, SystemParam},
+    },
+    ecs::{
+        change_detection::{DetectChanges, DetectChangesMut},
+        query::With,
     },
     math::{Affine3A, Vec3},
     mesh::{
@@ -375,31 +383,81 @@ pub fn locomotion_system(
     stats.locomotion = started.elapsed();
 }
 
-/// Advances every animator (parallel) and evaluates joint matrices.
+/// Update-rate level of detail: seconds between pose evaluations by distance (metres) from the
+/// camera. Close characters run every frame; far ones accumulate time and evaluate at 8-30 Hz;
+/// characters behind the camera are only visible in shadows and run at 10 Hz.
+fn lod_interval(dist: f32, ahead: f32) -> f32 {
+    let by_distance: f32 = if dist < 12.0 {
+        0.0
+    } else if dist < 30.0 {
+        1.0 / 30.0
+    } else if dist < 60.0 {
+        1.0 / 15.0
+    } else {
+        1.0 / 8.0
+    };
+    if dist > 4.0 && ahead < -0.1 {
+        by_distance.max(0.1)
+    } else {
+        by_distance
+    }
+}
+
+/// Advances every animator (parallel) and evaluates joint matrices, at a rate that depends on
+/// the distance to the camera (see [`lod_interval`]).
 pub fn animate_system(
     time: Res<Time>,
     mut stats: ResMut<AnimationStats>,
-    mut query: Query<&mut Animator>,
+    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    mut query: Query<(Entity, &GlobalTransform, &mut Animator)>,
 ) {
     let started = Instant::now();
     let dt = time.delta_secs().min(0.1);
+    let cam = cameras
+        .iter()
+        .next()
+        .map(|g| (g.translation(), Vec3::from(g.forward())));
     query
         .par_iter_mut()
-        .for_each(|mut animator| animator.update(dt));
+        .for_each(|(entity, global, mut animator)| {
+            let interval = cam.map_or(0.0, |(pos, fwd)| {
+                let d = global.translation() - pos;
+                let dist = d.length();
+                lod_interval(dist, d.dot(fwd) / dist.max(1.0e-3))
+            });
+            let a = animator.bypass_change_detection();
+            if !a.lod_seeded {
+                // Spread the first updates of a crowd over different frames.
+                a.lod_seeded = true;
+                let h = entity.index_u32().wrapping_mul(2_654_435_761) >> 8;
+                a.pending_dt = (h % 1000) as f32 / 1000.0 * interval.min(0.1);
+            }
+            a.pending_dt += dt;
+            if a.pending_dt < interval {
+                return;
+            }
+            let step = a.pending_dt.min(0.25);
+            a.pending_dt = 0.0;
+            animator.update(step);
+        });
     stats.animate = started.elapsed();
 }
 
 /// Copies joint matrices into the joint entities (model space times the character's world).
+/// Characters whose pose and placement did not change since the last write are skipped.
 pub fn write_joints_system(
     mut stats: ResMut<AnimationStats>,
     characters: Query<
-        (&Animator, &CharacterJoints, &GlobalTransform),
+        (&Animator, &CharacterJoints, Ref<GlobalTransform>),
         bevy::ecs::query::Without<SkeletonJoint>,
     >,
     mut joints: Query<&mut GlobalTransform, bevy::ecs::query::With<SkeletonJoint>>,
 ) {
     let started = Instant::now();
     for (animator, entities, global) in &characters {
+        if !animator.joints_dirty && !global.is_changed() {
+            continue;
+        }
         let world = global.affine();
         let mut it = joints.iter_many_mut(&entities.0);
         let mut i = 0;
@@ -439,18 +497,30 @@ pub fn weapon_mount_system(
     }
 }
 
-/// Places attachments at their joints.
+/// Places attachments at their joints (skipped for characters that did not change).
 pub fn attachment_system(
-    characters: Query<(&Animator, &GlobalTransform), bevy::ecs::query::Without<Attachment>>,
-    mut attachments: Query<(&Attachment, &ChildOf, &mut GlobalTransform)>,
+    characters: Query<(&Animator, Ref<GlobalTransform>), bevy::ecs::query::Without<Attachment>>,
+    mut attachments: Query<(Ref<Attachment>, &ChildOf, &mut GlobalTransform)>,
 ) {
     for (attachment, parent, mut global) in &mut attachments {
         let Ok((animator, root)) = characters.get(parent.parent()) else {
             continue;
         };
+        if !animator.joints_dirty && !root.is_changed() && !attachment.is_changed() {
+            continue;
+        }
         let Some(joint) = animator.joints.get(attachment.joint as usize) else {
             continue;
         };
         *global = GlobalTransform::from(root.affine() * *joint * attachment.offset);
+    }
+}
+
+/// Last system of the chain: the joints written this frame are no longer dirty.
+pub fn clear_dirty_system(mut animators: Query<&mut Animator>) {
+    for mut a in &mut animators {
+        if a.joints_dirty {
+            a.bypass_change_detection().joints_dirty = false;
+        }
     }
 }
