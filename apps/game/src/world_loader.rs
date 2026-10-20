@@ -85,6 +85,8 @@ pub struct GeomData {
     /// rgb: baked ambient occlusion, a: layer blend weight.
     pub colors: Vec<[f32; 4]>,
     pub tangents: Vec<[f32; 4]>,
+    /// Baked static-light colour per vertex (`xlmp`), packed `[r, b]` (g = sqrt(r*b)); empty = none.
+    pub light: Vec<[f32; 2]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -240,6 +242,9 @@ struct TerrainSub {
 
 struct MeshEntry {
     parts: Vec<(Arc<GeomData>, Option<Arc<MatData>>)>,
+    /// Submesh index of each part (empty submeshes are skipped) and the lightmap name stem.
+    sub_index: Vec<usize>,
+    stem: String,
 }
 
 struct CellInfo {
@@ -651,10 +656,12 @@ impl Loader {
         }
         let mesh = Xcmsh::parse(&bytes).ok()?;
         let mut parts = Vec::new();
-        for sub in &mesh.submeshes {
+        let mut sub_index = Vec::new();
+        for (si, sub) in mesh.submeshes.iter().enumerate() {
             if sub.positions.is_empty() || sub.indices.is_empty() {
                 continue;
             }
+            sub_index.push(si);
             let n = sub.positions.len();
             let positions: Vec<[f32; 3]> =
                 sub.positions.iter().map(|p| [-p[0], p[1], p[2]]).collect();
@@ -676,11 +683,67 @@ impl Loader {
                 indices: sub.indices.clone(),
                 colors: (0..n).map(|k| vertex_color(sub, k)).collect(),
                 tangents: (0..n).map(|k| vertex_tangent(sub, k)).collect(),
+                light: vec![],
             });
             let material = self.material(&sub.material);
             parts.push((geom, material));
         }
-        Some(Arc::new(MeshEntry { parts }))
+        let stem = key.rsplit_once('.').map_or(key, |(s, _)| s).to_string();
+        Some(Arc::new(MeshEntry {
+            parts,
+            sub_index,
+            stem,
+        }))
+    }
+
+    /// Per part: a copy of the geometry carrying the baked static-light colour of this placed
+    /// instance (`Lightmaps.pak`, matched by mesh stem + entity GUID), for vertices that receive
+    /// light. `None` entries (and an empty result) keep the shared geometry.
+    fn instance_light(&mut self, mesh: &MeshEntry, entity_id: &str) -> Vec<Option<Arc<GeomData>>> {
+        if std::env::var_os("GR_NOLM").is_some() || entity_id.len() < 32 {
+            return Vec::new();
+        }
+        let id: Vec<u8> = (0..16)
+            .filter_map(|i| u8::from_str_radix(&entity_id[i * 2..i * 2 + 2], 16).ok())
+            .collect();
+        let Some(name) = gothic_formats::xlmp::lightmap_file_name(&mesh.stem, &id) else {
+            return Vec::new();
+        };
+        let Some(slot) = self.vfs.resolve_name(&name) else {
+            return Vec::new();
+        };
+        let Ok(bytes) = self.vfs.read(slot) else {
+            return Vec::new();
+        };
+        let Ok(lm) = gothic_formats::xlmp::Xlmp::parse_opts(&bytes, false) else {
+            return Vec::new();
+        };
+        let mut out = vec![None; mesh.parts.len()];
+        for (pi, (geom, _)) in mesh.parts.iter().enumerate() {
+            let Some(block) = mesh.sub_index.get(pi).and_then(|&si| lm.blocks.get(si)) else {
+                continue;
+            };
+            if block.light.len() != geom.positions.len() || !block.has_vertex_light() {
+                continue;
+            }
+            let light = (0..block.light.len())
+                .map(|k| {
+                    let [r, _, b] = block.light_rgb(k).unwrap_or_default();
+                    [r, b]
+                })
+                .collect();
+            out[pi] = Some(Arc::new(GeomData {
+                id: self.id(),
+                positions: geom.positions.clone(),
+                normals: geom.normals.clone(),
+                uvs: geom.uvs.clone(),
+                indices: geom.indices.clone(),
+                colors: geom.colors.clone(),
+                tangents: geom.tangents.clone(),
+                light,
+            }));
+        }
+        out
     }
 
     /// The game's own collision mesh for a render resource (`<stem>_COL.xnvmsh`), as mirrored
@@ -764,6 +827,7 @@ impl Loader {
                     uvs: geom.2,
                     colors: geom.3,
                     tangents: geom.4,
+                    light: vec![],
                     indices: geom.5,
                 }),
                 material,
@@ -795,16 +859,16 @@ impl Loader {
 
         // Static scenery: entities whose origin falls in this tile.
         let radius = TILE_CM * 0.75;
-        let hits: Vec<(String, [[f32; 4]; 4])> = self
+        let hits: Vec<(String, [[f32; 4]; 4], String)> = self
             .index
             .query_xz([center.x, 0.0, center.z], radius)
             .into_iter()
             .filter(|r| parse_cell_name(&r.resource).is_none())
-            .map(|r| (r.resource.to_string(), r.world_matrix))
+            .map(|r| (r.resource.to_string(), r.world_matrix, r.entity_id.clone()))
             .collect();
         let f = flip();
         let origin = self.origin;
-        for (resource, matrix) in hits {
+        for (resource, matrix, entity_id) in hits {
             let m = Mat4::from_cols_array_2d(&matrix);
             if !m.is_finite() {
                 continue;
@@ -822,7 +886,9 @@ impl Loader {
             // origin-relative: (ox - tx, ty - oy, tz - oz).
             let mut any_solid = false;
             let mut water_only = true;
-            for (geom, material) in &mesh.parts {
+            let lit = self.instance_light(&mesh, &entity_id);
+            for (pi, (geom, material)) in mesh.parts.iter().enumerate() {
+                let geom = lit.get(pi).and_then(Option::as_ref).unwrap_or(geom);
                 // Distant-LOD proxy submeshes (low-poly world atlas) overlap the real geometry.
                 if material.as_ref().is_some_and(|m| {
                     m.name.contains("world_lowpoly")
@@ -1165,6 +1231,7 @@ impl Loader {
                                             indices: vec![],
                                             colors: vec![],
                                             tangents: vec![],
+                                            light: vec![],
                                         },
                                     )
                                 });
@@ -1333,6 +1400,7 @@ fn merge_statics(parts: &mut Vec<Part>, first_id: u64) -> u64 {
                     indices: vec![],
                     colors: vec![],
                     tangents: vec![],
+                    light: vec![],
                 },
             )
         });
@@ -1355,6 +1423,7 @@ fn merge_statics(parts: &mut Vec<Part>, first_id: u64) -> u64 {
             );
             out.uvs.push(g.uvs[k]);
             out.colors.push(g.colors[k]);
+            out.light.push(g.light.get(k).copied().unwrap_or([0.0; 2]));
             let t = g.tangents[k];
             let tv = xf
                 .transform_vector3(Vec3::new(t[0], t[1], t[2]))

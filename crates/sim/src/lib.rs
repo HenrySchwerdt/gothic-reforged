@@ -23,6 +23,7 @@ pub use gothic_script as script;
 
 pub mod actor;
 pub mod attitude;
+pub mod bark;
 pub mod brain;
 pub mod combat;
 pub mod config;

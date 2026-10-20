@@ -163,6 +163,77 @@ impl<W: WorldQuery> Sim<W> {
         }
     }
 
+    /// Routine NPCs of the script world: walk to the point of the current routine time (the
+    /// points the host registered with `ScriptTables::set_routine_point`), then run the ported
+    /// task state of the point's use type (`ZS_Smith`, `ZS_Guard`, `ZS_Sleep`, ...), whose
+    /// `Action` / `AniStateAction` commands reach the presentation as `EventKind::Anim`.
+    pub(super) fn script_routine_think(&mut self, i: usize, now: u64) {
+        use gothic_script::routine::select::select_routine_task;
+        use gothic_script::routine::time as rtime;
+        let id = self.actors[i].id;
+        let npc = entity(id);
+        let hour = self.clock.hour_of_day();
+        let species = self.actors[i].species;
+        let slot = crate::routine::routine_time(species, hour);
+        if self.actors[i].brain.routine_time != Some(slot) {
+            // A new part of the day: leave the old task and pick the new point.
+            self.actors[i].brain.routine_time = Some(slot);
+            let point = {
+                let mut host = SimHost::new(self);
+                host.self_entity = npc;
+                host.routine_point(npc, rtime::routine_time(species.to_script(), hour))
+            };
+            let st = self.script.npc_mut(id);
+            st.task = None;
+            st.state = None;
+            st.dest = point;
+            self.actors[i].brain.goto = None;
+            self.actors[i].brain.busy_until_ms = now;
+        }
+        let dest = self.script.npc(id).dest;
+        if dest.is_none() {
+            return;
+        }
+        let Some(target) = SimHost::<W>::entity_position_of(&self.script, dest) else {
+            return;
+        };
+        if self.script.npc(id).task.is_none() {
+            // Not at work yet: walk to the routine point; the task state starts on arrival.
+            if self.pos(id).dist_xz(target) > 30.0 {
+                self.world.move_towards(id, target, WALK_SPEED * self.dt());
+                return;
+            }
+            let task = {
+                let mut host = SimHost::new(self);
+                host.self_entity = npc;
+                host.set_on_destination(npc, true);
+                select_routine_task(&mut host, npc)
+            };
+            self.script_enter(id, task);
+        }
+        // The task state drives from here: its own walks to work objects, animations, waits.
+        // Task callbacks (`OnGoto`, `OnWork`) run every tick like the combat tasks'.
+        let cb = self.script.npc(id).task_cb;
+        if cb != Callback::None {
+            let mut host = SimHost::new(self);
+            host.self_entity = npc;
+            run_callback(&mut host, npc, cb);
+        }
+        if self.actors[i].brain.goto.is_some() {
+            self.goto_tick(i, now);
+            if self.actors[i].brain.goto.is_some() {
+                return;
+            }
+            // The engine's `OnGoto` (navigation) raises `IsOnDestination` when the walk ends.
+            let mut host = SimHost::new(self);
+            host.self_entity = npc;
+            host.set_on_destination(npc, true);
+        }
+        if now >= self.actors[i].brain.busy_until_ms {
+            self.run_script_states(i, now);
+        }
+    }
+
     /// Execute one command the script queued for actor `i`.
     pub(super) fn exec_command(&mut self, i: usize, cmd: AiCommand, now: u64) {
         let id = self.actors[i].id;
@@ -176,6 +247,25 @@ impl<W: WorldQuery> Sim<W> {
         ) {
             // Every instruction starts its own stage counting.
             self.actors[i].state_position = 0;
+        }
+        if matches!(
+            cmd,
+            AiCommand::Action { .. }
+                | AiCommand::ActionAtPoint { .. }
+                | AiCommand::AniStateAction(_)
+                | AiCommand::Enjoy { .. }
+                | AiCommand::UseItem(_)
+        ) || (cmd == AiCommand::StandUp && self.actors[i].brain.task == Task::Routine)
+        {
+            let dest = self.script.npc(id).dest;
+            let use_type = crate::script_host::table_index(dest, crate::script_host::KIND_POINT)
+                .and_then(|n| self.script.points.get(n))
+                .map_or(se::UseType::None, |p| p.use_type);
+            self.push(EventKind::Anim {
+                actor: id,
+                command: cmd.clone(),
+                use_type,
+            });
         }
         match cmd {
             AiCommand::Attack { action, target } => {
@@ -222,6 +312,12 @@ impl<W: WorldQuery> Sim<W> {
                 });
             }
             AiCommand::GotoExt { target } => {
+                {
+                    // A new walk: the destination is not reached yet.
+                    let mut host = SimHost::new(self);
+                    host.self_entity = entity(id);
+                    host.set_on_destination(entity(id), false);
+                }
                 let goto = if target.0 != 0 && target.0 >> 24 == 0 {
                     GotoState {
                         target: Some(actor_id(target)),
@@ -286,8 +382,18 @@ impl<W: WorldQuery> Sim<W> {
                     a.brain.parade_until_ms = a.brain.busy_until_ms;
                 }
             }
-            AiCommand::Wait { secs } | AiCommand::Action { secs, .. } => {
+            AiCommand::Wait { secs }
+            | AiCommand::Action { secs, .. }
+            | AiCommand::ActionAtPoint { secs }
+            | AiCommand::Enjoy { secs, .. } => {
                 self.actors[i].brain.busy_until_ms = now + (secs.max(0) as u64) * 1000;
+            }
+            AiCommand::AniStateAction(_) | AiCommand::StandUp
+                if self.actors[i].brain.task == Task::Routine =>
+            {
+                // The pose transition (sit down, lie down, get up) of a character at its
+                // routine takes about half a second (combat states stand up instantly).
+                self.actors[i].brain.busy_until_ms = now + 500;
             }
             AiCommand::UseItem(name) if name.eq_ignore_ascii_case("It_Potion_Health") => {
                 self.drink_potion(i, now);
@@ -310,12 +416,12 @@ impl<W: WorldQuery> Sim<W> {
                 }
             }
             AiCommand::SayLine { key } => {
-                self.push(EventKind::Voice {
-                    actor: id,
-                    key: key.to_string(),
-                });
+                self.speak(id, key.to_string());
             }
-            AiCommand::SaySvm { family, .. } => {
+            AiCommand::SaySvm { family, index } => {
+                // Numbered families carry the index in the sample id (`Smalltalk_03`); the host
+                // falls back to the plain family name (`Awake`) when no such recording exists.
+                self.speak(id, format!("{family}_{index:02}"));
                 let stage = match family {
                     "WeaponDown" | "StopMagic" | "LookingForTroubleAgain" => Some(0),
                     "ISaidWeaponDown" | "ISaidStopMagic" => Some(1),

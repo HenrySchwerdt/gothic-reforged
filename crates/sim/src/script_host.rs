@@ -36,6 +36,8 @@ use crate::world::{Pos, WorldQuery, ZoneSecurity, in_fov};
 
 pub(crate) const KIND_SHIFT: u32 = 24;
 pub(crate) const KIND_POINT: u32 = 1;
+/// How far around a character the scan for a use object looks (cm) [U: not recovered].
+const USE_OBJECT_RADIUS: f32 = 3_000.0;
 pub(crate) const KIND_ANCHOR: u32 = 2;
 pub(crate) const KIND_ENCLAVE: u32 = 3;
 pub(crate) const KIND_ITEM: u32 = 4;
@@ -1056,8 +1058,40 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
     fn in_dialog_with_player(&self, npc: EntityId) -> bool {
         self.sim.gui_open && self.sim.dialog_partner == actor_of(npc)
     }
-    fn find_smalltalk_partner(&self, _npc: EntityId) -> EntityId {
-        EntityId::NONE
+    fn find_smalltalk_partner(&self, npc: EntityId) -> EntityId {
+        // A free chatter in range: a routine character standing at a small-talk point that has
+        // no partner yet, within 6 m [U: the engine's range is not recovered].
+        let Some(me) = actor_of(npc) else {
+            return EntityId::NONE;
+        };
+        let here = self.sim.world.position(me).unwrap_or_default();
+        let mut best: Option<(f32, ActorId)> = None;
+        for o in &self.sim.actors {
+            if o.id == me
+                || o.target.is_some()
+                || !o.species.is_humanoid()
+                || o.ai_mode == AiMode::Dead
+                || o.brain.task != crate::brain::Task::Routine
+            {
+                continue;
+            }
+            let st = self.sim.script.npc(o.id);
+            let chat = table_index(st.dest, KIND_POINT)
+                .and_then(|n| self.sim.script.points.get(n))
+                .is_some_and(|p| p.use_type == se::UseType::Smalltalk);
+            let waiting = matches!(
+                st.state,
+                Some(State::HangAround | State::HangAroundDoNothing)
+            );
+            if !chat || !waiting {
+                continue;
+            }
+            let d = here.dist_xz(self.sim.world.position(o.id).unwrap_or_default());
+            if d <= 600.0 && best.is_none_or(|b| d < b.0) {
+                best = Some((d, o.id));
+            }
+        }
+        best.map_or(EntityId::NONE, |(_, id)| entity_of(id))
     }
     fn revolution_attitude(&self, _npc: EntityId, _other: EntityId) -> se::Attitude {
         se::Attitude::None
@@ -1301,11 +1335,25 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
             .unwrap_or_default()
     }
     fn find_use_object(&self, npc: EntityId, use_type: se::UseType) -> EntityId {
-        self.script(npc)
-            .use_objects
-            .get(&use_type)
-            .copied()
-            .unwrap_or(EntityId::NONE)
+        if let Some(o) = self.script(npc).use_objects.get(&use_type) {
+            return *o;
+        }
+        // The engine scans the interact points around the character: the nearest free point of
+        // that use type within `USE_OBJECT_RADIUS`.
+        let Some(me) = actor_of(npc).map(|a| self.sim.world.position(a).unwrap_or_default()) else {
+            return EntityId::NONE;
+        };
+        let mut best: Option<(f32, usize)> = None;
+        for (i, p) in self.sim.script.points.iter().enumerate() {
+            if p.use_type != use_type || (p.user.is_some() && p.user != npc) {
+                continue;
+            }
+            let d = me.dist_xz(p.pos);
+            if d <= USE_OBJECT_RADIUS && best.is_none_or(|b| d < b.0) {
+                best = Some((d, i));
+            }
+        }
+        best.map_or(EntityId::NONE, |(_, i)| table_id(KIND_POINT, i))
     }
     fn party_leader(&self, npc: EntityId) -> EntityId {
         opt_entity(self.actor(npc).and_then(|a| a.party_leader))
@@ -1365,30 +1413,16 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
 
 impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
     fn has_items(&self, e: EntityId, template: &str, count: u32) -> bool {
-        self.actor(e).is_some_and(|a| {
-            a.inventory
-                .iter()
-                .any(|(k, n)| k.eq_ignore_ascii_case(template) && *n >= count)
-        })
+        self.actor(e)
+            .is_some_and(|a| a.inventory.has_items(template, count))
     }
-    fn assure_items(&mut self, e: EntityId, template: &str, _flags: u32, count: u32) -> i32 {
+    fn assure_items(&mut self, e: EntityId, template: &str, flags: u32, count: u32) -> i32 {
+        let info = gothic_gameplay::inventory::OneItem(self.sim.items.info(template));
         let Some(a) = self.actor_mut(e) else {
             return -1;
         };
-        let key = a
-            .inventory
-            .keys()
-            .find(|k| k.eq_ignore_ascii_case(template))
-            .cloned()
-            .unwrap_or_else(|| template.to_string());
-        let n = a.inventory.entry(key.clone()).or_insert(0);
-        if *n < count {
-            *n = count;
-        }
         a.inventory
-            .keys()
-            .position(|k| *k == key)
-            .map_or(-1, |i| i as i32)
+            .assure_items(&info, template, flags, count.min(i32::MAX as u32) as i32)
     }
     fn find_stack_index(&self, e: EntityId, slot: se::Slot) -> i32 {
         if self.equipped(e, slot).is_some() {
@@ -1424,7 +1458,7 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
     }
     fn delete_unequipped_stacks(&mut self, e: EntityId) {
         if let Some(a) = self.actor_mut(e) {
-            a.inventory.clear();
+            a.inventory.delete_unlinked();
         }
     }
     fn generate_plunder(&mut self, _e: EntityId) {}
@@ -1945,9 +1979,11 @@ mod tests {
     use super::*;
     use crate::config::SimConfig;
     use crate::item::ItemDb;
+    use crate::sim::EventKind;
     use crate::types::Species;
     use crate::world::Grid2dWorld;
     use gothic_script::damage::{HitEvent, assess_hit, give_xp};
+    use gothic_script::host::AiCommand;
     use gothic_script::routine::select::select_routine_task;
     use gothic_script::stats;
 
@@ -2084,6 +2120,103 @@ mod tests {
         let (h, m) = (host.entity(hero), host.entity(man));
         assert_eq!(give_xp(&mut host, m, h, -1), 120);
         assert_eq!(s.state.xp, before + 120);
+    }
+
+    /// A routine NPC walks to the point of its use type and plays the ported task state.
+    fn routine_events(
+        use_type: se::UseType,
+        extra: &[se::UseType],
+        ticks: u64,
+    ) -> Vec<(u64, EventKind)> {
+        use gothic_script::routine::time::RoutineTime as Rt;
+        let mut s = sim();
+        s.script_routines = true;
+        let man = s.spawn(
+            Actor::npc(ActorId(0), "Worker", Species::Human, 5, 5),
+            Pos::flat(400.0, 0.0),
+        );
+        let point = s
+            .script
+            .add_point(use_type, EntityId::NONE, Pos::flat(520.0, 0.0));
+        for (i, u) in extra.iter().enumerate() {
+            s.script
+                .add_point(*u, EntityId::NONE, Pos::flat(620.0 + 100.0 * i as f32, 0.0));
+        }
+        for t in [Rt::Work, Rt::Relax, Rt::Sleep] {
+            s.script.set_routine_point(man, t, point);
+        }
+        let mut out = Vec::new();
+        for _ in 0..ticks {
+            s.step();
+            for e in s.drain_events() {
+                if matches!(e.kind, EventKind::Anim { .. } | EventKind::Voice { .. }) {
+                    out.push((s.tick, e.kind));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_smith_hammers_at_the_anvil() {
+        let ev = routine_events(se::UseType::Anvil, &[se::UseType::Forge], 3000);
+        assert!(ev.iter().any(|(_, e)| matches!(
+            e,
+            EventKind::Anim {
+                command: AiCommand::Action {
+                    action: se::Action::Anvil,
+                    ..
+                },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn two_chatters_at_small_talk_points_talk_to_each_other() {
+        use gothic_script::routine::time::RoutineTime as Rt;
+        let mut s = sim();
+        s.script_routines = true;
+        let mut points = Vec::new();
+        for (name, x) in [("A", 300.0), ("B", 380.0)] {
+            let man = s.spawn(
+                Actor::npc(ActorId(0), name, Species::Human, 5, 5),
+                Pos::flat(x, 0.0),
+            );
+            let p = s
+                .script
+                .add_point(se::UseType::Smalltalk, EntityId::NONE, Pos::flat(x, 40.0));
+            for t in [Rt::Work, Rt::Relax, Rt::Sleep] {
+                s.script.set_routine_point(man, t, p);
+            }
+            points.push(man);
+        }
+        let mut lines = Vec::new();
+        for _ in 0..2400 {
+            s.step();
+            for e in s.drain_events() {
+                if let EventKind::Voice { actor, key } = e.kind {
+                    lines.push((actor, key));
+                }
+            }
+        }
+        assert!(
+            lines.iter().any(|(_, k)| k.starts_with("Smalltalk")),
+            "{lines:?}"
+        );
+        let _ = points;
+    }
+
+    #[test]
+    fn a_man_at_a_stool_sits_down() {
+        let ev = routine_events(se::UseType::Stool, &[], 1500);
+        assert!(ev.iter().any(|(_, e)| matches!(
+            e,
+            EventKind::Anim {
+                command: AiCommand::AniStateAction(se::Action::SitStool),
+                ..
+            }
+        )));
     }
 
     #[test]

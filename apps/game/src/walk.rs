@@ -129,6 +129,10 @@ struct Player {
     /// Fly camera position in cm (origin-relative, mirrored space).
     fly_pos: Vec3,
     scripted_wish: Option<Vec3>,
+    /// Gait chosen by the play mode's input layer (`None`: keyboard Shift = sprint).
+    scripted_gait: Option<gothic_physics::Gait>,
+    /// Jump request of the play mode's input layer (`None`: keyboard Space).
+    scripted_jump: Option<bool>,
 }
 
 #[derive(Component)]
@@ -270,6 +274,8 @@ pub fn run(args: &[String]) -> Result<()> {
         placed: false,
         fly_pos: Vec3::new(0.0, 25_000.0, 0.0),
         scripted_wish: None,
+        scripted_gait: None,
+        scripted_jump: None,
     })
     .insert_resource(Smoke {
         enabled: smoke,
@@ -1216,13 +1222,16 @@ fn player_motion(
     }
     // Speeds come from the PC_Hero movement template (Run 400 cm/s, Sprint 600 cm/s), with the
     // slower strafe / backward limits relative to the facing; see PHYSICS_MOVEMENT.md.
-    let gait = if sprint {
+    let gait = player.scripted_gait.unwrap_or(if sprint {
         gothic_physics::Gait::Sprint
     } else {
         gothic_physics::Gait::Run
-    };
+    });
     player.ctrl.facing = Some(Vec2::new(forward.x, forward.z));
-    let jump = keys.just_pressed(KeyCode::Space);
+    let jump = player
+        .scripted_jump
+        .take()
+        .unwrap_or_else(|| keys.just_pressed(KeyCode::Space));
     player.ctrl.step_gait(&collision.0, wish, gait, jump, dt);
 }
 

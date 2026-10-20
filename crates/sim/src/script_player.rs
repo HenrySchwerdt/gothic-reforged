@@ -94,6 +94,28 @@ impl ScriptTables {
         self.player.boulders.insert(object.0, kind);
     }
 
+    /// A registered recipe.
+    pub fn recipe_of(&self, id: i32) -> Option<&Recipe> {
+        self.player.recipes.get(&id)
+    }
+
+    /// Object data.
+    pub fn object(&self, object: EntityId) -> Option<&ObjectData> {
+        self.player.objects.get(&object.0)
+    }
+
+    /// Take the contents of a container: stack `index`, or everything. Returns what was taken.
+    pub fn take_loot(&mut self, object: EntityId, index: Option<usize>) -> Vec<(String, u32)> {
+        let Some(o) = self.player.objects.get_mut(&object.0) else {
+            return Vec::new();
+        };
+        match index {
+            Some(i) if i < o.loot.len() => vec![o.loot.remove(i)],
+            Some(_) => Vec::new(),
+            None => std::mem::take(&mut o.loot),
+        }
+    }
+
     /// Object data (mutable).
     pub fn object_mut(&mut self, object: EntityId) -> Option<&mut ObjectData> {
         self.player.objects.get_mut(&object.0)
@@ -105,13 +127,6 @@ fn counter_index(c: VoiceCounter) -> usize {
         VoiceCounter::Refuse => 0,
         VoiceCounter::Aargh => 1,
     }
-}
-
-fn key_of<'a>(
-    inv: &'a std::collections::BTreeMap<String, u32>,
-    template: &str,
-) -> Option<&'a String> {
-    inv.keys().find(|k| k.eq_ignore_ascii_case(template))
 }
 
 impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
@@ -240,12 +255,8 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
             let Some(a) = self.actor_mut(from) else {
                 return;
             };
-            let Some(key) = key_of(&a.inventory, template).cloned() else {
-                return;
-            };
-            let n = a.inventory.get_mut(&key).expect("key found");
-            let moved = (*n).min(amount);
-            *n -= moved;
+            let moved = a.inventory.count(template).min(amount);
+            a.inventory.take(template, moved);
             moved
         };
         if moved > 0 {
@@ -269,35 +280,34 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
         }
     }
     fn add_item(&mut self, e: EntityId, template: &str, amount: u32) {
+        let info = self.sim.items.info(template);
         if let Some(a) = self.actor_mut(e) {
-            let key = key_of(&a.inventory, template)
-                .cloned()
-                .unwrap_or_else(|| template.to_string());
-            *a.inventory.entry(key).or_insert(0) += amount;
+            a.inventory.add_items(
+                template,
+                info,
+                amount.min(i32::MAX as u32) as i32,
+                0,
+                gothic_gameplay::inventory::StackType::Normal,
+            );
         }
     }
     fn remove_item(&mut self, e: EntityId, template: &str, amount: u32) -> bool {
         let Some(a) = self.actor_mut(e) else {
             return false;
         };
-        let Some(key) = key_of(&a.inventory, template).cloned() else {
+        let have = a.inventory.count(template);
+        if have == 0 {
             return amount == 0;
-        };
-        let n = a.inventory.get_mut(&key).expect("key found");
-        if *n < amount {
-            *n = 0;
+        }
+        if have < amount {
+            a.inventory.take(template, have);
             return false;
         }
-        *n -= amount;
+        a.inventory.take(template, amount);
         true
     }
     fn item_count(&self, e: EntityId, template: &str) -> u32 {
-        self.actor(e).map_or(0, |a| {
-            a.inventory
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(template))
-                .map_or(0, |(_, n)| *n)
-        })
+        self.actor(e).map_or(0, |a| a.inventory.count(template))
     }
     fn has_recipes(&self, e: EntityId, category: SkillCategory) -> bool {
         self.actor(e).is_some_and(|a| {
@@ -396,6 +406,12 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
         self.sim.state.hours = self.sim.clock.total_hours();
     }
     fn emit(&mut self, event: PlayerEvent) {
+        // A window the script opens holds the world (`gui_page_open`) until the host closes it.
+        match &event {
+            PlayerEvent::Window(_) => self.sim.gui_open = true,
+            PlayerEvent::CloseWindow => self.sim.gui_open = false,
+            _ => {}
+        }
         self.sim.push(EventKind::Player(event));
     }
 }
@@ -477,6 +493,11 @@ impl<W: WorldQuery> Sim<W> {
             .unwrap_or(false)
     }
 
+    /// Raise the guard against an actor (`PS_Melee_Parade`).
+    pub fn player_parade(&mut self, target: ActorId) {
+        self.with_hero(|h, p| commands::parade(h, p, entity_of(target)));
+    }
+
     /// Take everything from a body.
     pub fn player_quick_loot(&mut self, body: EntityId) -> usize {
         self.with_hero(|h, p| gothic_script::player::normal::quick_loot(h, p, body))
@@ -524,10 +545,7 @@ impl<W: WorldQuery> Sim<W> {
                 AiCommand::AniStateAction(_) => 500,
                 AiCommand::TakeItem { .. } => 800,
                 AiCommand::SayLine { key } => {
-                    self.push(EventKind::Voice {
-                        actor: hero,
-                        key: key.to_string(),
-                    });
+                    self.speak(hero, key.to_string());
                     0
                 }
                 AiCommand::Attack { target, .. } => {
@@ -617,7 +635,7 @@ mod tests {
                 .any(|e| matches!(&e.kind, EventKind::Voice { key, .. } if key == "NeedKey"))
         );
         let hero = s.hero.expect("hero");
-        s.actor_mut(hero).inventory.insert("It_Key_A".into(), 1);
+        s.actor_mut(hero).inventory.insert("It_Key_A", 1);
         s.player_use_object(chest);
         let ev = play(&mut s, 400);
         assert!(

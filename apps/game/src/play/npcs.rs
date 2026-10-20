@@ -1,6 +1,8 @@
 //! Ardea NPCs: world data -> core actors + assembled animated characters.
 use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall};
-use super::{NpcActor, PendingNpc, Roster, angle_delta, sim_to_bevy_yaw};
+use super::data::{Roll, seed_of};
+use super::objects::WorldObjects;
+use super::{NpcActor, NpcExtra, PendingNpc, Roster, angle_delta, sim_to_bevy_yaw};
 use crate::walk::{Collision, ORIGIN, Stream, tile_chunk_id, update_camera};
 use crate::world_loader::Origin;
 use bevy::prelude::*;
@@ -9,7 +11,8 @@ use gothic_animation::{
 };
 use gothic_formats::props::records::NpcLook;
 use gothic_runtime::{Command, CoreCommand, CoreRes};
-use gothic_sim::data::{NpcFile, NpcRecord};
+use gothic_sim::data::NpcFile;
+use gothic_sim::item::Use;
 use gothic_sim::types::{AiMode, Species};
 use gothic_sim::world::Pos;
 
@@ -168,21 +171,118 @@ fn hash01(i: usize, salt: u64) -> f32 {
     (x >> 40) as f32 / (1u64 << 24) as f32
 }
 
-fn weapon_for(lib: &ActorLibrary, rec: &NpcRecord) -> Option<WeaponSpec> {
-    let species = Species::from_name(&rec.species);
-    let wanted: &[&str] = if species == Species::Orc {
-        &["Weapon_2H_Orc", "Weapon_Orc", "Orc_Axe", "Orc_Sword"]
-    } else if rec.guild.eq_ignore_ascii_case("Reb") && rec.level >= 10 {
-        &["G3_Weapon_1H_Sword_Broad_01", "G3_Weapon_1H_Sword_01"]
-    } else {
-        return None;
+/// The weapons a character carries, from its real inventory: the stacks of its `Weaponry`
+/// treasure sets and the weapon stacks of its own inventory (`gCInventory_PS`).
+pub struct Gear {
+    /// Templates to wear (main weapon, shield).
+    pub equip: Vec<String>,
+    /// Everything else the character carries (plunder, spare weapons).
+    pub give: Vec<(String, u32)>,
+    pub stance: Stance,
+    pub weapons: Vec<WeaponSpec>,
+}
+
+/// Slots a weapon sits in when drawn / holstered (`GetBone` of the item entity, ENGINE_MAP).
+fn weapon_spec(kind: Use, mesh: &str) -> WeaponSpec {
+    let (drawn, holster) = match kind {
+        Use::Shield => ("Slot_LeftHand_Shield", "Slot_ShieldBack"),
+        Use::Bow => ("Slot_LeftHand_Weapon", "Slot_Bow"),
+        Use::CrossBow => ("Slot_LeftHand_Weapon", "Slot_CrossBow"),
+        Use::TwoH | Use::Axe => ("Slot_RightHand_Weapon", "Slot_AxeBack"),
+        Use::Staff | Use::Halberd => ("Slot_RightHand_Weapon", "Slot_StaffBack"),
+        _ => ("Slot_RightHand_Weapon", "Slot_MeleeBackRight"),
     };
-    for w in wanted {
-        if let Some(n) = lib.static_mesh_names(w).into_iter().next() {
-            return Some(WeaponSpec::one_hand_sword(&n));
+    WeaponSpec {
+        mesh: mesh.into(),
+        drawn_slot: drawn.into(),
+        holster_slot: holster.into(),
+        offset: Transform::IDENTITY,
+    }
+}
+
+pub fn gear_of(
+    objects: &WorldObjects,
+    core: &CoreRes,
+    lib: &ActorLibrary,
+    rec: &gothic_sim::data::NpcRecord,
+) -> Gear {
+    let sets = &rec.inventory.treasure_sets;
+    let mut stacks: Vec<(String, u32)> = objects.treasure.weaponry(sets);
+    stacks.extend(
+        rec.inventory
+            .stacks
+            .iter()
+            .filter(|s| s.amount > 0)
+            .map(|s| (s.item.clone(), s.amount as u32)),
+    );
+    let mut roll = Roll(seed_of(&format!("{}{:?}", rec.name, rec.position)));
+    let plunder = objects.treasure.plunder(sets, &mut roll);
+    let kind_of = |name: &str| {
+        core.0
+            .sim
+            .items
+            .get(name)
+            .map_or(Use::None, gothic_sim::item::ItemDef::use_kind)
+    };
+    let mut gear = Gear {
+        equip: Vec::new(),
+        give: Vec::new(),
+        stance: Stance::OneHand,
+        weapons: Vec::new(),
+    };
+    let mut main: Option<(String, Use)> = None;
+    let mut bow: Option<(String, Use)> = None;
+    let mut shield: Option<String> = None;
+    for (name, n) in &stacks {
+        let k = kind_of(name);
+        match k {
+            Use::OneH | Use::TwoH | Use::Axe | Use::Staff | Use::Halberd if main.is_none() => {
+                main = Some((name.clone(), k));
+            }
+            Use::Bow | Use::CrossBow if bow.is_none() => bow = Some((name.clone(), k)),
+            Use::Shield if shield.is_none() => shield = Some(name.clone()),
+            _ => gear.give.push((name.clone(), *n)),
         }
     }
-    None
+    let attach = |gear: &mut Gear, name: &str, k: Use| {
+        let mesh = objects.item_mesh.get(&name.to_ascii_lowercase());
+        if let Some(m) = mesh.filter(|m| lib.has_mesh(m)) {
+            gear.weapons.push(weapon_spec(k, m));
+        }
+    };
+    // A fighter wields his melee weapon; archers without one carry the bow.
+    if let Some((name, k)) = main.clone().or_else(|| bow.clone()) {
+        gear.stance = match k {
+            Use::TwoH | Use::Axe | Use::Halberd => Stance::TwoHand,
+            Use::Staff => Stance::Staff,
+            Use::Bow => Stance::Bow,
+            Use::CrossBow => Stance::CrossBow,
+            _ => Stance::OneHand,
+        };
+        gear.equip.push(name.clone());
+        attach(&mut gear, &name, k);
+        if k == Use::OneH
+            && let Some(sh) = shield.clone()
+        {
+            gear.equip.push(sh.clone());
+            gear.stance = Stance::OneHandShield;
+            attach(&mut gear, &sh, Use::Shield);
+        }
+    }
+    if let (Some((b, k)), Some(_)) = (bow.clone(), main.clone()) {
+        // The bow of a swordsman hangs on his back.
+        gear.give.push((b.clone(), 1));
+        attach(&mut gear, &b, k);
+    }
+    gear.give.extend(plunder);
+    gear
+}
+
+/// Carried gear waiting for the core to know the character.
+#[derive(Component)]
+pub struct NpcGear {
+    pub equip: Vec<String>,
+    pub give: Vec<(String, u32)>,
 }
 
 /// Spawns pending NPCs whose ground collision is resident.
@@ -193,6 +293,8 @@ fn spawn_npcs(
     collision: Res<Collision>,
     mut spawner: ActorSpawner,
     mut commands: MessageWriter<CoreCommand>,
+    objects: Res<WorldObjects>,
+    core: Res<CoreRes>,
 ) {
     let mut budget = 6;
     let mut i = 0;
@@ -226,8 +328,9 @@ fn spawn_npcs(
         };
         let idx = roster.spawned;
         spec = spec.with_start_time(hash01(idx, 4) * 2.0);
-        if let Some(w) = weapon_for(&spawner.library, &p.record) {
-            spec = spec.with_weapon(w);
+        let gear = gear_of(&objects, &core, &spawner.library, &p.record);
+        for w in &gear.weapons {
+            spec = spec.with_weapon(w.clone());
         }
         let yaw = hash01(idx, 7) * std::f32::consts::TAU;
         let pos = Vec3::new(p.pos_cm.x, ground, p.pos_cm.z);
@@ -236,7 +339,19 @@ fn spawn_npcs(
             rotation: Quat::from_rotation_y(yaw),
             scale: Vec3::splat(CM),
         };
-        let entity = match spawner.spawn(&spec, tf) {
+        let spawned = match spawner.spawn(&spec, tf) {
+            Ok(e) => Ok(e),
+            Err(e) => {
+                // A weapon whose slot this skeleton lacks: spawn the character without it.
+                eprintln!(
+                    "play: {} spawn with weapons failed ({e:#}), retrying bare",
+                    p.record.name
+                );
+                spec.weapons.clear();
+                spawner.spawn(&spec, tf)
+            }
+        };
+        let entity = match spawned {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("play: spawn {} failed: {e:#}", p.record.name);
@@ -244,12 +359,25 @@ fn spawn_npcs(
                 continue;
             }
         };
-        let stance = if Species::from_name(&p.record.species) == Species::Orc {
-            Stance::TwoHand
-        } else {
-            Stance::OneHand
+        let stance =
+            if Species::from_name(&p.record.species) == Species::Orc && gear.equip.is_empty() {
+                Stance::TwoHand
+            } else {
+                gear.stance
+            };
+        let look = p.look.as_ref();
+        let extra = NpcExtra {
+            voice: look.map(|l| l.voice.clone()).unwrap_or_default(),
+            work: look.and_then(|l| l.routine.working_points.first().cloned()),
+            relax: look.and_then(|l| l.routine.relaxing_points.first().cloned()),
+            sleep: look.and_then(|l| l.routine.sleeping_points.first().cloned()),
         };
         spawner.commands.entity(entity).insert((
+            extra,
+            NpcGear {
+                equip: gear.equip,
+                give: gear.give,
+            },
             OverlayQueue::default(),
             CombatStance(stance),
             NpcMotion {

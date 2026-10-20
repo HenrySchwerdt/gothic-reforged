@@ -1,5 +1,6 @@
 mod actors;
 mod gamedata;
+mod objdump;
 mod propdump;
 use anyhow::{Context, Result, bail, ensure};
 use gothic_formats::{PakArchive, normalize_path};
@@ -149,6 +150,7 @@ fn main() -> Result<()> {
             if !actors::dispatch(other, &args)?
                 && !gamedata::dispatch(other, &args)?
                 && !propdump::dispatch(other, &args)?
+                && !objdump::dispatch(other, &args)?
                 && !gothic_cook::cli::dispatch(other, &args)?
             {
                 bail!("unknown command {other}; use --help")

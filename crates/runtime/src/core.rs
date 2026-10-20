@@ -108,6 +108,20 @@ pub enum Command {
         /// Opponent.
         target: ActorId,
     },
+    /// Take stack `index` (or everything) of an opened container into the hero's inventory.
+    TakeLoot {
+        /// Raw script entity id of the container.
+        object: u32,
+        /// Stack to take, `None` for all.
+        index: Option<usize>,
+    },
+    /// The host opened (true) or closed (false) a full-screen window that holds the world.
+    GuiOpen(bool),
+    /// Raise the guard against `target` (hold of the right mouse button).
+    Parade {
+        /// Opponent.
+        target: ActorId,
+    },
     // ---- magic and ranged (ported `PS_Magic*` / `PS_Ranged*`, see `gothic_script::magic`) ----
     /// Hold a spell item (rune, scroll, potion) in the right hand and enter the magic mode.
     SelectSpell {
@@ -143,6 +157,82 @@ pub enum Command {
         crime: gothic_sim::script::enums::PlayerCrime,
         /// The dialog accepted the price.
         accepted: bool,
+    },
+    // ---- world content registration (host -> core, once at load) ---------------------------
+    /// Register an interact object (chest, door, work station, bed, bench, ...); the core
+    /// answers with [`Event::ObjectRegistered`] carrying the same `tag`.
+    AddObject {
+        /// Host-side correlation id.
+        tag: u32,
+        /// What it is used for (`UseType`).
+        use_type: gothic_sim::script::enums::UseType,
+        /// Position (centimetres, the world's space).
+        pos: Pos,
+        /// Lock, owner, loot, ...
+        data: gothic_sim::script_player::ObjectData,
+    },
+    /// Register a loose item lying in the world; answered by [`Event::ItemRegistered`].
+    AddItem {
+        /// Host-side correlation id.
+        tag: u32,
+        /// Item template.
+        template: String,
+        /// Position.
+        pos: Pos,
+    },
+    /// Register a synthesis recipe.
+    AddRecipe {
+        /// Recipe id.
+        id: i32,
+        /// The recipe.
+        recipe: gothic_sim::script::player::api::Recipe,
+    },
+    /// Declare a recipe item (blueprint) of a skill category.
+    AddRecipeItem {
+        /// Item template.
+        template: String,
+        /// Category.
+        category: gothic_sim::script::player::api::SkillCategory,
+    },
+    /// Register the spell templates (`spells.json` text).
+    LoadSpells(String),
+    /// Give an NPC its working / relaxing / sleeping points (script entity ids of registered
+    /// objects); from then on the ported routine tasks run for it.
+    SetRoutinePoints {
+        /// The NPC.
+        actor: ActorId,
+        /// Working point.
+        work: Option<u32>,
+        /// Relaxing point.
+        relax: Option<u32>,
+        /// Sleeping point.
+        sleep: Option<u32>,
+    },
+    /// Put an item into an NPC's hands or body (requirements are ignored for NPCs).
+    EquipNpc {
+        /// The NPC.
+        actor: ActorId,
+        /// Item template.
+        template: String,
+    },
+    /// Add items to an NPC's inventory (treasure sets, plunder).
+    GiveNpc {
+        /// The NPC.
+        actor: ActorId,
+        /// Item template.
+        template: String,
+        /// Amount.
+        amount: u32,
+    },
+    /// Give the hero a skill (debug and scripted tests; the game teaches skills through trainers).
+    GrantPerk(String),
+    /// Add items to the hero's inventory (debug and scripted tests; the game gives items
+    /// through dialogs, plunder and pick-ups).
+    GiveHero {
+        /// Item template.
+        template: String,
+        /// Amount.
+        amount: u32,
     },
     Save(std::path::PathBuf),
     Load(std::path::PathBuf),
@@ -229,6 +319,30 @@ pub enum Event {
     CastRefused(gothic_sim::script::player::commands::CastError),
     /// What the guard did with a bribe.
     Bribed(gothic_sim::script::routine::dialog::BribeOutcome),
+    /// An interact object was registered: its script entity id (for `Confirm` / `UseInteractObject`).
+    ObjectRegistered {
+        /// Tag of the `AddObject` command.
+        tag: u32,
+        /// Raw script entity id.
+        entity: u32,
+    },
+    /// A loose item was registered.
+    ItemRegistered {
+        /// Tag of the `AddItem` command.
+        tag: u32,
+        /// Raw script entity id.
+        entity: u32,
+    },
+    /// A character plays a use animation or pose queued by its script state (work station
+    /// tasks, sitting, sleeping, stock-voice family).
+    Anim {
+        /// The character.
+        actor: ActorId,
+        /// The command as queued.
+        command: gothic_sim::script::host::AiCommand,
+        /// Use type of the character's destination point.
+        use_type: gothic_sim::script::enums::UseType,
+    },
     /// A save game was written or read.
     Saved(std::path::PathBuf),
     Loaded {
@@ -254,6 +368,11 @@ pub struct Core {
     hero_next_strike_ms: u64,
     /// Bumped whenever `sim.state` may have changed (for cheap UI mirroring).
     pub state_rev: u64,
+    /// What the hero's carried items looked like at the last [`Core::sync_inventory`].
+    inv_mirror: gothic_gameplay::inventory::Inventory,
+    /// Arm spawned fighters with a stand-in weapon of their species (tests and tools without
+    /// the character's own inventory); the play mode gives real weapons from the treasure sets.
+    pub guess_weapons: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -292,7 +411,7 @@ impl Core {
         let hero = sim.spawn_hero(Pos::default());
         sim.actor_mut(hero).action = Action::Attack;
         sim.drain_events();
-        Self {
+        let mut core = Self {
             sim,
             db,
             hero,
@@ -300,6 +419,27 @@ impl Core {
             acc: 0.0,
             hero_next_strike_ms: 0,
             state_rev: 1,
+            inv_mirror: Default::default(),
+            guess_weapons: true,
+        };
+        // The new game's start kit lives in the quest/dialog state; the hero actor carries it.
+        core.sync_inventory();
+        core
+    }
+
+    /// Keep the hero's carried items in step: the sim actor (pick-ups, crafting, potions,
+    /// ammunition) and the dialog / UI state (rewards, trades) are two views of one bag. Whichever
+    /// side changed since the last call wins.
+    pub fn sync_inventory(&mut self) {
+        let hero = self.hero;
+        if self.sim.actor(hero).inventory != self.inv_mirror {
+            self.inv_mirror = self.sim.actor(hero).inventory.clone();
+            self.sim.state.inventory = self.inv_mirror.clone();
+            self.state_rev += 1;
+        } else if self.sim.state.inventory != self.inv_mirror {
+            self.inv_mirror = self.sim.state.inventory.clone();
+            self.sim.actor_mut(hero).inventory = self.inv_mirror.clone();
+            self.state_rev += 1;
         }
     }
 
@@ -315,6 +455,18 @@ impl Core {
         };
         self.sim.actor_mut(self.hero).equipment.equip(def);
         true
+    }
+
+    /// Give the hero skills (`Perk_Bow_1`, ...) without paying learning points. The demo hero
+    /// is not a fresh level-1 character (see [`Core::arm_hero`]): his start kit needs them.
+    pub fn grant_perks(&mut self, perks: &[&str]) {
+        let hero = self.hero;
+        for p in perks {
+            self.sim
+                .actor_mut(hero)
+                .perks
+                .insert(p.to_ascii_lowercase());
+        }
     }
 
     pub fn dialog_open(&self) -> bool {
@@ -339,6 +491,7 @@ impl Core {
             self.sim.step();
             n += 1;
         }
+        self.sync_inventory();
         let evs = self.sim.drain_events();
         if !evs.is_empty() {
             self.state_rev += 1;
@@ -361,6 +514,15 @@ impl Core {
                 EventKind::Voice { actor, key } => out.push(Event::Voice {
                     actor: *actor,
                     key: key.clone(),
+                }),
+                EventKind::Anim {
+                    actor,
+                    command,
+                    use_type,
+                } => out.push(Event::Anim {
+                    actor: *actor,
+                    command: command.clone(),
+                    use_type: *use_type,
                 }),
                 EventKind::Player(p) => out.push(Event::Player(p.clone())),
                 EventKind::Magic(m) => out.push(Event::Magic(m.clone())),
@@ -389,7 +551,8 @@ impl Core {
                     w.1 = *yaw;
                 }
                 let species = self.sim.actor(id).species;
-                if species.can_attack()
+                if self.guess_weapons
+                    && species.can_attack()
                     && let Some(w) = gothic_sim::data::default_weapon(&self.sim.items, species)
                 {
                     self.sim.actor_mut(id).equipment.equip(w);
@@ -441,6 +604,21 @@ impl Core {
             Command::MeleeMove { action, target } => {
                 self.sim.player_melee(*action, *target);
             }
+            Command::Parade { target } => self.sim.player_parade(*target),
+            Command::TakeLoot { object, index } => {
+                let taken = self.sim.script.take_loot(EntityId(*object), *index);
+                for (item, n) in taken {
+                    self.sim.state.add_item(&item.to_ascii_lowercase(), n);
+                    out.push(Event::ItemMoved {
+                        item,
+                        amount: n,
+                        gained: true,
+                    });
+                }
+                self.sync_inventory();
+                self.state_rev += 1;
+            }
+            Command::GuiOpen(open) => self.sim.gui_open = *open || self.dialog.is_some(),
             Command::SelectSpell { template } => {
                 if !self.sim.player_select_spell(template) {
                     out.push(Event::Notice(format!("cannot select {template}")));
@@ -468,6 +646,79 @@ impl Core {
                 if let Some(r) = self.sim.player_bribe(*guard, *crime, *accepted) {
                     out.push(Event::Bribed(r));
                 }
+            }
+            Command::AddObject {
+                tag,
+                use_type,
+                pos,
+                data,
+            } => {
+                let id = self.sim.script.add_object(*use_type, *pos, data.clone());
+                out.push(Event::ObjectRegistered {
+                    tag: *tag,
+                    entity: id.0,
+                });
+            }
+            Command::AddItem { tag, template, pos } => {
+                let id = self.sim.script.add_item(template, *pos);
+                out.push(Event::ItemRegistered {
+                    tag: *tag,
+                    entity: id.0,
+                });
+            }
+            Command::AddRecipe { id, recipe } => self.sim.script.add_recipe(*id, recipe.clone()),
+            Command::AddRecipeItem { template, category } => {
+                self.sim.script.add_recipe_item(template, *category);
+            }
+            Command::LoadSpells(json) => {
+                if let Err(e) = self.sim.load_spells(json) {
+                    out.push(Event::Failed(format!("spells: {e}")));
+                }
+            }
+            Command::SetRoutinePoints {
+                actor,
+                work,
+                relax,
+                sleep,
+            } => {
+                use gothic_sim::script::routine::time::RoutineTime as Rt;
+                self.sim.script_routines = true;
+                for (time, point) in [(Rt::Work, work), (Rt::Relax, relax), (Rt::Sleep, sleep)] {
+                    if let Some(p) = point {
+                        self.sim
+                            .script
+                            .set_routine_point(*actor, time, EntityId(*p));
+                    }
+                }
+            }
+            Command::EquipNpc { actor, template } => {
+                if let Some(def) = self.sim.items.get(template).cloned() {
+                    self.sim.actor_mut(*actor).equipment.equip(def);
+                }
+            }
+            Command::GiveNpc {
+                actor,
+                template,
+                amount,
+            } => {
+                let info = self.sim.items.info(template);
+                self.sim.actor_mut(*actor).inventory.add_items(
+                    template,
+                    info,
+                    (*amount).min(i32::MAX as u32) as i32,
+                    0,
+                    gothic_gameplay::inventory::StackType::Normal,
+                );
+            }
+            Command::GrantPerk(p) => {
+                self.grant_perks(&[p.as_str()]);
+            }
+            Command::GiveHero { template, amount } => {
+                self.sim
+                    .state
+                    .add_item(&template.to_ascii_lowercase(), *amount);
+                self.sync_inventory();
+                self.state_rev += 1;
             }
             Command::Save(p) => match self.save_to(p) {
                 Ok(()) => out.push(Event::Saved(p.clone())),

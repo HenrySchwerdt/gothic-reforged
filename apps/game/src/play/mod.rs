@@ -5,20 +5,29 @@
 //! combat, AI); this module only turns input into [`Command`]s and core [`Event`]s into
 //! animation, audio and UI.
 //!
-//! Controls: WASD move, mouse look (click to grab, Esc to release), Shift sprint, Space jump,
-//! 1 / 0 draw / holster the sword, E talk to the NPC in front of you (within 3 m), left click
-//! attack, L journal, I inventory, C character, F5 / F9 quick save / load, F fly, V camera.
+//! Controls: the original key bindings, see [`controls`] (WASD / QE, Shift, Ctrl, Alt, Space,
+//! 1..0 quick slots, mouse attacks and parry, L I C M B, F5 F6 F9 F10); developer keys of this
+//! port: F fly, V camera. The original shows no help overlay and neither does this mode.
 mod anim;
 mod audio;
+mod barks;
 mod cam;
+mod controls;
+mod data;
 mod events;
+mod fx;
 mod hero;
 mod hud;
+mod interact;
 mod kit;
 mod nav;
 mod npcs;
+mod objects;
+mod pose;
 mod record;
+mod routines;
 mod script;
+mod windows;
 
 use crate::walk::{Player, Smoke};
 use anyhow::Result;
@@ -62,6 +71,30 @@ pub struct Roster {
     pub display: HashMap<String, String>,
 }
 
+/// Per-NPC data the presentation needs besides the look: stock-voice class and routine points.
+#[derive(Component, Clone, Default)]
+pub struct NpcExtra {
+    /// `gCNPC_PS.Voice` (`Hum_Fat_Weak`), the `SVM_<voice>_<event>` class.
+    pub voice: String,
+    /// Working / relaxing / sleeping point ids (world entity ids).
+    pub work: Option<String>,
+    pub relax: Option<String>,
+    pub sleep: Option<String>,
+}
+
+/// What the interaction focus points at.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Target {
+    /// A living character (talk).
+    Npc(ActorId),
+    /// A dead or knocked-out character (loot).
+    Body(ActorId),
+    /// An interact object, index into [`objects::WorldObjects`].
+    Object(usize),
+    /// A loose item, index into [`objects::WorldObjects`].
+    Item(usize),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mode {
     #[default]
@@ -87,6 +120,35 @@ pub struct PlayState {
     pub combat_focus: Option<(ActorId, f32)>,
     /// Smoothed dialog camera position (metres).
     pub dialog_cam: Option<Vec3>,
+    /// The focused thing (object, item, body or character).
+    pub target: Option<Target>,
+    /// The hero sneaks (`AniState::Sneak` of the ported state).
+    pub sneaking: bool,
+    /// The quick bar: template per slot 1..10.
+    pub quick: Vec<Option<String>>,
+}
+
+/// A key press the smoke script injects (the same code path as the keyboard).
+#[derive(Clone, Debug)]
+pub enum ScriptAct {
+    Confirm,
+    /// Quick slot, 0-based.
+    Quick(usize),
+    DrawWeapon,
+    Sneak,
+    Jump,
+    /// Left mouse button held for this many seconds, then released.
+    LeftClick(f32),
+    /// Right mouse button down (true) or up (false).
+    Parry(bool),
+    /// Digit key `n` (1-based) of an open window (take / craft entry).
+    WindowKey(usize),
+    /// Enter in an open window (take all / first entry).
+    WindowEnter,
+    /// Esc in an open window.
+    WindowClose,
+    /// Leave a seat / pose.
+    EndInteraction,
 }
 
 /// Input injected by the smoke script (merged with the keyboard in `hero::input`).
@@ -100,6 +162,7 @@ pub struct ScriptInput {
     pub draw: Option<bool>,
     pub choose: Option<usize>,
     pub end_dialog: bool,
+    pub acts: std::collections::VecDeque<ScriptAct>,
 }
 
 pub fn requested(args: &[String]) -> bool {
@@ -203,6 +266,10 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     let state = new_game_state();
     let mut core = gothic_runtime::Core::new(db.clone(), items, state.clone(), 0x6074_1C20);
+    core.guess_weapons = false;
+    // The start kit's sword and bow need these skills (and STR 100 / DEX 80, which the new
+    // game's attributes meet).
+    core.grant_perks(&["Perk_1H_1", "Perk_Bow_1"]);
     if !core.arm_hero("It_1H_OrcSlayer_01") {
         eprintln!("play: It_1H_OrcSlayer_01 missing from the item database");
     }
@@ -230,6 +297,20 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         units_per_meter: 1.0,
         ..audio.settings
     };
+    let objects = objects::WorldObjects::load();
+    eprintln!(
+        "play: {} world entities around Ardea, {} item meshes",
+        objects.list.len(),
+        objects.item_mesh.len()
+    );
+    let mut quick = vec![None; 10];
+    for (item, _, slot) in kit::START_KIT {
+        if (1..=10).contains(slot) {
+            quick[*slot as usize - 1] = Some((*item).to_string());
+        }
+    }
+    app.insert_resource(PlayState { quick, ..default() });
+    app.insert_resource(objects);
     app.insert_resource(HeroKit {
         sword_mesh,
         look: hero_look,
@@ -243,12 +324,20 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         ..default()
     })
     .insert_resource(roster)
-    .init_resource::<PlayState>()
     .init_resource::<ScriptInput>()
+    .init_resource::<interact::Interaction>()
+    .init_resource::<barks::BarkState>()
     .add_plugins((AnimationPlugin, GothicUiPlugin, audio, CorePlugin));
 
     hero::register(app);
+    objects::register(app);
+    interact::register(app);
+    windows::register(app);
+    barks::register(app);
+    fx::register(app);
+    app.add_systems(Update, pose::pose_system.after(crate::walk::update_camera));
     npcs::register(app);
+    routines::register(app);
     nav::register(app);
     events::register(app);
     cam::register(app);

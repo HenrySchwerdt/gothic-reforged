@@ -101,6 +101,12 @@ pub fn overlay_system(
     }
 }
 
+/// Queues arbitrary overlay steps `(action, phase)`.
+pub fn queue_steps(queue: &mut OverlayQueue, steps: &[(&'static str, &'static str)]) {
+    queue.0.clear();
+    queue.0.extend(steps.iter().copied());
+}
+
 /// Queues a swing (raise, strike, recover).
 pub fn queue_swing(queue: &mut OverlayQueue) {
     queue.0.clear();

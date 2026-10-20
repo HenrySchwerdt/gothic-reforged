@@ -70,6 +70,8 @@ fn bind_actors(
     mut commands: Commands,
     mut events: MessageReader<CoreEvent>,
     mut roster: ResMut<Roster>,
+    gear: Query<&super::npcs::NpcGear>,
+    mut cmd: MessageWriter<CoreCommand>,
 ) {
     for e in events.read() {
         if let Event::ActorSpawned { actor, .. } = &e.0
@@ -77,6 +79,23 @@ fn bind_actors(
         {
             commands.entity(entity).insert(NpcActor(*actor));
             roster.by_actor.insert(*actor, entity);
+            // The character's real inventory: worn weapons and everything it carries.
+            if let Ok(g) = gear.get(entity) {
+                for t in &g.equip {
+                    cmd.write(CoreCommand(Command::EquipNpc {
+                        actor: *actor,
+                        template: t.clone(),
+                    }));
+                }
+                for (t, n) in &g.give {
+                    cmd.write(CoreCommand(Command::GiveNpc {
+                        actor: *actor,
+                        template: t.clone(),
+                        amount: *n,
+                    }));
+                }
+                commands.entity(entity).remove::<super::npcs::NpcGear>();
+            }
         }
     }
 }
@@ -404,7 +423,7 @@ fn mirror_state(
     if *rev != core.0.state_rev {
         *rev = core.0.state_rev;
         session.state = core.0.state().clone();
-        slots.0 = default_quick_slots(&session);
+        slots.0 = quick_slots(&play.quick, &session);
     }
     // creature in the fight (or in front of the camera): its health shows in the top bar
     let target = play.combat_focus.map(|(id, _)| id).or(play.focus);
@@ -441,27 +460,17 @@ fn mirror_state(
     }
 }
 
-/// Quick bar contents until the core has real slot bindings: weapons, bow, ammo, then
-/// consumables in inventory order (the original fills the bar the same way at game start).
-fn default_quick_slots(s: &GameSession) -> Vec<Option<gothic_ui::QuickSlot>> {
-    let inv = &s.state.inventory;
-    let mut picked: Vec<gothic_ui::QuickSlot> = Vec::new();
-    let mut take = |f: &dyn Fn(&gothic_ui::ItemInfo) -> bool| {
-        if let Some((k, n)) = inv.iter().find(|(k, n)| {
-            **n > 0 && !picked.iter().any(|p| p.item == **k) && s.items.get(k).is_some_and(f)
-        }) {
-            picked.push(gothic_ui::QuickSlot {
-                item: k.clone(),
-                count: *n,
-            });
-        }
-    };
-    take(&|i| i.category == 1 && matches!(i.use_type.as_str(), "1H" | "2H"));
-    take(&|i| i.category == 1 && i.use_type == "Axe");
-    take(&|i| i.category == 1 && i.use_type == "Bow");
-    take(&|i| i.category == 1 && i.use_type == "Arrow");
-    for _ in 0..6 {
-        take(&|i| matches!(i.category, 4 | 6) && !i.mission_item && i.value > 0);
-    }
-    picked.into_iter().map(Some).collect()
+/// The quick bar: the bound template of each slot with the amount carried (slots 1..0). The
+/// start kit binds slot 1 the sword, 2 the torch, 3 the bow, 4 the arrows and 5 the health
+/// potions (`InventoryAssureStartupItems`).
+fn quick_slots(bound: &[Option<String>], s: &GameSession) -> Vec<Option<gothic_ui::QuickSlot>> {
+    bound
+        .iter()
+        .map(|b| {
+            b.as_ref().map(|item| gothic_ui::QuickSlot {
+                item: item.clone(),
+                count: s.state.item_count(item),
+            })
+        })
+        .collect()
 }

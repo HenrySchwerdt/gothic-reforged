@@ -134,9 +134,56 @@ pub struct ItemDef {
     pub modifiers: Vec<Modifier>,
     pub spell: Option<String>,
     pub permanent: bool,
+    /// `MissionItem` (given to NPCs it vanishes, see `Inventory::transfer_items_to`).
+    pub mission_item: bool,
+    /// `ActivateSkill1/2`.
+    pub activate_skills: Vec<String>,
+    /// The skill this item teaches.
+    pub skill: Option<String>,
 }
 
 impl ItemDef {
+    /// The inventory rules' view of this item (`gCItem_PS` data).
+    pub fn to_info(&self) -> gothic_gameplay::inventory::ItemInfo {
+        use gothic_gameplay::inventory::{category_from_name, use_type_from_name, ItemInfo, StatMod, StatReq};
+        ItemInfo {
+            name: self.name.clone(),
+            category: category_from_name(&self.category),
+            use_type: use_type_from_name(self.use_type.as_deref().unwrap_or("None")),
+            gold_value: self.value,
+            quality: self.quality.max(0) as u32,
+            mission_item: self.mission_item,
+            permanent: self.permanent,
+            robe: self.robe,
+            damage_amount: self.damage.as_ref().map_or(0, |d| d.amount),
+            mods: self
+                .modifiers
+                .iter()
+                .map(|m| StatMod {
+                    tag: m.tag.clone(),
+                    op: m.op,
+                    value: m.value,
+                })
+                .collect(),
+            reqs: self
+                .requirements
+                .iter()
+                .map(|r| StatReq {
+                    tag: r.tag.clone(),
+                    op: r.op,
+                    value: r.value,
+                })
+                .collect(),
+            required_skills: self.required_skills.clone(),
+            activate_skills: self.activate_skills.clone(),
+            skill: self.skill.clone(),
+            spell: self.spell.clone(),
+            spell_is_magic: self.spell.is_some(),
+            skill_is_skill: self.skill.is_some(),
+            ..ItemInfo::default()
+        }
+    }
+
     /// Convenience constructor for fixtures.
     pub fn weapon(name: &str, use_type: &str, ty: &str, amount: i32) -> Self {
         Self {
@@ -176,15 +223,28 @@ impl ItemDef {
     }
 }
 
+impl gothic_gameplay::inventory::ItemCatalog for ItemDb {
+    fn item(&self, name: &str) -> Option<std::sync::Arc<gothic_gameplay::inventory::ItemInfo>> {
+        self.info(name)
+    }
+}
+
 /// Item database keyed by lower-case template name.
 #[derive(Debug, Clone, Default)]
 pub struct ItemDb {
     items: BTreeMap<String, ItemDef>,
+    infos: BTreeMap<String, std::sync::Arc<gothic_gameplay::inventory::ItemInfo>>,
 }
 
 impl ItemDb {
     pub fn insert(&mut self, item: ItemDef) {
-        self.items.insert(item.name.to_ascii_lowercase(), item);
+        let key = item.name.to_ascii_lowercase();
+        self.infos.insert(key.clone(), std::sync::Arc::new(item.to_info()));
+        self.items.insert(key, item);
+    }
+    /// Shared inventory-rule data of a template.
+    pub fn info(&self, name: &str) -> Option<std::sync::Arc<gothic_gameplay::inventory::ItemInfo>> {
+        self.infos.get(&name.to_ascii_lowercase()).cloned()
     }
     pub fn get(&self, name: &str) -> Option<&ItemDef> {
         self.items.get(&name.to_ascii_lowercase())

@@ -4,8 +4,9 @@
 use crate::brain::Brain;
 use crate::config::SimConfig;
 use crate::item::{DamageDef, Equipment};
+use gothic_gameplay::inventory::Inventory;
 use crate::types::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// Player attribute record (`PSPlayerMemory`) [CA 2.13 "New-game player values"].
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +71,7 @@ pub struct Actor {
     pub stamina: i32,
     pub mana: i32,
     pub equipment: Equipment,
-    pub inventory: BTreeMap<String, u32>,
+    pub inventory: Inventory,
     /// Lower-case skill/perk names (`perk_1h_2`).
     pub perks: BTreeSet<String>,
     pub ai_mode: AiMode,
@@ -136,7 +137,7 @@ impl Actor {
             stamina: 0,
             mana: 0,
             equipment: Equipment::default(),
-            inventory: BTreeMap::new(),
+            inventory: Inventory::new(),
             perks: BTreeSet::new(),
             ai_mode: AiMode::Routine,
             action: Action::None,

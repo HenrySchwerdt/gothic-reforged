@@ -101,9 +101,10 @@ impl NpcRecord {
         }
         for s in &self.inventory.stacks {
             if s.amount > 0 {
-                *a.inventory.entry(s.item.to_ascii_lowercase()).or_insert(0) += s.amount as u32;
+                a.inventory.add(&s.item, s.amount as u32);
             }
         }
+        a.inventory.rebind(items);
         a.refresh(cfg);
         a
     }

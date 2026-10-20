@@ -377,7 +377,7 @@ pub fn wants_potion(cfg: &SimConfig, a: &Actor, dist_to_target: f32) -> bool {
     !a.is_player
         && !matches!(a.class, NpcClass::Mage | NpcClass::Paladin)
         && a.hp * 100 < a.hp_max(cfg) * 40
-        && a.inventory.get("it_potion_health").copied().unwrap_or(0) > 0
+        && a.inventory.count("it_potion_health") > 0
         && matches!(
             a.equipment.weapon_mode(),
             WeaponMode::Melee | WeaponMode::None
@@ -393,7 +393,7 @@ pub fn wants_to_flee(cfg: &SimConfig, a: &Actor) -> bool {
             !a.is_player
                 && !a.boss
                 && a.hp * 100 < a.hp_max(cfg) * p
-                && a.inventory.get("it_potion_health").copied().unwrap_or(0) == 0
+                && a.inventory.count("it_potion_health") == 0
         }
         None => false,
     }
@@ -601,7 +601,7 @@ mod tests {
     fn potion_rule_and_flee_variant() {
         let cfg = SimConfig::default();
         let mut a = knight(&cfg);
-        a.inventory.insert("it_potion_health".into(), 1);
+        a.inventory.insert("it_potion_health", 1);
         a.hp = a.hp_max(&cfg) * 39 / 100;
         assert!(wants_potion(&cfg, &a, 800.0));
         assert!(!wants_potion(&cfg, &a, 600.0), "target too close");

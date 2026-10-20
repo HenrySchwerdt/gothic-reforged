@@ -245,9 +245,9 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
         for i in 0..config.crowd {
             let body = &bodies[(hash01(i, 1) * bodies.len() as f32) as usize % bodies.len()];
             let head = &format!(
-                "{}@S{}",
+                "{}@M{}",
                 heads[(hash01(i, 2) * heads.len() as f32) as usize % heads.len()],
-                1 + (hash01(i, 5) * 30.0) as u32
+                (hash01(i, 5) * 30.0) as u32
             );
             let stance = stances[(hash01(i, 3) * stances.len() as f32) as usize % stances.len()];
             let mut spec = NpcSpec::new(body.clone())

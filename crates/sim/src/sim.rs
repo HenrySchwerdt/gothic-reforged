@@ -153,6 +153,17 @@ pub enum EventKind {
         /// A spell missile (false: an arrow or bolt).
         spell: bool,
     },
+    /// An AI command the presentation should show: use animations at work stations, poses,
+    /// stock-voice families (`Action`, `ActionAtPoint`, `AniStateAction`, `StandUp`, `Enjoy`,
+    /// `SaySvm`, `UseItem`).
+    Anim {
+        /// The character.
+        actor: ActorId,
+        /// The command as the script queued it.
+        command: gothic_script::host::AiCommand,
+        /// Use type of the character's destination point (`None` without one).
+        use_type: gothic_script::enums::UseType,
+    },
     /// A forwarded effect the simulation does not act on (yet).
     Unhandled {
         command: String,
@@ -192,6 +203,10 @@ pub struct Sim<W: WorldQuery> {
     pub hero: Option<ActorId>,
     pub events: Vec<Event>,
     pub resolver: Option<Box<dyn RoutineResolver>>,
+    /// Run the ported routine states for routine NPCs (the host registered their points).
+    pub script_routines: bool,
+    /// Speaking cooldown shared by all characters (see [`crate::bark`]).
+    pub bark: crate::bark::BarkGate,
     /// The NPC of the running dialog (`npc` / `self` in forwarded effects).
     pub dialog_partner: Option<ActorId>,
     pub gui_open: bool,
@@ -259,6 +274,8 @@ impl<W: WorldQuery> Sim<W> {
             hero: None,
             events: Vec::new(),
             resolver: None,
+            script_routines: false,
+            bark: Default::default(),
             dialog_partner: None,
             gui_open: false,
             npc_templates: BTreeMap::new(),
@@ -281,6 +298,19 @@ impl<W: WorldQuery> Sim<W> {
 
     pub fn now_ms(&self) -> u64 {
         self.tick * u64::from(self.cfg.tick_ms)
+    }
+
+    /// A character says the stock voice line `key`, if the speak helper's gate lets it: only
+    /// humanoids speak, and the category of the speaker's state waits its span.
+    pub(crate) fn speak(&mut self, actor: ActorId, key: String) {
+        if !self.actors[actor.0 as usize].species.is_humanoid() {
+            return;
+        }
+        let category = crate::bark::category_of(self.script.npc(actor).state);
+        let hours = self.clock.game_ms as f64 / 3_600_000.0;
+        if self.bark.allow(category, hours) {
+            self.push(EventKind::Voice { actor, key });
+        }
     }
 
     pub(crate) fn push(&mut self, kind: EventKind) {
@@ -1102,9 +1132,7 @@ impl<W: WorldQuery> Sim<W> {
             .max(1);
         let max = self.actors[i].hp_max(&self.cfg);
         let a = &mut self.actors[i];
-        if let Some(n) = a.inventory.get_mut("it_potion_health") {
-            *n = n.saturating_sub(1);
-        }
+        a.inventory.take("it_potion_health", 1);
         let before = a.hp;
         a.hp = (a.hp + heal).min(max);
         a.action = Action::Heal;
@@ -1148,6 +1176,11 @@ impl<W: WorldQuery> Sim<W> {
 
     fn routine_think(&mut self, i: usize, now: u64) {
         if self.resolver.is_none() {
+            // Hosts that register script routine points (`ScriptTables::set_routine_point`) get
+            // the ported routine tasks; others have no routine at all.
+            if self.script_routines {
+                self.script_routine_think(i, now);
+            }
             return;
         }
         let id = self.actors[i].id;
@@ -1468,11 +1501,7 @@ impl<W: WorldQuery> Sim<W> {
         let key = item.to_ascii_lowercase();
         match side {
             TradeSide::PlayerBuys => {
-                let stock = self.actors[npc.0 as usize]
-                    .inventory
-                    .get(&key)
-                    .copied()
-                    .unwrap_or(0);
+                let stock = self.actors[npc.0 as usize].inventory.count(&key);
                 if stock == 0 {
                     return Err("npc does not have the item".into());
                 }
@@ -1482,7 +1511,7 @@ impl<W: WorldQuery> Sim<W> {
                 self.state
                     .take_item(gothic_gameplay::state::GOLD_ITEM, price as u32);
                 self.state.add_item(item, 1);
-                *self.actors[npc.0 as usize].inventory.get_mut(&key).unwrap() -= 1;
+                self.actors[npc.0 as usize].inventory.take(&key, 1);
             }
             TradeSide::PlayerSells => {
                 if !self.state.take_item(item, 1) {
@@ -1490,10 +1519,7 @@ impl<W: WorldQuery> Sim<W> {
                 }
                 self.state
                     .add_item(gothic_gameplay::state::GOLD_ITEM, price as u32);
-                *self.actors[npc.0 as usize]
-                    .inventory
-                    .entry(key)
-                    .or_insert(0) += 1;
+                self.actors[npc.0 as usize].inventory.add(&key, 1);
             }
         }
         Ok(price)

@@ -162,6 +162,7 @@ fn geom(id: u64, m: &MeshOut, ao: impl Fn([f32; 3]) -> f32) -> GeomData {
             })
             .collect(),
         tangents: vec![[1.0, 0.0, 0.0, 1.0]; m.positions.len()],
+        light: vec![],
     }
 }
 
@@ -269,6 +270,7 @@ fn billboard(id: u64, composite: &TexData, sil: &Silhouette, size: f32) -> GeomD
         indices: Vec::new(),
         colors: Vec::new(),
         tangents: Vec::new(),
+        light: Vec::new(),
     };
     for k in 0..2 {
         let a = k as f32 * std::f32::consts::FRAC_PI_2;

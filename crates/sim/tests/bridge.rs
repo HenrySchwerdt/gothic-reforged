@@ -187,7 +187,7 @@ fn trade_prices_and_transactions() {
     let mut sim = sim_with(SimConfig::default());
     let hero = sim.spawn_hero(Pos::flat(0.0, 0.0));
     let mut smith = Actor::npc(ActorId(0), "Smith", Species::Human, 10, 10);
-    smith.inventory.insert("it_1h_sword_01".into(), 2);
+    smith.inventory.insert("it_1h_sword_01", 2);
     smith.base_attitude_to_player = Attitude::Neutral; // no discount for friends
     let smith = sim.spawn(smith, Pos::flat(100.0, 0.0));
     sim.state.add_item("it_gold", 500);
@@ -443,7 +443,7 @@ fn drinking_the_potion_rule_triggers_below_forty_percent() {
     let hero = sim.spawn_hero(Pos::flat(0.0, 0.0));
     let mut orc = Actor::npc(ActorId(0), "Orc", Species::Orc, 10, 30);
     orc.alignment = Alignment::Orc;
-    orc.inventory.insert("it_potion_health".into(), 1);
+    orc.inventory.insert("it_potion_health", 1);
     let o = sim.spawn(orc, Pos::flat(1000.0, 0.0));
     sim.actor_mut(o).hp = 200; // 33 percent of 600
     sim.start_attack(o, hero, AttackReason::Enemy);

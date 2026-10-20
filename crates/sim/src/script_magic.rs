@@ -296,12 +296,9 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
             return 0;
         };
         let name = item.name.clone();
-        let held = self.actor(e).map_or(0, |a| {
-            a.inventory
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(&name))
-                .map_or(0, |(_, n)| *n as i32)
-        });
+        let held = self
+            .actor(e)
+            .map_or(0, |a| a.inventory.count(&name) as i32);
         held.max(1)
     }
     fn stack_permanent(&self, e: EntityId, stack: i32) -> bool {
@@ -328,18 +325,9 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
             return;
         };
         let Some(a) = self.actor_mut(e) else { return };
-        let mut left = 0;
-        if let Some(key) = a
-            .inventory
-            .keys()
-            .find(|k| k.eq_ignore_ascii_case(&name))
-            .cloned()
-        {
-            let c = a.inventory.get_mut(&key).expect("key found");
-            *c = c.saturating_sub(n.max(0) as u32);
-            left = *c;
-        }
-        if left == 0 {
+        let take = (n.max(0) as u32).min(a.inventory.count(&name));
+        a.inventory.take(&name, take);
+        if a.inventory.count(&name) == 0 {
             match slot {
                 se::Slot::RightHand => a.equipment.right = None,
                 _ => a.equipment.left = None,

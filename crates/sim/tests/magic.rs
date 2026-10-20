@@ -198,7 +198,7 @@ fn archer_world(seed: u64) -> (Sim<Grid2dWorld>, ActorId, ActorId) {
     let (mut sim, hero, orc) = world(seed);
     sim.equip(hero, "It_Bow_Test").expect("bow");
     sim.equip(hero, "It_Arrow").expect("arrows");
-    sim.actor_mut(hero).inventory.insert("It_Arrow".into(), 5);
+    sim.actor_mut(hero).inventory.insert("It_Arrow", 5);
     assert!(sim.player_ready_ranged());
     settle(&mut sim, 600);
     (sim, hero, orc)
