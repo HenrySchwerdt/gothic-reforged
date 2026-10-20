@@ -43,7 +43,6 @@ pub struct TexData {
 
 pub struct MatData {
     pub id: u64,
-    pub name: String,
     pub blend_mode: Option<u32>,
     pub mask_reference: Option<u8>,
     pub diffuse: Option<Arc<TexData>>,
@@ -395,7 +394,6 @@ impl Loader {
             let diffuse = stem.and_then(|s| self.texture(&s));
             Arc::new(MatData {
                 id: self.id(),
-                name: key.clone(),
                 blend_mode: x.blend_mode,
                 mask_reference: x.mask_reference,
                 diffuse,

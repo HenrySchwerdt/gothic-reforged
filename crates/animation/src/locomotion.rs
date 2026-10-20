@@ -179,6 +179,8 @@ pub struct Locomotion {
     pub key: LocoKey,
     /// Ground speed of the latest step (cm/s).
     pub ground_speed: f32,
+    /// Key whose clip was last started on the animator (managed by the runtime system).
+    pub playing: Option<LocoKey>,
 }
 
 impl Default for Locomotion {
@@ -198,6 +200,7 @@ impl Locomotion {
                 sneak: false,
             },
             ground_speed: 0.0,
+            playing: None,
         }
     }
 

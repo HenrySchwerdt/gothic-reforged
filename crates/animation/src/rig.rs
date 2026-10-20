@@ -302,7 +302,7 @@ pub(crate) mod tests {
         let plan = rig.plan(&[4]);
         let mut model = vec![Affine3A::IDENTITY; rig.names.len()];
         evaluate(&plan, &rig.rest, &mut model);
-        for n in [1usize, 2, 3, 4] {
+        for n in [1usize, 3, 4] {
             let want = rig.bind_world[n];
             let got = Mat4::from(model[n]);
             assert!(

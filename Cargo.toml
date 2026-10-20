@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "crates/formats", "crates/importer", "crates/world", "apps/inspector", "apps/game", "crates/physics", "crates/animation"]
-default-members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "apps/inspector", "crates/formats", "crates/importer", "crates/world"]
+members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "crates/formats", "crates/importer", "crates/world", "apps/inspector", "apps/game", "crates/physics", "crates/animation", "crates/audio", "crates/ui", "crates/sim"]
+default-members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "apps/inspector", "crates/formats", "crates/importer", "crates/world", "crates/sim"]
 resolver = "3"
 
 [workspace.package]

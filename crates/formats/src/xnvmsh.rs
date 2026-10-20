@@ -102,7 +102,7 @@ fn parse_stream(b: &[u8], q: usize) -> Option<(CollisionMesh, usize)> {
     let ie = ve.checked_add(nt.checked_mul(3 * width)?)?;
     let raw = b.get(vs..ie)?;
     let mut positions = Vec::with_capacity(nv);
-    for c in raw[..nv * 12].chunks_exact(12) {
+    for c in raw[..nv * 12].as_chunks::<12>().0.iter() {
         let p = [0, 4, 8].map(|o| f32::from_le_bytes(c[o..o + 4].try_into().unwrap()));
         if !p.iter().all(|v| v.is_finite() && v.abs() < 1.0e6) {
             return None;
@@ -113,7 +113,9 @@ fn parse_stream(b: &[u8], q: usize) -> Option<(CollisionMesh, usize)> {
     let indices: Vec<u32> = if width == 1 {
         idx.iter().map(|&v| u32::from(v)).collect()
     } else {
-        idx.chunks_exact(2)
+        idx.as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u32::from(u16::from_le_bytes([c[0], c[1]])))
             .collect()
     };

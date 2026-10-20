@@ -1,0 +1,16 @@
+[package]
+name = "gothic-audio"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_audio", "vorbis"] }
+gothic-formats = { path = "../formats" }
+gothic-gameplay = { path = "../gameplay" }
+anyhow.workspace = true
+lewton = "0.10"
+
+[lints]
+workspace = true

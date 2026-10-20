@@ -284,13 +284,13 @@ impl RootMotionSource {
     /// Root motion of `clip` between playback times `from` and `to` (unwrapped, may cross the
     /// loop point). Clips whose root bone does not travel (all walk/run cycles are in place)
     /// report zero; the nominal speed in [`Clip::nominal_speed`] covers those.
-    pub fn delta(rig: &Rig, binding: &ClipBinding, clip: &Clip, from: f32, to: f32) -> RootMotion {
+    pub fn delta(binding: &ClipBinding, clip: &Clip, from: f32, to: f32) -> RootMotion {
         if clip.duration <= 1e-4 || (to - from).abs() < 1e-7 {
             return RootMotion::default();
         }
         let (a, b) = if to >= from { (from, to) } else { (to, from) };
         let sign = if to >= from { 1.0 } else { -1.0 };
-        let (mut trans, mut yaw) = (Vec3::ZERO, 0.0);
+        let (trans, yaw);
         if clip.looping {
             let ta = a.rem_euclid(clip.duration);
             let tb = ta + (b - a);
@@ -299,15 +299,13 @@ impl RootMotionSource {
             } else {
                 let (t1, y1) = binding.root_delta_linear(clip, ta, clip.duration);
                 let (t2, y2) = binding.root_delta_linear(clip, 0.0, tb - clip.duration);
-                trans = t1 + t2;
-                yaw = y1 + y2;
+                (trans, yaw) = (t1 + t2, y1 + y2);
             }
         } else {
             let (ta, tb) = (a.clamp(0.0, clip.duration), b.clamp(0.0, clip.duration));
             (trans, yaw) = binding.root_delta_linear(clip, ta, tb);
         }
         // Model-space horizontal translation; the root bone's own up axis is world up.
-        let _ = rig;
         RootMotion {
             translation: Vec3::new(trans.x, 0.0, trans.z) * sign,
             yaw: yaw * sign,
@@ -392,10 +390,10 @@ pub(crate) mod tests {
         clip.looping = true;
         let binding = ClipBinding::new(&rig, &clip);
         assert_eq!(binding.root_slot, 0);
-        let d = RootMotionSource::delta(&rig, &binding, &clip, 0.9, 1.2);
+        let d = RootMotionSource::delta(&binding, &clip, 0.9, 1.2);
         // 0.1 s before the loop point and 0.2 s after: 3 cm.
         assert!((d.translation.x - 3.0).abs() < 1e-3, "{d:?}");
-        let back = RootMotionSource::delta(&rig, &binding, &clip, 1.2, 0.9);
+        let back = RootMotionSource::delta(&binding, &clip, 1.2, 0.9);
         assert!((back.translation.x + 3.0).abs() < 1e-3);
     }
 }

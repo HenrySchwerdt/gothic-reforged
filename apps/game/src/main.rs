@@ -8,6 +8,10 @@ mod walk;
 mod world_loader;
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "ui-demo")]
+    if std::env::args().any(|a| a == "--ui-demo") {
+        return gothic_ui::demo::run(&std::env::args().collect::<Vec<_>>());
+    }
     #[cfg(feature = "viewer")]
     if std::env::args().any(|a| a == "--actor") {
         return actor_viewer::run();

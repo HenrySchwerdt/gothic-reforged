@@ -23,6 +23,14 @@ pub struct Submesh {
     pub material: String,
     pub bounds_min: [f32; 3],
     pub bounds_max: [f32; 3],
+    /// Stream tag 4 (packed 4 bytes per vertex, byte order as stored); empty if absent.
+    pub colors4: Vec<[u8; 4]>,
+    /// Stream tag 5 (packed 4 bytes per vertex, byte order as stored); empty if absent.
+    pub colors5: Vec<[u8; 4]>,
+    /// Stream tag 64 (three f32 per vertex); empty if absent.
+    pub tangents: Vec<[f32; 3]>,
+    /// Stream tag 73 (two f32 per vertex); empty if absent.
+    pub uv2: Vec<[f32; 2]>,
 }
 
 impl Xcmsh {
@@ -108,6 +116,8 @@ impl Xcmsh {
                 .collect();
             let streams = c.count(32, 11)?;
             let (mut positions, mut normals, mut uvs, mut indices) = (None, None, None, None);
+            let (mut colors4, mut colors5, mut tangents, mut uv2) =
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             let mut tags = std::collections::HashSet::new();
             for _ in 0..streams {
                 let tag = c.u32()?;
@@ -178,8 +188,33 @@ impl Xcmsh {
                     // Tangent / auxiliary coordinate streams are length-checked
                     // by `take` above; their float values are not interpreted
                     // (tag 2 is the transformed-position layout, 16 bytes; tag 73 two floats).
-                    2 | 15 | 18 | 21 | 64 | 72 | 73 => {}
-                    4..=6 => { /* Opaque packed colors/point size; mapping unresolved. */ }
+                    64 => {
+                        for _ in 0..n {
+                            tangents.push([
+                                f32::from_bits(payload.u32()?),
+                                f32::from_bits(payload.u32()?),
+                                f32::from_bits(payload.u32()?),
+                            ]);
+                        }
+                    }
+                    73 => {
+                        for _ in 0..n {
+                            let a = f32::from_bits(payload.u32()?);
+                            let b = f32::from_bits(payload.u32()?);
+                            uv2.push([
+                                if a.is_finite() { a } else { 0.0 },
+                                if b.is_finite() { b } else { 0.0 },
+                            ]);
+                        }
+                    }
+                    2 | 15 | 18 | 21 | 72 => {}
+                    4 | 5 => {
+                        let target = if tag == 4 { &mut colors4 } else { &mut colors5 };
+                        for _ in 0..n {
+                            target.push(payload.take(4)?.try_into()?);
+                        }
+                    }
+                    6 => {}
                     _ => bail!("unsupported XCMSH stream tag {tag}"),
                 }
             }
@@ -208,6 +243,7 @@ impl Xcmsh {
                 indices.iter().all(|&i| (i as usize) < positions.len()),
                 "XCMSH index outside vertex stream"
             );
+            let n_vertices = positions.len();
             let normals = normals.unwrap_or_default();
             let uvs = uvs.unwrap_or_default();
             ensure!(
@@ -226,6 +262,10 @@ impl Xcmsh {
                 material,
                 bounds_min,
                 bounds_max,
+                colors4: if colors4.len() == n_vertices { colors4 } else { Vec::new() },
+                colors5: if colors5.len() == n_vertices { colors5 } else { Vec::new() },
+                tangents: if tangents.len() == n_vertices { tangents } else { Vec::new() },
+                uv2: if uv2.len() == n_vertices { uv2 } else { Vec::new() },
             });
         }
         ensure!(c.0.is_empty(), "unexpected trailing XCMSH body bytes");

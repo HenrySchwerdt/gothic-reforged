@@ -295,6 +295,10 @@ mod tests {
             material: String::new(),
             bounds_min: [0.0; 3],
             bounds_max: [1.0; 3],
+            colors4: vec![],
+            colors5: vec![],
+            tangents: vec![],
+            uv2: vec![],
         };
         let mut mesh = Xcmsh {
             submeshes: vec![sub],

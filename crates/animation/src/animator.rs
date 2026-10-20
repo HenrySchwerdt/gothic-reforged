@@ -180,7 +180,6 @@ impl Animator {
                 }
                 if i == top && self.root_motion_enabled {
                     self.root_motion = RootMotionSource::delta(
-                        &self.rig,
                         &l.motion.binding,
                         &l.motion.clip,
                         before,

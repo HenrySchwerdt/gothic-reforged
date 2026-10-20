@@ -1,86 +1,42 @@
-//! Development viewer for skinned `.xact` actors driven by `.xmot` motions.
+//! Development viewer for animated `.xact` actors (`gothic-animation`).
 //!
-//! `gothic-reforged --actor Hero [--motion walk] [--smoke]`: loads the actor(s) from
-//! `_compiledAnimation.pak`, resolves textures through `_compiledMaterial.pak` and
-//! `_compiledImage.pak`, builds a Bevy joint hierarchy with `SkinnedMesh`, and samples the
-//! motion's linear key tracks each frame. Explicit archives only, no patch overlay.
-use anyhow::{Result, anyhow, ensure};
+//! ```text
+//! gothic-reforged --actor Hero [--motion walk|run|idle|<name>] [--stance 1h] [--sword]
+//!                 [--yaw DEG] [--smoke] [--screenshot PATH]
+//! gothic-reforged --actor Hero --crowd 100 [--bench] [--smoke] [--screenshot PATH]
+//! ```
+//!
+//! Single mode shows the hero; without `--motion` it is driven through the locomotion state
+//! machine (keys 1..9 pick idle, walk, run, sprint, sneak, jump, fall, strafe, turn; F cycles
+//! the stance). `--crowd N` spawns N different human NPCs (body, head, stance, weapons) that
+//! follow scripted `LocomotionInput` sequences; `--bench` prints frame and animation timings.
+//! Explicit archives only (`--data-dir`), no patch overlay.
+use anyhow::{Context, Result, anyhow};
 use bevy::{
-    asset::RenderAssetUsages,
-    camera::visibility::NoFrustumCulling,
-    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
-    mesh::{
-        Indices, PrimitiveTopology, VertexAttributeValues,
-        skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
-    },
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-    window::WindowResolution,
+    window::{PresentMode, WindowResolution},
 };
-use gothic_formats::{PakArchive, xact::Actor, ximg::Ximg, xmot::Motion, xshmat::Xshmat};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
+use gothic_animation::{
+    ActorLibrary, ActorSpawner, AnimationPlugin, AnimationStats, Animator, Locomotion,
+    LocomotionInput, NpcSpec, Stance, WeaponSpec,
 };
+use std::path::PathBuf;
 
 const DEFAULT_DATA_DIR: &str = r"D:\SteamLibrary\steamapps\common\Gothic 3\Data";
 
-struct ImageData {
-    width: u32,
-    height: u32,
-    fourcc: [u8; 4],
-    mips: Vec<Vec<u8>>,
-}
-
-struct ActorData {
-    name: String,
-    actor: Actor,
-    /// Per material index: image index, alpha mode hint.
-    textures: Vec<Option<usize>>,
-    blend: Vec<Option<(u32, u8)>>,
-}
-
-#[derive(Resource)]
-struct Scene {
-    actors: Vec<ActorData>,
-    images: Vec<ImageData>,
-    motion: Option<(String, Motion)>,
-    label: String,
+#[derive(Resource, Clone)]
+struct Config {
+    crowd: usize,
+    smoke: bool,
+    bench: bool,
+    screenshot: String,
+    second_screenshot: String,
+    motion: Option<String>,
+    stance: Stance,
+    sword: bool,
     yaw_degrees: f32,
-    in_place: bool,
-}
-
-#[derive(Resource)]
-struct Smoke {
-    enabled: bool,
-    path: String,
-    second_path: String,
     times: [f32; 2],
-    frame: u32,
-}
-
-/// Marks a joint entity: which actor and node it represents.
-#[derive(Component)]
-struct Joint {
-    actor: usize,
-    node: usize,
-}
-
-#[derive(Resource)]
-struct Playback {
-    time: f32,
-    paused: bool,
-    /// Per actor, per node: index of the motion node with the same name.
-    map: Vec<Vec<Option<usize>>>,
-    /// Bind-pose local TRS per actor and node.
-    bind: Vec<Vec<(Vec3, Quat, Vec3)>>,
-    /// True for nodes without parent (root motion is flattened when in place).
-    root: Vec<Vec<bool>>,
-    /// Constant matrix applied before the motion's local transform: motions are expressed
-    /// relative to the nearest *animated* ancestor, so the bind-pose transform of any helper
-    /// nodes (`*_ROOT`, `*_END`) between them must be undone.
-    prefix: Vec<Vec<Mat4>>,
 }
 
 #[derive(Component)]
@@ -89,6 +45,39 @@ struct Orbit {
     distance: f32,
     yaw: f32,
     pitch: f32,
+}
+
+/// Scripted input source of a crowd member.
+#[derive(Component)]
+struct CrowdMember {
+    index: usize,
+    stance: Stance,
+}
+
+#[derive(Component)]
+struct Hero;
+
+#[derive(Resource, Default)]
+struct Frames {
+    count: u32,
+    deltas: Vec<f32>,
+    animation: Vec<[f32; 3]>,
+}
+
+fn parse_stance(value: &str) -> Result<Stance> {
+    Ok(match value.to_lowercase().as_str() {
+        "unarmed" | "none" => Stance::Unarmed,
+        "fist" => Stance::Fist,
+        "1h" => Stance::OneHand,
+        "1hshield" | "shield" => Stance::OneHandShield,
+        "2h" => Stance::TwoHand,
+        "bow" => Stance::Bow,
+        "crossbow" => Stance::CrossBow,
+        "staff" => Stance::Staff,
+        "magic" | "cast" => Stance::Magic,
+        "torch" => Stance::Torch,
+        other => return Err(anyhow!("unknown stance {other:?}")),
+    })
 }
 
 pub fn run() -> Result<()> {
@@ -100,645 +89,340 @@ pub fn run() -> Result<()> {
             .filter(|s| !s.starts_with("--"))
             .map(String::as_str)
     };
+    let has = |name: &str| args.iter().any(|a| a == name);
     let data_dir = PathBuf::from(flag("--data-dir").unwrap_or(DEFAULT_DATA_DIR));
-    let actor_arg = flag("--actor").ok_or_else(|| anyhow!("--actor requires a name (try Hero)"))?;
-    let smoke = args.iter().any(|a| a == "--smoke");
-    let scene = load(
-        &data_dir,
-        actor_arg,
-        flag("--motion"),
-        flag("--yaw").map(str::parse).transpose()?.unwrap_or(0.0),
-        args.iter().any(|a| a == "--root-motion"),
-    )?;
+    let crowd: usize = flag("--crowd").map(str::parse).transpose()?.unwrap_or(0);
+    let sword = has("--sword");
+    let stance = match flag("--stance") {
+        Some(s) => parse_stance(s)?,
+        None if sword => Stance::OneHand,
+        None => Stance::Unarmed,
+    };
     let screenshot = flag("--screenshot")
-        .unwrap_or(".local/actor-smoke.png")
+        .unwrap_or(if crowd > 0 {
+            ".local/crowd.png"
+        } else {
+            ".local/actor-smoke.png"
+        })
         .to_string();
-    let second_path = match screenshot.strip_suffix(".png") {
+    let second_screenshot = match screenshot.strip_suffix(".png") {
         Some(stem) => format!("{stem}-2.png"),
         None => format!("{screenshot}-2"),
     };
-    let duration = scene.motion.as_ref().map_or(0.0, |(_, m)| m.duration);
-    let time_a: f32 = flag("--time-a").map(str::parse).transpose()?.unwrap_or(0.0);
-    let time_b: f32 = flag("--time-b")
-        .map(str::parse)
-        .transpose()?
-        .unwrap_or(duration * 0.5);
+    let config = Config {
+        crowd,
+        smoke: has("--smoke"),
+        bench: has("--bench"),
+        screenshot,
+        second_screenshot,
+        motion: flag("--motion").map(str::to_string),
+        stance,
+        sword,
+        yaw_degrees: flag("--yaw").map(str::parse).transpose()?.unwrap_or(0.0),
+        times: [
+            flag("--time-a").map(str::parse).transpose()?.unwrap_or(0.0),
+            flag("--time-b").map(str::parse).transpose()?.unwrap_or(0.5),
+        ],
+    };
+    let library = ActorLibrary::open(&data_dir)
+        .with_context(|| format!("opening archives in {}", data_dir.display()))?;
+    eprintln!(
+        "motion catalog: {} named motions; actors: {}",
+        library.catalog.len(),
+        library.actor_names(|_| true).len()
+    );
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gothic Reforged / actor viewer".into(),
                 resolution: WindowResolution::new(1280, 720),
+                present_mode: if config.bench {
+                    PresentMode::AutoNoVsync
+                } else {
+                    PresentMode::AutoVsync
+                },
                 ..default()
             }),
             ..default()
         }))
-        .insert_resource(scene)
-        .insert_resource(Smoke {
-            enabled: smoke,
-            path: screenshot,
-            second_path,
-            times: [time_a, time_b],
-            frame: 0,
-        })
+        .add_plugins(AnimationPlugin)
+        .insert_resource(library)
+        .insert_resource(config)
+        .init_resource::<Frames>()
         .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.1)))
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (animate, orbit, smoke_capture, update_title).chain(),
+            (crowd_script, hero_keys, smoke_drive, orbit, capture, update_title).chain(),
         )
         .run();
     Ok(())
 }
 
-fn find_member(pak: &PakArchive, wanted: &str, extension: &str) -> Result<usize> {
-    let wanted_lower = wanted.to_lowercase();
-    let with_ext = if wanted_lower.ends_with(extension) {
-        wanted_lower.clone()
-    } else {
-        format!("{wanted_lower}{extension}")
-    };
-    let live = |e: &&gothic_formats::PakEntry| !e.deleted() && !e.payloadless();
-    if let Some(i) = pak
-        .entries
-        .iter()
-        .position(|e| live(&e) && e.path.to_lowercase() == with_ext)
-    {
-        return Ok(i);
+fn alias(name: &str) -> String {
+    match name.to_lowercase().as_str() {
+        "idle" => "Hero_Stand_None_None_P0_Ambient_Loop_N_Fwd_01_%_00_P0_0".into(),
+        "walk" => "Hero_Stand_None_None_P0_Move_Walk_N_Fwd_00_%_00_P0_160".into(),
+        "run" => "Hero_Stand_None_None_P0_Move_Run_N_Fwd_00_%_00_P0_400".into(),
+        _ => name.to_string(),
     }
-    let mut hits: Vec<usize> = pak
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| {
-            live(e) && {
-                let p = e.path.to_lowercase();
-                p.ends_with(extension) && p.contains(&wanted_lower)
-            }
-        })
-        .map(|(i, _)| i)
-        .collect();
-    hits.sort_by_key(|&i| pak.entries[i].path.len());
-    let first = *hits
-        .first()
-        .ok_or_else(|| anyhow!("no {extension} member matches {wanted:?}"))?;
-    if hits.len() > 1 {
-        eprintln!(
-            "{wanted:?} matched {} members; using {} (shortest name)",
-            hits.len(),
-            pak.entries[first].path
-        );
-    }
-    Ok(first)
 }
 
-fn load(
-    data_dir: &Path,
-    actor_arg: &str,
-    motion_arg: Option<&str>,
-    yaw_degrees: f32,
-    root_motion: bool,
-) -> Result<Scene> {
-    let mut animation = PakArchive::open(data_dir.join("_compiledAnimation.pak"))?;
-    let mut material_pak = PakArchive::open(data_dir.join("_compiledMaterial.pak"))?;
-    let mut image_pak = PakArchive::open(data_dir.join("_compiledImage.pak"))?;
-    // Unique-basename lookup, first occurrence wins (the importer reports ambiguity).
-    let basename = |p: &str| p.rsplit('/').next().unwrap_or(p).to_lowercase();
-    let materials_index: HashMap<String, usize> = material_pak
-        .entries
-        .iter()
-        .enumerate()
-        .rev()
-        .map(|(i, e)| (basename(&e.path), i))
-        .collect();
-    let images_index: HashMap<String, usize> = image_pak
-        .entries
-        .iter()
-        .enumerate()
-        .rev()
-        .map(|(i, e)| (basename(&e.path), i))
-        .collect();
+/// Deterministic pseudo-random value in 0..1 from an index and a salt.
+fn hash01(index: usize, salt: u64) -> f32 {
+    let mut x = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 27;
+    (x >> 40) as f32 / (1u64 << 24) as f32
+}
 
-    // "Hero" is a convenience alias for the player body plus head.
-    let names: Vec<String> = if actor_arg.eq_ignore_ascii_case("hero") {
-        vec!["G3_Hero_Body_Player".into(), "G3_Hero_Head_Player".into()]
+fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
+    let mut center = Vec3::new(0.0, 95.0, 0.0);
+    let mut distance = 300.0;
+    let mut pitch = 0.08;
+    let mut yaw = config.yaw_degrees.to_radians();
+    if config.crowd == 0 {
+        let mut spec = NpcSpec::new("G3_Hero_Body_Player")
+            .with_part("G3_Hero_Head_Player")
+            .with_stance(config.stance);
+        if config.sword {
+            spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_1H_Sword_01"));
+        }
+        if let Some(motion) = &config.motion {
+            spec = spec.with_motion(alias(motion));
+        }
+        match spawner.spawn(&spec, Transform::default()) {
+            Ok(entity) => {
+                spawner.commands.entity(entity).insert(Hero);
+            }
+            Err(error) => eprintln!("hero spawn failed: {error:#}"),
+        }
     } else {
-        actor_arg.split(',').map(str::to_string).collect()
-    };
-    let mut images: Vec<ImageData> = Vec::new();
-    let mut image_cache: HashMap<String, Option<usize>> = HashMap::new();
-    let mut actors = Vec::new();
-    for name in &names {
-        let at = find_member(&animation, name, ".xact")?;
-        let path = animation.entries[at].path.clone();
-        let actor = Actor::parse(&animation.read_payload(at)?)
-            .map_err(|e| e.context(format!("parsing {path}")))?;
-        let mut textures = vec![None; actor.materials.len()];
-        let mut blend = vec![None; actor.materials.len()];
-        for (index, material) in actor.materials.iter().enumerate().skip(1) {
-            let mut stem: Option<String> = None;
-            let listed = actor
-                .material_file(index)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("{}.xshmat", material.name.trim_end_matches('|')));
-            // Candidate shader materials. The listed file can be a generic Maya name
-            // (`lambert2SG.xshmat` exists in the archive but belongs to another model), so the
-            // layer's texture name (`<texture>_A.xshmat`) is tried first.
-            let mut candidates = Vec::new();
-            if let Some(texture) = material.diffuse_texture() {
-                candidates.push(format!("{texture}_A.xshmat"));
-                candidates.push(format!("{texture}.xshmat"));
-            }
-            candidates.push(listed.clone());
-            let file = candidates
-                .iter()
-                .find(|c| materials_index.contains_key(&c.to_lowercase()))
-                .cloned()
-                .unwrap_or(listed);
-            if let Some(&m) = materials_index.get(&file.to_lowercase()) {
-                let parsed = Xshmat::parse(&material_pak.read_payload(m)?)?;
-                if let Some(d) = parsed.diffuse() {
-                    stem = Some(d.stem().to_string());
-                }
-                if let Some(mode) = parsed.blend_mode {
-                    blend[index] = Some((mode, parsed.mask_reference.unwrap_or(128)));
-                }
-            } else {
-                eprintln!("{path}: material file {file} not found in _compiledMaterial.pak");
-            }
-            let stem = stem.or_else(|| material.diffuse_texture().map(str::to_string));
-            eprintln!(
-                "  material {index} {:?}: file {file}, diffuse {stem:?}",
-                material.name
-            );
-            if let Some(stem) = stem {
-                let key = format!("{}.ximg", stem.to_lowercase());
-                let image = *image_cache.entry(key.clone()).or_insert_with(|| {
-                    let at = *images_index.get(&key)?;
-                    let bytes = image_pak.read_payload(at).ok()?;
-                    let ximg = Ximg::parse(&bytes).ok()?;
-                    images.push(ImageData {
-                        width: ximg.width,
-                        height: ximg.height,
-                        fourcc: ximg.fourcc,
-                        mips: ximg.mips().iter().map(|m| m.to_vec()).collect(),
+        let (bodies, heads) = crowd_parts(&mut spawner);
+        eprintln!("crowd parts: {} bodies, {} heads", bodies.len(), heads.len());
+        let columns = (config.crowd as f32).sqrt().ceil() as usize;
+        let spacing = 130.0;
+        let swords = ["G3_Weapon_1H_Sword_01", "G3_Weapon_1H_Sword_Broad_01", "G3_Weapon_1H_Sword_Long_01", "G3_Weapon_1H_Sword_Rusty_01", "G3_Weapon_1H_Sword_Bastard_01"];
+        let stances = [
+            Stance::Unarmed,
+            Stance::OneHand,
+            Stance::OneHandShield,
+            Stance::TwoHand,
+            Stance::Fist,
+            Stance::Staff,
+            Stance::Unarmed,
+            Stance::OneHand,
+        ];
+        let mut spawned = 0;
+        for i in 0..config.crowd {
+            let body = &bodies[(hash01(i, 1) * bodies.len() as f32) as usize % bodies.len()];
+            let head = &heads[(hash01(i, 2) * heads.len() as f32) as usize % heads.len()];
+            let stance = stances[(hash01(i, 3) * stances.len() as f32) as usize % stances.len()];
+            let mut spec = NpcSpec::new(body.clone())
+                .with_part(head.clone())
+                .with_stance(stance)
+                .with_start_time(hash01(i, 4) * 2.0);
+            let sword = swords[i % swords.len()];
+            match stance {
+                Stance::OneHand => spec = spec.with_weapon(WeaponSpec::one_hand_sword(sword)),
+                Stance::OneHandShield => {
+                    spec = spec.with_weapon(WeaponSpec::one_hand_sword(sword)).with_weapon(WeaponSpec {
+                        mesh: "G3_Armor_Shield_Round_Big_01".into(),
+                        drawn_slot: "Slot_LeftHand_Shield".into(),
+                        holster_slot: "Slot_ShieldBack".into(),
+                        offset: Transform::IDENTITY,
                     });
-                    Some(images.len() - 1)
-                });
-                if image.is_none() {
-                    eprintln!("{path}: texture {stem} not found as ximg");
                 }
-                textures[index] = image;
+                Stance::TwoHand => spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_2H_Sword_01")),
+                Stance::Staff => spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_Staff_QuarterStaff_01")),
+                _ => {}
+            }
+            let (col, row) = (i % columns, i / columns);
+            let position = Vec3::new(
+                (col as f32 - (columns as f32 - 1.0) * 0.5) * spacing,
+                0.0,
+                (row as f32) * -spacing,
+            );
+            match spawner.spawn(&spec, Transform::from_translation(position)) {
+                Ok(entity) => {
+                    spawner
+                        .commands
+                        .entity(entity)
+                        .insert(CrowdMember { index: i, stance });
+                    spawned += 1;
+                }
+                Err(error) => eprintln!("crowd member {i} ({body} + {head}): {error:#}"),
             }
         }
-        eprintln!(
-            "actor {path}: {} nodes, {} meshes, {} materials ({} textured)",
-            actor.nodes.len(),
-            actor.meshes.len(),
-            actor.materials.len() - 1,
-            textures.iter().flatten().count()
-        );
-        actors.push(ActorData {
-            name: path,
-            actor,
-            textures,
-            blend,
-        });
+        eprintln!("spawned {spawned}/{} crowd members", config.crowd);
+        let rows = config.crowd.div_ceil(columns);
+        let width = columns as f32 * spacing;
+        let depth = rows as f32 * spacing;
+        center = Vec3::new(0.0, 90.0, -depth * 0.5 + spacing * 0.5);
+        distance = (width.max(depth) * 1.15).max(400.0);
+        pitch = 0.55;
+        yaw = 0.0;
     }
-
-    let motion = {
-        let wanted = motion_arg.unwrap_or("idle");
-        let resolved = match wanted.to_lowercase().as_str() {
-            "idle" => "Hero_Stand_None_None_P0_Ambient_Loop_N_Fwd_01_%_00_P0_0",
-            "walk" => "Hero_Stand_None_None_P0_Move_Walk_N_Fwd_00_%_00_P0_160",
-            "run" => "Hero_Stand_None_None_P0_Move_Run_N_Fwd_00_%_00_P0_400",
-            "none" => "",
-            _ => wanted,
-        };
-        if resolved.is_empty() {
-            None
-        } else {
-            let at = find_member(&animation, resolved, ".xmot")?;
-            let path = animation.entries[at].path.clone();
-            let motion = Motion::parse(&animation.read_payload(at)?)
-                .map_err(|e| e.context(format!("parsing {path}")))?;
-            eprintln!(
-                "motion {path}: {} nodes, {} keys, {:.2}s",
-                motion.nodes.len(),
-                motion.key_count,
-                motion.duration
-            );
-            Some((path, motion))
-        }
-    };
-    ensure!(!actors.is_empty(), "no actors loaded");
-    let label = format!(
-        "{} | {}",
-        actors
-            .iter()
-            .map(|a| a.name.as_str())
-            .collect::<Vec<_>>()
-            .join(" + "),
-        motion.as_ref().map_or("bind pose", |(n, _)| n.as_str())
-    );
-    Ok(Scene {
-        actors,
-        images,
-        motion,
-        label,
-        yaw_degrees,
-        in_place: !root_motion,
-    })
-}
-
-fn texture_image(image: &ImageData) -> Option<Image> {
-    let format = match &image.fourcc {
-        b"DXT1" => TextureFormat::Bc1RgbaUnormSrgb,
-        b"DXT3" => TextureFormat::Bc2RgbaUnormSrgb,
-        b"DXT5" => TextureFormat::Bc3RgbaUnormSrgb,
-        _ => return None,
-    };
-    if !image.width.is_multiple_of(4) || !image.height.is_multiple_of(4) {
-        return None;
-    }
-    let data: Vec<u8> = image.mips.iter().flatten().copied().collect();
-    let mut out = Image::new(
-        Extent3d {
-            width: image.width,
-            height: image.height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        format,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    out.texture_descriptor.mip_level_count = image.mips.len() as u32;
-    out.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: 8,
-        ..default()
-    });
-    Some(out)
-}
-
-fn node_local(n: &gothic_formats::xact::ActorNode) -> (Vec3, Quat, Vec3) {
-    (
-        Vec3::from(n.position),
-        quat(n.rotation),
-        Vec3::from(n.scale),
-    )
-}
-
-fn quat(q: [f32; 4]) -> Quat {
-    let q = Quat::from_xyzw(q[0], q[1], q[2], q[3]);
-    if q.length_squared() > 1e-12 {
-        q.normalize()
-    } else {
-        Quat::IDENTITY
-    }
-}
-
-/// Bind-pose model-space matrix of every node (parents resolved by name).
-fn bind_world(actor: &Actor) -> Vec<Mat4> {
-    let mut world: Vec<Option<Mat4>> = vec![None; actor.nodes.len()];
-    fn resolve(actor: &Actor, world: &mut [Option<Mat4>], i: usize) -> Mat4 {
-        if let Some(m) = world[i] {
-            return m;
-        }
-        let (t, r, s) = node_local(&actor.nodes[i]);
-        let local = Mat4::from_scale_rotation_translation(s, r, t);
-        let m = match actor.nodes[i].parent {
-            Some(p) => resolve(actor, world, p) * local,
-            None => local,
-        };
-        world[i] = Some(m);
-        m
-    }
-    (0..actor.nodes.len())
-        .map(|i| resolve(actor, &mut world, i))
-        .collect()
-}
-
-fn alpha_mode(blend: Option<(u32, u8)>) -> AlphaMode {
-    match blend {
-        Some((1, mask)) => AlphaMode::Mask(f32::from(mask) / 255.0),
-        Some((2 | 8, _)) => AlphaMode::Blend,
-        Some((7, _)) => AlphaMode::Add,
-        _ => AlphaMode::Opaque,
-    }
-}
-
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
-    scene: Res<Scene>,
-) {
-    let handles: Vec<Option<Handle<Image>>> = scene
-        .images
-        .iter()
-        .map(|i| texture_image(i).map(|t| images.add(t)))
-        .collect();
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
-    let mut map = Vec::new();
-    let mut bind = Vec::new();
-    let mut prefix = Vec::new();
-    let mut root_flags: Vec<Vec<bool>> = Vec::new();
-    for (actor_index, data) in scene.actors.iter().enumerate() {
-        let actor = &data.actor;
-        let world = bind_world(actor);
-        let root_entity = commands
-            .spawn((Transform::default(), Visibility::default()))
-            .id();
-        // One entity per node, in node order so joint indices equal node indices.
-        let mut joints = Vec::new();
-        for (node_index, node) in actor.nodes.iter().enumerate() {
-            let (t, r, s) = node_local(node);
-            joints.push(
-                commands
-                    .spawn((
-                        Joint {
-                            actor: actor_index,
-                            node: node_index,
-                        },
-                        Transform {
-                            translation: t,
-                            rotation: r,
-                            scale: s,
-                        },
-                    ))
-                    .id(),
-            );
-        }
-        for (node_index, node) in actor.nodes.iter().enumerate() {
-            let parent = node.parent.map_or(root_entity, |p| joints[p]);
-            commands.entity(parent).add_child(joints[node_index]);
-        }
-        let inverse = bindposes.add(world.iter().map(Mat4::inverse).collect::<Vec<_>>());
-        // Name -> motion node mapping (first occurrence).
-        if let Some((_, motion)) = &scene.motion {
-            let by_name: HashMap<&str, usize> = motion
-                .nodes
-                .iter()
-                .enumerate()
-                .rev()
-                .map(|(i, n)| (n.name.as_str(), i))
-                .collect();
-            let mapping: Vec<Option<usize>> = actor
-                .nodes
-                .iter()
-                .map(|n| by_name.get(n.name.as_str()).copied())
-                .collect();
-            eprintln!(
-                "{}: {}/{} nodes animated by the motion",
-                data.name,
-                mapping.iter().flatten().count(),
-                actor.nodes.len()
-            );
-            let mut pre = vec![Mat4::IDENTITY; actor.nodes.len()];
-            let mut anim_root = vec![false; actor.nodes.len()];
-            for n in 0..actor.nodes.len() {
-                if mapping[n].is_none() {
-                    continue;
-                }
-                let parent = actor.nodes[n].parent;
-                let mut anim_parent = parent;
-                while let Some(p) = anim_parent {
-                    if mapping[p].is_some() {
-                        break;
-                    }
-                    anim_parent = actor.nodes[p].parent;
-                }
-                pre[n] = match (parent, anim_parent) {
-                    (Some(p), Some(a)) => {
-                        // inverse of the bind transform from the animated ancestor to the parent
-                        (world[a].inverse() * world[p]).inverse()
-                    }
-                    (Some(p), None) => world[p].inverse(),
-                    (None, _) => Mat4::IDENTITY,
-                };
-                anim_root[n] = anim_parent.is_none();
-            }
-            prefix.push(pre);
-            root_flags.push(anim_root);
-            map.push(mapping);
-        } else {
-            prefix.push(vec![Mat4::IDENTITY; actor.nodes.len()]);
-            root_flags.push(vec![false; actor.nodes.len()]);
-            map.push(vec![None; actor.nodes.len()]);
-        }
-        bind.push(actor.nodes.iter().map(node_local).collect());
-
-        let mut fallback_material: Option<Handle<StandardMaterial>> = None;
-        let mut material_cache: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
-        for mesh_data in &actor.meshes {
-            for sub in &mesh_data.submeshes {
-                for p in &sub.positions {
-                    let v = Vec3::from(*p);
-                    min = min.min(v);
-                    max = max.max(v);
-                }
-                let mut indices = sub.indices.clone();
-                // Same winding convention as the static mesh viewer.
-                for triangle in indices.as_chunks_mut::<3>().0 {
-                    triangle.swap(1, 2);
-                }
-                let mut mesh = Mesh::new(
-                    PrimitiveTopology::TriangleList,
-                    RenderAssetUsages::RENDER_WORLD,
-                )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, sub.positions.clone())
-                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, sub.normals.clone())
-                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, sub.uvs.clone())
-                .with_inserted_attribute(
-                    Mesh::ATTRIBUTE_JOINT_INDEX,
-                    VertexAttributeValues::Uint16x4(sub.joints.clone()),
-                )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, sub.weights.clone())
-                .with_inserted_indices(Indices::U32(indices));
-                mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
-                let material = if sub.material == 0 {
-                    fallback_material
-                        .get_or_insert_with(|| {
-                            materials.add(StandardMaterial {
-                                base_color: Color::srgb(0.6, 0.6, 0.65),
-                                cull_mode: None,
-                                ..default()
-                            })
-                        })
-                        .clone()
-                } else {
-                    material_cache
-                        .entry(sub.material)
-                        .or_insert_with(|| {
-                            let texture = data
-                                .textures
-                                .get(sub.material as usize)
-                                .copied()
-                                .flatten()
-                                .and_then(|i| handles[i].clone());
-                            materials.add(StandardMaterial {
-                                base_color: if texture.is_some() {
-                                    Color::WHITE
-                                } else {
-                                    Color::srgb(0.6, 0.55, 0.5)
-                                },
-                                base_color_texture: texture,
-                                perceptual_roughness: 0.85,
-                                reflectance: 0.1,
-                                alpha_mode: alpha_mode(
-                                    data.blend.get(sub.material as usize).copied().flatten(),
-                                ),
-                                cull_mode: None,
-                                ..default()
-                            })
-                        })
-                        .clone()
-                };
-                let mesh_entity = commands
-                    .spawn((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(material),
-                        SkinnedMesh {
-                            inverse_bindposes: inverse.clone(),
-                            joints: joints.clone(),
-                        },
-                        // Joint-driven bounds are not generated; the actor is always framed.
-                        NoFrustumCulling,
-                    ))
-                    .id();
-                commands.entity(root_entity).add_child(mesh_entity);
-            }
-        }
-    }
-    commands.insert_resource(Playback {
-        time: 0.0,
-        paused: false,
-        map,
-        bind,
-        root: root_flags,
-        prefix,
-    });
-    let center = (min + max) * 0.5;
-    let extent = (max - min).max_element().max(1.0);
-    let distance = extent * 1.5;
-    commands.spawn((
+    spawner.commands.spawn((
         Camera3d::default(),
         Orbit {
             target: center,
             distance,
-            yaw: scene.yaw_degrees.to_radians(),
-            pitch: 0.08,
+            yaw,
+            pitch,
         },
         Transform::default(),
     ));
-    commands.spawn((
+    spawner.commands.spawn((
         DirectionalLight {
             illuminance: 20000.0,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.7, 0.6, 0.0)),
     ));
-    commands.insert_resource(GlobalAmbientLight {
+    spawner.commands.insert_resource(GlobalAmbientLight {
         brightness: 900.0,
         ..default()
     });
-    eprintln!("bounds min {min:?} max {max:?}");
 }
 
-fn sample<T: Copy>(keys: &[(f32, T)], t: f32, lerp: impl Fn(T, T, f32) -> T) -> Option<T> {
-    let first = keys.first()?;
-    let last = keys.last()?;
-    if t <= first.0 {
-        return Some(first.1);
-    }
-    if t >= last.0 {
-        return Some(last.1);
-    }
-    let after = keys.partition_point(|k| k.0 <= t);
-    let (a, b) = (keys[after - 1], keys[after]);
-    let span = (b.0 - a.0).max(1e-6);
-    Some(lerp(a.1, b.1, ((t - a.0) / span).clamp(0.0, 1.0)))
-}
-
-fn animate(
-    time: Res<Time>,
-    scene: Res<Scene>,
-    smoke: Res<Smoke>,
-    mut playback: ResMut<Playback>,
-    mut joints: Query<(&Joint, &mut Transform)>,
-) {
-    let Some((_, motion)) = &scene.motion else {
-        return;
-    };
-    if smoke.enabled {
-        // Deterministic sampling for screenshots: times are driven by the smoke schedule.
-        playback.time = match smoke.frame {
-            0..=99 => smoke.times[0],
-            _ => smoke.times[1],
-        };
-    } else if !playback.paused {
-        playback.time += time.delta_secs();
-    }
-    let t = if motion.duration > 1e-3 && !smoke.enabled {
-        playback.time % motion.duration
-    } else {
-        playback.time
-    };
-    for (joint, mut transform) in &mut joints {
-        let (bind_t, bind_r, bind_s) = playback.bind[joint.actor][joint.node];
-        let Some(m) = playback.map[joint.actor][joint.node].map(|i| &motion.nodes[i]) else {
-            *transform = Transform {
-                translation: bind_t,
-                rotation: bind_r,
-                scale: bind_s,
-            };
-            continue;
-        };
-        let pos = sample(&m.positions.keys, t, |a, b, f| {
-            Vec3::from(a).lerp(Vec3::from(b), f).to_array()
+/// Human bodies sharing the hero skeleton and plain (non-LOD, non-animated) heads.
+fn crowd_parts(spawner: &mut ActorSpawner) -> (Vec<String>, Vec<String>) {
+    let library = &spawner.library;
+    let plain = |n: &str| !n.contains("LOD") && !n.contains("Animated") && !n.contains("Ghost");
+    let bodies: Vec<String> = library
+        .actor_names(|n| n.starts_with("G3_Hero_Body_") && plain(n))
+        .into_iter()
+        .filter(|n| {
+            !["Skeleton", "Mummy", "Zombie", "Ghost", "Fat"]
+                .iter()
+                .any(|bad| n.contains(bad))
         })
-        .map(Vec3::from)
-        // No position track: the node record's static pose.
-        .unwrap_or(Vec3::from(m.position));
-        let rot = sample(&m.rotations.keys, t, |a, b, f| {
-            let (a, mut b) = (quat(a), quat(b));
-            if a.dot(b) < 0.0 {
-                b = -b;
+        .collect();
+    let heads: Vec<String> = library
+        .actor_names(|n| {
+            (n.starts_with("G3_Hero_Head_") || n.starts_with("G3_Head_Hero_")) && plain(n)
+        })
+        .into_iter()
+        .filter(|n| !n.contains("Slave_Head"))
+        .collect();
+    (bodies, heads)
+}
+
+/// Scripted locomotion input per crowd member: a repeating sequence of states.
+fn crowd_script(time: Res<Time>, mut query: Query<(&CrowdMember, &mut LocomotionInput)>) {
+    // (duration, speed cm/s, strafe cm/s, sneak, airborne, turn error)
+    const SCRIPT: [(f32, f32, f32, bool, bool, f32); 9] = [
+        (2.5, 0.0, 0.0, false, false, 0.0),
+        (3.0, 150.0, 0.0, false, false, 0.0),
+        (3.0, 380.0, 0.0, false, false, 0.0),
+        (2.5, 140.0, 0.0, true, false, 0.0),
+        (2.0, 0.0, 130.0, false, false, 0.0),
+        (2.0, 480.0, 0.0, false, false, 0.0),
+        (1.6, 0.0, 0.0, false, true, 0.0),
+        (2.0, 0.0, 0.0, false, false, 1.5),
+        (2.5, 90.0, 0.0, false, false, 0.0),
+    ];
+    let total: f32 = SCRIPT.iter().map(|s| s.0).sum();
+    for (member, mut input) in &mut query {
+        let mut t = (time.elapsed_secs() + hash01(member.index, 9) * total) % total;
+        let mut step = SCRIPT[0];
+        for s in SCRIPT {
+            if t < s.0 {
+                step = s;
+                break;
             }
-            a.slerp(b, f).to_array()
-        })
-        .map(quat)
-        .unwrap_or_else(|| quat(m.rotation));
-        let scale = sample(&m.scales.keys, t, |a, b, f| {
-            Vec3::from(a).lerp(Vec3::from(b), f).to_array()
-        })
-        .map(Vec3::from)
-        .unwrap_or(Vec3::from(m.scale));
-        let mut pos = pos;
-        if scene.in_place && playback.root[joint.actor][joint.node] {
-            // Root motion: keep the root at its bind position.
-            pos = Vec3::from(m.position);
+            t -= s.0;
         }
-        let local = Mat4::from_scale_rotation_translation(scale, rot, pos);
-        *transform = Transform::from_matrix(playback.prefix[joint.actor][joint.node] * local);
+        let (_, speed, strafe, sneak, air, turn) = step;
+        // Character frame: the controller would use the world velocity; here the entity keeps
+        // its rotation, so rig-forward is the entity's local direction.
+        let forward = Vec3::Z;
+        let right = forward.cross(Vec3::Y);
+        let mut velocity = forward * speed + right * strafe;
+        if air {
+            velocity.y = if t < 0.9 { 260.0 } else { -200.0 };
+        }
+        input.velocity = velocity;
+        input.grounded = !air || t > 1.2;
+        input.stance = member.stance;
+        input.sneak = sneak;
+        input.turn_error = turn;
+    }
+}
+
+/// Keyboard control of the single hero through the locomotion input.
+fn hero_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut LocomotionInput, With<Hero>>,
+) {
+    for mut input in &mut query {
+        let preset = |input: &mut LocomotionInput, speed: f32, strafe: f32, sneak: bool, grounded: bool, up: f32, turn: f32| {
+            let right = Vec3::Z.cross(Vec3::Y);
+            input.velocity = Vec3::Z * speed + right * strafe + Vec3::Y * up;
+            input.sneak = sneak;
+            input.grounded = grounded;
+            input.turn_error = turn;
+        };
+        let table = [
+            (KeyCode::Digit1, [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            (KeyCode::Digit2, [150.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            (KeyCode::Digit3, [380.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            (KeyCode::Digit4, [490.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            (KeyCode::Digit5, [140.0, 0.0, 1.0, 1.0, 0.0, 0.0]),
+            (KeyCode::Digit6, [0.0, 0.0, 0.0, 0.0, 300.0, 0.0]),
+            (KeyCode::Digit7, [0.0, 0.0, 0.0, 0.0, -300.0, 0.0]),
+            (KeyCode::Digit8, [0.0, 130.0, 0.0, 1.0, 0.0, 0.0]),
+            (KeyCode::Digit9, [0.0, 0.0, 0.0, 1.0, 0.0, 1.5]),
+        ];
+        for (key, v) in table {
+            if keys.just_pressed(key) {
+                preset(&mut input, v[0], v[1], v[2] > 0.5, v[3] > 0.5, v[4], v[5]);
+            }
+        }
+        if keys.just_pressed(KeyCode::KeyF) {
+            const CYCLE: [Stance; 6] = [
+                Stance::Unarmed,
+                Stance::OneHand,
+                Stance::OneHandShield,
+                Stance::TwoHand,
+                Stance::Fist,
+                Stance::Staff,
+            ];
+            let at = CYCLE.iter().position(|s| *s == input.stance).unwrap_or(0);
+            input.stance = CYCLE[(at + 1) % CYCLE.len()];
+        }
+    }
+}
+
+/// Deterministic animation times for single-actor screenshots.
+fn smoke_drive(
+    config: Res<Config>,
+    frames: Res<Frames>,
+    mut query: Query<&mut Animator, With<Hero>>,
+) {
+    if !config.smoke || config.crowd > 0 || config.motion.is_none() {
+        return;
+    }
+    for mut animator in &mut query {
+        animator.paused = true;
+        let duration = animator.current_clip().map_or(0.0, |c| c.duration);
+        let t = if frames.count < 130 {
+            config.times[0]
+        } else {
+            config.times[1] * duration * 2.0
+        };
+        animator.seek(t);
     }
 }
 
 fn orbit(
-    keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
-    mut playback: ResMut<Playback>,
     mut camera: Query<(&mut Orbit, &mut Transform)>,
 ) {
     let Ok((mut orbit, mut transform)) = camera.single_mut() else {
@@ -762,40 +446,107 @@ fn orbit(
         orbit.distance *= 1.0 + dt;
     }
     orbit.distance = (orbit.distance * (1.0 - scroll.delta.y * 0.1)).max(5.0);
-    if keys.just_pressed(KeyCode::Space) {
-        playback.paused = !playback.paused;
-    }
     let direction = Quat::from_euler(EulerRot::YXZ, orbit.yaw, -orbit.pitch, 0.0) * Vec3::Z;
     transform.translation = orbit.target + direction * orbit.distance;
     transform.look_at(orbit.target, Vec3::Y);
 }
 
-fn smoke_capture(mut commands: Commands, mut smoke: ResMut<Smoke>) {
-    if !smoke.enabled {
+/// Screenshots, benchmark sampling and exit handling.
+fn capture(
+    mut commands: Commands,
+    config: Res<Config>,
+    time: Res<Time>,
+    stats: Res<AnimationStats>,
+    mut frames: ResMut<Frames>,
+) {
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    frames.count += 1;
+    let frame = frames.count;
+    if config.bench && (150..450).contains(&frame) {
+        frames.deltas.push(time.delta_secs());
+        frames.animation.push([
+            stats.locomotion.as_secs_f32() * 1.0e6,
+            stats.animate.as_secs_f32() * 1.0e6,
+            stats.write.as_secs_f32() * 1.0e6,
+        ]);
+    }
+    if !config.smoke && !config.bench {
         return;
     }
-    smoke.frame += 1;
-    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-    if smoke.frame == 80 {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(smoke.path.clone()));
-    }
-    if smoke.frame == 180 {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(smoke.second_path.clone()));
-    }
-    if smoke.frame == 260 {
-        commands.write_message(bevy::app::AppExit::Success);
+    if config.crowd > 0 {
+        if frame == 120 {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(config.screenshot.clone()));
+        }
+        if config.bench && frame == 450 {
+            report(&frames, &stats, config.crowd);
+            commands.write_message(AppExit::Success);
+        } else if !config.bench && frame == 200 {
+            commands.write_message(AppExit::Success);
+        }
+    } else {
+        if frame == 80 {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(config.screenshot.clone()));
+        }
+        if frame == 180 {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(config.second_screenshot.clone()));
+        }
+        if frame == 260 {
+            commands.write_message(AppExit::Success);
+        }
     }
 }
 
-fn update_title(scene: Res<Scene>, playback: Res<Playback>, mut windows: Query<&mut Window>) {
+fn report(frames: &Frames, stats: &AnimationStats, crowd: usize) {
+    let mut sorted = frames.deltas.clone();
+    sorted.sort_by(f32::total_cmp);
+    if sorted.is_empty() {
+        return;
+    }
+    let mean = sorted.iter().sum::<f32>() / sorted.len() as f32;
+    let p95 = sorted[(sorted.len() as f32 * 0.95) as usize % sorted.len()];
+    let n = frames.animation.len().max(1) as f32;
+    let avg = |i: usize| frames.animation.iter().map(|a| a[i]).sum::<f32>() / n;
+    println!(
+        "BENCH crowd={crowd} characters={} frames={} frame_ms mean={:.2} p95={:.2} max={:.2} | animation_us locomotion={:.0} animate={:.0} write={:.0} total={:.0}",
+        stats.characters,
+        sorted.len(),
+        mean * 1000.0,
+        p95 * 1000.0,
+        sorted[sorted.len() - 1] * 1000.0,
+        avg(0),
+        avg(1),
+        avg(2),
+        avg(0) + avg(1) + avg(2)
+    );
+}
+
+fn update_title(
+    config: Res<Config>,
+    stats: Res<AnimationStats>,
+    query: Query<(&Animator, Option<&Locomotion>), With<Hero>>,
+    mut windows: Query<&mut Window>,
+) {
     for mut window in &mut windows {
-        window.title = format!(
-            "Gothic Reforged | {} | t={:.2}s | LMB drag / A D / W S / Space",
-            scene.label, playback.time
-        );
+        window.title = if config.crowd > 0 {
+            format!(
+                "Gothic Reforged | crowd {} | animation {:.0} us/frame",
+                stats.characters,
+                stats.average_micros
+            )
+        } else if let Ok((animator, loco)) = query.single() {
+            format!(
+                "Gothic Reforged | {} | {:?} | keys 1-9 states, F stance",
+                animator.current_name().unwrap_or("-"),
+                loco.map(|l| l.key.kind)
+            )
+        } else {
+            "Gothic Reforged / actor viewer".into()
+        };
     }
 }

@@ -79,3 +79,23 @@ comma-joined; later entries override earlier ones (`.p00` patches over `.pak`). 
   in `Projects_compiled.pak` are the global nav data; untouched.
 * Sector activation: `G3_World_01.wrldatasc` carries `[Sector.List]` `Name=true|false` start states which info scripts
   later change with `SetSectorStatus` (see `GAMEDATA_FORMATS.md`).
+
+## Collision mesh `.xnvmsh` (decoded, 2026-10-20)
+
+`.xnvmsh` is a GENOMFLE wrapper around several **PhysX 2.x cooked triangle meshes** (`NXS\x01MESH`).
+Per stream: `u32 0, u32 cook_version (9|11|19), f32 0.001, u32 0xff, u32 0, u32 vertex_count, u32 triangle_count`,
+then `vertex_count * 3 * f32` positions in **metres** (x100 = render-mesh cm space), then `triangle_count * 3`
+indices (u8 when `vertex_count <= 256`, else u16); the rest (material ids, adjacency, `OPC` tree, `HBM` hull)
+is ignored. Reader: `crates/formats/src/xnvmsh.rs` (signature scan, every stream validated, bad streams skipped).
+Verified on Myrtana cells 131/155/178: 6-7 streams each, bounds x100 equal the render cell bounds, 6 516 / 18 933 / 28 971
+triangles (render meshes hold more). Submeshes of the render mesh are **material groups, not LODs** (disjoint triangles).
+
+## Walkable region (`gothic-reforged --features viewer -- --walk`)
+
+* World is mirrored on X (`F = diag(-1,1,1)`) for Bevy: this flips handedness and winding together, so source index order
+  is kept and **single-sided back-face culling renders correctly** (verified visually on terrain and houses). Instance
+  matrices become `F*M*F`.
+* Terrain cells are re-binned into 25 m tiles by triangle centroid; collision per tile is the xnvmsh triangles (render
+  triangles if a tile has no collision cell), plus the render triangles of opaque static props.
+* Terrain material blending (splat/detail) is undecoded: each submesh uses its first diffuse texture, which shows as flat
+  pale patches where the original blends layers.
