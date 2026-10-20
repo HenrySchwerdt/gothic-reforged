@@ -5,7 +5,10 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_bindings::mesh,
-    mesh_view_bindings::view,
+    mesh_view_bindings::{view, lights},
+    mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
+    shadows,
+    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, calculate_view},
     pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
 };
@@ -22,6 +25,8 @@ struct GothicParams {
     ao_strength: f32,
     normal_strength: f32,
     roughness: f32,
+    sun: vec4<f32>,
+    sh: array<vec4<f32>, 4>,
 };
 
 @group(3) @binding(0) var<uniform> params: GothicParams;
@@ -48,6 +53,15 @@ fn decode_normal(t: vec4<f32>) -> vec3<f32> {
     // DXT5nm: x in alpha, y in green.
     let xy = vec2<f32>(t.a, t.g) * 2.0 - 1.0;
     return vec3<f32>(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3<f32>(0.0031308));
+}
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    return select(pow((x + 0.055) / 1.055, vec3<f32>(2.4)), x / 12.92, x <= vec3<f32>(0.04045));
 }
 
 fn ign(p: vec2<f32>) -> f32 {
@@ -109,28 +123,48 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         n = normalize(t * nt.x + b * nt.y + n_geo * nt.z);
     }
 
-    // Vertex AO (stored in rgb), softened.
+    // Original Gothic 3 lighting (ORIGINAL_SHADING.md): evaluated in gamma space on the raw
+    // texture values, ambient = linear SH(N) * (0.75 + 0.25 N.V) * vertex AO, plus
+    // sun diffuse * N.L * shadow, plus lightmap * 4; fog is applied afterwards.
     let ao = mix(1.0, in.color.r, params.ao_strength);
+    let albedo_g = linear_to_srgb(color);
+    let v = normalize(view.world_position.xyz - in.world_position.xyz);
+    let ndv = max(dot(n, v), 0.0);
+    let sh = params.sh;
+    let amb = sh[0].rgb + sh[1].rgb * n.x + sh[2].rgb * n.y + sh[3].rgb * n.z;
+    var light = amb * (0.75 + 0.25 * ndv) * ao;
 
     var pbr = pbr_input_new();
     pbr.material.base_color = vec4<f32>(color, 1.0);
     pbr.material.flags = STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
-    pbr.material.perceptual_roughness = params.roughness;
-    pbr.material.reflectance = vec3<f32>(0.08);
     pbr.flags = mesh[in.instance_index].flags;
     pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
-    pbr.V = calculate_view(in.world_position, pbr.is_orthographic);
+    pbr.V = v;
     pbr.frag_coord = in.position;
     pbr.world_position = in.world_position;
     pbr.world_normal = n_geo;
     pbr.N = n;
-    pbr.diffuse_occlusion = vec3<f32>(ao);
+
+    let sun_l = lights.directional_lights[0].direction_to_light;
+    var shadow = 1.0;
+    if (pbr.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
+        && (lights.directional_lights[0].flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
+        let view_z = dot(vec4<f32>(
+            view.view_from_world[0].z, view.view_from_world[1].z,
+            view.view_from_world[2].z, view.view_from_world[3].z), in.world_position);
+        shadow = shadows::fetch_directional_shadow(0u, in.world_position, n_geo, view_z, in.position.xy);
+    }
+    light = light + params.sun.rgb * max(dot(n, sun_l), 0.0) * shadow;
+
+    // Baked static lights (xlmp per-vertex colour, packed r/b in uv_b): lightmap * gain.
+    let lm = in.uv_b;
+    light = light + vec3<f32>(lm.x, sqrt(max(lm.x * lm.y, 0.0)), lm.y) * params.sun.w;
 
     var out: FragmentOutput;
     if (flags & F_UNLIT) != 0u {
         out.color = vec4<f32>(color, 1.0);
     } else {
-        out.color = apply_pbr_lighting(pbr);
+        out.color = vec4<f32>(srgb_to_linear(albedo_g * light), 1.0);
     }
     out.color = main_pass_post_lighting_processing(pbr, out.color);
     return out;

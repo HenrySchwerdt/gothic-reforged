@@ -339,7 +339,7 @@ fn setup(
         clouds: None,
         params: SkyParams {
             sun_dir: sun.0.extend(0.0),
-            zenith: Vec4::new(0.10, 0.30, 0.82, 1.0),
+            zenith: Vec4::new(0.04, 0.20, 0.80, 1.0),
             horizon: Vec4::new(0.52, 0.70, 0.95, 1.0),
             ground: Vec4::new(0.60, 0.74, 0.92, 1.0),
             sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
@@ -747,6 +747,14 @@ fn mesh_handle(part: &Part, caches: &mut Caches, meshes: &mut Assets<Mesh>) -> H
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, g.uvs.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, g.colors.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, g.tangents.clone())
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_UV_1,
+        if g.light.len() == g.positions.len() {
+            g.light.clone()
+        } else {
+            vec![[0.0f32; 2]; g.positions.len()]
+        },
+    )
     .with_inserted_indices(Indices::U32(g.indices.clone()));
     let handle = meshes.add(mesh);
     // Terrain tiles and merged ground cover are unique; only shared geometry is worth caching.
