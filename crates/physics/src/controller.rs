@@ -17,9 +17,23 @@
 //!
 //! Source tags are in [`crate::MovementProfile`]; the derivation is in
 //! `docs/research/PHYSICS_MOVEMENT.md`.
+use crate::movement::{
+    AniVelocity, ModeChange, ModeContext, ModeMachine, MovementMode, StateProbe, TurnState,
+    follow_ground, ground_follow_factor, step_turn, wrap_deg,
+};
 use crate::profile::{MovementProfile, fall_damage};
+use crate::relax::relax;
 use crate::{CollisionWorld, Tri, segment_triangle};
 use glam::{Vec2, Vec3};
+
+/// How far below the feet the floor is probed while airborne over water, cm.
+const WATER_FLOOR_PROBE: f32 = 3000.0;
+/// Dive speed, cm/s (tuned; the original dives through scripted tasks).
+const SWIM_DIVE_SPEED: f32 = 200.0;
+/// Deepest dive below the swim line, cm (tuned).
+const SWIM_DIVE_MAX: f32 = 300.0;
+/// Relax factor of the swim height filter (x0.025 s, tuned).
+const SWIM_VERTICAL_RELAX: f32 = 5.0;
 
 /// Gait chosen by the player or the AI (`gECharMovementMode` 2..5 in the original).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,6 +67,8 @@ pub enum MoveMode {
     Jump,
     /// Falling (original mode 0xd).
     Fall,
+    /// Swimming or diving (original modes 7 and 8).
+    Swim,
 }
 
 /// Result of touching ground after being airborne.
@@ -64,6 +80,39 @@ pub struct Landing {
     pub impact_speed: f32,
     /// `fall_damage(fall_time)`; scripts apply perks on top.
     pub damage: i32,
+}
+
+/// Input of [`CharacterController::step_command`]: the controls of one frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MoveCommand {
+    /// Wish direction on the ground plane (from [`crate::movement::wish_direction`]); zero for
+    /// no input. Need not be normalised.
+    pub wish: Vec3,
+    /// Wished gait (walk toggle, sprint key).
+    pub gait: Gait,
+    pub jump: bool,
+    /// Direction to face instead of the wish direction (combat lock-on, ranged aiming).
+    pub face: Option<Vec3>,
+    /// Water surface height at the character, `None` on dry land.
+    pub water_level: Option<f32>,
+    /// Dive request (scripted) while swimming.
+    pub dive: bool,
+    /// Vertical input while diving, -1 (down) to 1 (up).
+    pub vertical: f32,
+}
+
+impl Default for MoveCommand {
+    fn default() -> Self {
+        Self {
+            wish: Vec3::ZERO,
+            gait: Gait::Run,
+            jump: false,
+            face: None,
+            water_level: None,
+            dive: false,
+            vertical: 0.0,
+        }
+    }
 }
 
 /// What happened during one [`CharacterController::step`].
@@ -105,8 +154,24 @@ pub struct CharacterController {
     /// Normal of the ground below (up when airborne).
     pub ground_normal: Vec3,
     pub last_landing: Option<Landing>,
+    /// Movement mode machine: `SetMovementMode` is its only writer (E02).
+    pub machine: ModeMachine,
+    /// Facing yaw, radians (Bevy convention: forward is -Z rotated about Y). Driven by the turn
+    /// model in [`CharacterController::step_command`].
+    pub heading: f32,
+    /// State of the turn-rate model.
+    pub turn: TurnState,
+    /// Smoothed animation velocity for the locomotion mixer (`CalcAniVelocity`).
+    pub ani: AniVelocity,
+    /// Water surface height at the character, set by the host each frame (`None` = dry).
+    pub water_level: Option<f32>,
     speed: f32,
     slide_speed: f32,
+    dive_offset: f32,
+    dive_input: f32,
+    floor_y: f32,
+    /// The character is steered by the player (slides, wades by step height).
+    pub player_controlled: bool,
 }
 
 impl CharacterController {
@@ -123,9 +188,41 @@ impl CharacterController {
             slope_scale: 1.0,
             ground_normal: Vec3::Y,
             last_landing: None,
+            machine: ModeMachine::with_mode(MovementMode::Falling),
+            heading: 0.0,
+            turn: TurnState::default(),
+            ani: AniVelocity::default(),
+            water_level: None,
             speed: 0.0,
             slide_speed: 0.0,
+            dive_offset: 0.0,
+            dive_input: 0.0,
+            floor_y: position.y,
+            player_controlled: true,
         }
+    }
+
+    /// Current original movement mode (`gECharMovementMode`).
+    pub fn movement_mode(&self) -> MovementMode {
+        self.machine.mode()
+    }
+
+    /// Mode changes since the last call, for `OnMovementModeChanged`.
+    pub fn drain_mode_changes(&mut self) -> Vec<ModeChange> {
+        self.machine.drain_changes()
+    }
+
+    fn mode_ctx(&self) -> ModeContext {
+        ModeContext {
+            floor_angle_deg: self.ground_normal.y.clamp(-1.0, 1.0).acos().to_degrees(),
+            floor_y: self.position.y,
+        }
+    }
+
+    /// Route a physical transition through the mode machine.
+    fn set_machine(&mut self, mode: MovementMode) {
+        let ctx = self.mode_ctx();
+        self.machine.set_mode(mode, &self.config, &ctx);
     }
 
     /// Place the character (teleport) and let it fall to the ground.
@@ -137,6 +234,9 @@ impl CharacterController {
         self.velocity = Vec3::ZERO;
         self.speed = 0.0;
         self.fall_time = 0.0;
+        self.machine = ModeMachine::with_mode(MovementMode::Falling);
+        self.floor_y = position.y;
+        self.ani = AniVelocity::default();
     }
 
     /// Capsule segment endpoints for a lateral test: the lower sphere starts `clear` above the
@@ -284,9 +384,34 @@ impl CharacterController {
     }
 
     /// Advance with a desired horizontal velocity `wish` (cm/s: direction and top speed; the
-    /// speed is clamped to the directional maximum of the profile).
+    /// speed is clamped to the directional maximum of the profile). The gait follows from the
+    /// wish: running with input, standing without.
     pub fn step(&mut self, world: &CollisionWorld, wish: Vec3, jump: bool, dt: f32) -> StepReport {
+        let wished = if wish.x * wish.x + wish.z * wish.z > 1.0e-8 {
+            MovementMode::Running
+        } else {
+            MovementMode::Standing
+        };
+        self.step_inner(world, wish, jump, Some(wished), dt)
+    }
+
+    /// The pipeline of one frame: gait request, physics sub-steps, `CheckChangedMovementStates`
+    /// on the new state, mode-to-physics sync, animation velocity.
+    fn step_inner(
+        &mut self,
+        world: &CollisionWorld,
+        wish: Vec3,
+        jump: bool,
+        wished: Option<MovementMode>,
+        dt: f32,
+    ) -> StepReport {
         let dt = dt.clamp(0.0, 0.1);
+        let ctx = self.mode_ctx();
+        if let Some(w) = wished {
+            self.machine.request_gait(w, &self.config, &ctx);
+        }
+        let jump = jump && (self.machine.mode().can_jump() || self.mode == MoveMode::Ground);
+        let start = self.position;
         let travel = wish.length() * dt + self.vertical_speed.abs().max(self.slide_speed) * dt;
         let steps = ((travel / (self.config.radius * 0.4)).ceil() as usize).clamp(1, 12);
         let sub = dt / steps as f32;
@@ -295,7 +420,159 @@ impl CharacterController {
         for _ in 0..steps {
             self.sub_step(world, wish, std::mem::take(&mut jump), sub, &mut report);
         }
+        self.check_states(world, dt);
+        self.ani.update(
+            self.position - start,
+            Vec3::ZERO,
+            dt,
+            self.config.ani_velocity_inertia,
+        );
         report
+    }
+
+    /// `CheckChangedMovementStates` on the post-move state, then bring the physical state in line
+    /// with the mode the machine decided on.
+    fn check_states(&mut self, world: &CollisionWorld, dt: f32) {
+        let c = self.config;
+        if self.water_level.is_some_and(|l| l > self.position.y)
+            && !self.grounded
+            && let Some(g) = self.sense(world, self.position, 0.0, WATER_FLOOR_PROBE)
+        {
+            self.floor_y = g.y;
+        }
+        let (depth, column) = match self.water_level {
+            Some(level) => (
+                (level - self.position.y).max(0.0),
+                (level - self.floor_y).max(0.0),
+            ),
+            None => (0.0, 0.0),
+        };
+        let probe = StateProbe {
+            dt,
+            on_ground: self.grounded,
+            feet_y: self.position.y,
+            floor_y: self.floor_y,
+            floor_angle_deg: self.ground_normal.y.clamp(-1.0, 1.0).acos().to_degrees(),
+            vertical_velocity: self.vertical_speed,
+            water_depth: depth,
+            water_column: column,
+            player_controlled: self.player_controlled,
+            speed: self.speed,
+            slope_scale: self.slope_scale,
+        };
+        self.machine.check_changed_states(&c, &probe);
+        let want = match self.machine.mode() {
+            MovementMode::Jumping => MoveMode::Jump,
+            MovementMode::Falling => MoveMode::Fall,
+            MovementMode::Sliding => MoveMode::Slide,
+            MovementMode::Swimming | MovementMode::Diving => MoveMode::Swim,
+            _ => MoveMode::Ground,
+        };
+        if want == self.mode {
+            return;
+        }
+        match want {
+            MoveMode::Fall => {
+                self.grounded = false;
+                self.mode = MoveMode::Fall;
+                self.fall_time = 0.0;
+            }
+            MoveMode::Jump => self.mode = MoveMode::Jump,
+            MoveMode::Slide => {
+                self.mode = MoveMode::Slide;
+                self.slide_speed = self.speed;
+            }
+            MoveMode::Swim => {
+                self.mode = MoveMode::Swim;
+                self.grounded = false;
+                self.vertical_speed = 0.0;
+                self.dive_offset = 0.0;
+            }
+            MoveMode::Ground => {
+                self.mode = MoveMode::Ground;
+                self.grounded = true;
+                self.speed = 0.0;
+            }
+        }
+    }
+
+    /// One frame of the controlled-movement pipeline (E01): the wish direction and gait become a
+    /// mode request, the turn model rotates the heading toward the wish (or `face`), the
+    /// directional speed limit follows from the angle between heading and wish, and the physics
+    /// step runs with the resulting velocity.
+    pub fn step_command(
+        &mut self,
+        world: &CollisionWorld,
+        cmd: &MoveCommand,
+        dt: f32,
+    ) -> StepReport {
+        let dt = dt.clamp(0.0, 0.1);
+        self.water_level = cmd.water_level;
+        self.dive_input = cmd.vertical;
+        let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize_or_zero();
+        let dir = flat(cmd.wish);
+        let wished = if dir == Vec3::ZERO {
+            MovementMode::Standing
+        } else {
+            match cmd.gait {
+                Gait::Sneak => MovementMode::Sneaking,
+                Gait::Walk => MovementMode::Walking,
+                Gait::Run => MovementMode::Running,
+                Gait::Sprint => MovementMode::Sprinting,
+            }
+        };
+        let ctx = self.mode_ctx();
+        self.machine.request_gait(wished, &self.config, &ctx);
+        self.machine.set_diving(cmd.dive, &self.config, &ctx);
+
+        let mode = self.machine.mode();
+        let face = cmd.face.map(flat).filter(|f| *f != Vec3::ZERO);
+        let goal = face.or((dir != Vec3::ZERO).then_some(dir));
+        if let Some(g) = goal
+            && (mode.is_self_controlled() || mode == MovementMode::Swimming)
+        {
+            let goal_yaw = (-g.x).atan2(-g.z);
+            let angle = wrap_deg((goal_yaw - self.heading).to_degrees());
+            let step = step_turn(
+                &mut self.turn,
+                angle,
+                dt,
+                &self.config,
+                mode == MovementMode::Sprinting,
+                false,
+            );
+            self.heading += step.to_radians();
+        } else {
+            self.turn.velocity_deg = 0.0;
+        }
+        let fwd = Vec3::new(-self.heading.sin(), 0.0, -self.heading.cos());
+        let right = Vec3::new(self.heading.cos(), 0.0, -self.heading.sin());
+        self.facing = Some(Vec2::new(fwd.x, fwd.z));
+
+        let sprinting = mode == MovementMode::Sprinting || self.machine.sprint_jump;
+        let modifier = match mode {
+            MovementMode::Jumping | MovementMode::Falling => {
+                if self.machine.sprint_jump {
+                    self.config.fast_mod
+                } else {
+                    1.0
+                }
+            }
+            m => m.speed_modifier(&self.config),
+        };
+        let speed = if dir == Vec3::ZERO {
+            0.0
+        } else {
+            self.config
+                .directional_max(dir.dot(right), dir.dot(fwd), modifier, sprinting)
+        };
+        self.step_inner(world, dir * speed, cmd.jump, None, dt)
+    }
+
+    /// Animation velocity in the character frame: `(forward, right)` cm/s, filtered with
+    /// `AniVelocityInertia`. Feed this to the locomotion mixer instead of the raw velocity.
+    pub fn local_ani_velocity(&self) -> (f32, f32) {
+        self.ani.local(self.heading)
     }
 
     /// Advance with a unit direction and a gait.
@@ -308,23 +585,32 @@ impl CharacterController {
         dt: f32,
     ) -> StepReport {
         let d = Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero();
-        let speed = if d == Vec3::ZERO {
-            0.0
+        let (speed, wished) = if d == Vec3::ZERO {
+            (0.0, MovementMode::Standing)
         } else {
-            self.directional_max(d) * gait.modifier(&self.config)
+            (
+                self.directional_max(d, gait.modifier(&self.config), gait == Gait::Sprint),
+                match gait {
+                    Gait::Sneak => MovementMode::Sneaking,
+                    Gait::Walk => MovementMode::Walking,
+                    Gait::Run => MovementMode::Running,
+                    Gait::Sprint => MovementMode::Sprinting,
+                },
+            )
         };
-        self.step(world, d * speed, jump, dt)
+        self.step_inner(world, d * speed, jump, Some(wished), dt)
     }
 
-    /// `ForwardSpeedMax`-style limit for a world direction given the facing.
-    fn directional_max(&self, dir: Vec3) -> f32 {
+    /// `GetCurrentMaxSpeedOfDir` for a world direction given the facing.
+    fn directional_max(&self, dir: Vec3, modifier: f32, sprint: bool) -> f32 {
         let Some(f) = self.facing else {
-            return self.config.forward_max;
+            return self.config.forward_max * modifier;
         };
         let fwd = Vec2::new(f.x, f.y).normalize_or_zero();
         let right = Vec2::new(-fwd.y, fwd.x);
         let d = Vec2::new(dir.x, dir.z);
-        self.config.max_speed_of_dir(d.dot(right), d.dot(fwd))
+        self.config
+            .directional_max(d.dot(right), d.dot(fwd), modifier, sprint)
     }
 
     fn sub_step(
@@ -352,6 +638,7 @@ impl CharacterController {
                 self.ground_step(world, dir, want, dt, report);
             }
             MoveMode::Slide => self.slide_step(world, dt, report),
+            MoveMode::Swim => self.swim_step(world, dir, want, dt),
             MoveMode::Jump | MoveMode::Fall => self.air_step(world, dir, want, dt, report),
         }
         self.vertical_speed = if self.grounded {
@@ -361,12 +648,53 @@ impl CharacterController {
         };
     }
 
+    /// Swimming and diving: horizontal movement at the swim speed, the feet follow the surface
+    /// (`SwimDepth` below it) or the floor, whichever is higher; diving adds a vertical offset.
+    fn swim_step(&mut self, world: &CollisionWorld, dir: Vec3, want: f32, dt: f32) {
+        let c = self.config;
+        let level = self.water_level.unwrap_or(self.position.y + c.swim_depth);
+        self.speed = if want <= 1.0e-4 {
+            0.0
+        } else {
+            (self.speed + c.accel * dt).min(want)
+        };
+        self.velocity = dir * self.speed;
+        let start = self.position;
+        let mut p = start + self.velocity * dt;
+        self.depenetrate(world, &mut p, c.step_height, true);
+        self.position.x = p.x;
+        self.position.z = p.z;
+        if self.machine.mode() == MovementMode::Diving {
+            self.dive_offset = (self.dive_offset - self.dive_input * SWIM_DIVE_SPEED * dt)
+                .clamp(0.0, SWIM_DIVE_MAX);
+        } else {
+            self.dive_offset = relax(self.dive_offset, 0.0, dt, SWIM_VERTICAL_RELAX);
+        }
+        let floor = self
+            .sense(
+                world,
+                self.position,
+                c.step_height,
+                c.swim_depth + SWIM_DIVE_MAX + 200.0,
+            )
+            .map(|g| g.y);
+        let mut target = level - c.swim_depth - self.dive_offset;
+        if let Some(f) = floor {
+            self.floor_y = f;
+            target = target.max(f);
+        }
+        self.position.y = relax(self.position.y, target, dt, SWIM_VERTICAL_RELAX);
+        self.vertical_speed = 0.0;
+        self.grounded = false;
+    }
+
     fn take_off(&mut self, report: &mut StepReport) {
         self.vertical_speed = self.config.jump_velocity;
         self.grounded = false;
         self.mode = MoveMode::Jump;
         self.fall_time = 0.0;
         report.took_off = true;
+        self.set_machine(MovementMode::Jumping);
     }
 
     fn start_fall(&mut self, report: &mut StepReport) {
@@ -375,6 +703,7 @@ impl CharacterController {
         self.fall_time = 0.0;
         self.vertical_speed = 0.0;
         report.took_off = true;
+        self.set_machine(MovementMode::Falling);
     }
 
     fn ground_step(
@@ -393,6 +722,9 @@ impl CharacterController {
             normal: Vec3::Y,
         });
         self.ground_normal = ground.normal;
+        if cur.is_some() {
+            self.floor_y = ground.y;
+        }
         // Speed: accelerate up to the (slope scaled) maximum; no input stops at once (V: the
         // original adds no velocity without input).
         if want <= 1.0e-4 {
@@ -407,7 +739,7 @@ impl CharacterController {
                 let k = 1.0 - (-dt / c.slope_trans_inertia.max(1.0e-3)).exp();
                 self.slope_scale += (target - self.slope_scale) * k;
             }
-            let max = want.min(self.directional_max(dir) * c.fast_mod) * self.slope_scale;
+            let max = want.min(self.directional_max(dir, c.fast_mod, true)) * self.slope_scale;
             self.speed = (self.speed + c.accel * dt).min(max);
         }
         self.velocity = dir * self.speed;
@@ -420,9 +752,14 @@ impl CharacterController {
         match self.sense(world, p, c.step_height, c.step_height + 1.0) {
             None => self.start_fall(report),
             Some(g) => {
-                let rate = c.ground_follow_speed * dt;
-                let dy = g.y - p.y;
-                self.position.y += dy.clamp(-rate, rate);
+                self.floor_y = g.y;
+                let factor = ground_follow_factor(self.speed, c.forward_max, false);
+                // Slopes are tracked without lag; only height steps are smoothed (PutToGround).
+                let moved_h = p - start;
+                let n = ground.normal;
+                let rise = -(n.x * moved_h.x + n.z * moved_h.z) / n.y.max(0.3);
+                let predicted = p.y + rise.clamp(-c.step_height, c.step_height);
+                self.position.y = follow_ground(predicted, g.y, dt, factor);
                 self.ground_normal = g.normal;
                 if g.angle_deg() > c.steep_max_deg + 0.5 && !moved {
                     self.begin_slide(g, report);
@@ -478,6 +815,7 @@ impl CharacterController {
         self.ground_normal = g.normal;
         self.slide_speed = self.speed;
         report.started_sliding = true;
+        self.set_machine(MovementMode::Sliding);
     }
 
     fn slide_step(&mut self, world: &CollisionWorld, dt: f32, report: &mut StepReport) {
@@ -491,6 +829,8 @@ impl CharacterController {
         if g.angle_deg() <= c.steep_max_deg - 1.0 {
             self.mode = MoveMode::Ground;
             self.speed = 0.0;
+            self.floor_y = g.y;
+            self.set_machine(MovementMode::Running);
             return;
         }
         let down = Vec3::new(g.normal.x, 0.0, g.normal.z).normalize_or_zero();
@@ -503,8 +843,9 @@ impl CharacterController {
         match self.sense(world, self.position, c.step_height, c.step_height + 1.0) {
             None => self.start_fall(report),
             Some(g2) => {
-                let rate = c.slide_speed_max.max(c.ground_follow_speed) * dt;
+                let rate = c.slide_speed_max * dt;
                 self.position.y += (g2.y - self.position.y).clamp(-rate, rate);
+                self.floor_y = g2.y;
                 self.ground_normal = g2.normal;
             }
         }
@@ -526,7 +867,7 @@ impl CharacterController {
         } else {
             c.fall_steer
         };
-        let target = dir * (want.min(self.directional_max(dir) * c.fast_mod) * steer);
+        let target = dir * (want.min(self.directional_max(dir, c.fast_mod, true)) * steer);
         let diff = target - self.velocity;
         let max_d = c.accel * dt;
         self.velocity += if diff.length() > max_d {
@@ -577,6 +918,11 @@ impl CharacterController {
         self.fall_time = 0.0;
         self.last_landing = Some(landing);
         report.landed = Some(landing);
+        self.floor_y = g.y;
+        let steep = g.angle_deg() > self.config.steep_max_deg + 0.5;
+        let ctx = self.mode_ctx();
+        self.machine
+            .landed(-landing.impact_speed, steep, &self.config, &ctx);
         if g.angle_deg() > self.config.steep_max_deg + 0.5 {
             self.begin_slide(g, report);
         } else {

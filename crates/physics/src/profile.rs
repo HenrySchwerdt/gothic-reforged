@@ -64,9 +64,19 @@ pub struct MovementProfile {
     pub can_be_pushed_while_idle: bool,
     /// Water depth where a character starts to swim, cm. V: `SwimDepth` 155 (hero).
     pub swim_depth: f32,
-    /// Rate at which the feet follow the ground (stairs, ramps), cm/s.
-    /// T: the original snaps through `PutToGround`; this only hides the pop.
-    pub ground_follow_speed: f32,
+    /// Turn acceleration, deg/s^2. V: `TurnAcceleration` 999999 (effectively instant).
+    pub turn_accel_deg: f32,
+    /// Turn deceleration magnitude, deg/s^2. V: `TurnDecceleration` (same order as the acceleration).
+    pub turn_decel_deg: f32,
+    /// Multiplier on `TurnSpeedMax` while sprinting. V: `TurnSpeedModifier` 0.5.
+    pub turn_speed_sprint_mod: f32,
+    /// Animation-velocity filter factor (x0.025 s). V: `AniVelocityInertia` 5.
+    pub ani_velocity_inertia: f32,
+    /// Water depth where a grounded character starts wading, cm. V: `StepHeight` for the player,
+    /// 85 for others (`CheckChangedMovementStates`).
+    pub wade_depth: f32,
+    /// Swim-depth hysteresis, cm. V: 10 (`CheckChangedMovementStates`).
+    pub swim_hysteresis: f32,
 }
 
 /// Kept for source compatibility with the former controller configuration.
@@ -108,7 +118,12 @@ impl MovementProfile {
             min_slope_scale: 0.0,
             can_be_pushed_while_idle: false,
             swim_depth: 155.0,
-            ground_follow_speed: 1000.0,
+            turn_accel_deg: 999_999.0,
+            turn_decel_deg: 999_999.0,
+            turn_speed_sprint_mod: 0.5,
+            ani_velocity_inertia: 5.0,
+            wade_depth: 65.0,
+            swim_hysteresis: 10.0,
         }
     }
 
@@ -120,6 +135,7 @@ impl MovementProfile {
             height: 129.3 + 2.0 * 35.3,
             min_slope_scale: 0.3,
             swim_depth: 200.0,
+            wade_depth: 85.0,
             jump_velocity: 600.0,
             ..Self::hero()
         }
@@ -153,6 +169,9 @@ impl MovementProfile {
         f("JumpSteerScaleFactor", &mut p.jump_steer);
         f("FallSteerScaleFactor", &mut p.fall_steer);
         f("SwimDepth", &mut p.swim_depth);
+        f("TurnSpeedModifier", &mut p.turn_speed_sprint_mod);
+        f("TurnAcceleration", &mut p.turn_accel_deg);
+        f("AniVelocityInertia", &mut p.ani_velocity_inertia);
         if let Some(d) = get("MoveDecceleration") {
             p.decel = d.abs();
         }
@@ -169,17 +188,37 @@ impl MovementProfile {
         self.forward_max * gait.modifier(self)
     }
 
-    /// Maximum speed in the local direction `(strafe, forward)` (unit vector): forward /
-    /// backward speed blended with the strafe speed on an ellipse. I: the original blends
-    /// the three maxima by the angle to the facing axes (`GetCurrentMaxSpeedOfDir`).
-    pub fn max_speed_of_dir(&self, strafe: f32, forward: f32) -> f32 {
-        let fm = if forward >= 0.0 {
-            self.forward_max
+    /// Maximum speed along the local direction `(strafe, forward)` (unit vector) before the gait
+    /// modifier: the forward/strafe/backward maxima are blended linearly by the angle to the
+    /// facing (`GetCurrentMaxSpeedOfDir`, GameDll:0x100eb800): 0 deg forward, 90 deg strafe,
+    /// 180 deg backward. Returns `(forward weight * forward, strafe part, backward part)`
+    /// packed as `(fwd, side, back)` so sprint can scale only the forward part.
+    pub fn directional_parts(&self, strafe: f32, forward: f32) -> (f32, f32, f32) {
+        let a = strafe.abs().atan2(forward).to_degrees().clamp(0.0, 180.0);
+        if a <= 90.0 {
+            let w = a / 90.0;
+            (self.forward_max * (1.0 - w), self.strafe_max * w, 0.0)
         } else {
-            self.backward_max
-        };
-        let denom = ((forward / fm).powi(2) + (strafe / self.strafe_max).powi(2)).sqrt();
-        if denom < 1.0e-6 { fm } else { 1.0 / denom }
+            let w = (a - 90.0) / 90.0;
+            (0.0, self.strafe_max * (1.0 - w), self.backward_max * w)
+        }
+    }
+
+    /// Maximum speed in the local direction `(strafe, forward)` for a speed modifier `modifier`
+    /// (1 = run). Sprint scales only the forward part by the modifier (`sprint = true`).
+    pub fn directional_max(&self, strafe: f32, forward: f32, modifier: f32, sprint: bool) -> f32 {
+        let (f, s, b) = self.directional_parts(strafe, forward);
+        if sprint {
+            f * modifier + s + b
+        } else {
+            (f + s + b) * modifier
+        }
+    }
+
+    /// Maximum run speed in the local direction `(strafe, forward)` (see
+    /// [`Self::directional_parts`]).
+    pub fn max_speed_of_dir(&self, strafe: f32, forward: f32) -> f32 {
+        self.directional_max(strafe, forward, 1.0, false)
     }
 }
 

@@ -971,3 +971,21 @@ Caveats:
 - `FUN_*` attribution is heuristic ([I]). Inside the animation, camera and movement classes the unnamed functions are mostly the large locomotion/mixer routines, which ENGINE_MAP already describes by address.
 - *Covered* is not *verified*. Where a batch overlaps a covered subsystem it is because the *port* class also drives that subsystem at run time.
 - Open items inherited from `ENGINE_MAP.md`: body of `CorrectCameraPosition` (not recoverable, treat as behavioural spec), movement modes 9 and 0xb, swim vs dive margins, savegame MD5 failure behaviour.
+
+## 7. Port status
+
+| Batch | Status | Where | Tests |
+| --- | --- | --- | --- |
+| E00 camera | ported, not yet wired into `--play` (play mode owns `apps/game/src/play/**`) | `crates/camera` (`gothic-camera`: `state.rs` solver and modes 0..13, `dialog.rs`, `preset.rs`, `config.rs`, `world.rs`) | 18 unit + 13 scenario tests; the built-in preset table equals the installed `Camera_PC_Camera.tple` |
+| E01 movement pipeline | ported | `crates/physics/src/movement.rs` (wish direction, turn model, animation velocity, ground-follow filter), `controller.rs` `step_command`, `profile.rs` (directional speed blend), `crates/animation/src/locomotion.rs` (`GaitHint`) | unit tests plus `crates/physics/tests/movement_scenarios.rs` (walk/run/sprint/sneak, U-turn, sprint turn rate, camera-relative keys, jump, sprint-jump) |
+| E02 mode machine, ground, swim | ported (water level comes from the host) | `movement.rs` `ModeMachine`, `controller.rs` (`Swim`, `check_states`, `PutToGround` filter) | unit state-transition tests and the slope, ledge, slide, wade, swim, dive scenarios |
+
+### PORT_NOTES (engine port wins over earlier guesses)
+
+- Camera: position is `pivot + dir(azimuth, elevation) * boom`, relaxed with `fRelaxCamera`; the boom snaps closer instantly and relaxes outward (`UpdateDistance`); the pivot relaxes with `fRelaxPlayer`; FOV law uses the cosine ease over the zoom window (64.9 at the rest distance). The old fixed 280 boom, 150-unit focus height and `exp(-4 dt)` dialog lerp are replaced.
+- Camera orientation in third person is `LookAt(pivot -> camera)` times a smoothed rotation offset (`RotOffset*`, slerp factor `dt * VeloRot * ease(timer / RotOffsetDuration)`), not a slerped full orientation (`GetCurrentWishedRotation`).
+- Reconstructed, not recovered verbatim: which actor anchors which dialog preset group (Face* anchors on the speaker, all others on the listener, Two-shots look at the midpoint), the `FindPreset` ordering (only the 0.3 / 0.25 thresholds, the large-creature volume 262144, the 2000 distance and the 18 s Lerp pair are verified), and the mouse scale (`radians_per_count`, the raw device unit of the 550 / 50 factors is unknown).
+- Not ported: the sideways yaw swing of up to 80 degrees (`GetCurrentWishedTranslation`; its trigger is unclear), `CorrectCameraPosition` (collision is the documented behavioural spec: ray from the pivot, margin 25, minimum boom 30, first-person push-out 17.5), the first-person relax factor of 25/10 by speed (decompiled as a lag of several tenths of a second at run speed; first person uses the pivot factor 2 instead, tuned).
+- Movement: `max_speed_of_dir` is now the linear angle blend of `GetCurrentMaxSpeedOfDir` (forward 0 deg, strafe 90, backward 180) instead of an ellipse, and sprint scales only the forward part. `ground_follow_speed` (1000 cm/s clamp) is gone: the foot height uses the `PutToGround` relax filter (factor 10 standing .. 2 at full speed and while jumping); slope rise is predicted so constant slopes are tracked without lag (assumption: the original's secondary offset does this).
+- Swimming/diving: modes 7/8 use the walk speed modifier (the original does not list them), the swim line is `SwimDepth` below the surface, diving is a scripted request with a tuned vertical speed; a deep water body (column >= SwimDepth) keeps a swimmer swimming until the floor comes up (the original's condition order is hidden by the decompiler). Modes 9 and 0xb are never produced.
+- Turn model: acceleration 999999 means the angular velocity jumps to `TurnSpeedMax` at once; the braking branch exists (`brake` flag) but is unused because `TurnDecceleration` is as large as the acceleration on all templates.

@@ -3150,6 +3150,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-camera"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "gothic-formats",
+ "gothic-physics",
+]
+
+[[package]]
 name = "gothic-cook"
 version = "0.1.0"
 dependencies = [

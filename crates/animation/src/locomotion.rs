@@ -31,6 +31,17 @@ pub const FORWARD: Vec3 = Vec3::NEG_Z;
 /// Entity-local right axis (`FORWARD x Y`).
 pub const RIGHT: Vec3 = Vec3::X;
 
+/// Gait the movement mode machine selected (`gECharMovementMode` 2..5). When present the mixer
+/// follows it instead of guessing the gait from the ground speed (the original never promotes a
+/// gait by speed: the locomotion clip is chosen by the mode and played at `speed / nominal`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum GaitHint {
+    Sneak,
+    Walk,
+    Run,
+    Sprint,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Stance {
     #[default]
@@ -80,6 +91,8 @@ pub struct LocomotionInput {
     /// Signed yaw from the current facing to the desired facing, radians, positive is
     /// counter-clockwise seen from above (left). Triggers turn-in-place when standing.
     pub turn_error: f32,
+    /// Gait from the movement mode machine; `None` keeps the speed-threshold guess.
+    pub gait: Option<GaitHint>,
 }
 
 impl Default for LocomotionInput {
@@ -90,6 +103,7 @@ impl Default for LocomotionInput {
             stance: Stance::Unarmed,
             sneak: false,
             turn_error: 0.0,
+            gait: None,
         }
     }
 }
@@ -279,7 +293,14 @@ impl Locomotion {
                 } else {
                     c.sprint_enter
                 };
-            next.kind = if input.sneak {
+            next.kind = if let Some(g) = input.gait {
+                match g {
+                    GaitHint::Sneak | GaitHint::Walk => MoveKind::Walk,
+                    GaitHint::Run => MoveKind::Run,
+                    GaitHint::Sprint if next.dir == MoveDir::Fwd => MoveKind::Sprint,
+                    GaitHint::Sprint => MoveKind::Run,
+                }
+            } else if input.sneak {
                 MoveKind::Walk
             } else if sprint && next.dir == MoveDir::Fwd {
                 MoveKind::Sprint
@@ -546,6 +567,31 @@ mod tests {
         );
         assert!(
             resolve_motion(&catalog, "Orc", key(MoveKind::Idle, Stance::Unarmed, false)).is_none()
+        );
+    }
+
+    #[test]
+    fn gait_hint_selects_the_clip_regardless_of_speed() {
+        let mut loco = Locomotion::default();
+        let mut i = input(Stance::Unarmed);
+        i.gait = Some(GaitHint::Run);
+        assert_eq!(loco.step(&i, lm(60.0, 0.0, 0.0), false).kind, MoveKind::Run);
+        i.gait = Some(GaitHint::Sprint);
+        assert_eq!(
+            loco.step(&i, lm(300.0, 0.0, 0.0), false).kind,
+            MoveKind::Sprint
+        );
+        i.gait = Some(GaitHint::Walk);
+        assert_eq!(
+            loco.step(&i, lm(500.0, 0.0, 0.0), false).kind,
+            MoveKind::Walk
+        );
+        // Without a hint the speed decides (100 cm/s is a walk).
+        i.gait = None;
+        let mut guess = Locomotion::default();
+        assert_eq!(
+            guess.step(&i, lm(100.0, 0.0, 0.0), false).kind,
+            MoveKind::Walk
         );
     }
 }

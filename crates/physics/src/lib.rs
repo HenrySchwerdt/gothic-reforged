@@ -10,10 +10,13 @@
 //! Units are centimetres (Gothic 3), Y up.
 pub mod controller;
 pub mod crowd;
+pub mod movement;
 pub mod profile;
 pub mod ragdoll;
+pub mod relax;
 
-pub use controller::{CharacterController, Gait, Landing, MoveMode, StepReport};
+pub use controller::{CharacterController, Gait, Landing, MoveCommand, MoveMode, StepReport};
+pub use movement::{ModeChange, MovementMode};
 pub use profile::{ControllerConfig, MovementProfile, fall_damage};
 
 use glam::Vec3;
