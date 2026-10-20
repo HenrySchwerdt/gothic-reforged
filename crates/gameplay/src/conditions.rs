@@ -134,9 +134,7 @@ fn container_has(st: &GameState, assume: Assumptions, container: &str, item: &st
             st.item_count(item)
         } else {
             match st.npc(container) {
-                Some(npc) if !npc.inventory.is_empty() => {
-                    npc.inventory.get(&norm(item)).copied().unwrap_or(0)
-                }
+                Some(npc) if !npc.inventory.is_empty() => npc.inventory.count(item),
                 // Unknown inventory: pretend it holds what the info asks for.
                 _ if assume.unknown_npc_inventory => return true,
                 _ => 0,

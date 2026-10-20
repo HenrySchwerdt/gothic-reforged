@@ -296,9 +296,7 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
             return 0;
         };
         let name = item.name.clone();
-        let held = self
-            .actor(e)
-            .map_or(0, |a| a.inventory.count(&name) as i32);
+        let held = self.actor(e).map_or(0, |a| a.inventory.count(&name) as i32);
         held.max(1)
     }
     fn stack_permanent(&self, e: EntityId, stack: i32) -> bool {

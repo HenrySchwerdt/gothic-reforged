@@ -3,6 +3,7 @@
 //! Everything is keyed by lower-cased names (not by database indices) so that a save
 //! stays valid when the database is rebuilt or patched. Maps are `BTree*` so
 //! serialization is deterministic byte-for-byte.
+use crate::inventory::Inventory;
 use crate::model::{NpcStatus, QuestStatus};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,7 @@ pub struct NpcRuntime {
     /// Remaining per-NPC settings forwarded by commands the simulation does not
     /// interpret yet (guard status, slavery flag, sleeping points ...): `command -> value`.
     pub settings: BTreeMap<String, String>,
-    pub inventory: BTreeMap<String, u32>,
+    pub inventory: Inventory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,7 +76,7 @@ pub struct GameState {
     pub told: BTreeSet<String>,
     pub npcs: BTreeMap<String, NpcRuntime>,
     /// Player inventory: item template name -> count (gold is `it_gold`).
-    pub inventory: BTreeMap<String, u32>,
+    pub inventory: Inventory,
     pub xp: u64,
     pub attributes: BTreeMap<String, i32>,
     /// Fame 0..=100 per political alignment (`pol:<tag>`) and enclave (`enc:<name>`),
@@ -117,7 +118,7 @@ impl GameState {
             events: BTreeSet::new(),
             told: BTreeSet::new(),
             npcs: BTreeMap::new(),
-            inventory: BTreeMap::new(),
+            inventory: Inventory::new(),
             xp: 0,
             attributes: BTreeMap::new(),
             fame: BTreeMap::new(),
@@ -215,29 +216,17 @@ impl GameState {
 
     // ---- inventory ----------------------------------------------------------------
     pub fn item_count(&self, item: &str) -> u32 {
-        self.inventory.get(&norm(item)).copied().unwrap_or(0)
+        self.inventory.count(item)
     }
     pub fn gold(&self) -> u32 {
         self.item_count(GOLD_ITEM)
     }
     pub fn add_item(&mut self, item: &str, n: u32) {
-        if n > 0 {
-            *self.inventory.entry(norm(item)).or_insert(0) += n;
-        }
+        self.inventory.add(item, n);
     }
     /// Remove `n` items; returns false (and changes nothing) when not enough are held.
     pub fn take_item(&mut self, item: &str, n: u32) -> bool {
-        let k = norm(item);
-        let have = self.inventory.get(&k).copied().unwrap_or(0);
-        if have < n {
-            return false;
-        }
-        if have == n {
-            self.inventory.remove(&k);
-        } else {
-            self.inventory.insert(k, have - n);
-        }
-        true
+        self.inventory.take(item, n)
     }
 
     // ---- npcs ---------------------------------------------------------------------

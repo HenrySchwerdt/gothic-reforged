@@ -209,13 +209,15 @@ impl Ctx<'_> {
                 self.st.add_item(item, n - have);
             }
             self.st.take_item(item, n);
-        } else if let Some(c) = self.st.npc_mut(from).inventory.get_mut(&norm(item)) {
-            *c = c.saturating_sub(n);
+        } else {
+            let inv = &mut self.st.npc_mut(from).inventory;
+            let n = n.min(inv.count(item));
+            inv.take(item, n);
         }
         if to == "player" {
             self.st.add_item(item, n);
         } else {
-            *self.st.npc_mut(to).inventory.entry(norm(item)).or_insert(0) += n;
+            self.st.npc_mut(to).inventory.add(item, n);
         }
         self.res.outputs.push(Output::Item {
             from: from.into(),
@@ -335,12 +337,7 @@ impl Ctx<'_> {
                 if who == "player" {
                     self.st.add_item(&s.id1, n);
                 } else {
-                    *self
-                        .st
-                        .npc_mut(&who)
-                        .inventory
-                        .entry(norm(&s.id1))
-                        .or_insert(0) += n;
+                    self.st.npc_mut(&who).inventory.add(&s.id1, n);
                 }
                 self.effect(s);
             }
@@ -359,8 +356,10 @@ impl Ctx<'_> {
                 let n = self.amount(name, &s.id2, 1);
                 if who == "player" {
                     self.st.take_item(&s.id1, n);
-                } else if let Some(c) = self.st.npc_mut(&who).inventory.get_mut(&norm(&s.id1)) {
-                    *c = c.saturating_sub(n);
+                } else {
+                    let inv = &mut self.st.npc_mut(&who).inventory;
+                    let n = n.min(inv.count(&s.id1));
+                    inv.take(&s.id1, n);
                 }
                 self.effect(s);
             }

@@ -141,7 +141,7 @@ fn a_scroll_is_used_up_by_the_cast() {
     let (mut sim, hero, orc) = world(2);
     sim.actor_mut(hero)
         .inventory
-        .insert("It_Scroll_Fireball".into(), 1);
+        .insert("It_Scroll_Fireball", 1);
     sim.equip(hero, "It_Scroll_Fireball").expect("scroll");
     assert!(sim.player_select_spell("It_Scroll_Fireball"));
     settle(&mut sim, 600);
@@ -152,10 +152,7 @@ fn a_scroll_is_used_up_by_the_cast() {
         sim.actor(hero).equipment.right.is_none(),
         "the scroll is gone"
     );
-    assert_eq!(
-        sim.actor(hero).inventory.get("It_Scroll_Fireball").copied(),
-        Some(0)
-    );
+    assert_eq!(sim.actor(hero).inventory.count("It_Scroll_Fireball"), 0);
 }
 
 #[test]

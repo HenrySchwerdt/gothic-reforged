@@ -4,8 +4,8 @@
 use crate::brain::Brain;
 use crate::config::SimConfig;
 use crate::item::{DamageDef, Equipment};
-use gothic_gameplay::inventory::Inventory;
 use crate::types::*;
+use gothic_gameplay::inventory::Inventory;
 use std::collections::BTreeSet;
 
 /// Player attribute record (`PSPlayerMemory`) [CA 2.13 "New-game player values"].

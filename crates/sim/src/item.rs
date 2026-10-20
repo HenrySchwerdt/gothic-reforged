@@ -145,7 +145,9 @@ pub struct ItemDef {
 impl ItemDef {
     /// The inventory rules' view of this item (`gCItem_PS` data).
     pub fn to_info(&self) -> gothic_gameplay::inventory::ItemInfo {
-        use gothic_gameplay::inventory::{category_from_name, use_type_from_name, ItemInfo, StatMod, StatReq};
+        use gothic_gameplay::inventory::{
+            ItemInfo, StatMod, StatReq, category_from_name, use_type_from_name,
+        };
         ItemInfo {
             name: self.name.clone(),
             category: category_from_name(&self.category),
@@ -239,7 +241,8 @@ pub struct ItemDb {
 impl ItemDb {
     pub fn insert(&mut self, item: ItemDef) {
         let key = item.name.to_ascii_lowercase();
-        self.infos.insert(key.clone(), std::sync::Arc::new(item.to_info()));
+        self.infos
+            .insert(key.clone(), std::sync::Arc::new(item.to_info()));
         self.items.insert(key, item);
     }
     /// Shared inventory-rule data of a template.
@@ -282,26 +285,35 @@ pub enum Unmet {
 }
 
 /// Attribute and skill requirements of an item [CA: GAME_RULES 4.2 / PROPERTY_STREAMS items].
-/// `attr` returns the actor's current value for a tag (`STR`, `DEX`, `INT`, ...).
+/// `attr` returns the actor's current value for a tag (`STR`, `DEX`, `INT`, ...). The rule
+/// itself is `gCInventory_PS::CanEquip` as ported in `gothic_gameplay::inventory`: an attribute
+/// is missing by `required - have`, a required skill must be among `skills`. Attributes are
+/// reported before skills.
 pub fn check_requirements(
     item: &ItemDef,
     attr: impl Fn(&str) -> i32,
     skills: &BTreeSet<String>,
 ) -> Result<(), Unmet> {
-    for r in &item.requirements {
-        let have = attr(&r.tag);
-        if have < r.value {
-            return Err(Unmet::Attribute {
-                tag: r.tag.clone(),
-                need: r.value,
-                have,
-            });
-        }
+    use gothic_gameplay::inventory::missing_requirements;
+    let info = item.to_info();
+    let missing = |tag: &str, required: i32| (required - attr(tag)).max(0);
+    let check = missing_requirements(&info.reqs, &info.required_skills, 0, Some(&missing), &|s| {
+        skills.contains(&s.to_ascii_lowercase())
+    });
+    if let Some((tag, _)) = check.missing_attribs.first() {
+        let need = info
+            .reqs
+            .iter()
+            .find(|r| &r.tag == tag)
+            .map_or(0, |r| r.value);
+        return Err(Unmet::Attribute {
+            tag: tag.clone(),
+            need,
+            have: attr(tag),
+        });
     }
-    for s in &item.required_skills {
-        if !skills.contains(&s.to_ascii_lowercase()) {
-            return Err(Unmet::Skill(s.clone()));
-        }
+    if let Some(s) = check.missing_skills.first() {
+        return Err(Unmet::Skill(s.clone()));
     }
     Ok(())
 }

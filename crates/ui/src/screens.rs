@@ -278,7 +278,7 @@ fn item_grid(
 
 fn item_list(
     cx: &Cx,
-    inv: &std::collections::BTreeMap<String, u32>,
+    inv: &gothic_gameplay::inventory::Inventory,
     cat: Option<i32>,
 ) -> Vec<(String, String, u32)> {
     let mut v: Vec<_> = inv

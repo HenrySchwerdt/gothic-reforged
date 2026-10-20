@@ -11,6 +11,7 @@
 pub mod conditions;
 pub mod db;
 pub mod dialog;
+pub mod inventory;
 pub mod lint;
 pub mod model;
 pub mod questmgr;
