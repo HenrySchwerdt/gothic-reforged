@@ -1,0 +1,16 @@
+[package]
+name = "gothic-inspector"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+gothic-formats = { path = "../../crates/formats" }
+gothic-importer = { path = "../../crates/importer" }
+
+[lints]
+workspace = true
+

@@ -1,5 +1,13 @@
 # Architecture — Rust/Bevy Implementation
 
+## Implemented foundation (2026-10-20)
+
+The initial workspace deliberately instantiates only four boundaries: `gothic-formats` (bounded lazy archive reader), `gothic-importer` (installation inventory and provenance evidence), `gothic-world` (Bevy residency planner), and the inspector/game executables. The larger tree below remains a proposal; absent gameplay crates are not stubs or completed features.
+
+`gothic-formats` uses buffered `Read + Seek`, indexes archive metadata, and fetches selected payloads on demand. It does not bulk-decompress the installation. `gothic-importer` depends on formats and contains no rendering. `gothic-world` contains no archive I/O or original game data. Its deterministic cell planner runs with a bounded number of residency changes and distinct load/retain radii. This is a synthetic residency laboratory; actual asynchronous loading, unloading, memory budgets, original world sectors, collision and navigation remain to be connected.
+
+The game defaults to a finite headless smoke run. The `viewer` Cargo feature enables the Bevy 3D renderer and window backend. No physics dependency is selected until original collision shapes, units and behavior can be tested. Current version/toolchain and completed validation are tracked in `HANDOFF_CLAUDE.md`.
+
 ## Principles
 
 - Use Bevy ECS/plugins/resources/schedules for orchestration; prefer idiomatic Bevy over a parallel bespoke ECS.
