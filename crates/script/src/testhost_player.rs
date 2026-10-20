@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::enums::UseType;
 use crate::host::EntityId;
 use crate::player::api::{
-    FocusKind, Lock, LockStatus, PlayerApi, PlayerEvent, Recipe, SkillCategory, VoiceCounter,
+    Book, BoulderClass, FocusKind, Lock, LockStatus, PlayerApi, PlayerEvent, Recipe, SkillCategory,
+    VoiceCounter,
 };
 use crate::testhost::TestWorld;
 
@@ -49,6 +50,10 @@ pub struct PlayerSide {
     pub hours: f32,
     /// Raised game events.
     pub raised: Vec<String>,
+    /// Pages read per book.
+    pub books: HashMap<Book, i32>,
+    /// Weight class per boulder.
+    pub boulders: HashMap<EntityId, BoulderClass>,
 }
 
 impl TestWorld {
@@ -97,6 +102,15 @@ impl TestWorld {
 }
 
 impl PlayerApi for TestWorld {
+    fn book_progress(&self, book: Book) -> i32 {
+        self.pl.books.get(&book).copied().unwrap_or(0)
+    }
+    fn set_book_progress(&mut self, book: Book, pages: i32) {
+        self.pl.books.insert(book, pages);
+    }
+    fn boulder_class(&self, object: EntityId) -> BoulderClass {
+        self.pl.boulders.get(&object).copied().unwrap_or_default()
+    }
     fn voice_counter(&self, c: VoiceCounter) -> u32 {
         self.pl.counters.get(&c).copied().unwrap_or(0)
     }

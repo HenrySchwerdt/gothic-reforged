@@ -256,13 +256,27 @@ impl<W: WorldQuery> Sim<W> {
             AiCommand::Shoot { target } => {
                 let tid = actor_id(target);
                 self.face(i, tid);
-                let ammo = if self.actors[i].equipment.left_use() == crate::item::Use::CrossBow {
-                    "It_Bolt"
-                } else {
-                    "It_Arrow"
-                };
-                if self.shoot(id, tid, 2.0, ammo).is_none() {
+                let loaded = matches!(
+                    self.actors[i].equipment.right_use(),
+                    crate::item::Use::Arrow | crate::item::Use::Bolt
+                );
+                if loaded {
+                    // The ported `Shoot`: the ammunition in the right hand becomes a projectile
+                    // (NPC archers are re-supplied), it lands after its flight time.
+                    let mut host = crate::script_host::SimHost::new(self);
+                    gothic_script::player::ranged::shoot(&mut host, entity(id), target);
+                    self.actors[i].action = Action::Shoot;
                     self.actors[i].brain.busy_until_ms = now + 1500;
+                } else {
+                    let ammo = if self.actors[i].equipment.left_use() == crate::item::Use::CrossBow
+                    {
+                        "It_Bolt"
+                    } else {
+                        "It_Arrow"
+                    };
+                    if self.shoot(id, tid, 2.0, ammo).is_none() {
+                        self.actors[i].brain.busy_until_ms = now + 1500;
+                    }
                 }
             }
             AiCommand::WaitMs { ms } => {
@@ -278,8 +292,12 @@ impl<W: WorldQuery> Sim<W> {
             AiCommand::UseItem(name) if name.eq_ignore_ascii_case("It_Potion_Health") => {
                 self.drink_potion(i, now);
             }
-            AiCommand::Cast { .. } => {
-                // NPC spell casting needs per-spell data; hosts drive it through `cast`. [stub]
+            AiCommand::Cast { power } => {
+                // The ported cast pipeline: load, (power), cast, reset; the spell data come
+                // from the spell templates.
+                let mut host = crate::script_host::SimHost::new(self);
+                gothic_script::magic::cast::run_cast(&mut host, entity(id), power);
+                self.actors[i].action = Action::Cast;
                 self.actors[i].brain.busy_until_ms = now + 1500;
             }
             AiCommand::HoldInventoryStacks {

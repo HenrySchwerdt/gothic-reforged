@@ -237,6 +237,8 @@ pub struct ScriptTables {
     pub stopped_goto: u32,
     /// Player-side state (interact objects, recipes, speech counters).
     pub player: crate::script_player::PlayerTables,
+    /// Magic state (spells, projectiles in flight, area effects).
+    pub magic: crate::script_magic::MagicTables,
 }
 
 impl ScriptTables {
@@ -514,7 +516,7 @@ impl<'a, W: WorldQuery> SimHost<'a, W> {
         actor_of(e).map(|a| self.sim.script.npc_mut(a))
     }
 
-    fn entity_pos(&self, e: EntityId) -> Pos {
+    pub(crate) fn entity_pos(&self, e: EntityId) -> Pos {
         if let Some(a) = actor_of(e) {
             return self.sim.world.position(a).unwrap_or_default();
         }
@@ -822,7 +824,11 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
             a.target = actor_target;
         }
         if let Some(s) = self.script_mut(npc) {
-            s.obj_target = if actor_target.is_none() { target } else { EntityId::NONE };
+            s.obj_target = if actor_target.is_none() {
+                target
+            } else {
+                EntityId::NONE
+            };
         }
     }
     fn enclave(&self, npc: EntityId) -> EntityId {

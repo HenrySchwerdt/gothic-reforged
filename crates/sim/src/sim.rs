@@ -143,6 +143,16 @@ pub enum EventKind {
     },
     /// Something the player did or was told (windows, doors, locks, crafting, sleep).
     Player(gothic_script::player::api::PlayerEvent),
+    /// Something magical happened (cast phase, effect, summon, status, teleport...).
+    Magic(gothic_script::magic::api::MagicEvent),
+    /// A projectile left its shooter.
+    Projectile {
+        owner: ActorId,
+        target: Option<ActorId>,
+        template: String,
+        /// A spell missile (false: an arrow or bolt).
+        spell: bool,
+    },
     /// A forwarded effect the simulation does not act on (yet).
     Unhandled {
         command: String,
@@ -398,6 +408,7 @@ impl<W: WorldQuery> Sim<W> {
             self.think(i, now);
         }
         self.drive_player();
+        self.tick_magic();
     }
 
     pub fn run_ticks(&mut self, n: u64) {
@@ -1046,7 +1057,7 @@ impl<W: WorldQuery> Sim<W> {
         self.run_combat_script(i, now);
     }
 
-    fn dt(&self) -> f32 {
+    pub(crate) fn dt(&self) -> f32 {
         self.cfg.tick_ms as f32 / 1000.0
     }
 

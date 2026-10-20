@@ -3,8 +3,8 @@
 //!
 //! The DLL runs them as coroutines inside the info (dialog) manager, speaking voice lines and
 //! ending the dialog; here they are plain functions that return what happened and queue the
-//! voice lines. Bribing (`_AI_Bribe`) needs the price tables of the dialog data and is not
-//! ported.
+//! voice lines. `_AI_Bribe` only decides what the guard does with an offer; the price is dialog
+//! data, so the caller passes whether the dialog accepted it.
 
 use crate::enums::{AttackReason, PlayerCrime};
 use crate::host::{AiCommand, EntityId, ScriptHost};
@@ -86,6 +86,49 @@ pub fn excuse(
         assess_target(host, guard, player, reason);
     }
     ExcuseOutcome::Rejected
+}
+
+/// How a bribe ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BribeOutcome {
+    /// The guard takes the money and forgets the crime.
+    Accepted,
+    /// The guard refuses ("No") and acts on what he knows.
+    Refused,
+}
+
+/// Port of `_AI_Bribe` (S:3d7d0): the player offers a guard money to forget a `crime`.
+///
+/// Accepted (the dialog took the gold): the guard says `LetsForgetThis`, `ThisTimeYoureLucky` and
+/// `NoMoreTroubleHere`, and forgets what the player did to him (`LastPlayerCrime` cleared).
+/// Refused: the guard says `No`, then attacks as in `_AI_Excuse` ([`guard_attack_reason`]; a
+/// murder also alerts the enclave). The dialog ends either way.
+pub fn bribe(
+    host: &mut dyn ScriptHost,
+    guard: EntityId,
+    player: EntityId,
+    crime: PlayerCrime,
+    accepted: bool,
+) -> BribeOutcome {
+    let say = |host: &mut dyn ScriptHost, key: &'static str| {
+        host.queue_ai(guard, AiCommand::SayLine { key });
+    };
+    if accepted {
+        say(host, "LetsForgetThis");
+        say(host, "ThisTimeYoureLucky");
+        say(host, "NoMoreTroubleHere");
+        host.set_last_player_crime(guard, PlayerCrime::None);
+        return BribeOutcome::Accepted;
+    }
+    say(host, "No");
+    let reason = guard_attack_reason(crime);
+    if reason == AttackReason::Revolution {
+        crate::crime::notify_enclave(host, guard, 1);
+    }
+    if reason != AttackReason::None {
+        assess_target(host, guard, player, reason);
+    }
+    BribeOutcome::Refused
 }
 
 /// How a pickpocket attempt ended.

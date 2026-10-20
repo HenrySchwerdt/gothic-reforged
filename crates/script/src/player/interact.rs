@@ -121,6 +121,7 @@ fn refusal_voice(host: &mut dyn ScriptHost, player: EntityId, r: &Refusal) {
         Refusal::KeyOrLockpick => "NeedKeyOrLockpick",
         Refusal::NeedLockpick => "NeedLockpick",
         Refusal::Impossible => "Impossible",
+        Refusal::TooHard => "TooHard",
         Refusal::MissingPerk(p) if p.starts_with("Perk_LockPick") => "TooHard",
         Refusal::WrongGod => "No",
         Refusal::NothingToGet => {
@@ -194,6 +195,15 @@ pub const STATIONS: &[Station] = &[
         State::PsInteractAnvil,
         ["It_Hammer_Smith", "It_Sword"],
         Mode::Window(UiWindow::Smithing),
+        false,
+    ),
+    // `PS_Interact_Forge` (S:711f0): take the hammer, change the action, hold the pose [I: the
+    // DLL's tool template is not readable].
+    station(
+        UseType::Forge,
+        State::PsInteractForge,
+        ["It_Hammer_Smith", ""],
+        Mode::Pose(Action::Forge),
         false,
     ),
     station(
@@ -315,13 +325,6 @@ pub const STATIONS: &[Station] = &[
         Mode::Pose(Action::SleepGround),
         false,
     ),
-    station(
-        UseType::OrcBoulder,
-        State::PsInteractTiltOrcBoulder,
-        ["", ""],
-        Mode::Timed(Action::TiltOrcBoulder, 6),
-        false,
-    ),
 ];
 
 /// The station of a use type.
@@ -337,6 +340,7 @@ pub fn state_for_use(use_type: UseType) -> Option<State> {
         UseType::Shrine => Some(State::PsInteractShrine),
         UseType::Talk => Some(State::PsInteractTalk),
         UseType::Bed => Some(State::PsInteractSleepBed),
+        UseType::OrcBoulder => Some(State::PsInteractTiltOrcBoulder),
         other => station_for_use(other).map(|s| s.state),
     }
 }
@@ -549,6 +553,25 @@ fn ps_interact_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     }
     host.set_task(p, State::PsInteractEnd);
     Flow::Done
+}
+
+/// Port of `IsBasket` (S:782e0): the hero just opened a chest (action `OpenChest`) and the object
+/// is one of the harvestable "ChestPod" baskets, not a real chest.
+pub fn is_basket(host: &dyn ScriptHost, player: EntityId, object: EntityId) -> bool {
+    host.exists(object)
+        && host.current_action(player) == Action::OpenChest
+        && host.name(object).contains("ChestPod")
+}
+
+/// Port of `PS_Interact_WaitForExit`: wait for the exit key, then stop and leave the interaction.
+fn ps_interact_wait_for_exit(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    if host.task_position(p) == EXIT_REQUESTED {
+        host.full_stop(p);
+        host.set_task(p, State::PsInteractEnd);
+        return Flow::Done;
+    }
+    host.queue_ai(p, AiCommand::WaitMs { ms: 100 });
+    Flow::Yield
 }
 
 /// Port of `PS_Interact_End` (S:6f880): put the tools away, stand up, tell the game layer and
@@ -781,6 +804,7 @@ pub fn definition(state: State) -> Option<Def> {
         S::PsInteract => custom(ps_interact),
         S::PsInteractLoop => custom(ps_interact_loop),
         S::PsInteractEnd => custom(ps_interact_end),
+        S::PsInteractWaitForExit => custom(ps_interact_wait_for_exit),
         S::PsInteractChest => custom(ps_interact_chest),
         S::PsInteractChestLoop => custom(ps_interact_chest_loop),
         S::PsInteractDoor => custom(ps_interact_door),

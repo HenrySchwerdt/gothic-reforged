@@ -16,6 +16,7 @@
 
 pub mod assess;
 pub mod attitude;
+pub mod callbacks;
 pub mod combat;
 pub mod config;
 pub mod crime;
@@ -24,6 +25,7 @@ pub mod down;
 pub mod enums;
 pub mod helpers;
 pub mod host;
+pub mod magic;
 pub mod perception;
 pub mod player;
 pub mod predicates;
@@ -31,4 +33,5 @@ pub mod routine;
 pub mod speech;
 pub mod stats;
 pub mod testhost;
+pub mod testhost_magic;
 pub mod testhost_player;

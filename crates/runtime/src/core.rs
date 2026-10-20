@@ -108,6 +108,42 @@ pub enum Command {
         /// Opponent.
         target: ActorId,
     },
+    // ---- magic and ranged (ported `PS_Magic*` / `PS_Ranged*`, see `gothic_script::magic`) ----
+    /// Hold a spell item (rune, scroll, potion) in the right hand and enter the magic mode.
+    SelectSpell {
+        /// Item template (`It_Spell_Fireball`).
+        template: String,
+    },
+    /// The cast key: quick cast, cast, power cast or summon, by the spell in hand.
+    CastSpell {
+        /// The focused character, `None` for a free cast.
+        target: Option<ActorId>,
+        /// A long press: a spell that can be charged is cast with all its mana.
+        power: bool,
+    },
+    /// Let go of a cast in progress (the mana paid comes back).
+    AbortCast,
+    /// Put the bow or crossbow up (it must be equipped).
+    ReadyRanged,
+    /// Aim (zoom in, a bow starts drawing) or lower the weapon again.
+    AimRanged {
+        /// True to aim.
+        aim: bool,
+    },
+    /// Release the string or pull the trigger at the focused character.
+    ReleaseRanged {
+        /// The focus target, `None` shoots along the aim.
+        target: Option<ActorId>,
+    },
+    /// Offer a guard money to forget a crime (`_AI_Bribe`).
+    Bribe {
+        /// The guard.
+        guard: ActorId,
+        /// The crime he knows.
+        crime: gothic_sim::script::enums::PlayerCrime,
+        /// The dialog accepted the price.
+        accepted: bool,
+    },
     Save(std::path::PathBuf),
     Load(std::path::PathBuf),
 }
@@ -174,6 +210,25 @@ pub enum Event {
     CraftResult(gothic_sim::script::player::craft::Synth),
     /// Result of a `UseItem` command.
     ItemUsed(gothic_sim::script::player::use_item::UseOutcome),
+    /// Something magical happened: cast phases, effects to play, summons, status bits, teleports.
+    Magic(gothic_sim::script::magic::api::MagicEvent),
+    /// A projectile left its shooter (play the missile; the hit follows as `Sim(Hit)`).
+    Projectile {
+        /// Who shot.
+        owner: ActorId,
+        /// Whom it is aimed at.
+        target: Option<ActorId>,
+        /// Missile or ammunition template.
+        template: String,
+        /// A spell missile (otherwise an arrow or bolt).
+        spell: bool,
+    },
+    /// The cast key started this cast state.
+    CastStarted(gothic_sim::script::routine::state::State),
+    /// A spell command could not run (no spell in hand, hero busy).
+    CastRefused(gothic_sim::script::player::commands::CastError),
+    /// What the guard did with a bribe.
+    Bribed(gothic_sim::script::routine::dialog::BribeOutcome),
     /// A save game was written or read.
     Saved(std::path::PathBuf),
     Loaded {
@@ -308,6 +363,18 @@ impl Core {
                     key: key.clone(),
                 }),
                 EventKind::Player(p) => out.push(Event::Player(p.clone())),
+                EventKind::Magic(m) => out.push(Event::Magic(m.clone())),
+                EventKind::Projectile {
+                    owner,
+                    target,
+                    template,
+                    spell,
+                } => out.push(Event::Projectile {
+                    owner: *owner,
+                    target: *target,
+                    template: template.clone(),
+                    spell: *spell,
+                }),
                 _ => out.push(Event::Sim(e.kind)),
             }
         }
@@ -373,6 +440,34 @@ impl Core {
             }
             Command::MeleeMove { action, target } => {
                 self.sim.player_melee(*action, *target);
+            }
+            Command::SelectSpell { template } => {
+                if !self.sim.player_select_spell(template) {
+                    out.push(Event::Notice(format!("cannot select {template}")));
+                }
+            }
+            Command::CastSpell { target, power } => match self.sim.player_cast(*target, *power) {
+                Ok(state) => out.push(Event::CastStarted(state)),
+                Err(e) => out.push(Event::CastRefused(e)),
+            },
+            Command::AbortCast => self.sim.player_abort_cast(),
+            Command::ReadyRanged => {
+                if !self.sim.player_ready_ranged() {
+                    out.push(Event::Notice("no bow or crossbow in hand".into()));
+                }
+            }
+            Command::AimRanged { aim } => self.sim.player_aim(*aim),
+            Command::ReleaseRanged { target } => {
+                self.sim.player_release(*target);
+            }
+            Command::Bribe {
+                guard,
+                crime,
+                accepted,
+            } => {
+                if let Some(r) = self.sim.player_bribe(*guard, *crime, *accepted) {
+                    out.push(Event::Bribed(r));
+                }
             }
             Command::Save(p) => match self.save_to(p) {
                 Ok(()) => out.push(Event::Saved(p.clone())),

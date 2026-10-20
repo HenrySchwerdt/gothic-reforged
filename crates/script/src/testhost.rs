@@ -233,6 +233,8 @@ pub struct TestWorld {
     pub evade_blocked: HashSet<EntityId>,
     /// State of the player-side host.
     pub pl: crate::testhost_player::PlayerSide,
+    /// Magic-side state (spell templates, casts, projectiles, summons).
+    pub mg: crate::testhost_magic::MagicSide,
     /// `LastDistToTarget` per NPC.
     pub last_dist: HashMap<EntityId, f32>,
     /// `GetLastHitTimestamp` per NPC.
@@ -252,11 +254,27 @@ impl Default for TestWorld {
 }
 
 impl TestWorld {
+    pub(crate) fn slot_category(&self, e: EntityId, slot: Slot) -> u32 {
+        self.npc(e)
+            .and_then(|n| n.slots.get(&slot))
+            .map_or(0, |s| s.category)
+    }
+    pub(crate) fn clear_slot(&mut self, e: EntityId, slot: Slot) {
+        if let Some(n) = self.npc_mut(e) {
+            n.slots.remove(&slot);
+        }
+    }
+    pub(crate) fn npc_ids(&self) -> Vec<EntityId> {
+        self.npcs.keys().copied().collect()
+    }
     pub(crate) fn items_mut(&mut self, e: EntityId) -> Option<&mut Vec<String>> {
         self.npcs.get_mut(&e).map(|n| &mut n.items)
     }
     pub(crate) fn items_of(&self, e: EntityId) -> Vec<String> {
-        self.npcs.get(&e).map(|n| n.items.clone()).unwrap_or_default()
+        self.npcs
+            .get(&e)
+            .map(|n| n.items.clone())
+            .unwrap_or_default()
     }
     pub(crate) fn is_npc(&self, e: EntityId) -> bool {
         self.npcs.contains_key(&e)
@@ -268,7 +286,10 @@ impl TestWorld {
         self.points.contains_key(&e)
     }
     pub(crate) fn item_name(&self, e: EntityId) -> String {
-        self.items_by_id.get(&e).map(|i| i.name.clone()).unwrap_or_default()
+        self.items_by_id
+            .get(&e)
+            .map(|i| i.name.clone())
+            .unwrap_or_default()
     }
     pub(crate) fn remove_item_entity(&mut self, e: EntityId) {
         self.items_by_id.remove(&e);
@@ -300,6 +321,7 @@ impl TestWorld {
             hit_blocked: HashSet::new(),
             evade_blocked: HashSet::new(),
             pl: Default::default(),
+            mg: Default::default(),
             last_dist: HashMap::new(),
             last_hit_ts: HashMap::new(),
             hit_stamped: Vec::new(),
@@ -737,6 +759,15 @@ impl TestWorld {
                     deity: SpellDeity::None,
                 },
             );
+        }
+    }
+
+    /// Put a spell item (rune or scroll) in a slot: `spell` is the `PSItem.Spell`, `category` the
+    /// `PSItem.Category` (3 artefact scrolls, 9 spell book runes, 4 potions).
+    pub fn set_spell_slot(&mut self, e: EntityId, slot: Slot, spell: &str, category: u32) {
+        self.set_slot(e, slot, UseType::Cast, category);
+        if let Some(s) = self.npc_mut(e).and_then(|n| n.slots.get_mut(&slot)) {
+            s.spell = spell.into();
         }
     }
 
@@ -1670,7 +1701,13 @@ impl WorldApi for TestWorld {
             .collect()
     }
     fn distance(&self, a: EntityId, b: EntityId) -> f32 {
-        self.distances.get(&(a, b)).copied().unwrap_or(0.0)
+        if let Some(d) = self.distances.get(&(a, b)) {
+            return *d;
+        }
+        match (self.npc(a), self.npc(b)) {
+            (Some(x), Some(y)) => x.pos.distance(y.pos),
+            _ => 0.0,
+        }
     }
     fn has_free_los(&self, _a: EntityId, _b: EntityId) -> bool {
         self.los

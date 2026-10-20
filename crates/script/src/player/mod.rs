@@ -8,18 +8,24 @@
 //! * [`use_item`]: `OnPlayerUseStack`, the item-use dispatcher of the HUD.
 //! * [`evade`]: the five `ZS_Evade*` states (the player's roll).
 //! * [`melee`]: the `PS_Melee*` input-to-attack mapping.
+//! * [`magic`]: the `PS_Magic*` spell states and the `BS_*` book stands.
+//! * [`ranged`]: bow and crossbow, `Shoot`.
+//! * [`boulder`]: orc boulders and carried stones.
 //!
 //! The states are plain [`Def`]s run by the same interpreter as the NPC states (the player is an
 //! entity with a current task and state); the game layer never calls them directly but through
 //! [`commands`], the safe entry points the runtime commands map to.
 
 pub mod api;
+pub mod boulder;
 pub mod commands;
 pub mod craft;
 pub mod evade;
 pub mod interact;
+pub mod magic;
 pub mod melee;
 pub mod normal;
+pub mod ranged;
 pub mod use_item;
 
 use crate::enums::AiMode;
@@ -33,6 +39,9 @@ pub fn definition(state: State) -> Option<Def> {
         .or_else(|| normal::definition(state))
         .or_else(|| evade::definition(state))
         .or_else(|| melee::definition(state))
+        .or_else(|| magic::definition(state))
+        .or_else(|| ranged::definition(state))
+        .or_else(|| boulder::definition(state))
 }
 
 /// Return the counter of the current step and advance it (the state interpreter contract).
@@ -48,6 +57,9 @@ pub fn back_to_normal(host: &mut dyn ScriptHost, player: EntityId) {
     host.set_current_target(player, EntityId::NONE);
     host.set_task(player, State::PsNormal);
 }
+
+#[cfg(test)]
+mod magic_tests;
 
 #[cfg(test)]
 mod tests {

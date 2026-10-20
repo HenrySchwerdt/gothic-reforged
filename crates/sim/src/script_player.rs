@@ -54,6 +54,8 @@ pub struct PlayerTables {
     blade_items: BTreeSet<String>,
     /// The hero is busy (an animation plays) until this simulation time.
     pub busy_until_ms: u64,
+    books: [i32; 3],
+    boulders: BTreeMap<u32, gothic_script::player::api::BoulderClass>,
 }
 
 impl ScriptTables {
@@ -83,6 +85,15 @@ impl ScriptTables {
             .insert(template.to_ascii_lowercase());
     }
 
+    /// Set the weight class of an orc boulder object.
+    pub fn set_boulder(
+        &mut self,
+        object: EntityId,
+        kind: gothic_script::player::api::BoulderClass,
+    ) {
+        self.player.boulders.insert(object.0, kind);
+    }
+
     /// Object data (mutable).
     pub fn object_mut(&mut self, object: EntityId) -> Option<&mut ObjectData> {
         self.player.objects.get_mut(&object.0)
@@ -104,6 +115,21 @@ fn key_of<'a>(
 }
 
 impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
+    fn book_progress(&self, book: gothic_script::player::api::Book) -> i32 {
+        self.sim.script.player.books[book as usize]
+    }
+    fn set_book_progress(&mut self, book: gothic_script::player::api::Book, pages: i32) {
+        self.sim.script.player.books[book as usize] = pages;
+    }
+    fn boulder_class(&self, object: EntityId) -> gothic_script::player::api::BoulderClass {
+        self.sim
+            .script
+            .player
+            .boulders
+            .get(&object.0)
+            .copied()
+            .unwrap_or_default()
+    }
     fn voice_counter(&self, c: VoiceCounter) -> u32 {
         self.sim.script.player.counters[counter_index(c)]
     }
@@ -379,7 +405,10 @@ impl<W: WorldQuery> Sim<W> {
         self.hero.map(entity_of)
     }
 
-    fn with_hero<R>(&mut self, f: impl FnOnce(&mut SimHost<'_, W>, EntityId) -> R) -> Option<R> {
+    pub(crate) fn with_hero<R>(
+        &mut self,
+        f: impl FnOnce(&mut SimHost<'_, W>, EntityId) -> R,
+    ) -> Option<R> {
         let hero = self.hero_entity()?;
         let mut host = SimHost::new(self);
         host.self_entity = hero;
@@ -459,6 +488,13 @@ impl<W: WorldQuery> Sim<W> {
     pub fn drive_player(&mut self) {
         let now = self.now_ms();
         let Some(hero) = self.hero else { return };
+        {
+            // The hero's states keep time like the NPCs' (a bow's draw is read from it).
+            let dt = self.dt();
+            let s = self.script.npc_mut(hero);
+            s.state_time += dt;
+            s.task_time += dt;
+        }
         if now < self.script.player.busy_until_ms {
             return;
         }
@@ -466,10 +502,10 @@ impl<W: WorldQuery> Sim<W> {
         let cmds = {
             let mut host = SimHost::new(self);
             host.self_entity = ent;
-            if !host
-                .current_state(ent)
-                .is_some_and(|s| s.name().starts_with("PS_") || s.name().starts_with("ZS_Evade"))
-            {
+            if !host.current_state(ent).is_some_and(|s| {
+                let n = s.name();
+                n.starts_with("PS_") || n.starts_with("BS_") || n.starts_with("ZS_Evade")
+            }) {
                 return;
             }
             commands::run(&mut host, ent);
@@ -511,7 +547,13 @@ impl<W: WorldQuery> Sim<W> {
         let Some(h) = self.hero else { return true };
         matches!(
             self.script.npc(h).state,
-            None | Some(State::PsNormalLoop) | Some(State::PsMeleeLoop)
+            None | Some(
+                State::PsNormalLoop
+                    | State::PsMeleeLoop
+                    | State::PsMagicLoop
+                    | State::PsRangedWalk
+                    | State::PsRangedAimLoop,
+            )
         )
     }
 }

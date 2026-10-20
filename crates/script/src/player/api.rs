@@ -122,10 +122,39 @@ pub enum Refusal {
     WrongGod,
     /// The object is blocked or in use.
     DoesntWork,
+    /// The hero is not strong enough (heavy boulders).
+    TooHard,
     /// Synthesis: ingredients missing.
     MissingIngredients,
     /// Synthesis: the learning points / perk are missing.
     NotEnoughLp(String),
+}
+
+/// The books the bookstands of the ancient wisdom hold (`PSPlayerMemory.BookOf*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Book {
+    /// The Book of Flood (18 pages).
+    Flood,
+    /// The Book of Rhobar (8 pages).
+    Rhobar,
+    /// The Book of Zuben (8 pages).
+    Zuben,
+}
+
+/// The weight class of an orc boulder (the object's use function: `OB_Light`, `OB_Medium`,
+/// `OB_Heavy`, `OB_Faring_Boulder`). Tilting is free; holding and lifting need Strength.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BoulderClass {
+    /// `OB_Light`: hold at Strength 100, lift at 150.
+    Light,
+    /// `OB_Medium`: hold at 150, lift at 200.
+    #[default]
+    Medium,
+    /// `OB_Heavy`: hold at 200, lift at 250.
+    Heavy,
+    /// `OB_Faring_Boulder`: like heavy, and lifting it sets the game event
+    /// `Faring_Boulder_Success`.
+    Faring,
 }
 
 /// What the game layer is told about the player's actions.
@@ -282,6 +311,12 @@ pub trait PlayerApi {
     fn raise_game_event(&mut self, name: &str);
     /// Advance the world clock (and the playing time) by this many hours.
     fn advance_hours(&mut self, hours: f32);
+    /// Pages read of a book (`PSPlayerMemory.BookOf*`).
+    fn book_progress(&self, book: Book) -> i32;
+    /// Set the pages read.
+    fn set_book_progress(&mut self, book: Book, pages: i32);
+    /// Weight class of a boulder object (its `UseFunc`).
+    fn boulder_class(&self, object: EntityId) -> BoulderClass;
     /// Report something to the game layer.
     fn emit(&mut self, event: PlayerEvent);
 }

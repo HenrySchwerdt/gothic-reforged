@@ -14,7 +14,9 @@
 //! * Inferred (tagged `[I]` in place): per-move scores and move durations ([`tactics`],
 //!   [`sim::move_duration_ms`]), stagger lock times, run speed, FOV, `CurrentLevel`'s second term,
 //!   the Orc/Assassin chapter switch, melee parry needing stamina.
-//! * Stubbed: NPC spell casting AI (the `cast` API exists), `NotifyEnclave` modes, revolution
+//! * Magic and ranged weapons run on the ported script pipeline ([`script_magic`]): spell
+//!   templates, projectiles in flight, area spells, summons, the hero's cast and bow states.
+//! * Stubbed: `NotifyEnclave` modes, revolution
 //!   attitude, bribe price, sneaking reactions, zone reactions, burn / poison damage rates,
 //!   routine-name resolution (the [`routine::RoutineResolver`] hook), arena.
 pub use gothic_script as script;
@@ -32,6 +34,7 @@ pub mod perception;
 pub mod rng;
 pub mod routine;
 pub mod script_host;
+pub mod script_magic;
 pub mod script_player;
 pub mod sim;
 pub mod tactics;

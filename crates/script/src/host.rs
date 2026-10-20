@@ -13,6 +13,7 @@ use crate::enums::{
     GuardStatus, LastFight, NpcClass, NpcType, PartyMemberType, PlayerCrime, SecurityLevel, Slot,
     Species, SpellDeity, UseType,
 };
+use crate::magic::api::MagicApi;
 use crate::player::api::PlayerApi;
 use crate::routine::state::{Callback, State};
 use crate::routine::time::RoutineTime;
@@ -49,6 +50,12 @@ impl Pos {
     /// Construct.
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
+    }
+
+    /// Euclidean distance to another position.
+    pub fn distance(self, o: Pos) -> f32 {
+        let (dx, dy, dz) = (self.x - o.x, self.y - o.y, self.z - o.z);
+        (dx * dx + dy * dy + dz * dz).sqrt()
     }
 }
 
@@ -789,11 +796,27 @@ pub trait CombatApi {
 
 /// Everything a ported script function can call.
 pub trait ScriptHost:
-    ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi + PlayerApi
+    ScriptCtx
+    + EntityApi
+    + NpcApi
+    + InventoryApi
+    + StatsApi
+    + WorldApi
+    + CombatApi
+    + PlayerApi
+    + MagicApi
 {
 }
 impl<
-    T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi + CombatApi + PlayerApi,
+    T: ScriptCtx
+        + EntityApi
+        + NpcApi
+        + InventoryApi
+        + StatsApi
+        + WorldApi
+        + CombatApi
+        + PlayerApi
+        + MagicApi,
 > ScriptHost for T
 {
 }

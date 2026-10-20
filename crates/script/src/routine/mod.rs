@@ -8,6 +8,7 @@
 
 pub mod dialog;
 pub mod follow;
+pub mod info;
 pub mod party;
 pub mod select;
 pub mod state;
