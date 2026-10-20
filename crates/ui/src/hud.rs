@@ -207,19 +207,20 @@ pub(crate) fn update_hud(
                     BorderColor::all(Color::srgba(0.55, 0.45, 0.30, 0.8)),
                 ));
                 if let Some(s) = slot {
-                    let cat = session
-                        .as_ref()
-                        .and_then(|g| g.items.get(&s.item))
-                        .map_or(6, |i| i.category);
-                    let g = glyph(cat);
-                    spawn_pic(
-                        c,
-                        &assets,
-                        g,
-                        x + (48.0 - g.w) / 2.0,
-                        5.0 + (48.0 - g.h) / 2.0,
-                        None,
-                    );
+                    let info = session.as_ref().and_then(|g| g.items.get(&s.item));
+                    let (g, full) = item_icon(&assets, info, false);
+                    if full {
+                        spawn_pic(c, &assets, g, x + 2.0, 7.0, Some((44.0, 44.0)));
+                    } else {
+                        spawn_pic(
+                            c,
+                            &assets,
+                            g,
+                            x + (48.0 - g.w) / 2.0,
+                            5.0 + (48.0 - g.h) / 2.0,
+                            None,
+                        );
+                    }
                 }
                 label(
                     c,
@@ -256,6 +257,22 @@ fn frac(cur: f32, max: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+/// Icon picture of an item: the real `g3.igl` tile of its icon string, else the category glyph.
+/// Returns the picture and whether it is a full icon tile (drawn scaled to the cell).
+pub(crate) fn item_icon(
+    a: &crate::assets::UiAssets,
+    info: Option<&crate::items::ItemInfo>,
+    grey: bool,
+) -> (Pic, bool) {
+    if let Some(p) = info
+        .and_then(|i| i.icon.as_deref())
+        .and_then(|n| a.item_pic(n, grey))
+    {
+        return (p, true);
+    }
+    (glyph(info.map_or(6, |i| i.category)), false)
 }
 
 /// Item category -> glyph of the icon atlas (the per-item icon cells are not indexed in gui.pak).

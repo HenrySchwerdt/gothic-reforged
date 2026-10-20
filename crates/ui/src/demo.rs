@@ -106,6 +106,25 @@ fn items_iter(items: &ItemCatalog) -> impl Iterator<Item = (&str, &ItemInfo)> {
     items.iter()
 }
 
+/// Report how many item templates resolve to a `g3.igl` icon tile (no window).
+fn icon_coverage(install: &std::path::Path, items: &ItemCatalog) -> Result<()> {
+    let igl = crate::assets::load_igl(install);
+    let (mut total, mut ok, mut empty) = (0, 0, 0);
+    for (name, info) in items_iter(items) {
+        total += 1;
+        match info.icon.as_deref() {
+            None | Some("") => empty += 1,
+            Some(i) if igl.contains_key(&gothic_formats::igl::bare_key(i)) => ok += 1,
+            Some(i) => println!("MISS {name}: {i}"),
+        }
+    }
+    println!(
+        "templates {total}: icon resolved {ok}, no icon string {empty}, igl tiles {}",
+        igl.len()
+    );
+    Ok(())
+}
+
 pub fn run(args: &[String]) -> Result<()> {
     let npc = flag(args, "--ui-demo")
         .filter(|s| !s.starts_with("--"))
@@ -119,6 +138,9 @@ pub fn run(args: &[String]) -> Result<()> {
         .map_err(|e| anyhow!("loading game database: {e:#}"))?;
     let items = ItemCatalog::load(std::path::Path::new(items_path))
         .map_err(|e| anyhow!("{items_path}: {e:#} (run `gothic-inspector item-dump` first)"))?;
+    if args.iter().any(|a| a == "--icon-coverage") {
+        return icon_coverage(&install, &items);
+    }
     let state = demo_state(&db, &items);
     let shots = args.iter().any(|a| a == "--shots");
     App::new()
@@ -195,17 +217,22 @@ fn demo_system(
     demo.frame += 1;
     let f = demo.frame;
     if f == 2 {
-        let mut slots: Vec<Option<QuickSlot>> = Vec::new();
-        for want in [1, 1, 1, 6, 4, 7, 2] {
-            let hit = s.state.inventory.iter().find(|(k, _)| {
-                s.items.get(k).is_some_and(|i| i.category == want)
-                    && !slots.iter().flatten().any(|q| &q.item == *k)
-            });
-            slots.push(hit.map(|(k, n)| QuickSlot {
-                item: k.clone(),
+        // the five slots of the original quick bar reference (.local/ref/orig-hud-tip.png)
+        let slots: Vec<Option<QuickSlot>> = [
+            ("It_1H_OrcSlayer_01", 1),
+            ("It_Torch_Burning", 1),
+            ("It_Bow_Hunting", 1),
+            ("Arrow", 50),
+            ("It_Potion_Health", 10),
+        ]
+        .iter()
+        .map(|(k, n)| {
+            s.items.get(k).map(|_| QuickSlot {
+                item: (*k).to_string(),
                 count: *n,
-            }));
-        }
+            })
+        })
+        .collect();
         commands.insert_resource(QuickSlots(slots));
     }
     if f == 5 {

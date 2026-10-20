@@ -73,3 +73,20 @@ The mapping therefore lives in engine code (`gCInventoryStack::CreateIcons`, Gam
 templates (`icon` = TGA file name) carry the cell index (order is not alphabetical). The UI therefore
 uses category glyphs from `g3_hud_icons_00` until the compile order is found (likely inside
 `Gothic3Final.exe`/`GUI.dll` loader code or reproducible from the original icon directory order).
+
+## g3.igl image group list (Library.pak)
+
+Parsed by `crates/formats/src/igl.rs`, used by `crates/ui/src/assets.rs`. Layout (little endian):
+`"GENOMFLE"`, `u16 version`, `u32 string_table_offset`, `u32 group_count`, `group_count x u16` ids;
+groups start at `0x2c`. Group: `u32 version(2)`, `u16 x4` string ids (name, compiled dir, import dir,
+prefix), `u32 max_w`, `u32 max_h`, 9 x `u32` (purpose unknown), `u32 tile_count`, tiles of 20 bytes
+(`u16 image id`, `u16 texture id`, `u32 left, top, right, bottom`, right/bottom exclusive). String table at
+the offset: 5 tag bytes, `u32 count`, `u16 len` + Latin-1 bytes each. 13 groups, 1017 tiles on UI atlases.
+
+Runtime: key = lower-cased bare file name of the image (`FindImageIndex`); item icons come from the template
+`icon` string (`IT_1H_OrcSlayer_01.tga`), `_Grey` variant via `UiAssets::item_pic(.., grey=true)`.
+All 840 item templates that carry an icon string resolve (the other 1281 templates are heads/beards/
+spawn points without an item icon). Panel backgrounds and a few icons are re-resolved through `Pic::keyed`
+(igl moves the inventory panel to `backgrounds_10`, not 11). The trimmed glyph rectangles (compass, page tabs)
+stay hand-recovered because igl stores the untrimmed 200x200/45x43 tiles. Open: per-category default
+icon names (table at Game 0x103f3c10) for empty icon strings, `_Grey` use for unlearned skills.

@@ -2,7 +2,7 @@
 //! position/size stored in the resource file (1024x768 design space) with the original's
 //! text rectangles on top. The whole screen is respawned when `UiState::dirty` is set.
 use crate::atlas::*;
-use crate::hud::glyph;
+use crate::hud::item_icon;
 use crate::style::*;
 use crate::*;
 use gothic_gameplay::model::{Cmd, QuestStatus};
@@ -230,8 +230,8 @@ fn item_grid(
                     let is_sel = sel == Some(key.as_str());
                     n.justify_content = JustifyContent::Center;
                     n.align_items = AlignItems::Center;
-                    let cat = cx.s.items.get(key).map_or(6, |i| i.category);
-                    let gl = glyph(cat);
+                    let (gl, full) = item_icon(cx.a, cx.s.items.get(key), false);
+                    let (gw, gh) = if full { (42.0, 42.0) } else { (gl.w, gl.h) };
                     g.spawn((
                         button(
                             mk(key),
@@ -247,12 +247,12 @@ fn item_grid(
                     ))
                     .with_children(|c| {
                         c.spawn(Node {
-                            width: px(gl.w),
-                            height: px(gl.h),
+                            width: px(gw),
+                            height: px(gh),
                             ..default()
                         })
                         .with_children(|i| {
-                            spawn_pic(i, cx.a, gl, 0.0, 0.0, None);
+                            spawn_pic(i, cx.a, gl, 0.0, 0.0, Some((gw, gh)));
                         });
                         if *count > 1 {
                             label(
@@ -448,15 +448,19 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
     let Some(info) = info else {
         return;
     };
-    let gl = glyph(info.category);
-    spawn_pic(
-        p,
-        cx.a,
-        gl,
-        ox + 16.0 + (52.0 - gl.w) / 2.0,
-        oy + 40.0 + (52.0 - gl.h) / 2.0,
-        None,
-    );
+    let (gl, full) = item_icon(cx.a, Some(info), false);
+    if full {
+        spawn_pic(p, cx.a, gl, ox + 16.0, oy + 40.0, Some((52.0, 52.0)));
+    } else {
+        spawn_pic(
+            p,
+            cx.a,
+            gl,
+            ox + 16.0 + (52.0 - gl.w) / 2.0,
+            oy + 40.0 + (52.0 - gl.h) / 2.0,
+            None,
+        );
+    }
     let mut y = 112.0;
     let mut row = |p: &mut P, k: String, v: String, c: Color| {
         body(p, cx, k, (ox + 18.0, oy + y, 170.0, 20.0), Al::Left, TEXT);

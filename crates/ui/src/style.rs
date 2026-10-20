@@ -41,6 +41,7 @@ pub fn spawn_pic<'a>(
     y: f32,
     size: Option<(f32, f32)>,
 ) -> EntityCommands<'a> {
+    let pic = a.resolve(pic);
     let (w, h) = size.unwrap_or((pic.w, pic.h));
     let node = abs(x, y, w, h);
     match a.page(pic.page) {

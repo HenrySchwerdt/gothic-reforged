@@ -2,6 +2,7 @@
 pub mod emfx;
 pub mod gdini;
 pub mod genome;
+pub mod igl;
 pub mod info;
 pub mod propstream;
 pub mod props;

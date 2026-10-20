@@ -1,9 +1,11 @@
 //! Runtime loading of original UI assets from the installation (never copied into the repo):
 //! `Gothic3.ttf` and DDS atlases of `Data/gui.pak`. Everything degrades to the built-in font.
+use crate::atlas::Pic;
 use anyhow::{Result, anyhow, bail, ensure};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use gothic_formats::igl::{Igl, bare_key};
 use gothic_formats::{PakArchive, normalize_path};
 use std::path::Path;
 
@@ -16,6 +18,37 @@ pub enum Page {
     Icons,
     /// `theme_g3_00.dds` (generic widget theme, cursor).
     Theme,
+    /// `g3_hud_it_<group>_00.dds`, index into [`ITEM_GROUPS`] (item icon atlases).
+    Item(u8),
+}
+
+/// Item icon groups of `g3.igl` (atlas file `g3_hud_it_<name>_00.dds`).
+pub const ITEM_GROUPS: [&str; 9] = [
+    "alchemy",
+    "armor",
+    "artefacts",
+    "documents",
+    "misc",
+    "perks",
+    "recipe",
+    "spells",
+    "weapons",
+];
+
+/// Page of an `.igl` atlas stem such as `g3_hud_backgrounds_10`, if the UI loads it.
+fn page_of_stem(stem: &str) -> Option<Page> {
+    let rest = stem.strip_prefix("g3_hud_")?;
+    if let Some(n) = rest.strip_prefix("backgrounds_") {
+        return n.parse().ok().map(Page::Bg);
+    }
+    if rest == "icons_00" {
+        return Some(Page::Icons);
+    }
+    let g = rest.strip_prefix("it_")?.strip_suffix("_00")?;
+    ITEM_GROUPS
+        .iter()
+        .position(|n| *n == g)
+        .map(|i| Page::Item(i as u8))
 }
 
 impl Page {
@@ -24,6 +57,10 @@ impl Page {
             Page::Bg(n) => format!("icons/compiled/g3_hud_backgrounds_{n:02}.dds"),
             Page::Icons => "icons/compiled/g3_hud_icons_00.dds".into(),
             Page::Theme => "themes/g3/compiled/theme_g3_00.dds".into(),
+            Page::Item(i) => format!(
+                "icons/compiled/g3_hud_it_{}_00.dds",
+                ITEM_GROUPS[i as usize % 9]
+            ),
         }
     }
 }
@@ -36,9 +73,41 @@ pub struct UiAssets {
     pub heading: Handle<Font>,
     pub pages: std::collections::HashMap<Page, Handle<Image>>,
     pub original_font: bool,
+    /// `g3.igl` lookup (lower-cased bare image name -> page + rectangle), the
+    /// `eCImageAdmin::FindImageIndex` of the original.
+    pub igl: std::collections::HashMap<String, Pic>,
 }
 
 impl UiAssets {
+    /// Replace a hand-recovered picture by the `g3.igl` rectangle when its key resolves and the
+    /// atlas page is loaded.
+    pub fn resolve(&self, pic: Pic) -> Pic {
+        pic.key
+            .and_then(|k| self.igl.get(k))
+            .filter(|r| self.pages.contains_key(&r.page))
+            .copied()
+            .unwrap_or(pic)
+    }
+
+    /// Inventory icon of an item template's icon string (`gCInventoryStack::GetIconFileNames`);
+    /// `grey` selects the `_Grey` variant (not-yet-learned skills/recipes) when one exists.
+    pub fn item_pic(&self, icon: &str, grey: bool) -> Option<Pic> {
+        let key = bare_key(icon);
+        let hit = |k: &str| {
+            self.igl
+                .get(k)
+                .filter(|p| matches!(p.page, Page::Item(_)) && self.pages.contains_key(&p.page))
+                .copied()
+        };
+        if grey
+            && let Some(stem) = key.strip_suffix(".tga")
+            && let Some(p) = hit(&format!("{stem}_grey.tga"))
+        {
+            return Some(p);
+        }
+        hit(&key)
+    }
+
     pub fn page(&self, p: Page) -> Option<&Handle<Image>> {
         self.pages.get(&p)
     }
@@ -117,10 +186,12 @@ pub fn load_install_assets(
     out.heading = load(win.join("timesbi.ttf"))
         .map(|f| fonts.add(f))
         .unwrap_or_else(|| out.font.clone());
+    out.igl = load_igl(install);
     match PakArchive::open(install.join("Data").join("gui.pak")) {
         Ok(mut pak) => {
             let mut pages = (2..=2).chain(9..=17).map(Page::Bg).collect::<Vec<_>>();
             pages.extend([Page::Icons, Page::Theme]);
+            pages.extend((0..ITEM_GROUPS.len() as u8).map(Page::Item));
             for p in pages {
                 match read_pak_member(&mut pak, &p.member()).and_then(|b| dds_image(&b)) {
                     Ok(img) => {
@@ -133,4 +204,41 @@ pub fn load_install_assets(
         Err(e) => warn!("UI: gui.pak unavailable ({e:#}); using flat style"),
     }
     out
+}
+
+/// Parse `g3.igl` of `Library.pak` into the lookup map (empty on failure).
+pub fn load_igl(install: &Path) -> std::collections::HashMap<String, Pic> {
+    let read = || -> Result<Igl> {
+        let mut pak = PakArchive::open(install.join("Data").join("Library.pak"))?;
+        Igl::parse(&read_pak_member(&mut pak, "g3.igl")?)
+    };
+    match read() {
+        Ok(igl) => igl_pics(&igl),
+        Err(e) => {
+            warn!("UI: g3.igl unavailable ({e:#}); using hand-recovered rectangles");
+            Default::default()
+        }
+    }
+}
+
+/// Map every tile whose atlas the UI can load to a [`Pic`]. Duplicated names keep the first.
+pub fn igl_pics(igl: &Igl) -> std::collections::HashMap<String, Pic> {
+    let mut m = std::collections::HashMap::new();
+    for g in &igl.groups {
+        for t in &g.tiles {
+            let Some(page) = page_of_stem(&t.texture_stem()) else {
+                continue;
+            };
+            let [l, tp, r, b] = t.rect.map(|v| v as f32);
+            m.entry(t.key()).or_insert(Pic {
+                page,
+                x: l,
+                y: tp,
+                w: r - l,
+                h: b - tp,
+                key: None,
+            });
+        }
+    }
+    m
 }
