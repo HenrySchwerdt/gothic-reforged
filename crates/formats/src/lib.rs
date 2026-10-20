@@ -14,6 +14,7 @@ pub mod world_node;
 pub mod xact;
 pub mod xcmsh;
 pub mod ximg;
+pub mod xlmp;
 pub mod xlmsh;
 pub mod xmot;
 pub mod xnvmsh;
