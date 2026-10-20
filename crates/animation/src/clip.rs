@@ -72,7 +72,10 @@ impl<T: Copy> Track<T> {
                 let i = if self.dt > 0.0 {
                     (((t - self.t0) / self.dt) as usize).min(n - 2)
                 } else {
-                    self.times.partition_point(|&k| k <= t).saturating_sub(1).min(n - 2)
+                    self.times
+                        .partition_point(|&k| k <= t)
+                        .saturating_sub(1)
+                        .min(n - 2)
                 };
                 let span = (self.times[i + 1] - self.times[i]).max(1e-6);
                 let f = ((t - self.times[i]) / span).clamp(0.0, 1.0);
@@ -126,6 +129,10 @@ pub struct Clip {
     pub looping: bool,
     /// Nominal ground speed in cm/s from the trailing number of the motion name (0 if none).
     pub nominal_speed: f32,
+    /// Entity-space unit direction of the nominal movement (zero for non-movement clips).
+    pub implied_dir: Vec3,
+    /// Total yaw the entity should turn over the clip (`Turn90`: +-90 degrees), radians.
+    pub implied_turn: f32,
     pub by_name: HashMap<String, u16>,
 }
 
@@ -181,6 +188,8 @@ impl Clip {
             nodes,
             looping: false,
             nominal_speed: crate::names::trailing_speed(name),
+            implied_dir: Vec3::ZERO,
+            implied_turn: 0.0,
             by_name,
         }
     }
@@ -210,6 +219,9 @@ pub struct ClipBinding {
     /// Slot of the root bone (animated node without animated ancestor) if the clip drives it.
     pub root_slot: u16,
     pub bound: usize,
+    /// Horizontal distance the root bone travels over the whole clip (cm). The installed
+    /// locomotion clips are in place (a few cm of sway); only some actions travel.
+    pub root_travel: f32,
 }
 
 impl ClipBinding {
@@ -231,11 +243,19 @@ impl ClipBinding {
             .enumerate()
             .find(|&(slot, &n)| rig.eff_parent[n as usize] == NONE && node_of_slot[slot] != NONE)
             .map_or(NONE, |(slot, _)| slot as u16);
-        ClipBinding {
+        let mut binding = ClipBinding {
             node_of_slot: node_of_slot.into_boxed_slice(),
             root_slot,
             bound,
+            root_travel: 0.0,
+        };
+        if let (Some(a), Some(b)) = (
+            binding.root_pose(clip, 0.0),
+            binding.root_pose(clip, clip.duration),
+        ) {
+            binding.root_travel = Vec3::new(b.t.x - a.t.x, 0.0, b.t.z - a.t.z).length();
         }
+        binding
     }
 
     /// Samples the clip at (already wrapped) time `t` into `out` (one entry per slot);
@@ -254,9 +274,8 @@ impl ClipBinding {
 
     /// Root bone pose (model space) at time `t`.
     pub fn root_pose(&self, clip: &Clip, t: f32) -> Option<Trs> {
-        (self.root_slot != NONE).then(|| {
-            clip.nodes[self.node_of_slot[self.root_slot as usize] as usize].sample(t)
-        })
+        (self.root_slot != NONE)
+            .then(|| clip.nodes[self.node_of_slot[self.root_slot as usize] as usize].sample(t))
     }
 
     /// Root motion between two times of the same pass over the clip (`t1 >= t0`, wrapped
@@ -334,13 +353,17 @@ pub(crate) mod tests {
             nodes: vec![n],
             looping: false,
             nominal_speed: 0.0,
+            implied_dir: Vec3::ZERO,
+            implied_turn: 0.0,
             by_name,
         }
     }
 
     #[test]
     fn uniform_track_indexes_directly_and_interpolates() {
-        let keys: Vec<(f32, Vec3)> = (0..11).map(|i| (i as f32 * 0.04, Vec3::splat(i as f32))).collect();
+        let keys: Vec<(f32, Vec3)> = (0..11)
+            .map(|i| (i as f32 * 0.04, Vec3::splat(i as f32)))
+            .collect();
         let track = Track::new(keys);
         assert!(track.dt > 0.0);
         let v = track.sample(0.10).unwrap();
@@ -386,7 +409,11 @@ pub(crate) mod tests {
         use crate::rig::tests::synthetic;
         let rig = synthetic();
         // Root bone is slot 0 ("Test_Hip_1") moving 10 cm/s along X.
-        let mut clip = clip_with_track(vec![(0.0, Vec3::ZERO), (1.0, Vec3::X * 10.0)], "c", "Test_Hip_1");
+        let mut clip = clip_with_track(
+            vec![(0.0, Vec3::ZERO), (1.0, Vec3::X * 10.0)],
+            "c",
+            "Test_Hip_1",
+        );
         clip.looping = true;
         let binding = ClipBinding::new(&rig, &clip);
         assert_eq!(binding.root_slot, 0);

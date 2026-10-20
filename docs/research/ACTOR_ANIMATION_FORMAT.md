@@ -113,6 +113,14 @@ Verified results: bind pose renders exactly as authored (T pose, textured); idle
 
 The Genome-flavoured quaternions need no handedness change in this viewer: skin matrices cancel the bind convention, and the animated poses look anatomically correct with the data used as-is. Chirality relative to the real game (left-handed) is unverified; the static mesh viewer uses the same unflipped convention.
 
+## Animation system (`crates/animation`)
+
+Plugin `AnimationPlugin`, cached `ActorLibrary`, `ActorSpawner` (SystemParam), `Animator` (0.2 s cross-fade stack, masked upper-body overlay, root motion), `Locomotion` state machine driven by `LocomotionInput {velocity, grounded, stance, sneak, turn_error}`. Design: motions are sampled on the CPU (uniform 25 Hz tracks indexed in O(1), otherwise binary search; no Bevy AnimationClip because of the animated-ancestor quirk), model matrices are computed once per character on a folded skeleton (animated bones relative to their nearest animated ancestor, helpers fixed to bind), body and head/armor parts share one set of joint entities bound by node name, joints carry only a `GlobalTransform`.
+
+Findings: (1) animated skeleton faces -X in model space; the animator rotates it to Bevy forward (-Z). (2) Locomotion clips are in place; ground speed is the trailing number of the name (cm/s), `Turn90` clips imply +-90 degrees yaw; both are reported as implied root motion. (3) Name grammar `<Actor>_<Pose>_<LeftHand>_<RightHand>_<Pn>_<Action>_<Phase>_<N|I|O>_<Dir>_<Var>_%_<Var2>_<Pm>_<Speed>`; stances map to hands: Unarmed None/None, Fist None/Fist, OneHand None/1H, Shield+1H, TwoHand None/2H, Bow Bow/Arrow, CrossBow CrossBow/Bolt, Staff None/Staff, Magic None/Cast, Torch Torch/None; pose `Sneak` has walk/turn/idle only. (4) Equipment slots `Slot_RightHand_Weapon`, `Slot_LeftHand_Shield`, `Slot_MeleeBackRight`, `Slot_ShieldBack`, ... are helper nodes; static `.xcmsh` blade axis is +Z, units cm. (5) Head material file lists are not aligned with material order; generic heads use skin atlas `G3_Animation_Head_Main_01_S1..30` (heuristic: face/neck materials), hair is flat-coloured, eyelashes hidden. (6) NPC item templates (`Body_X`, `Head_Hero_NN_Sxx`) are mapped to actors by name heuristics only.
+
+Viewer: `--actor Hero [--sword] [--stance 1h] [--motion walk] [--speed 150] [--overlay ArmsCrossed]`, `--actor Hero --crowd N [--bench]`. Release, RTX 3060 Ti, 100 NPCs: frame 3.6 ms mean, animation systems 0.88 ms CPU total (animate 0.50 parallel, joint write 0.34, locomotion 0.04).
+
 ## Unknown / not done
 
 - Chunks 8 and 9, the 4 x 28-byte table in skeleton actor prefixes, the per-vertex stream after the FXA region, the opaque 40 bytes in motion node records, the second UV set semantics, material layer map type 11.

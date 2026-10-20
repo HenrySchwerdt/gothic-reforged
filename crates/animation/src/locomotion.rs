@@ -212,7 +212,12 @@ impl Locomotion {
 
     /// Advances the state machine. `clip_finished` reports that the one-shot clip of the
     /// current state (jump, land, turn) has ended.
-    pub fn step(&mut self, input: &LocomotionInput, v: LocalMotion, clip_finished: bool) -> LocoKey {
+    pub fn step(
+        &mut self,
+        input: &LocomotionInput,
+        v: LocalMotion,
+        clip_finished: bool,
+    ) -> LocoKey {
         let c = &self.config;
         let prev = self.key;
         let speed = v.forward.hypot(v.right);
@@ -268,7 +273,12 @@ impl Locomotion {
                 MoveDir::Left
             };
             let run = speed > if was_run { c.run_exit } else { c.run_enter };
-            let sprint = speed > if was_sprint { c.sprint_exit } else { c.sprint_enter };
+            let sprint = speed
+                > if was_sprint {
+                    c.sprint_exit
+                } else {
+                    c.sprint_enter
+                };
             next.kind = if input.sneak {
                 MoveKind::Walk
             } else if sprint && next.dir == MoveDir::Fwd {
@@ -297,7 +307,8 @@ impl Locomotion {
     pub fn rate_for(&self, key: LocoKey, nominal_speed: f32) -> f32 {
         match key.kind {
             MoveKind::Walk | MoveKind::Run | MoveKind::Sprint if nominal_speed > 1.0 => {
-                (self.ground_speed / nominal_speed).clamp(self.config.min_rate, self.config.max_rate)
+                (self.ground_speed / nominal_speed)
+                    .clamp(self.config.min_rate, self.config.max_rate)
             }
             _ => 1.0,
         }
@@ -400,8 +411,14 @@ mod tests {
         assert_eq!(l.step(&i, lm(300.0, 0.0, 0.0), false).kind, MoveKind::Run);
         // still run just below the enter threshold
         assert_eq!(l.step(&i, lm(260.0, 0.0, 0.0), false).kind, MoveKind::Run);
-        assert_eq!(l.step(&i, lm(500.0, 0.0, 0.0), false).kind, MoveKind::Sprint);
-        assert_eq!(l.step(&i, lm(440.0, 0.0, 0.0), false).kind, MoveKind::Sprint);
+        assert_eq!(
+            l.step(&i, lm(500.0, 0.0, 0.0), false).kind,
+            MoveKind::Sprint
+        );
+        assert_eq!(
+            l.step(&i, lm(440.0, 0.0, 0.0), false).kind,
+            MoveKind::Sprint
+        );
         assert_eq!(l.step(&i, lm(15.0, 0.0, 0.0), false).kind, MoveKind::Walk);
         assert_eq!(l.step(&i, lm(5.0, 0.0, 0.0), false).kind, MoveKind::Idle);
     }
@@ -430,7 +447,10 @@ mod tests {
         assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), true).kind, MoveKind::Idle);
         // walking off a ledge is a fall, not a jump
         i.grounded = false;
-        assert_eq!(l.step(&i, lm(100.0, 0.0, -10.0), false).kind, MoveKind::Fall);
+        assert_eq!(
+            l.step(&i, lm(100.0, 0.0, -10.0), false).kind,
+            MoveKind::Fall
+        );
     }
 
     #[test]
@@ -438,12 +458,21 @@ mod tests {
         let mut l = Locomotion::default();
         let mut i = input(Stance::Unarmed);
         i.turn_error = 1.5;
-        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), false).kind, MoveKind::TurnLeft);
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, 0.0), false).kind,
+            MoveKind::TurnLeft
+        );
         i.turn_error = 0.1;
-        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), false).kind, MoveKind::TurnLeft);
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, 0.0), false).kind,
+            MoveKind::TurnLeft
+        );
         assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), true).kind, MoveKind::Idle);
         i.turn_error = -1.5;
-        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), false).kind, MoveKind::TurnRight);
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, 0.0), false).kind,
+            MoveKind::TurnRight
+        );
     }
 
     #[test]
@@ -455,7 +484,16 @@ mod tests {
         let key = l.key;
         let rate = l.rate_for(key, 150.0);
         assert!((rate - l.config.max_rate).abs() < 1e-6);
-        assert_eq!(l.rate_for(LocoKey { kind: MoveKind::Idle, ..key }, 150.0), 1.0);
+        assert_eq!(
+            l.rate_for(
+                LocoKey {
+                    kind: MoveKind::Idle,
+                    ..key
+                },
+                150.0
+            ),
+            1.0
+        );
     }
 
     #[test]
@@ -482,7 +520,11 @@ mod tests {
             Some(names[2])
         );
         assert_eq!(
-            resolve_motion(&catalog, "Hero", key(MoveKind::Sprint, Stance::Unarmed, false)),
+            resolve_motion(
+                &catalog,
+                "Hero",
+                key(MoveKind::Sprint, Stance::Unarmed, false)
+            ),
             Some(names[1])
         );
         assert_eq!(
@@ -495,9 +537,15 @@ mod tests {
             Some(names[5])
         );
         assert_eq!(
-            resolve_motion(&catalog, "Hero", key(MoveKind::Idle, Stance::Unarmed, false)),
+            resolve_motion(
+                &catalog,
+                "Hero",
+                key(MoveKind::Idle, Stance::Unarmed, false)
+            ),
             Some(names[4])
         );
-        assert!(resolve_motion(&catalog, "Orc", key(MoveKind::Idle, Stance::Unarmed, false)).is_none());
+        assert!(
+            resolve_motion(&catalog, "Orc", key(MoveKind::Idle, Stance::Unarmed, false)).is_none()
+        );
     }
 }

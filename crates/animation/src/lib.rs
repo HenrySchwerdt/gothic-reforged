@@ -62,4 +62,3 @@ impl Plugin for AnimationPlugin {
             );
     }
 }
-

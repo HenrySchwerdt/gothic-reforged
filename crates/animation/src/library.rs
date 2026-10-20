@@ -38,6 +38,9 @@ use std::{
     sync::Arc,
 };
 
+/// Diffuse texture stem and `(blend mode, mask reference)` of a shader material.
+type MaterialInfo = (Option<String>, Option<(u32, u8)>);
+
 /// Mutable access to the Bevy asset collections the loaders fill.
 pub struct AssetStores<'a> {
     pub meshes: &'a mut Assets<Mesh>,
@@ -230,7 +233,7 @@ impl ActorLibrary {
     }
 
     /// Diffuse stem and blend hint of a shader material file.
-    fn material_file(&mut self, file: &str) -> Option<(Option<String>, Option<(u32, u8)>)> {
+    fn material_file(&mut self, file: &str) -> Option<MaterialInfo> {
         let at = *self.material_index.get(&file.to_lowercase())?;
         let bytes = self.material_pak.read_payload(at).ok()?;
         let parsed = Xshmat::parse(&bytes).ok()?;
@@ -284,12 +287,16 @@ impl ActorLibrary {
         if stem.is_none() {
             stem = material.diffuse_texture().map(str::to_string);
         }
-        let resolves = stem
-            .as_ref()
-            .is_some_and(|s| self.image_index.contains_key(&format!("{}.ximg", s.to_lowercase())));
+        let resolves = stem.as_ref().is_some_and(|s| {
+            self.image_index
+                .contains_key(&format!("{}.ximg", s.to_lowercase()))
+        });
         let hair_like = {
             let n = material.name.to_lowercase();
-            n.contains("hair") || n.contains("beard") || n.contains("material") || n.contains("lash")
+            n.contains("hair")
+                || n.contains("beard")
+                || n.contains("material")
+                || n.contains("lash")
         };
         if (!resolves || hair_like) && path.to_lowercase().contains("head") {
             // Head materials carry exporter leftovers; map them by role.
@@ -297,13 +304,33 @@ impl ActorLibrary {
             let name = material.name.to_lowercase();
             let babe = path.to_lowercase().contains("babe");
             if name.contains("lash") {
-                return self.flat_material("lashes", Color::srgba(0.0, 0.0, 0.0, 0.0), AlphaMode::Blend, stores);
+                return self.flat_material(
+                    "lashes",
+                    Color::srgba(0.0, 0.0, 0.0, 0.0),
+                    AlphaMode::Blend,
+                    stores,
+                );
             } else if name.contains("eye") {
-                return self.shared_material(Some(format!("G3_Animation_Head_Eyes_01_S{}", (n - 1) % 8 + 1)), None, stores);
+                return self.shared_material(
+                    Some(format!("G3_Animation_Head_Eyes_01_S{}", (n - 1) % 8 + 1)),
+                    None,
+                    stores,
+                );
             } else if name.contains("hair") || name.contains("beard") || name.contains("material") {
-                let tones = [(0.16, 0.11, 0.07), (0.30, 0.20, 0.10), (0.08, 0.07, 0.06), (0.42, 0.33, 0.18), (0.24, 0.12, 0.06)];
+                let tones = [
+                    (0.16, 0.11, 0.07),
+                    (0.30, 0.20, 0.10),
+                    (0.08, 0.07, 0.06),
+                    (0.42, 0.33, 0.18),
+                    (0.24, 0.12, 0.06),
+                ];
                 let t = tones[(n as usize) % tones.len()];
-                return self.flat_material(&format!("hair{}", n as usize % tones.len()), Color::srgb(t.0, t.1, t.2), AlphaMode::Opaque, stores);
+                return self.flat_material(
+                    &format!("hair{}", n as usize % tones.len()),
+                    Color::srgb(t.0, t.1, t.2),
+                    AlphaMode::Opaque,
+                    stores,
+                );
             } else if name.contains("face") || name.contains("neck") || name.contains("skin") {
                 let skin_stem = if babe {
                     format!("G3_Animation_Head_Women_01_S{}", (n - 1) % 2 + 1)
@@ -430,7 +457,9 @@ impl ActorLibrary {
                 let material = match sub_materials.get(&sub.material) {
                     Some(h) => h.clone(),
                     None => {
-                        let h = if sub.material == 0 || sub.material as usize >= actor.materials.len() {
+                        let h = if sub.material == 0
+                            || sub.material as usize >= actor.materials.len()
+                        {
                             self.shared_material(None, None, stores)
                         } else {
                             self.actor_material(&actor, sub.material as usize, &path, skin, stores)
@@ -558,7 +587,9 @@ impl ActorLibrary {
             return Quat::IDENTITY;
         };
         let mut pose = rig.rest.clone();
-        motion.binding.sample(&motion.clip, &rig.rest, 0.0, &mut pose);
+        motion
+            .binding
+            .sample(&motion.clip, &rig.rest, 0.0, &mut pose);
         let mut model = vec![Affine3A::IDENTITY; rig.names.len()];
         crate::rig::evaluate(plan, &pose, &mut model);
         match rig.facing_in_pose(&model) {
@@ -584,7 +615,31 @@ impl ActorLibrary {
             .map_err(|e| e.context(format!("parsing {path}")))?;
         let stem = path.trim_end_matches(".xmot");
         let mut clip = Clip::from_motion(stem, &raw);
-        clip.looping = MotionName::parse(stem).is_some_and(|m| m.is_cyclic());
+        if let Some(parsed) = MotionName::parse(stem) {
+            clip.looping = parsed.is_cyclic();
+            if parsed.action == "Move" {
+                use crate::locomotion::{FORWARD, RIGHT};
+                match parsed.phase.as_str() {
+                    "Walk" | "Run" | "Sprint" => {
+                        clip.implied_dir = match parsed.dir.as_str() {
+                            "Back" => -FORWARD,
+                            "Left" => -RIGHT,
+                            "Right" => RIGHT,
+                            _ => FORWARD,
+                        };
+                    }
+                    "Turn90" => {
+                        let quarter = std::f32::consts::FRAC_PI_2;
+                        clip.implied_turn = if parsed.dir == "Left" {
+                            quarter
+                        } else {
+                            -quarter
+                        };
+                    }
+                    _ => {}
+                }
+            }
+        }
         let clip = Arc::new(clip);
         self.clips.insert(key, clip.clone());
         Ok(clip)
@@ -619,7 +674,11 @@ impl ActorLibrary {
     // ---- static meshes ------------------------------------------------------------------
 
     /// Loads a static `.xcmsh` (weapons, tools) with its diffuse textures.
-    pub fn static_mesh(&mut self, name: &str, stores: &mut AssetStores) -> Result<Arc<StaticAsset>> {
+    pub fn static_mesh(
+        &mut self,
+        name: &str,
+        stores: &mut AssetStores,
+    ) -> Result<Arc<StaticAsset>> {
         let key = name.to_lowercase().trim_end_matches(".xcmsh").to_string();
         if let Some(s) = self.statics.get(&key) {
             return Ok(s.clone());
@@ -790,14 +849,15 @@ fn texture_image(image: &Ximg) -> Option<Image> {
 pub fn template_actor_candidates(template: &str) -> Vec<String> {
     let tokens: Vec<&str> = template.split('_').collect();
     let mut out: Vec<String> = Vec::new();
-    let is_skin = |t: &str| {
-        t.len() >= 2
-            && t.starts_with('S')
-            && t[1..].chars().all(|c| c.is_ascii_digit())
-    };
+    let is_skin =
+        |t: &str| t.len() >= 2 && t.starts_with('S') && t[1..].chars().all(|c| c.is_ascii_digit());
     let is_num = |t: &str| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit());
     if let Some(pos) = tokens.iter().position(|t| *t == "Body") {
-        let family = if pos == 0 { vec!["Hero"] } else { tokens[..pos].to_vec() };
+        let family = if pos == 0 {
+            vec!["Hero"]
+        } else {
+            tokens[..pos].to_vec()
+        };
         let name = &tokens[pos + 1..];
         for k in (1..=name.len()).rev() {
             let joined = name[..k].join("_");
@@ -852,7 +912,10 @@ mod tests {
         assert_eq!(orc[0], "G3_Orc_Body_Warrior_Outlaw");
         assert!(orc.contains(&"G3_Orc_Body_Warrior".to_string()));
         let head = template_actor_candidates("Head_Hero_05_S24");
-        assert!(head.contains(&"G3_Hero_Head_Head05".to_string()), "{head:?}");
+        assert!(
+            head.contains(&"G3_Hero_Head_Head05".to_string()),
+            "{head:?}"
+        );
         let babe = template_actor_candidates("Head_Hero_Babe_01");
         assert_eq!(babe[0], "G3_Head_Hero_Babe_01");
         assert_eq!(

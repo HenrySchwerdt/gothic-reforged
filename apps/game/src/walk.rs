@@ -2,9 +2,11 @@
 //!
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
+mod gmat;
+
 use crate::world_loader::{
-    LoaderHandle, MatData, Origin, Part, Request, Response, TILE_CM, TexData, TileKey, TilePayload,
-    spawn_loader,
+    LoaderHandle, MatData, MatKind, Origin, Part, PartKind, Request, Response, TILE_CM, TexData,
+    TileKey, TilePayload, VegPayload, spawn_loader,
 };
 use anyhow::Result;
 use bevy::{
@@ -12,12 +14,16 @@ use bevy::{
     camera::Exposure,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     input::mouse::AccumulatedMouseMotion,
-    light::CascadeShadowConfigBuilder,
+    light::{CascadeShadowConfigBuilder, NotShadowCaster},
     mesh::{Indices, PrimitiveTopology},
     pbr::{DistanceFog, FogFalloff},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::{CursorGrabMode, CursorOptions, PresentMode, PrimaryWindow, WindowResolution},
+};
+use gmat::{
+    F_A1, F_B0, F_B1, F_FADE, F_MASK, F_NA, F_NB, F_VBLEND, GothicMaterial, GothicMaterialsPlugin,
+    GothicParams, SkyMaterial, SkyParams, WaterMaterial, WaterParams,
 };
 use gothic_physics::{CharacterController, CollisionWorld, ControllerConfig};
 use gothic_world::{CellId, StreamingSettings, plan};
@@ -38,12 +44,37 @@ struct LoaderRes {
     responses: Mutex<std::sync::mpsc::Receiver<Response>>,
 }
 
+/// World-units (metres) distances for ground-cover fade and streaming.
+const FOLIAGE_FADE: (f32, f32) = (42.0, 62.0);
+const VEG_RADIUS: i32 = 3;
+/// Sign applied to the normal-map green channel (D3D convention vs. the mirrored world).
+const NORMAL_Y_SIGN: f32 = 1.0;
+
 #[derive(Resource, Default)]
 struct Caches {
     meshes: HashMap<u64, Handle<Mesh>>,
-    materials: HashMap<u64, Handle<StandardMaterial>>,
-    textures: HashMap<u64, Option<Handle<Image>>>,
+    surfaces: HashMap<(u64, u8), Handle<GothicMaterial>>,
+    water: Option<Handle<WaterMaterial>>,
+    fallback: Option<Handle<GothicMaterial>>,
+    images: HashMap<(u64, bool), Option<Handle<Image>>>,
 }
+
+#[derive(Resource, Default)]
+struct VegStream {
+    wanted: HashSet<TileKey>,
+    in_flight: HashSet<TileKey>,
+    pending: VecDeque<(VegPayload, usize, Vec<Entity>)>,
+    spawned: HashMap<TileKey, Vec<Entity>>,
+    instances: usize,
+}
+
+#[derive(Component)]
+struct SkyDome;
+
+#[derive(Resource, Clone, Copy)]
+struct SunDir(Vec3);
+
+const SUN_ROT: (f32, f32) = (0.9, -0.85);
 
 struct Pending {
     payload: TilePayload,
@@ -63,6 +94,9 @@ struct Stream {
     loader_ms: u128,
     records: usize,
     triangles_nav: usize,
+    statics: usize,
+    statics_with_collision: usize,
+    trees: usize,
     tiles_loaded: usize,
     parts_spawned: usize,
     double_sided: bool,
@@ -99,6 +133,32 @@ struct Smoke {
     frame_times: Vec<f32>,
     walk_log: Vec<(Vec3, bool)>,
     stable: u32,
+    shots: Vec<Shot>,
+    shot_index: usize,
+}
+
+/// Extra screenshot viewpoint: name, position in metres relative to the origin (mirrored
+/// space, Y up), yaw and pitch in radians.
+struct Shot {
+    name: String,
+    pos: Vec3,
+    yaw: f32,
+    pitch: f32,
+}
+
+fn parse_shots(spec: &str) -> Vec<Shot> {
+    spec.split(';')
+        .filter_map(|item| {
+            let (name, nums) = item.split_once(':')?;
+            let v: Vec<f32> = nums.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+            (v.len() == 5).then(|| Shot {
+                name: name.trim().to_string(),
+                pos: Vec3::new(v[0], v[1], v[2]),
+                yaw: v[3],
+                pitch: v[4],
+            })
+        })
+        .collect()
 }
 
 fn tile_chunk_id(key: TileKey) -> u64 {
@@ -124,6 +184,7 @@ pub fn run(args: &[String]) -> Result<()> {
         .unwrap_or((4000.0, 4000.0));
     let smoke = args.iter().any(|a| a == "--smoke");
     let prefix = arg("--screenshot").unwrap_or_else(|| ".local/ardea".into());
+    let shots = arg("--shots").map(|s| parse_shots(&s)).unwrap_or_default();
     let handle: LoaderHandle = spawn_loader(data_dir.into(), Origin(ORIGIN));
     let settings = StreamingSettings {
         cell_size: TILE_CM,
@@ -146,6 +207,7 @@ pub fn run(args: &[String]) -> Result<()> {
             }),
             ..default()
         }))
+        .add_plugins(GothicMaterialsPlugin)
         .insert_resource(LoaderRes {
             requests: handle.requests,
             responses: Mutex::new(handle.responses),
@@ -160,6 +222,9 @@ pub fn run(args: &[String]) -> Result<()> {
             loader_ms: 0,
             records: 0,
             triangles_nav: 0,
+            statics: 0,
+            statics_with_collision: 0,
+            trees: 0,
             tiles_loaded: 0,
             parts_spawned: 0,
             double_sided: args.iter().any(|a| a == "--double-sided"),
@@ -188,7 +253,11 @@ pub fn run(args: &[String]) -> Result<()> {
             frame_times: Vec::new(),
             walk_log: Vec::new(),
             stable: 0,
+            shots,
+            shot_index: 0,
         })
+        .insert_resource(VegStream::default())
+        .insert_resource(SunDir(Quat::from_euler(EulerRot::YXZ, SUN_ROT.0, SUN_ROT.1, 0.0) * Vec3::Z))
         .insert_resource(ClearColor(Color::srgb(0.52, 0.68, 0.88)))
         .insert_resource(GlobalAmbientLight {
             color: Color::srgb(0.75, 0.82, 1.0),
@@ -202,7 +271,10 @@ pub fn run(args: &[String]) -> Result<()> {
             (
                 receive_tiles,
                 stream_tiles,
+                stream_vegetation,
                 spawn_pending,
+                spawn_vegetation,
+                sky_follow,
                 input_mode,
                 player_motion,
                 update_camera,
@@ -218,8 +290,29 @@ pub fn run(args: &[String]) -> Result<()> {
 #[derive(Resource)]
 struct FogEnd(f32);
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, fog: Res<FogEnd>) {
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut skies: ResMut<Assets<SkyMaterial>>,
+    fog: Res<FogEnd>,
+    sun: Res<SunDir>,
+) {
     let fog_color = Color::srgb(0.70, 0.78, 0.88);
+    commands.spawn((
+        Mesh3d(meshes.add(Sphere::new(1.0).mesh().uv(48, 24))),
+        MeshMaterial3d(skies.add(SkyMaterial {
+            params: SkyParams {
+                sun_dir: sun.0.extend(0.0),
+                zenith: Vec4::new(0.20, 0.38, 0.78, 1.0),
+                horizon: Vec4::new(0.74, 0.82, 0.92, 1.0),
+                ground: Vec4::new(0.70, 0.78, 0.88, 1.0),
+                sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
+            },
+        })),
+        Transform::from_scale(Vec3::splat(3500.0)),
+        NotShadowCaster,
+        SkyDome,
+    ));
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -256,7 +349,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, fog: Res<FogE
             overlap_proportion: 0.2,
         }
         .build(),
-        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, 0.9, -0.85, 0.0)),
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, SUN_ROT.0, SUN_ROT.1, 0.0)),
     ));
     commands.spawn((
         Mesh3d(meshes.add(Capsule3d::new(0.35, 1.05))),
@@ -267,7 +360,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, fog: Res<FogE
     ));
 }
 
-fn receive_tiles(loader: Res<LoaderRes>, mut stream: ResMut<Stream>) {
+fn receive_tiles(loader: Res<LoaderRes>, mut stream: ResMut<Stream>, mut veg: ResMut<VegStream>) {
     let rx = loader.responses.lock().expect("loader channel");
     while let Ok(msg) = rx.try_recv() {
         match msg {
@@ -278,9 +371,21 @@ fn receive_tiles(loader: Res<LoaderRes>, mut stream: ResMut<Stream>) {
                 eprintln!("loader ready: {records} placed meshes indexed in {millis} ms");
             }
             Response::Failed(e) => eprintln!("loader: {e}"),
+            Response::Vegetation(payload) => {
+                let key = payload.key;
+                veg.in_flight.remove(&key);
+                stream.last_activity = 0;
+                if veg.wanted.contains(&key) {
+                    veg.instances += payload.instances;
+                    veg.pending.push_back((*payload, 0, Vec::new()));
+                }
+            }
             Response::Tile(payload) => {
                 let key = payload.key;
                 stream.in_flight.remove(&key);
+                stream.statics += payload.stats.statics;
+                stream.statics_with_collision += payload.stats.statics_with_collision_mesh;
+                stream.trees += payload.stats.trees;
                 stream.tiles_loaded += 1;
                 stream.last_activity = 0;
                 if stream.resident.contains(&CellId { x: key.0, z: key.1 }) {
@@ -339,11 +444,14 @@ fn stream_tiles(
     }
 }
 
-fn texture_image(texture: &TexData) -> Option<Image> {
-    let format = match &texture.fourcc {
-        b"DXT1" => TextureFormat::Bc1RgbaUnormSrgb,
-        b"DXT3" => TextureFormat::Bc2RgbaUnormSrgb,
-        b"DXT5" => TextureFormat::Bc3RgbaUnormSrgb,
+fn texture_image(texture: &TexData, srgb: bool) -> Option<Image> {
+    let format = match (&texture.fourcc, srgb) {
+        (b"DXT1", true) => TextureFormat::Bc1RgbaUnormSrgb,
+        (b"DXT1", false) => TextureFormat::Bc1RgbaUnorm,
+        (b"DXT3", true) => TextureFormat::Bc2RgbaUnormSrgb,
+        (b"DXT3", false) => TextureFormat::Bc2RgbaUnorm,
+        (b"DXT5", true) => TextureFormat::Bc3RgbaUnormSrgb,
+        (b"DXT5", false) => TextureFormat::Bc3RgbaUnorm,
         _ => return None,
     };
     if !texture.width.is_multiple_of(4) || !texture.height.is_multiple_of(4) {
@@ -374,64 +482,180 @@ fn texture_image(texture: &TexData) -> Option<Image> {
     Some(image)
 }
 
-fn material_handle(
-    data: &Option<std::sync::Arc<MatData>>,
+fn image_handle(
+    tex: &Option<std::sync::Arc<TexData>>,
+    srgb: bool,
     caches: &mut Caches,
-    materials: &mut Assets<StandardMaterial>,
     images: &mut Assets<Image>,
-    double_sided: bool,
-) -> Handle<StandardMaterial> {
+) -> Option<Handle<Image>> {
+    let t = tex.as_ref()?;
+    caches
+        .images
+        .entry((t.id, srgb))
+        .or_insert_with(|| texture_image(t, srgb).map(|i| images.add(i)))
+        .clone()
+}
+
+fn surface_material(
+    data: &Option<std::sync::Arc<MatData>>,
+    kind: PartKind,
+    caches: &mut Caches,
+    materials: &mut Assets<GothicMaterial>,
+    images: &mut Assets<Image>,
+    force_two_sided: bool,
+) -> Handle<GothicMaterial> {
     let Some(data) = data else {
         return caches
-            .materials
-            .entry(0)
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.55, 0.55, 0.5),
-                    perceptual_roughness: 0.95,
-                    ..default()
+            .fallback
+            .get_or_insert_with(|| {
+                materials.add(GothicMaterial {
+                    params: GothicParams {
+                        tint_a: Vec4::new(0.55, 0.55, 0.5, 1.0),
+                        ..default()
+                    },
+                    a0: None,
+                    a1: None,
+                    b0: None,
+                    b1: None,
+                    na: None,
+                    nb: None,
+                    alpha_mode: AlphaMode::Opaque,
+                    two_sided: false,
                 })
             })
             .clone();
     };
-    if let Some(h) = caches.materials.get(&data.id) {
+    let cache_key = (data.id, kind as u8);
+    if let Some(h) = caches.surfaces.get(&cache_key) {
         return h.clone();
     }
-    let texture = data.diffuse.as_ref().and_then(|t| {
-        caches
-            .textures
-            .entry(t.id)
-            .or_insert_with(|| texture_image(t).map(|i| images.add(i)))
-            .clone()
-    });
-    let (alpha_mode, two_sided) = match data.blend_mode {
-        Some(1) => (
-            AlphaMode::Mask(f32::from(data.mask_reference.unwrap_or(128)) / 255.0),
-            true,
-        ),
+    let foliage = matches!(kind, PartKind::Foliage | PartKind::Tree);
+    let mut params = GothicParams::default();
+    let mut flags = 0;
+    let (l0, l1) = (data.layers.first(), data.layers.get(1));
+    let a0 = l0.and_then(|l| image_handle(&l.tex[0], true, caches, images));
+    let mut a1 = None;
+    let (mut b0, mut b1) = (None, None);
+    if let Some(l) = l0 {
+        params.tint_a = Vec4::new(l.tint[0], l.tint[1], l.tint[2], 1.0);
+        params.scale_a = Vec4::new(l.scale[0][0], l.scale[0][1], l.scale[1][0], l.scale[1][1]);
+        if l.tex[1].is_some() {
+            a1 = image_handle(&l.tex[1], true, caches, images);
+            flags |= F_A1;
+        }
+    }
+    if data.vertex_blend
+        && let Some(l) = l1
+    {
+        flags |= F_VBLEND | F_B0;
+        params.tint_b = Vec4::new(l.tint[0], l.tint[1], l.tint[2], 1.0);
+        params.scale_b = Vec4::new(l.scale[0][0], l.scale[0][1], l.scale[1][0], l.scale[1][1]);
+        b0 = image_handle(&l.tex[0], true, caches, images);
+        if l.tex[1].is_some() {
+            b1 = image_handle(&l.tex[1], true, caches, images);
+            flags |= F_B1;
+        }
+    }
+    let na = data.normals[0]
+        .as_ref()
+        .and_then(|(t, _)| image_handle(&Some(t.clone()), false, caches, images));
+    let nb = data.normals[1]
+        .as_ref()
+        .and_then(|(t, _)| image_handle(&Some(t.clone()), false, caches, images));
+    let mut scale_n = Vec4::ONE;
+    if na.is_some() && !foliage {
+        flags |= F_NA;
+        let s = data.normals[0].as_ref().map_or([1.0; 2], |n| n.1);
+        scale_n.x = s[0];
+        scale_n.y = s[1];
+    }
+    if nb.is_some() && !foliage {
+        flags |= F_NB;
+        let s = data.normals[1].as_ref().map_or([1.0; 2], |n| n.1);
+        scale_n.z = s[0];
+        scale_n.w = s[1];
+    }
+    params.scale_n = scale_n;
+    let (alpha_mode, mut two_sided) = match data.blend_mode {
+        Some(1) => {
+            flags |= F_MASK;
+            let r = f32::from(data.mask_reference.unwrap_or(128)) / 255.0;
+            params.misc.z = if r < 0.05 { 0.4 } else { r };
+            (AlphaMode::Mask(params.misc.z), true)
+        }
         Some(2 | 8) => (AlphaMode::Blend, true),
         Some(7) => (AlphaMode::Add, true),
         _ => (AlphaMode::Opaque, false),
     };
-    let handle = materials.add(StandardMaterial {
-        base_color: if texture.is_some() {
-            Color::WHITE
-        } else {
-            Color::srgb(0.55, 0.58, 0.5)
-        },
-        base_color_texture: texture,
-        perceptual_roughness: 0.95,
-        reflectance: 0.05,
+    if foliage {
+        if flags & F_MASK == 0 {
+            params.misc.z = 0.4;
+        }
+        flags |= F_MASK;
+        two_sided = true;
+    }
+    if kind == PartKind::Foliage {
+        flags |= F_FADE;
+        params.misc.x = FOLIAGE_FADE.0;
+        params.misc.y = FOLIAGE_FADE.1;
+    }
+    params.misc.w = NORMAL_Y_SIGN;
+    params.flags = flags;
+    params.ao_strength = if kind == PartKind::Terrain { 0.55 } else { 0.7 };
+    params.roughness = if kind == PartKind::Terrain { 0.95 } else { 0.85 };
+    let alpha_mode = if flags & F_MASK != 0 {
+        AlphaMode::Mask(params.misc.z)
+    } else {
+        alpha_mode
+    };
+    let handle = materials.add(GothicMaterial {
+        params,
+        a0,
+        a1,
+        b0,
+        b1,
+        na,
+        nb,
         alpha_mode,
-        cull_mode: if two_sided || double_sided {
-            None
-        } else {
-            Some(bevy::render::render_resource::Face::Back)
-        },
-        double_sided: two_sided || double_sided,
-        ..default()
+        two_sided: two_sided || force_two_sided,
     });
-    caches.materials.insert(data.id, handle.clone());
+    caches.surfaces.insert(cache_key, handle.clone());
+    handle
+}
+
+fn water_material(
+    data: &Option<std::sync::Arc<MatData>>,
+    caches: &mut Caches,
+    materials: &mut Assets<WaterMaterial>,
+    images: &mut Assets<Image>,
+    sun: Vec3,
+) -> Handle<WaterMaterial> {
+    if let Some(h) = &caches.water {
+        return h.clone();
+    }
+    let (mut n0, mut n1) = (None, None);
+    if let Some(d) = data {
+        n0 = d.normals[0]
+            .as_ref()
+            .and_then(|(t, _)| image_handle(&Some(t.clone()), false, caches, images));
+        n1 = d.normals[1]
+            .as_ref()
+            .and_then(|(t, _)| image_handle(&Some(t.clone()), false, caches, images));
+    }
+    let n1 = n1.or_else(|| n0.clone());
+    let handle = materials.add(WaterMaterial {
+        params: WaterParams {
+            sun_dir: sun.extend(0.0),
+            deep: Vec4::new(0.03, 0.13, 0.18, 1.0),
+            shallow: Vec4::new(0.12, 0.34, 0.38, 1.0),
+            sky: Vec4::new(0.45, 0.62, 0.86, 1.0),
+            sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
+            misc: Vec4::new(0.5, NORMAL_Y_SIGN, 0.72, 0.0),
+        },
+        n0,
+        n1,
+    });
+    caches.water = Some(handle.clone());
     handle
 }
 
@@ -447,23 +671,69 @@ fn mesh_handle(part: &Part, caches: &mut Caches, meshes: &mut Assets<Mesh>) -> H
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, g.positions.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, g.normals.clone())
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, g.uvs.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, g.colors.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, g.tangents.clone())
     .with_inserted_indices(Indices::U32(g.indices.clone()));
     let handle = meshes.add(mesh);
-    // Terrain tiles are unique; only shared static geometry is worth caching.
-    if !part.terrain {
+    // Terrain tiles and merged ground cover are unique; only shared geometry is worth caching.
+    if !matches!(part.kind, PartKind::Terrain | PartKind::Foliage) {
         caches.meshes.insert(g.id, handle.clone());
     }
     handle
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+struct Gpu<'w> {
+    caches: ResMut<'w, Caches>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    surfaces: ResMut<'w, Assets<GothicMaterial>>,
+    waters: ResMut<'w, Assets<WaterMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
+    sun: Res<'w, SunDir>,
+}
+
+fn spawn_part(commands: &mut Commands, part: &Part, gpu: &mut Gpu, force_two_sided: bool) -> Entity {
+    let mesh = mesh_handle(part, &mut gpu.caches, &mut gpu.meshes);
+    let mut transform = Transform::from_matrix(part.transform);
+    transform.translation *= CM;
+    transform.scale *= CM;
+    let is_water = part.kind == PartKind::Water
+        || part
+            .material
+            .as_ref()
+            .is_some_and(|m| m.kind == MatKind::Water);
+    if is_water {
+        let material = water_material(
+            &part.material,
+            &mut gpu.caches,
+            &mut gpu.waters,
+            &mut gpu.images,
+            gpu.sun.0,
+        );
+        return commands
+            .spawn((Mesh3d(mesh), MeshMaterial3d(material), transform, NotShadowCaster))
+            .id();
+    }
+    let material = surface_material(
+        &part.material,
+        part.kind,
+        &mut gpu.caches,
+        &mut gpu.surfaces,
+        &mut gpu.images,
+        force_two_sided,
+    );
+    let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform));
+    if matches!(part.kind, PartKind::Foliage | PartKind::Tree) {
+        e.insert(NotShadowCaster);
+    }
+    e.id()
 }
 
 fn spawn_pending(
     mut commands: Commands,
     mut stream: ResMut<Stream>,
     mut collision: ResMut<Collision>,
-    mut caches: ResMut<Caches>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    mut gpu: Gpu,
 ) {
     let start = Instant::now();
     let double_sided = stream.double_sided;
@@ -491,22 +761,85 @@ fn spawn_pending(
         }
         let part = &front.payload.parts[front.next];
         front.next += 1;
-        let mesh = mesh_handle(part, &mut caches, &mut meshes);
-        let material = material_handle(
-            &part.material,
-            &mut caches,
-            &mut materials,
-            &mut images,
-            double_sided,
-        );
-        let mut transform = Transform::from_matrix(part.transform);
-        transform.translation *= CM;
-        transform.scale *= CM;
-        let entity = commands
-            .spawn((Mesh3d(mesh), MeshMaterial3d(material), transform))
-            .id();
+        let entity = spawn_part(&mut commands, part, &mut gpu, double_sided);
         front.entities.push(entity);
         stream.parts_spawned += 1;
+    }
+}
+
+/// Request ground cover for tiles near the player, drop it again further out.
+fn stream_vegetation(
+    loader: Res<LoaderRes>,
+    stream: Res<Stream>,
+    player: Res<Player>,
+    mut veg: ResMut<VegStream>,
+    mut commands: Commands,
+) {
+    if !stream.ready {
+        return;
+    }
+    let center = stream.settings.cell_at(observer_cm(&player));
+    let dist = |k: &TileKey| (k.0 - center.x).abs().max((k.1 - center.z).abs());
+    let drop: Vec<TileKey> = veg
+        .wanted
+        .iter()
+        .filter(|k| dist(k) > VEG_RADIUS + 1)
+        .copied()
+        .collect();
+    for k in drop {
+        veg.wanted.remove(&k);
+        veg.in_flight.remove(&k);
+        veg.pending.retain(|(p, _, _)| p.key != k);
+        if let Some(entities) = veg.spawned.remove(&k) {
+            for e in entities {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let mut wanted_now = Vec::new();
+    for dx in -VEG_RADIUS..=VEG_RADIUS {
+        for dz in -VEG_RADIUS..=VEG_RADIUS {
+            let k = (center.x + dx, center.z + dz);
+            if !veg.wanted.contains(&k) && stream.spawned.contains_key(&k) {
+                wanted_now.push(k);
+            }
+        }
+    }
+    wanted_now.sort_by_key(|k| dist(k));
+    for k in wanted_now.into_iter().take(2) {
+        if veg.in_flight.len() >= 4 {
+            break;
+        }
+        veg.wanted.insert(k);
+        veg.in_flight.insert(k);
+        let _ = loader.requests.send(Request::Vegetation(k));
+    }
+}
+
+fn spawn_vegetation(mut commands: Commands, mut veg: ResMut<VegStream>, mut gpu: Gpu) {
+    let start = Instant::now();
+    while start.elapsed().as_micros() < 2500 {
+        let Some(front) = veg.pending.front_mut() else {
+            break;
+        };
+        if front.1 >= front.0.parts.len() {
+            let (payload, _, entities) = veg.pending.pop_front().expect("front exists");
+            veg.spawned.insert(payload.key, entities);
+            continue;
+        }
+        let part = &front.0.parts[front.1];
+        front.1 += 1;
+        let entity = spawn_part(&mut commands, part, &mut gpu, true);
+        front.2.push(entity);
+    }
+}
+
+fn sky_follow(
+    camera: Query<&Transform, (With<PlayerCamera>, Without<SkyDome>)>,
+    mut sky: Query<&mut Transform, With<SkyDome>>,
+) {
+    if let (Ok(c), Ok(mut s)) = (camera.single(), sky.single_mut()) {
+        s.translation = c.translation;
     }
 }
 
@@ -694,6 +1027,7 @@ fn smoke_script(
     mut smoke: ResMut<Smoke>,
     mut player: ResMut<Player>,
     stream: Res<Stream>,
+    veg: Res<VegStream>,
     time: Res<Time>,
 ) {
     if !smoke.enabled {
@@ -703,6 +1037,8 @@ fn smoke_script(
     let loaded_all = stream.ready
         && stream.in_flight.is_empty()
         && stream.pending.is_empty()
+        && veg.in_flight.is_empty()
+        && veg.pending.is_empty()
         && player.placed_or_fly();
     if loaded_all && stream.last_activity > 5 {
         smoke.stable += 1;
@@ -792,7 +1128,34 @@ fn smoke_script(
             smoke.frames = 0;
         }
         4 if smoke.frames > 90 => {
-            commands.write_message(AppExit::Success);
+            if smoke.shots.is_empty() {
+                commands.write_message(AppExit::Success);
+            } else {
+                smoke.stage = 5;
+                smoke.frames = 0;
+                smoke.stable = 0;
+            }
+        }
+        5 => {
+            let i = smoke.shot_index;
+            if i >= smoke.shots.len() {
+                commands.write_message(AppExit::Success);
+            } else if smoke.frames == 1 {
+                let (pos, yaw, pitch) = (smoke.shots[i].pos, smoke.shots[i].yaw, smoke.shots[i].pitch);
+                player.fly = true;
+                player.fly_pos = pos / CM;
+                player.yaw = yaw;
+                player.pitch = pitch;
+            } else if smoke.frames > 60 && smoke.stable > 60 {
+                let name = format!("{}-{}.png", smoke.prefix, smoke.shots[i].name);
+                shoot(&mut commands, name);
+                smoke.shot_index += 1;
+                smoke.frames = 100;
+                smoke.stable = 0;
+                if smoke.shot_index < smoke.shots.len() {
+                    smoke.frames = 0;
+                }
+            }
         }
         _ => {}
     }

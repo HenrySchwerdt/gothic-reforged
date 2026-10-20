@@ -14,6 +14,8 @@ use std::sync::Arc;
 /// Default cross-fade time in seconds.
 pub const DEFAULT_FADE: f32 = 0.2;
 const MAX_LAYERS: usize = 4;
+/// Root travel below this (cm over the whole clip) counts as in place.
+const IN_PLACE_LIMIT: f32 = 20.0;
 
 /// A clip together with its slot mapping for one rig.
 #[derive(Clone)]
@@ -194,13 +196,19 @@ impl Animator {
                     l.time = l.time.min(l.motion.clip.duration.max(0.0));
                 }
                 if i == top && self.root_motion_enabled {
-                    let mut rm = RootMotionSource::delta(
-                        &l.motion.binding,
-                        &l.motion.clip,
-                        before,
-                        l.time,
-                    );
+                    let mut rm =
+                        RootMotionSource::delta(&l.motion.binding, &l.motion.clip, before, l.time);
                     rm.translation = self.facing.transform_vector3(rm.translation);
+                    if l.motion.binding.root_travel < IN_PLACE_LIMIT {
+                        // In-place clip: ground travel and turning are implied by the name
+                        // (nominal speed and direction, `Turn90`), not stored in the keys.
+                        let advanced = (l.time - before).abs();
+                        let clip = &l.motion.clip;
+                        rm.translation = clip.implied_dir * clip.nominal_speed * (l.time - before);
+                        if clip.duration > 1e-4 && clip.implied_turn != 0.0 {
+                            rm.yaw = clip.implied_turn * advanced / clip.duration;
+                        }
+                    }
                     self.root_motion = rm;
                 }
                 if i > 0 {
@@ -215,11 +223,11 @@ impl Animator {
                 o.time += dt * o.rate;
             }
             // A completed fade makes everything below it irrelevant.
-            if let Some(full) = self.layers.iter().rposition(|l| l.fade >= 1.0) {
-                if full > 0 {
-                    self.layers.drain(..full);
-                    self.layers[0].fade = 1.0;
-                }
+            if let Some(full) = self.layers.iter().rposition(|l| l.fade >= 1.0)
+                && full > 0
+            {
+                self.layers.drain(..full);
+                self.layers[0].fade = 1.0;
             }
         }
         self.evaluate();
@@ -234,7 +242,9 @@ impl Animator {
         {
             let l = &self.layers[0];
             let t = l.motion.clip.wrap(l.time);
-            l.motion.binding.sample(&l.motion.clip, rest, t, &mut self.pose);
+            l.motion
+                .binding
+                .sample(&l.motion.clip, rest, t, &mut self.pose);
         }
         for l in &self.layers[1..] {
             let t = l.motion.clip.wrap(l.time);
@@ -246,17 +256,17 @@ impl Animator {
                 *p = p.blend(*s, w);
             }
         }
-        if let Some(o) = &self.overlay {
-            if o.weight > 1e-3 {
-                let t = o.motion.clip.wrap(o.time);
-                o.motion
-                    .binding
-                    .sample(&o.motion.clip, rest, t, &mut self.scratch);
-                for ((p, s), m) in self.pose.iter_mut().zip(&self.scratch).zip(o.mask.iter()) {
-                    let w = o.weight * m;
-                    if w > 1e-3 {
-                        *p = p.blend(*s, w);
-                    }
+        if let Some(o) = &self.overlay
+            && o.weight > 1e-3
+        {
+            let t = o.motion.clip.wrap(o.time);
+            o.motion
+                .binding
+                .sample(&o.motion.clip, rest, t, &mut self.scratch);
+            for ((p, s), m) in self.pose.iter_mut().zip(&self.scratch).zip(o.mask.iter()) {
+                let w = o.weight * m;
+                if w > 1e-3 {
+                    *p = p.blend(*s, w);
                 }
             }
         }
@@ -290,7 +300,10 @@ mod tests {
         let rig = Arc::new(synthetic());
         let plan: Arc<[EvalStep]> = rig.plan(&[1, 3, 4]).into();
         let joints: Arc<[u16]> = vec![1u16, 3, 4].into();
-        (Animator::new(rig.clone(), plan, joints, Quat::IDENTITY), rig)
+        (
+            Animator::new(rig.clone(), plan, joints, Quat::IDENTITY),
+            rig,
+        )
     }
 
     #[test]
@@ -298,11 +311,22 @@ mod tests {
         let (mut a, rig) = animator();
         let m1 = make(
             &rig,
-            clip_with_track(vec![(0.0, Vec3::new(0.0, 0.0, 0.0)), (10.0, Vec3::ZERO)], "a", "Test_Hip_1"),
+            clip_with_track(
+                vec![(0.0, Vec3::new(0.0, 0.0, 0.0)), (10.0, Vec3::ZERO)],
+                "a",
+                "Test_Hip_1",
+            ),
         );
         let m2 = make(
             &rig,
-            clip_with_track(vec![(0.0, Vec3::new(0.0, 0.0, 100.0)), (10.0, Vec3::new(0.0, 0.0, 100.0))], "b", "Test_Hip_1"),
+            clip_with_track(
+                vec![
+                    (0.0, Vec3::new(0.0, 0.0, 100.0)),
+                    (10.0, Vec3::new(0.0, 0.0, 100.0)),
+                ],
+                "b",
+                "Test_Hip_1",
+            ),
         );
         a.play(m1, 0.2, 1.0, 0.0);
         a.update(0.0);
@@ -321,7 +345,11 @@ mod tests {
         let (mut a, rig) = animator();
         let m = make(
             &rig,
-            clip_with_track(vec![(0.0, Vec3::ZERO), (0.5, Vec3::X * 5.0)], "s", "Test_Hip_1"),
+            clip_with_track(
+                vec![(0.0, Vec3::ZERO), (0.5, Vec3::X * 5.0)],
+                "s",
+                "Test_Hip_1",
+            ),
         );
         a.play(m, 0.2, 1.0, 0.0);
         assert!(!a.finished());
@@ -331,11 +359,48 @@ mod tests {
     }
 
     #[test]
+    fn in_place_clips_report_implied_root_motion() {
+        let (mut a, rig) = animator();
+        let mut clip = clip_with_track(
+            vec![(0.0, Vec3::ZERO), (1.0, Vec3::ZERO)],
+            "w",
+            "Test_Hip_1",
+        );
+        clip.looping = true;
+        clip.nominal_speed = 100.0;
+        clip.implied_dir = crate::locomotion::FORWARD;
+        let motion = make(&rig, clip);
+        a.play(motion, 0.2, 1.0, 0.0);
+        a.update(0.5);
+        assert!((a.root_motion.translation - Vec3::new(0.0, 0.0, -50.0)).length() < 1e-3);
+        a.set_rate(2.0);
+        a.update(0.5);
+        assert!((a.root_motion.translation.z + 100.0).abs() < 1e-3);
+    }
+
+    #[test]
     fn overlay_respects_mask() {
         let (mut a, rig) = animator();
-        let base = make(&rig, clip_with_track(vec![(0.0, Vec3::ZERO), (1.0, Vec3::ZERO)], "b", "Test_Hip_1"));
+        let base = make(
+            &rig,
+            clip_with_track(
+                vec![(0.0, Vec3::ZERO), (1.0, Vec3::ZERO)],
+                "b",
+                "Test_Hip_1",
+            ),
+        );
         a.play(base, 0.2, 1.0, 0.0);
-        let over = make(&rig, clip_with_track(vec![(0.0, Vec3::new(0.0, 0.0, 30.0)), (1.0, Vec3::new(0.0, 0.0, 30.0))], "o", "Test_Hip_1"));
+        let over = make(
+            &rig,
+            clip_with_track(
+                vec![
+                    (0.0, Vec3::new(0.0, 0.0, 30.0)),
+                    (1.0, Vec3::new(0.0, 0.0, 30.0)),
+                ],
+                "o",
+                "Test_Hip_1",
+            ),
+        );
         a.set_overlay(Some(Overlay {
             motion: over,
             time: 0.0,

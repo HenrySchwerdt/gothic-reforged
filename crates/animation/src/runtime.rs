@@ -12,7 +12,8 @@ use crate::{
     animator::{Animator, Overlay},
     library::{ActorLibrary, AssetStores, Composition},
     locomotion::{
-        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveDir, MoveKind, RIGHT, Stance,
+        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveDir, MoveKind, RIGHT,
+        Stance,
     },
 };
 use anyhow::{Result, anyhow};
@@ -26,7 +27,10 @@ use bevy::{
         system::{Commands, Query, Res, ResMut, SystemParam},
     },
     math::{Affine3A, Vec3},
-    mesh::{Mesh, Mesh3d, skinning::{SkinnedMesh, SkinnedMeshInverseBindposes}},
+    mesh::{
+        Mesh, Mesh3d,
+        skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
+    },
     prelude::{Assets, GlobalTransform, Image, MeshMaterial3d, StandardMaterial, Time, Transform},
 };
 use std::{
@@ -148,7 +152,11 @@ impl NpcSpec {
     /// Composes body and head from NPC item-template names such as `Body_AssWarrior` and
     /// `Head_Hero_05_S24` (see [`crate::library::template_actor_candidates`]). Parts are
     /// resolved against the installed actors at spawn time.
-    pub fn from_item_templates(library: &ActorLibrary, body: &str, head: Option<&str>) -> Result<Self> {
+    pub fn from_item_templates(
+        library: &ActorLibrary,
+        body: &str,
+        head: Option<&str>,
+    ) -> Result<Self> {
         let pick = |template: &str| -> Result<String> {
             crate::library::template_actor_candidates(template)
                 .into_iter()
@@ -244,7 +252,8 @@ impl ActorSpawner<'_, '_> {
             })
             .collect();
         for (part, part_joints) in composition.parts.iter().zip(&composition.part_joints) {
-            let skin_joints: Vec<Entity> = part_joints.iter().map(|&j| joints[j as usize]).collect();
+            let skin_joints: Vec<Entity> =
+                part_joints.iter().map(|&j| joints[j as usize]).collect();
             for m in &part.meshes {
                 commands.spawn((
                     Mesh3d(m.mesh.clone()),
@@ -271,7 +280,11 @@ impl ActorSpawner<'_, '_> {
             };
             let drawn = joint_of(&weapon.drawn_slot)?;
             let holster = joint_of(&weapon.holster_slot).unwrap_or(drawn);
-            let start = if spec.stance.weapon_drawn() { drawn } else { holster };
+            let start = if spec.stance.weapon_drawn() {
+                drawn
+            } else {
+                holster
+            };
             for m in &asset.meshes {
                 commands.spawn((
                     Mesh3d(m.mesh.clone()),
@@ -370,14 +383,19 @@ pub fn animate_system(
 ) {
     let started = Instant::now();
     let dt = time.delta_secs().min(0.1);
-    query.par_iter_mut().for_each(|mut animator| animator.update(dt));
+    query
+        .par_iter_mut()
+        .for_each(|mut animator| animator.update(dt));
     stats.animate = started.elapsed();
 }
 
 /// Copies joint matrices into the joint entities (model space times the character's world).
 pub fn write_joints_system(
     mut stats: ResMut<AnimationStats>,
-    characters: Query<(&Animator, &CharacterJoints, &GlobalTransform), bevy::ecs::query::Without<SkeletonJoint>>,
+    characters: Query<
+        (&Animator, &CharacterJoints, &GlobalTransform),
+        bevy::ecs::query::Without<SkeletonJoint>,
+    >,
     mut joints: Query<&mut GlobalTransform, bevy::ecs::query::With<SkeletonJoint>>,
 ) {
     let started = Instant::now();

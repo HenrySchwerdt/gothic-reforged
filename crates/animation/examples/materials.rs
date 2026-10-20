@@ -8,15 +8,35 @@ fn main() -> anyhow::Result<()> {
     let mut mat = PakArchive::open(format!(r"{dir}\_compiledMaterial.pak"))?;
     let img = PakArchive::open(format!(r"{dir}\_compiledImage.pak"))?;
     let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_lowercase();
-    let mi: HashMap<String, usize> = mat.entries.iter().enumerate().rev().map(|(i, e)| (base(&e.path), i)).collect();
-    let ii: HashMap<String, usize> = img.entries.iter().enumerate().rev().map(|(i, e)| (base(&e.path), i)).collect();
+    let mi: HashMap<String, usize> = mat
+        .entries
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, e)| (base(&e.path), i))
+        .collect();
+    let ii: HashMap<String, usize> = img
+        .entries
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, e)| (base(&e.path), i))
+        .collect();
     for want in std::env::args().skip(1) {
-        let at = anim.entries.iter().position(|e| e.path.eq_ignore_ascii_case(&format!("{want}.xact"))).expect("actor");
+        let at = anim
+            .entries
+            .iter()
+            .position(|e| e.path.eq_ignore_ascii_case(&format!("{want}.xact")))
+            .expect("actor");
         let actor = Actor::parse(&anim.read_payload(at)?)?;
         println!("== {want}: {} materials", actor.materials.len());
         for (i, m) in actor.materials.iter().enumerate().skip(1) {
             let listed = actor.material_file(i).unwrap_or("?");
-            println!(" mat {i} {:?} listed {listed} diffuse_layer {:?}", m.name, m.diffuse_texture());
+            println!(
+                " mat {i} {:?} listed {listed} diffuse_layer {:?}",
+                m.name,
+                m.diffuse_texture()
+            );
             let mut cands = vec![];
             if let Some(t) = m.diffuse_texture() {
                 cands.push(format!("{t}_A.xshmat"));
@@ -28,7 +48,9 @@ fn main() -> anyhow::Result<()> {
                     Some(&k) => {
                         let x = Xshmat::parse(&mat.read_payload(k)?)?;
                         let stem = x.diffuse().map(|d| d.stem().to_string());
-                        let found = stem.as_ref().map(|s| ii.contains_key(&format!("{}.ximg", s.to_lowercase())));
+                        let found = stem
+                            .as_ref()
+                            .map(|s| ii.contains_key(&format!("{}.ximg", s.to_lowercase())));
                         println!("    {c} -> stem {stem:?} image_found {found:?}");
                     }
                     None => println!("    {c} -> (no material file)"),

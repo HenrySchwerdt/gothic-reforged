@@ -38,6 +38,9 @@ struct Config {
     sword: bool,
     yaw_degrees: f32,
     times: [f32; 2],
+    /// Upper-body overlay action (`ArmsCrossed`, ...) and initial ground speed (cm/s).
+    overlay: Option<String>,
+    speed: f32,
 }
 
 #[derive(Component)]
@@ -124,6 +127,8 @@ pub fn run() -> Result<()> {
             flag("--time-a").map(str::parse).transpose()?.unwrap_or(0.0),
             flag("--time-b").map(str::parse).transpose()?.unwrap_or(0.5),
         ],
+        overlay: flag("--overlay").map(str::to_string),
+        speed: flag("--speed").map(str::parse).transpose()?.unwrap_or(0.0),
     };
     let library = ActorLibrary::open(&data_dir)
         .map_err(|e| e.context(format!("opening archives in {}", data_dir.display())))?;
@@ -154,7 +159,16 @@ pub fn run() -> Result<()> {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (crowd_script, hero_keys, smoke_drive, orbit, capture, update_title).chain(),
+            (
+                crowd_script,
+                hero_keys,
+                hero_overlay,
+                smoke_drive,
+                orbit,
+                capture,
+                update_title,
+            )
+                .chain(),
         )
         .run();
     Ok(())
@@ -171,7 +185,8 @@ fn alias(name: &str) -> String {
 
 /// Deterministic pseudo-random value in 0..1 from an index and a salt.
 fn hash01(index: usize, salt: u64) -> f32 {
-    let mut x = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let mut x = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ salt.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x ^= x >> 30;
     x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
     x ^= x >> 27;
@@ -202,10 +217,20 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
         }
     } else {
         let (bodies, heads) = crowd_parts(&mut spawner);
-        eprintln!("crowd parts: {} bodies, {} heads", bodies.len(), heads.len());
+        eprintln!(
+            "crowd parts: {} bodies, {} heads",
+            bodies.len(),
+            heads.len()
+        );
         let columns = (config.crowd as f32).sqrt().ceil() as usize;
         let spacing = 130.0;
-        let swords = ["G3_Weapon_1H_Sword_01", "G3_Weapon_1H_Sword_Broad_01", "G3_Weapon_1H_Sword_Long_01", "G3_Weapon_1H_Sword_Rusty_01", "G3_Weapon_1H_Sword_Bastard_01"];
+        let swords = [
+            "G3_Weapon_1H_Sword_01",
+            "G3_Weapon_1H_Sword_Broad_01",
+            "G3_Weapon_1H_Sword_Long_01",
+            "G3_Weapon_1H_Sword_Rusty_01",
+            "G3_Weapon_1H_Sword_Bastard_01",
+        ];
         let stances = [
             Stance::Unarmed,
             Stance::OneHand,
@@ -233,15 +258,23 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
             match stance {
                 Stance::OneHand => spec = spec.with_weapon(WeaponSpec::one_hand_sword(sword)),
                 Stance::OneHandShield => {
-                    spec = spec.with_weapon(WeaponSpec::one_hand_sword(sword)).with_weapon(WeaponSpec {
-                        mesh: "G3_Armor_Shield_Round_Big_01".into(),
-                        drawn_slot: "Slot_LeftHand_Shield".into(),
-                        holster_slot: "Slot_ShieldBack".into(),
-                        offset: Transform::IDENTITY,
-                    });
+                    spec = spec
+                        .with_weapon(WeaponSpec::one_hand_sword(sword))
+                        .with_weapon(WeaponSpec {
+                            mesh: "G3_Armor_Shield_Round_Big_01".into(),
+                            drawn_slot: "Slot_LeftHand_Shield".into(),
+                            holster_slot: "Slot_ShieldBack".into(),
+                            offset: Transform::IDENTITY,
+                        });
                 }
-                Stance::TwoHand => spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_2H_Sword_01")),
-                Stance::Staff => spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_Staff_QuarterStaff_01")),
+                Stance::TwoHand => {
+                    spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_2H_Sword_01"))
+                }
+                Stance::Staff => {
+                    spec = spec.with_weapon(WeaponSpec::one_hand_sword(
+                        "G3_Weapon_Staff_QuarterStaff_01",
+                    ))
+                }
                 _ => {}
             }
             let (col, row) = (i % columns, i / columns);
@@ -296,7 +329,11 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
 /// Human bodies sharing the hero skeleton and plain (non-LOD, non-animated) heads.
 fn crowd_parts(spawner: &mut ActorSpawner) -> (Vec<String>, Vec<String>) {
     let library = &spawner.library;
-    let plain = |n: &str| !n.contains("LOD") && !n.contains("Animated") && !n.contains("Ghost");
+    let plain = |n: &str| {
+        !["LOD", "Animated", "Ghost", "Ancient", "Mummy", "Skeleton"]
+            .iter()
+            .any(|bad| n.contains(bad))
+    };
     let bodies: Vec<String> = library
         .actor_names(|n| n.starts_with("G3_Hero_Body_") && plain(n))
         .into_iter()
@@ -359,12 +396,15 @@ fn crowd_script(time: Res<Time>, mut query: Query<(&CrowdMember, &mut Locomotion
 }
 
 /// Keyboard control of the single hero through the locomotion input.
-fn hero_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut query: Query<&mut LocomotionInput, With<Hero>>,
-) {
+fn hero_keys(keys: Res<ButtonInput<KeyCode>>, mut query: Query<&mut LocomotionInput, With<Hero>>) {
     for mut input in &mut query {
-        let preset = |input: &mut LocomotionInput, speed: f32, strafe: f32, sneak: bool, grounded: bool, up: f32, turn: f32| {
+        let preset = |input: &mut LocomotionInput,
+                      speed: f32,
+                      strafe: f32,
+                      sneak: bool,
+                      grounded: bool,
+                      up: f32,
+                      turn: f32| {
             input.velocity = FORWARD * speed + RIGHT * strafe + Vec3::Y * up;
             input.sneak = sneak;
             input.grounded = grounded;
@@ -397,6 +437,55 @@ fn hero_keys(
             ];
             let at = CYCLE.iter().position(|s| *s == input.stance).unwrap_or(0);
             input.stance = CYCLE[(at + 1) % CYCLE.len()];
+        }
+    }
+}
+
+/// Applies `--overlay <action>` (upper-body layer) and `--speed` to the hero once.
+fn hero_overlay(
+    config: Res<Config>,
+    mut library: ResMut<ActorLibrary>,
+    mut done: Local<bool>,
+    mut query: Query<(&mut Animator, &mut LocomotionInput), With<Hero>>,
+) {
+    if *done {
+        return;
+    }
+    for (mut animator, mut input) in &mut query {
+        *done = true;
+        input.velocity = gothic_animation::locomotion::FORWARD * config.speed;
+        let Some(action) = &config.overlay else {
+            continue;
+        };
+        let query = gothic_animation::names::MotionQuery {
+            pose: Some("Stand"),
+            left: Some("None"),
+            right: Some("None"),
+            pn: Some("P0"),
+            action: Some(action),
+            ..Default::default()
+        };
+        let Some(name) = library
+            .catalog
+            .find(&animator.rig.family, &query)
+            .map(str::to_string)
+        else {
+            eprintln!("no motion for overlay action {action:?}");
+            continue;
+        };
+        let rig = animator.rig.clone();
+        match library.motion(&rig, &name) {
+            Ok(motion) => {
+                eprintln!("overlay {name}");
+                animator.set_overlay(Some(gothic_animation::Overlay {
+                    motion,
+                    time: 0.0,
+                    rate: 1.0,
+                    weight: 1.0,
+                    mask: rig.upper_body_mask().into(),
+                }));
+            }
+            Err(error) => eprintln!("overlay {name}: {error:#}"),
         }
     }
 }
@@ -541,8 +630,7 @@ fn update_title(
         window.title = if config.crowd > 0 {
             format!(
                 "Gothic Reforged | crowd {} | animation {:.0} us/frame",
-                stats.characters,
-                stats.average_micros
+                stats.characters, stats.average_micros
             )
         } else if let Ok((animator, loco)) = query.single() {
             format!(

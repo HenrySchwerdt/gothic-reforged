@@ -69,7 +69,12 @@ impl Rig {
         Self::from_parts(name, names, parent, bind_local)
     }
 
-    pub fn from_parts(name: &str, names: Vec<String>, parent: Vec<u16>, bind_local: Vec<Trs>) -> Self {
+    pub fn from_parts(
+        name: &str,
+        names: Vec<String>,
+        parent: Vec<u16>,
+        bind_local: Vec<Trs>,
+    ) -> Self {
         let n = names.len();
         // Parents-first order by actual depth (file order does not guarantee it).
         let mut depth = vec![0u32; n];
