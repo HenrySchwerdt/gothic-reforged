@@ -21,13 +21,17 @@ use bevy::{
 
 pub mod animator;
 pub mod appearance;
+pub mod attach;
+pub mod blend;
 pub mod clip;
 pub mod library;
 pub mod locomotion;
+pub mod lookat;
 pub mod names;
 pub mod pose;
 pub mod rig;
 pub mod runtime;
+pub mod visual;
 
 pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
 pub use library::{ActorLibrary, AssetStores, Composition};

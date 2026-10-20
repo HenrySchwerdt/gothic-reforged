@@ -67,6 +67,7 @@ fn main() -> anyhow::Result<()> {
                         inventory: gothic_formats::props::records::LookInventory {
                             equipped: n.data.inventory.equipped,
                         },
+                        ..Default::default()
                     },
                     n.data.species,
                 ));

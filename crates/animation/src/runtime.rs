@@ -336,6 +336,37 @@ impl ActorSpawner<'_, '_> {
         Ok(root)
     }
 
+    /// Spawns a static mesh (a loose item, a tool) at `transform`; its parts are children of
+    /// the returned root.
+    pub fn spawn_static(&mut self, mesh: &str, transform: Transform) -> Result<Entity> {
+        let Self {
+            commands,
+            library,
+            meshes,
+            materials,
+            images,
+            bindposes,
+        } = self;
+        let mut stores = AssetStores {
+            meshes,
+            materials,
+            images,
+            bindposes,
+        };
+        let asset = library.static_mesh(mesh, &mut stores)?;
+        let root = commands.spawn((transform, Visibility::default())).id();
+        for m in &asset.meshes {
+            commands.spawn((
+                Mesh3d(m.mesh.clone()),
+                MeshMaterial3d(m.material.clone()),
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(root),
+            ));
+        }
+        Ok(root)
+    }
+
     /// Starts an upper-body overlay motion (blended through the rig's upper-body mask).
     pub fn overlay(
         &mut self,
@@ -383,10 +414,21 @@ pub fn locomotion_system(
         let key = loco.step(input, v, finished);
         if loco.playing != Some(key) {
             if let Some(name) = library.locomotion_motion(&rig.family, key) {
+                // The idle mixer fades a non-idle clip out over 0.5 s, every other mixer uses
+                // the standard fade (E03, FUN_100d9940 / FUN_100d9d80 / FUN_100da480).
+                let old_owner = match loco.playing.map(|k| k.kind) {
+                    Some(MoveKind::Idle) => crate::blend::owner::IDLE,
+                    _ => crate::blend::owner::DIRECTIONAL,
+                };
+                let fade = if loco.config.fade == crate::animator::DEFAULT_FADE {
+                    crate::blend::mixer_fade(key.kind == MoveKind::Idle, old_owner)
+                } else {
+                    loco.config.fade
+                };
                 loco.playing = Some(key);
                 if animator.current_name() != Some(name.as_str()) {
                     match library.motion(&rig, &name) {
-                        Ok(motion) => animator.play(motion, loco.config.fade, 1.0, 0.0),
+                        Ok(motion) => animator.play(motion, fade, 1.0, 0.0),
                         Err(error) => eprintln!("locomotion clip {name}: {error:#}"),
                     }
                 }

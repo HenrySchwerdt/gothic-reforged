@@ -272,6 +272,35 @@ impl ClipBinding {
         }
     }
 
+    /// Lerps the clip over `pose` with `weight`, touching only the slots the clip animates
+    /// (the layer system skips nodes without a track and keeps what is below).
+    #[inline]
+    pub fn blend_into(&self, clip: &Clip, t: f32, weight: f32, pose: &mut [Trs]) {
+        for (slot, p) in pose.iter_mut().enumerate() {
+            let n = self.node_of_slot[slot];
+            if n != NONE {
+                *p = p.blend(clip.nodes[n as usize].sample(t), weight);
+            }
+        }
+    }
+
+    /// Adds the clip's offset from the rig's rest pose on top of `pose`, scaled by `weight`
+    /// (mix flag / blend mode 2).
+    pub fn add_into(&self, clip: &Clip, rest: &[Trs], t: f32, weight: f32, pose: &mut [Trs]) {
+        for (slot, p) in pose.iter_mut().enumerate() {
+            let n = self.node_of_slot[slot];
+            if n == NONE {
+                continue;
+            }
+            let s = clip.nodes[n as usize].sample(t);
+            let r = rest[slot];
+            let delta = Quat::IDENTITY.slerp(s.r * r.r.inverse(), weight);
+            p.t += (s.t - r.t) * weight;
+            p.r = (delta * p.r).normalize();
+            p.s += (s.s - r.s) * weight;
+        }
+    }
+
     /// Root bone pose (model space) at time `t`.
     pub fn root_pose(&self, clip: &Clip, t: f32) -> Option<Trs> {
         (self.root_slot != NONE)
