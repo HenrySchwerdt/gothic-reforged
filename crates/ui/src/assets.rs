@@ -119,7 +119,7 @@ pub fn load_install_assets(
         .unwrap_or_else(|| out.font.clone());
     match PakArchive::open(install.join("Data").join("gui.pak")) {
         Ok(mut pak) => {
-            let mut pages = (9..=17).map(Page::Bg).collect::<Vec<_>>();
+            let mut pages = (2..=2).chain(9..=17).map(Page::Bg).collect::<Vec<_>>();
             pages.extend([Page::Icons, Page::Theme]);
             for p in pages {
                 match read_pak_member(&mut pak, &p.member()).and_then(|b| dds_image(&b)) {

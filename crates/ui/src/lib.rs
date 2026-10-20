@@ -84,6 +84,8 @@ pub enum Screen {
     Inventory,
     Character,
     Trade,
+    /// Full-screen main menu (banner background, entries report [`MenuChoice`]).
+    MainMenu,
 }
 
 // ---- messages: host -> UI ----------------------------------------------------------
@@ -117,6 +119,41 @@ pub struct DialogUpdate {
     pub menu: Vec<Choice>,
     pub open: bool,
 }
+
+/// Modal box shown above everything ([`ShowModal`]); answered with [`ModalAnswer`].
+#[derive(Clone, Debug)]
+pub enum Modal {
+    /// Yes/no box (`tag` is echoed in the answer).
+    Confirm {
+        tag: String,
+        text: String,
+        yes: String,
+        no: String,
+    },
+    /// Tip window with a "do not show again" checkbox and an Ok button.
+    Tip { title: String, text: String },
+}
+#[derive(Message, Clone, Debug)]
+pub struct ShowModal(pub Modal);
+/// Answer of a modal: for `Confirm` `yes` is the chosen button, for `Tip` (tag `"tip"`) it is
+/// the state of the "do not show again" checkbox.
+#[derive(Message, Clone, Debug)]
+pub struct ModalAnswer {
+    pub tag: String,
+    pub yes: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuEntry {
+    NewGame,
+    LoadGame,
+    SaveGame,
+    Options,
+    Credits,
+    Quit,
+}
+/// The player picked an entry of the main menu.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct MenuChoice(pub MenuEntry);
 
 // ---- messages: UI -> host -----------------------------------------------------------
 /// The player picked entry `index` of the current dialog menu.
@@ -205,6 +242,9 @@ pub(crate) enum Action {
     SelectItem(String),
     UseItem(String),
     Trade(String, bool),
+    Menu(MenuEntry),
+    Modal(bool),
+    TipCheck,
 }
 
 #[derive(Message, Clone, Debug)]
@@ -221,6 +261,10 @@ pub struct UiState {
     pub(crate) trade: Option<(String, Vec<(String, u32)>)>,
     pub(crate) scroll: HashMap<&'static str, f32>,
     pub(crate) dirty: bool,
+    pub(crate) modal: Option<Modal>,
+    pub(crate) tip_never: bool,
+    /// Whether "Spiel speichern" is enabled in the main menu.
+    pub menu_can_save: bool,
 }
 
 impl UiState {
@@ -230,7 +274,7 @@ impl UiState {
     }
     /// True while any full screen (not the HUD) is shown.
     pub fn is_open(&self) -> bool {
-        self.screen != Screen::None
+        self.screen != Screen::None || self.modal.is_some()
     }
 }
 
@@ -255,6 +299,9 @@ impl Plugin for GothicUiPlugin {
             .add_message::<DialogEnded>()
             .add_message::<WorldEffect>()
             .add_message::<DialogUpdate>()
+            .add_message::<ShowModal>()
+            .add_message::<ModalAnswer>()
+            .add_message::<MenuChoice>()
             .add_message::<Act>()
             .add_systems(Startup, (logic::setup, hud::spawn_hud).chain())
             .add_systems(

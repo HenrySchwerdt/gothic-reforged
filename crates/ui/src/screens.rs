@@ -60,7 +60,7 @@ pub(crate) fn rebuild(
         ui: &ui,
         vitals: *vitals,
     };
-    if ui.screen == Screen::None {
+    if ui.screen == Screen::None && ui.modal.is_none() {
         return;
     }
     // full-window root; the 1024x768 stage is centred inside it
@@ -86,12 +86,27 @@ pub(crate) fn rebuild(
             })
             .with_children(|p| match ui.screen {
                 Screen::None => {}
+                Screen::MainMenu => main_menu(p, &cx),
                 Screen::Dialog => dialog(p, &cx),
                 Screen::Journal => journal(p, &cx),
                 Screen::Inventory => inventory(p, &cx),
                 Screen::Character => character(p, &cx),
                 Screen::Trade => trade(p, &cx),
             });
+            if let Some(m) = ui.modal.clone() {
+                root.spawn((
+                    GlobalZIndex(30),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        top: px(0),
+                        width: px(1024),
+                        height: px(768),
+                        ..default()
+                    },
+                ))
+                .with_children(|p| modal(p, &cx, &m));
+            }
         });
 }
 
@@ -1026,4 +1041,158 @@ fn trade(p: &mut P, cx: &Cx) {
         BorderColor::all(BORDER),
         children![txt(cx.font(), "Schliessen", 16.0, TEXT)],
     ));
+}
+
+// ---------------------------------------------------------------------------- main menu
+fn menu_button(
+    p: &mut P,
+    cx: &Cx,
+    text: &str,
+    r: (f32, f32, f32, f32),
+    e: MenuEntry,
+    enabled: bool,
+) {
+    let mut n = abs(r.0, r.1, r.2, r.3);
+    n.align_items = AlignItems::Center;
+    n.justify_content = JustifyContent::Center;
+    let col = if enabled { TEXT_HI } else { TEXT_DIM };
+    if enabled {
+        p.spawn((button(Action::Menu(e), Color::NONE, Color::NONE), n))
+            .with_child(txt(cx.font(), text, 19.0, col));
+    } else {
+        p.spawn(n).with_child(txt(cx.font(), text, 19.0, col));
+    }
+}
+
+fn main_menu(p: &mut P, cx: &Cx) {
+    spawn_pic(p, cx.a, MENU_BG, 0.0, 0.0, None);
+    let entries = [
+        ("Neues Spiel", MenuEntry::NewGame, 368.0, true),
+        ("Spiel laden", MenuEntry::LoadGame, 400.0, true),
+        (
+            "Spiel speichern",
+            MenuEntry::SaveGame,
+            432.0,
+            cx.ui.menu_can_save,
+        ),
+        ("Einstellungen", MenuEntry::Options, 464.0, true),
+        ("Mitwirkende", MenuEntry::Credits, 496.0, true),
+        ("Spiel beenden", MenuEntry::Quit, 532.0, true),
+    ];
+    for (t, e, y, on) in entries {
+        menu_button(p, cx, t, (386.0, y, 252.0, 32.0), e, on);
+    }
+}
+
+// ---------------------------------------------------------------------------------- modal
+fn modal_button(p: &mut P, cx: &Cx, text: &str, r: (f32, f32, f32, f32), yes: bool) {
+    let mut n = abs(r.0, r.1, r.2, r.3);
+    n.border = UiRect::all(px(2));
+    n.align_items = AlignItems::Center;
+    n.justify_content = JustifyContent::Center;
+    p.spawn((
+        button(
+            Action::Modal(yes),
+            Color::srgba(0.25, 0.08, 0.05, 0.9),
+            Color::srgba(0.42, 0.14, 0.08, 0.95),
+        ),
+        n,
+        BorderColor::all(BORDER),
+    ))
+    .with_child(txt(cx.font(), text, 19.0, TEXT_HI));
+}
+
+fn modal(p: &mut P, cx: &Cx, m: &Modal) {
+    match m {
+        Modal::Confirm { text, yes, no, .. } => {
+            let (ox, oy) = (271.0, 202.0);
+            spawn_pic(p, cx.a, CONFIRM, ox, oy, None);
+            p.spawn((
+                Node {
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    overflow: Overflow::clip(),
+                    ..abs(ox + 29.0, oy + 12.0, 424.0, 64.0)
+                },
+                children![(
+                    txt_wrap(cx.font(), text.clone(), 17.0, TEXT_HI),
+                    TextLayout::justify(Justify::Center),
+                )],
+            ));
+            modal_button(p, cx, yes, (ox + 64.0, oy + 84.0, 109.0, 37.0), true);
+            modal_button(p, cx, no, (ox + 300.0, oy + 84.0, 109.0, 37.0), false);
+        }
+        Modal::Tip { title, text } => {
+            let (ox, oy) = (287.0, 154.0);
+            // 9-sliced so the 350x279 frame art fits the 450x379 window
+            match cx.a.page(TIP.page) {
+                Some(img) => {
+                    p.spawn((
+                        abs(ox, oy, 450.0, 379.0),
+                        ImageNode {
+                            image: img.clone(),
+                            rect: Some(Rect::new(TIP.x, TIP.y, TIP.x + TIP.w, TIP.y + TIP.h)),
+                            image_mode: NodeImageMode::Sliced(TextureSlicer {
+                                border: BorderRect::all(44.0),
+                                center_scale_mode: SliceScaleMode::Stretch,
+                                sides_scale_mode: SliceScaleMode::Stretch,
+                                max_corner_scale: 1.0,
+                            }),
+                            ..default()
+                        },
+                    ));
+                }
+                None => {
+                    p.spawn((
+                        abs(ox, oy, 450.0, 379.0),
+                        BackgroundColor(Color::srgba(0.2, 0.12, 0.1, 0.95)),
+                    ));
+                }
+            }
+            label(
+                p,
+                &cx.a.heading,
+                title.clone(),
+                (ox + 35.0, oy + 11.0, 380.0, 25.0),
+                22.0,
+                TEXT_HI,
+                Al::Center,
+            );
+            p.spawn((
+                Node {
+                    overflow: Overflow::clip(),
+                    ..abs(ox + 29.0, oy + 70.0, 388.0, 184.0)
+                },
+                children![txt_wrap(cx.font(), text.clone(), 16.0, TEXT)],
+            ));
+            let mut b = abs(ox + 69.0, oy + 296.0, 18.0, 18.0);
+            b.border = UiRect::all(px(2));
+            b.align_items = AlignItems::Center;
+            b.justify_content = JustifyContent::Center;
+            p.spawn((
+                button(
+                    Action::TipCheck,
+                    Color::srgba(0.12, 0.09, 0.07, 0.9),
+                    CELL_HOVER,
+                ),
+                b,
+                BorderColor::all(BORDER),
+            ))
+            .with_child(txt(
+                cx.font(),
+                if cx.ui.tip_never { "x" } else { "" },
+                14.0,
+                TEXT_HI,
+            ));
+            body(
+                p,
+                cx,
+                "Keine Tipps mehr anzeigen",
+                (ox + 94.0, oy + 294.0, 290.0, 22.0),
+                Al::Left,
+                TEXT,
+            );
+            modal_button(p, cx, "Ok", (ox + 165.0, oy + 330.0, 120.0, 32.0), true);
+        }
+    }
 }

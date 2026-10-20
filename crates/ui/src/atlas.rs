@@ -71,3 +71,8 @@ pub const GLYPH_MISC: Pic = ic(452, 250, 26, 19);
 pub const GLYPH_BOOK: Pic = ic(406, 250, 29, 20);
 pub const GLYPH_ANVIL: Pic = ic(318, 247, 24, 22);
 pub const MARK_QUEST: Pic = ic(481, 284, 18, 18);
+
+/// Main-menu banner background (page 02, 1024x768 at the top of the atlas).
+pub const MENU_BG: Pic = bg(2, 0, 0, 1024, 768);
+pub const MEDAL_ON: Pic = ic(131, 203, 39, 39);
+pub const MEDAL_OFF: Pic = ic(459, 203, 39, 39);

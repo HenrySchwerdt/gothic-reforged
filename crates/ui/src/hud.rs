@@ -160,7 +160,7 @@ pub(crate) fn update_hud(
 ) {
     // the full-width dialog / trade panels replace the HUD, every other page keeps it
     for mut v in &mut root {
-        *v = if matches!(ui.screen, Screen::Dialog | Screen::Trade) {
+        *v = if matches!(ui.screen, Screen::Dialog | Screen::Trade | Screen::MainMenu) {
             Visibility::Hidden
         } else {
             Visibility::Inherited

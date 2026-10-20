@@ -60,6 +60,18 @@ pub(crate) fn hotkeys(
     if !cfg.hotkeys {
         return;
     }
+    if ui.modal.is_some() {
+        if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]) {
+            act.write(Act(Action::Modal(true)));
+        }
+        if keys.just_pressed(KeyCode::Escape) {
+            act.write(Act(Action::Modal(false)));
+        }
+        return;
+    }
+    if ui.screen == Screen::MainMenu {
+        return;
+    }
     if ui.screen == Screen::Dialog {
         let n = ui.dialog.as_ref().map_or(0, |d| d.menu.len());
         for (i, k) in DIGITS.iter().enumerate() {
@@ -99,6 +111,8 @@ pub(crate) fn dispatch_actions(
     mut use_item: MessageWriter<UseItem>,
     mut trade: MessageWriter<TradeRequest>,
     mut ended: MessageWriter<DialogEnded>,
+    mut menu: MessageWriter<MenuChoice>,
+    mut answer: MessageWriter<ModalAnswer>,
 ) {
     for Act(a) in acts.read() {
         match a.clone() {
@@ -143,6 +157,29 @@ pub(crate) fn dispatch_actions(
             }
             Action::UseItem(item) => {
                 use_item.write(UseItem { item });
+            }
+            Action::Menu(e) => {
+                menu.write(MenuChoice(e));
+            }
+            Action::TipCheck => {
+                ui.tip_never = !ui.tip_never;
+                ui.dirty = true;
+            }
+            Action::Modal(yes) => {
+                if let Some(m) = ui.modal.take() {
+                    match m {
+                        Modal::Confirm { tag, .. } => {
+                            answer.write(ModalAnswer { tag, yes });
+                        }
+                        Modal::Tip { .. } => {
+                            answer.write(ModalAnswer {
+                                tag: "tip".into(),
+                                yes: ui.tip_never,
+                            });
+                        }
+                    }
+                    ui.dirty = true;
+                }
             }
             Action::Trade(item, buy) => {
                 trade.write(TradeRequest { item, buy });
@@ -295,9 +332,15 @@ pub(crate) fn screens_requests(
     mut open: MessageReader<OpenScreen>,
     mut close: MessageReader<CloseScreen>,
     mut trades: MessageReader<OpenTrade>,
+    mut modals: MessageReader<ShowModal>,
     mut act: MessageWriter<Act>,
     mut ui: ResMut<UiState>,
 ) {
+    for m in modals.read() {
+        ui.modal = Some(m.0.clone());
+        ui.tip_never = false;
+        ui.dirty = true;
+    }
     for t in trades.read() {
         ui.trade = Some((t.npc.clone(), t.stock.clone()));
         ui.set_screen(Screen::Trade);

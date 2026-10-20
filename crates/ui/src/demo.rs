@@ -190,6 +190,7 @@ fn demo_system(
     mut trade: MessageWriter<OpenTrade>,
     mut exit: MessageWriter<AppExit>,
     mut act: MessageWriter<Act>,
+    mut modal: MessageWriter<ShowModal>,
 ) {
     demo.frame += 1;
     let f = demo.frame;
@@ -276,7 +277,33 @@ fn demo_system(
             close.write(CloseScreen);
         }
         270 => shot(&mut commands, "hud"),
-        300 => {
+        275 => {
+            open.write(OpenScreen(Screen::MainMenu));
+        }
+        310 => shot(&mut commands, "menu"),
+        315 => {
+            modal.write(ShowModal(Modal::Confirm {
+                tag: "new".into(),
+                text: "Möchten Sie wirklich ein neues Spiel anfangen?".into(),
+                yes: "Ja".into(),
+                no: "Nein".into(),
+            }));
+        }
+        345 => shot(&mut commands, "confirm"),
+        350 => {
+            close.write(CloseScreen);
+            act.write(Act(Action::Modal(false)));
+        }
+        355 => {
+            modal.write(ShowModal(Modal::Tip {
+                title: "Tipp".into(),
+                text: "Am unteren Bildschirmrand befindet sich die Schnellleiste. Durch Drücken der entsprechenden Nummerntaste wird der jeweilige Gegenstand benutzt oder die Waffe gezogen.
+
+Drücke jetzt die Taste '1', um das Schwert zu ziehen.".into(),
+            }));
+        }
+        385 => shot(&mut commands, "tip"),
+        400 => {
             exit.write(AppExit::Success);
         }
         _ => {}
