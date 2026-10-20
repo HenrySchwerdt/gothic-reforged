@@ -3,6 +3,7 @@
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 mod gmat;
+mod post;
 #[path = "play/mod.rs"]
 mod play;
 
@@ -229,7 +230,7 @@ pub fn run(args: &[String]) -> Result<()> {
             ..default()
         }),
     )
-    .add_plugins(GothicMaterialsPlugin);
+    .add_plugins((GothicMaterialsPlugin, post::PostPlugin));
     if std::env::var_os("GR_PROF").is_some() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
@@ -353,7 +354,8 @@ fn setup(
         NotShadowCaster,
         SkyDome,
     ));
-    commands.spawn((
+    let cam = commands
+        .spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             fov: 70f32.to_radians(),
@@ -374,7 +376,11 @@ fn setup(
             },
         },
         PlayerCamera,
-    ));
+    ))
+        .id();
+    if std::env::var_os("GR_NOBLOOM").is_none() {
+        commands.entity(cam).insert(post::BloomPost::original());
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 24_000.0,

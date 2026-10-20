@@ -93,13 +93,19 @@ fn light_env_raw() -> (Vec4, [Vec4; 4]) {
     let sh0 = Vec3::new(0.30, 0.35, 0.42) * amb_i;
     let sh_y = Vec3::new(0.12, 0.14, 0.20) * amb_i;
     let sh_x = Vec3::new(0.03, 0.02, 0.0) * amb_i;
+    // The environment carries an AmbientBackLightColor next to AmbientGeneralColor (see the
+    // eCWeatherZone_PS properties): light arriving from the side opposite the sun that fills the
+    // shaded half of every object. It enters the 2-band SH as back * (-sun_dir) . n.
+    let s = Quat::from_euler(EulerRot::YXZ, super::SUN_ROT.0, super::SUN_ROT.1, 0.0) * Vec3::Z;
+    let back_i = f("GR_BACK", 0.75);
+    let back = Vec3::new(f("GR_BACKR", 1.0), f("GR_BACKG", 0.92), f("GR_BACKB", 0.80)) * back_i;
     (
         sun,
         [
             sh0.extend(0.0),
-            sh_x.extend(0.0),
-            sh_y.extend(0.0),
-            Vec4::ZERO,
+            (sh_x - back * s.x).extend(0.0),
+            (sh_y - back * s.y).extend(0.0),
+            (-back * s.z).extend(0.0),
         ],
     )
 }

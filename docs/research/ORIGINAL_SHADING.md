@@ -49,3 +49,11 @@ Sun, ambient, fog, sky and haze colours are keyframed per weather/daytime in a w
 ## Implementation here
 
 `apps/game/src/walk/shaders/gothic.wesl` (static, terrain, foliage) and `char.wesl` (characters and props, `StandardMaterial` entities are converted to `CharMaterial` at spawn by `convert_standard`; `GR_NOCHAR=1` disables it) implement the core above: gamma-space albedo (`linear_to_srgb` of the sRGB-decoded sample), SH ambient, `N.L` sun with Bevy's cascaded shadow lookup, full-strength AO, lightmap x4, rim for characters, then `srgb_to_linear` and Bevy's distance fog. Not implemented: per-material specular, point-light pass, bloom/LUT/DOF/vignette, per-daytime keyframes.
+
+## Update 2026-10-20 (night): characters, bloom, environment
+
+* Characters/world ambient: the environment carries `AmbientBackLightColor` besides `AmbientGeneralColor`; modelled as an SH term `back * (-sun_dir) . n` (`gmat.rs::light_env`, `GR_BACK`, calibrated 0.75 against `orig-ardea-start.png`). It lifts the sun-averted side of characters, which have no lightmap and no AO. Characters in the original also receive up to four instance static point lights (`arrInstanceStaticLightData`, not implemented).
+* `vecShadowDensity` (shadow = shadow*x + y) exists in the HLSL; its value is not known, shadows are still full strength.
+* Bloom (`Bloom=1`, High): `walk/post.rs` + `shaders/post.wesl`, gamma-space: mask `c*max(lum-0.59,0)*1.7`, 5x5-tap subset of IP_Blur's Gaussian (tap spacing 2.5 px is a guess; the original blur resolution is unknown), `scene += bloom*(1-scene)`, chroma offset `2.75*lum` pixels (unit guessed). `GR_NOBLOOM=1` disables. Cost about +0.3 ms GPU at 1440p.
+* Colour LUT: `G3_Color_LUT_LDR/HDR.tga` (256x16, in `_compiledImage.pak/_special`) exist, but `ColorGrading` is not enabled in any ge3.INI preset or UserOptions.ini, so it is not applied. Noise also only at VeryHigh. The user's UserOptions.ini is VeryHigh (Bloom=2 HDR, vignette 0.30), so the reference screenshots likely include HDR tone mapping; not implemented.
+* Daytime keyframes (sun/ambient/fog/sky): not present as data in any pak (searched Library/Templates/Projects_compiled/Workspace/Materials/Sound for Environment/DayTime/Weather); only zone overrides in world nodes. Probably hard-coded or in Engine/Game DLL.
