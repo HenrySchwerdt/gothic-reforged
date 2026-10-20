@@ -1168,7 +1168,7 @@ mod tests {
     }
 
     fn orc(c: &SimConfig) -> Actor {
-        let mut o = Actor::npc(ActorId(1), "Orc_01", Species::Orc, 10, 30);
+        let mut o = Actor::npc(ActorId(1), "Orc_01", Species::Orc, 5, 30);
         o.refresh(c);
         o.equipment
             .equip(ItemDef::weapon("It_Axe_Orc_01", "2H", "Blade", 150));

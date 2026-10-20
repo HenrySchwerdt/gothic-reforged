@@ -19,6 +19,7 @@ use crate::enums::{Action, AiMode, Slot, UseType};
 use crate::helpers::{ambient_action_secs, long_work_secs, medium_work_secs};
 use crate::host::{AiCommand, EntityId, Pos, ScriptHost};
 use crate::predicates::{is_ambient_creature, is_gate_guard};
+use crate::routine::follow;
 use crate::routine::select::{
     ambient_action, continue_routine, have_a_break, set_current_destination_point,
 };
@@ -911,6 +912,18 @@ const SMALLTALK_PARTNER: &[Step] = &[
 /// Port of `ZS_Goblin_Smalltalk` (S:92f00): wait out the poll interval, then continue.
 const SMALLTALK_PARTNER_LOOP: &[Step] = &[Custom(smalltalk_partner_end)];
 
+/// Port of `ZS_HealSelf` (S:a6820): stand up, return to routine AI mode, then heal: Mages and
+/// Paladins ready the healing spell and cast it, everyone else drinks a health potion.
+const HEAL_SELF: &[Step] = &[
+    StandUp,
+    Custom(heal_ready),
+    Custom(heal_use),
+    Then(End::Continue),
+];
+/// Port of `ZS_HealSelf_Cast` (S:a6cb0): cast the readied spell on oneself (a power cast with
+/// 20 percent chance), then continue the routine.
+const HEAL_SELF_CAST: &[Step] = &[Custom(heal_cast), Then(End::Continue)];
+
 // ---- ambient / animal / monster ----------------------------------------------------------------------
 
 /// Port of `ZS_Herd` (S:971d0): walk to a grazing or watering spot.
@@ -1079,6 +1092,22 @@ pub fn definition(state: State) -> Option<Def> {
         S::SmalltalkPartner => steps(SMALLTALK_PARTNER),
         S::SmalltalkPartnerLoop => steps(SMALLTALK_PARTNER_LOOP),
         S::RunToAttackPoint => Some(Def::Custom(run_to_attack_point)),
+        S::Dead => steps(crate::down::DEAD),
+        S::DeadLoop => steps(crate::down::DEAD_LOOP),
+        S::Unconscious => steps(crate::down::UNCONSCIOUS),
+        S::UnconsciousLoop => steps(crate::down::UNCONSCIOUS_LOOP),
+        S::UnconsciousEnd => steps(crate::down::UNCONSCIOUS_END),
+        S::FollowPlayer => steps(follow::FOLLOW_PLAYER),
+        S::FollowPlayerLoop => steps(follow::FOLLOW_PLAYER_LOOP),
+        S::WaitForPlayer => steps(follow::WAIT_FOR_PLAYER),
+        S::WaitForPlayerLoop => steps(follow::WAIT_FOR_PLAYER_LOOP),
+        S::GuidePlayer => steps(follow::GUIDE_PLAYER),
+        S::GuidePlayerLoop => steps(follow::GUIDE_PLAYER_LOOP),
+        S::GuidePlayerWait => steps(follow::GUIDE_PLAYER_WAIT),
+        S::FollowNpc => steps(follow::FOLLOW_NPC),
+        S::FollowNpcLoop => steps(follow::FOLLOW_NPC_LOOP),
+        S::HealSelf => steps(HEAL_SELF),
+        S::HealSelfCast => steps(HEAL_SELF_CAST),
         S::Herd => steps(HERD),
         S::HerdDrinkWater => steps(HERD_DRINK_WATER),
         S::HerdEatGround => steps(HERD_EAT_GROUND),
@@ -1709,6 +1738,50 @@ fn ambient_sleep_wake(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
         return Out::Leave;
     }
     Out::Abort
+}
+
+fn is_spellcaster(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    matches!(
+        host.npc_class(npc),
+        crate::enums::NpcClass::Mage | crate::enums::NpcClass::Paladin
+    )
+}
+
+/// `ZS_HealSelf` step: reset the AI mode; casters take the healing spell in hand.
+fn heal_ready(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    host.set_ai_mode(npc, AiMode::Routine);
+    if is_spellcaster(host, npc) {
+        return queue(
+            host,
+            npc,
+            AiCommand::HoldItems {
+                right: "It_Spell_Healing",
+                left: "",
+            },
+        );
+    }
+    Out::Next
+}
+
+/// `ZS_HealSelf` step: a caster holding a ready spell switches to the cast state, anyone else
+/// drinks the potion.
+fn heal_use(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    use crate::helpers::{WeaponMode, weapon_mode};
+    let ready = weapon_mode(
+        host.slot_use_type(npc, Slot::LeftHand),
+        host.slot_use_type(npc, Slot::RightHand),
+    ) == WeaponMode::Magic;
+    if is_spellcaster(host, npc) && ready {
+        host.set_current_target(npc, npc);
+        host.set_state(npc, State::HealSelfCast);
+        return Out::Leave;
+    }
+    queue(host, npc, AiCommand::UseItem("It_Potion_Health"))
+}
+
+fn heal_cast(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    let power = host.random(100) < 20;
+    queue(host, npc, AiCommand::Cast { power })
 }
 
 /// First step of `ZS_AnimalSleep` (S:898c0): no sleeping point means an ordinary ambient creature.
@@ -2373,6 +2446,51 @@ mod tests {
         w.set_task_directly(wolf, State::AnimalSleep);
         run_state(&mut w, wolf);
         assert_eq!(w.current_task(wolf), Some(State::Ambient));
+    }
+
+    #[test]
+    fn heal_self_by_potion_or_spell() {
+        let mut w = TestWorld::new();
+        let man = w.spawn_npc("Man", Species::Human, 10, 10);
+        w.set_ai_mode(man, AiMode::Combat);
+        w.set_task_directly(man, State::HealSelf);
+        let cmds = drive(&mut w, man, 8);
+        assert_eq!(cmds[0], AiCommand::StandUp);
+        assert!(cmds.contains(&AiCommand::UseItem("It_Potion_Health")));
+        assert_eq!(w.ai_mode(man), AiMode::Routine);
+        assert_ne!(w.current_state(man), Some(State::HealSelf));
+        // A mage without the spell in hand drinks too; with it, he casts.
+        let mage = w.spawn_npc("Mage", Species::Human, 10, 10);
+        w.set_class(mage, crate::enums::NpcClass::Mage);
+        w.set_task_directly(mage, State::HealSelf);
+        let cmds = drive(&mut w, mage, 8);
+        assert!(cmds.contains(&AiCommand::HoldItems {
+            right: "It_Spell_Healing",
+            left: ""
+        }));
+        let mage2 = w.spawn_npc("Mage2", Species::Human, 10, 10);
+        w.set_class(mage2, crate::enums::NpcClass::Paladin);
+        w.set_slot(mage2, Slot::RightHand, UseType::Cast, 1);
+        w.set_task_directly(mage2, State::HealSelf);
+        for _ in 0..3 {
+            run_state(&mut w, mage2);
+            w.finish_commands(mage2);
+        }
+        assert_eq!(w.current_state(mage2), Some(State::HealSelfCast));
+        assert_eq!(w.current_target(mage2), mage2);
+        w.rolls = vec![19];
+        run_state(&mut w, mage2);
+        assert_eq!(
+            w.finish_commands(mage2),
+            vec![AiCommand::Cast { power: true }]
+        );
+        w.set_task_directly(mage2, State::HealSelfCast);
+        w.rolls = vec![20];
+        run_state(&mut w, mage2);
+        assert_eq!(
+            w.finish_commands(mage2),
+            vec![AiCommand::Cast { power: false }]
+        );
     }
 
     #[test]

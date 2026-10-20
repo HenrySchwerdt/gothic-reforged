@@ -67,9 +67,22 @@ impl Difficulty {
 }
 
 /// Named behaviour switches that are *not* shipped-INI values. All default to the shipped game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Variants {
     /// The script's debug byte (`DAT_10118aaa` in the DLL): when set every routine action lasts
     /// 10 s instead of its randomised duration. Off in the shipped game.
     pub fast_routines: bool,
+    /// `CurrentLevel` adds the raw `Level` property to the difficulty-adjusted `GetLevel` before
+    /// capping at `LevelMax` (the reading of the decompiled S:36b40; PORT_NOTES 8.2). Turn off
+    /// for `min(GetLevel, LevelMax)`.
+    pub current_level_adds_raw: bool,
+}
+
+impl Default for Variants {
+    fn default() -> Self {
+        Self {
+            fast_routines: false,
+            current_level_adds_raw: true,
+        }
+    }
 }

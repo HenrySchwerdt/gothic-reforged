@@ -54,7 +54,12 @@ pub fn current_level(host: &dyn ScriptHost, e: EntityId) -> u32 {
         let avg = (host.level_max_raw(e) + host.level_raw(e)) >> 1;
         return avg.max(1);
     }
-    (level(host, e) + host.level_raw(e)).min(level_max(host, e))
+    let raw = if host.variants().current_level_adds_raw {
+        host.level_raw(e)
+    } else {
+        0
+    };
+    (level(host, e) + raw).min(level_max(host, e))
 }
 
 /// Port of `GetDiffToPlayerLevel` (S:36eb0): `CurrentLevel(npc) - player level`, 0 for the player.

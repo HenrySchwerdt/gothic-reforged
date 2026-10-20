@@ -579,6 +579,20 @@ engine_enum! {
 }
 
 engine_enum! {
+    /// `gEDamageType`.
+    DamageType {
+        None = 0,
+        Impact = 1,
+        Blade = 2,
+        Missile = 3,
+        Fire = 4,
+        Ice = 5,
+        Lightning = 6,
+        Physics = 7,
+    }
+}
+
+engine_enum! {
     /// `gEAttitude`: how one entity regards another.
     Attitude {
         None = 0,

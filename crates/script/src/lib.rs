@@ -14,10 +14,15 @@
 //! are relative virtual addresses in the original DLL. No decompiled code is included: the
 //! behaviour was re-derived and re-expressed as data tables and explicit state machines.
 
+pub mod attitude;
 pub mod config;
+pub mod crime;
+pub mod damage;
+pub mod down;
 pub mod enums;
 pub mod helpers;
 pub mod host;
+pub mod perception;
 pub mod predicates;
 pub mod routine;
 pub mod stats;

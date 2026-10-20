@@ -10,12 +10,12 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use crate::config::{Difficulty, EngineSetup, Variants};
 use crate::enums::{
     Action, AiMode, Alignment, AnchorType, AniState, AttackReason, Attitude, EnclaveStatus,
-    GuardStatus, LastFight, NpcClass, NpcType, PartyMemberType, SecurityLevel, Slot, Species,
-    SpellDeity, UseType,
+    GuardStatus, LastFight, NpcClass, NpcType, PartyMemberType, PlayerCrime, SecurityLevel, Slot,
+    Species, SpellDeity, UseType,
 };
 use crate::host::{
     AiCommand, Attribute, EntityApi, EntityId, InventoryApi, NpcApi, Pool, Pos, Protection,
-    ScriptCtx, StatsApi,
+    ScriptCtx, StatsApi, WorldApi,
 };
 use crate::routine::state::{Callback, State};
 use crate::routine::time::RoutineTime;
@@ -85,6 +85,21 @@ struct TestNpc {
     dr: HashMap<Pool, (i32, i32)>,
     use_objects: HashMap<UseType, EntityId>,
     revolution: Attitude,
+    last_crime: PlayerCrime,
+    cur_attacker: EntityId,
+    last_attacker: EntityId,
+    action: Action,
+    state_position: u32,
+    defeated: bool,
+    immortal: bool,
+    damage_amount: i32,
+    pose: u32,
+    mob_enabled: bool,
+    task_time: f32,
+    alt_target: EntityId,
+    routine: String,
+    quality: HashMap<Slot, (u32, String)>,
+    combat_state: u32,
     time_stamp_transformed: u32,
     pending: VecDeque<AiCommand>,
 }
@@ -108,10 +123,22 @@ struct TestAnchor {
 
 #[derive(Debug, Clone)]
 struct TestEnclave {
+    name: String,
     alignment: Alignment,
     status: EnclaveStatus,
     switched: bool,
     player_fame: i32,
+    known_crime: PlayerCrime,
+    crime_counts: HashMap<PlayerCrime, i32>,
+    raid: bool,
+    revolution: bool,
+    members: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone)]
+struct TestItem {
+    name: String,
+    dropped: bool,
 }
 
 /// The in-memory world.
@@ -124,6 +151,14 @@ pub struct TestWorld {
     anchors: BTreeMap<EntityId, TestAnchor>,
     enclaves: BTreeMap<EntityId, TestEnclave>,
     zones: BTreeMap<EntityId, (EntityId, SecurityLevel)>,
+    zone_names: BTreeMap<EntityId, String>,
+    entity_zone: HashMap<EntityId, EntityId>,
+    outdoor_zones: HashSet<EntityId>,
+    items_by_id: BTreeMap<EntityId, TestItem>,
+    distances: HashMap<(EntityId, EntityId), f32>,
+    game_events: HashSet<String>,
+    political_crime_counts: HashMap<Alignment, i32>,
+    wanted: HashSet<Alignment>,
     roaming: HashMap<String, Vec<EntityId>>,
     political_fame: HashMap<Alignment, i32>,
     smalltalk_partner: EntityId,
@@ -152,6 +187,32 @@ pub struct TestWorld {
     pub in_range: bool,
     /// The dialog page is open with the NPC as partner.
     pub in_dialog: bool,
+    /// A GUI page is open.
+    pub gui_open: bool,
+    /// Number of `StopAIGoto` calls.
+    pub stopped_goto: u32,
+    /// Slots whose items were dropped.
+    pub dropped: Vec<Slot>,
+    /// `(victim, killed)` per `OnNPCKilled`/`OnNPCDefeated`.
+    pub felled: Vec<(EntityId, bool)>,
+    /// Entities whose inventory was emptied.
+    pub stacks_deleted: Vec<EntityId>,
+    /// Entities that got plunder generated.
+    pub plundered: Vec<EntityId>,
+    /// Everybody swims.
+    pub swimming: bool,
+    /// Player XP.
+    pub xp: i64,
+    /// Learning points handed out.
+    pub learning_points: i32,
+    /// Chest armor modifier returned for every protection.
+    pub armor_modifier: i32,
+    /// Everything is in everybody's field of view.
+    pub fov: bool,
+    /// Every line of sight is free.
+    pub los: bool,
+    /// Entities stand still.
+    pub standing: bool,
     /// An arena fight is running.
     pub arena: bool,
     /// Creatures stand in water.
@@ -185,6 +246,14 @@ impl TestWorld {
             anchors: BTreeMap::new(),
             enclaves: BTreeMap::new(),
             zones: BTreeMap::new(),
+            zone_names: BTreeMap::new(),
+            entity_zone: HashMap::new(),
+            outdoor_zones: HashSet::new(),
+            items_by_id: BTreeMap::new(),
+            distances: HashMap::new(),
+            game_events: HashSet::new(),
+            political_crime_counts: HashMap::new(),
+            wanted: HashSet::new(),
             roaming: HashMap::new(),
             political_fame: HashMap::new(),
             smalltalk_partner: EntityId::NONE,
@@ -201,6 +270,19 @@ impl TestWorld {
             chapter: 1,
             in_range: true,
             in_dialog: false,
+            gui_open: false,
+            stopped_goto: 0,
+            dropped: Vec::new(),
+            felled: Vec::new(),
+            stacks_deleted: Vec::new(),
+            plundered: Vec::new(),
+            swimming: false,
+            xp: 0,
+            learning_points: 0,
+            armor_modifier: 0,
+            fov: true,
+            los: true,
+            standing: false,
             arena: false,
             in_water: false,
             has_speech: false,
@@ -292,6 +374,21 @@ impl TestWorld {
                 dr,
                 use_objects: HashMap::new(),
                 revolution: Attitude::None,
+                last_crime: PlayerCrime::None,
+                cur_attacker: EntityId::NONE,
+                last_attacker: EntityId::NONE,
+                action: Action::None,
+                state_position: 0,
+                defeated: false,
+                immortal: false,
+                damage_amount: 0,
+                pose: 0,
+                mob_enabled: false,
+                task_time: 0.0,
+                alt_target: EntityId::NONE,
+                routine: String::new(),
+                quality: HashMap::new(),
+                combat_state: 0,
                 time_stamp_transformed: 0,
                 pending: VecDeque::new(),
             },
@@ -339,10 +436,16 @@ impl TestWorld {
         self.enclaves.insert(
             id,
             TestEnclave {
+                name: String::new(),
                 alignment,
                 status: EnclaveStatus::Routine,
                 switched: false,
                 player_fame: 100,
+                known_crime: PlayerCrime::None,
+                crime_counts: HashMap::new(),
+                raid: false,
+                revolution: false,
+                members: Vec::new(),
             },
         );
         id
@@ -422,6 +525,90 @@ impl TestWorld {
         }
     }
 
+    /// Name an enclave.
+    pub fn set_enclave_name(&mut self, enclave: EntityId, name: &str) {
+        if let Some(x) = self.enclaves.get_mut(&enclave) {
+            x.name = name.into();
+        }
+    }
+
+    /// Add an NPC to the member list of an enclave.
+    pub fn add_member(&mut self, enclave: EntityId, npc: EntityId) {
+        if let Some(x) = self.enclaves.get_mut(&enclave) {
+            x.members.push(npc);
+        }
+    }
+
+    /// Create an item entity (a thing lying around, not an inventory entry).
+    pub fn add_item(&mut self, name: &str) -> EntityId {
+        let id = self.alloc();
+        self.items_by_id.insert(
+            id,
+            TestItem {
+                name: name.into(),
+                dropped: false,
+            },
+        );
+        id
+    }
+
+    /// Mark an item entity as dropped by someone.
+    pub fn set_item_dropped(&mut self, item: EntityId, v: bool) {
+        if let Some(i) = self.items_by_id.get_mut(&item) {
+            i.dropped = v;
+        }
+    }
+
+    /// Create a zone entity with a name.
+    pub fn add_named_zone(&mut self, name: &str) -> EntityId {
+        let id = self.alloc();
+        self.zone_names.insert(id, name.into());
+        id
+    }
+
+    /// Mark a zone as outdoors.
+    pub fn set_zone_outdoor(&mut self, zone: EntityId, v: bool) {
+        if v {
+            self.outdoor_zones.insert(zone);
+        } else {
+            self.outdoor_zones.remove(&zone);
+        }
+    }
+
+    /// Set the distance between two entities (symmetric).
+    pub fn set_distance(&mut self, a: EntityId, b: EntityId, d: f32) {
+        self.distances.insert((a, b), d);
+        self.distances.insert((b, a), d);
+    }
+
+    /// Raise a game event flag.
+    pub fn set_game_event(&mut self, name: &str) {
+        self.game_events.insert(name.into());
+    }
+
+    /// Mark the player as wanted by a faction.
+    pub fn set_political_player_crime(&mut self, a: Alignment, v: bool) {
+        if v {
+            self.wanted.insert(a);
+        } else {
+            self.wanted.remove(&a);
+        }
+    }
+
+    /// Set the body pose.
+    pub fn set_ani_state(&mut self, e: EntityId, a: AniState) {
+        if let Some(n) = self.npc_mut(e) {
+            n.ani_state = a;
+        }
+    }
+
+    /// Set `TimeStampTransformed` directly.
+    pub fn set_time_stamp_transformed_value(&mut self, e: EntityId, t: u32) {
+        if let Some(n) = self.npc_mut(e) {
+            n.time_stamp_transformed = t;
+        }
+    }
+
     /// Set the enclave status.
     pub fn set_enclave_status(&mut self, enclave: EntityId, s: EnclaveStatus) {
         if let Some(x) = self.enclaves.get_mut(&enclave) {
@@ -479,6 +666,7 @@ impl TestWorld {
 
     /// Put an entity in a zone.
     pub fn set_zone_of(&mut self, e: EntityId, zone: EntityId) {
+        self.entity_zone.insert(e, zone);
         if let Some(n) = self.npc_mut(e) {
             n.zone = zone;
         }
@@ -563,6 +751,62 @@ impl TestWorld {
         if let Some(n) = self.npc_mut(e) {
             n.revolution = a;
         }
+    }
+
+    /// Set the status-effect mask.
+    /// Set the task time directly.
+    pub fn set_task_time_value(&mut self, e: EntityId, t: f32) {
+        if let Some(n) = self.npc_mut(e) {
+            n.task_time = t;
+        }
+    }
+
+    /// The alternative target.
+    pub fn alternative_target(&self, e: EntityId) -> EntityId {
+        self.npc(e).map_or(EntityId::NONE, |n| n.alt_target)
+    }
+
+    /// The routine name last set.
+    pub fn routine_of(&self, e: EntityId) -> String {
+        self.npc(e).map(|n| n.routine.clone()).unwrap_or_default()
+    }
+
+    /// `PSDialog.MobEnabled`.
+    pub fn set_dialog_mob(&mut self, e: EntityId, v: bool) {
+        if let Some(n) = self.npc_mut(e) {
+            n.mob_enabled = v;
+        }
+    }
+
+    /// Force an NPC's current action.
+    pub fn set_current_action_direct(&mut self, e: EntityId, a: Action) {
+        if let Some(n) = self.npc_mut(e) {
+            n.action = a;
+        }
+    }
+
+    /// `PSDamageReceiver.DamageAmount` as last written.
+    pub fn damage_amount(&self, e: EntityId) -> i32 {
+        self.npc(e).map_or(0, |n| n.damage_amount)
+    }
+
+    /// Mark an NPC as essential.
+    pub fn set_immortal(&mut self, e: EntityId, v: bool) {
+        if let Some(n) = self.npc_mut(e) {
+            n.immortal = v;
+        }
+    }
+
+    /// Set the primary pose (1 or 2 while holding weapons).
+    pub fn set_primary_pose(&mut self, e: EntityId, pose: u32) {
+        if let Some(n) = self.npc_mut(e) {
+            n.pose = pose;
+        }
+    }
+
+    /// Set the player's XP.
+    pub fn set_player_xp(&mut self, xp: i64) {
+        self.xp = xp;
     }
 
     /// Set the status-effect mask.
@@ -694,13 +938,21 @@ impl EntityApi for TestWorld {
             && (self.npcs.contains_key(&e)
                 || self.points.contains_key(&e)
                 || self.anchors.contains_key(&e)
-                || self.enclaves.contains_key(&e))
+                || self.enclaves.contains_key(&e)
+                || self.items_by_id.contains_key(&e)
+                || self.zone_names.contains_key(&e))
     }
     fn name(&self, e: EntityId) -> String {
         if let Some(n) = self.npc(e) {
             n.name.clone()
         } else if let Some(a) = self.anchors.get(&e) {
             a.name.clone()
+        } else if let Some(i) = self.items_by_id.get(&e) {
+            i.name.clone()
+        } else if let Some(z) = self.zone_names.get(&e) {
+            z.clone()
+        } else if let Some(x) = self.enclaves.get(&e) {
+            x.name.clone()
         } else {
             String::new()
         }
@@ -709,7 +961,11 @@ impl EntityApi for TestWorld {
         self.npc(e).map_or(Pos::default(), |n| n.pos)
     }
     fn zone(&self, e: EntityId) -> EntityId {
-        self.npc(e).map_or(EntityId::NONE, |n| n.zone)
+        self.entity_zone
+            .get(&e)
+            .copied()
+            .or_else(|| self.npc(e).map(|n| n.zone))
+            .unwrap_or(EntityId::NONE)
     }
     fn zone_owner(&self, zone: EntityId) -> EntityId {
         self.zones.get(&zone).map_or(EntityId::NONE, |z| z.0)
@@ -718,7 +974,7 @@ impl EntityApi for TestWorld {
         self.zones.get(&zone).map_or(SecurityLevel::None, |z| z.1)
     }
     fn is_in_fov(&self, _observer: EntityId, _target: EntityId) -> bool {
-        true
+        self.fov
     }
     fn is_sprinting(&self, _e: EntityId) -> bool {
         self.player_sprinting
@@ -818,13 +1074,134 @@ impl NpcApi for TestWorld {
     fn enclave(&self, npc: EntityId) -> EntityId {
         self.npc(npc).map_or(EntityId::NONE, |n| n.enclave)
     }
+    fn time_stamp_transformed(&self, npc: EntityId) -> u32 {
+        self.npc(npc).map_or(0, |n| n.time_stamp_transformed)
+    }
+    fn set_attack_reason(&mut self, npc: EntityId, reason: AttackReason) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.attack_reason = reason;
+        }
+    }
+    fn set_last_player_attack_reason(&mut self, npc: EntityId, reason: AttackReason) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.last_player_ar = reason;
+        }
+    }
+    fn set_last_fight_vs_player(&mut self, npc: EntityId, result: LastFight) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.last_fight = result;
+        }
+    }
+    fn last_player_crime(&self, npc: EntityId) -> PlayerCrime {
+        self.npc(npc).map_or(PlayerCrime::None, |n| n.last_crime)
+    }
+    fn set_last_player_crime(&mut self, npc: EntityId, crime: PlayerCrime) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.last_crime = crime;
+        }
+    }
+    fn set_alignment(&mut self, npc: EntityId, alignment: Alignment) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.alignment = alignment;
+        }
+    }
+    fn combat_state(&self, npc: EntityId) -> u32 {
+        self.npc(npc).map_or(0, |n| n.combat_state)
+    }
+    fn set_combat_state(&mut self, npc: EntityId, state: u32) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.combat_state = state;
+        }
+    }
+    fn stop_ai_goto(&mut self, _npc: EntityId) {
+        self.stopped_goto += 1;
+    }
+    fn task_time(&self, npc: EntityId) -> f32 {
+        self.npc(npc).map_or(0.0, |n| n.task_time)
+    }
+    fn set_task_time(&mut self, npc: EntityId, t: f32) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.task_time = t;
+        }
+    }
+    fn set_ani_state(&mut self, npc: EntityId, state: AniState) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.ani_state = state;
+        }
+    }
+    fn set_alternative_target(&mut self, npc: EntityId, target: EntityId) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.alt_target = target;
+        }
+    }
+    fn set_collision_group(&mut self, _npc: EntityId, _group: u32) {}
+    fn set_can_be_pushed(&mut self, _npc: EntityId, _v: bool) {}
+    fn reset_character(&mut self, _npc: EntityId) {}
+    fn set_routine_name(&mut self, npc: EntityId, routine: &str) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.routine = routine.into();
+        }
+    }
+    fn dialog_mob_enabled(&self, npc: EntityId) -> bool {
+        self.npc(npc).is_some_and(|n| n.mob_enabled)
+    }
+    fn current_attacker(&self, npc: EntityId) -> EntityId {
+        self.npc(npc).map_or(EntityId::NONE, |n| n.cur_attacker)
+    }
+    fn set_current_attacker(&mut self, npc: EntityId, attacker: EntityId) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.cur_attacker = attacker;
+        }
+    }
+    fn last_attacker(&self, npc: EntityId) -> EntityId {
+        self.npc(npc).map_or(EntityId::NONE, |n| n.last_attacker)
+    }
+    fn set_last_attacker(&mut self, npc: EntityId, attacker: EntityId) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.last_attacker = attacker;
+        }
+    }
+    fn set_last_hit_timestamp(&mut self, _npc: EntityId, _t: u32) {}
+    fn set_current_action(&mut self, npc: EntityId, action: Action) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.action = action;
+        }
+    }
+    fn state_position(&self, npc: EntityId) -> u32 {
+        self.npc(npc).map_or(0, |n| n.state_position)
+    }
+    fn defeated_by_player(&self, npc: EntityId) -> bool {
+        self.npc(npc).is_some_and(|n| n.defeated)
+    }
+    fn set_defeated_by_player(&mut self, npc: EntityId, v: bool) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.defeated = v;
+        }
+    }
+    fn is_immortal(&self, npc: EntityId) -> bool {
+        self.npc(npc).is_some_and(|n| n.immortal)
+    }
+    fn set_status_bits(&mut self, npc: EntityId, mask: u32, on: bool) {
+        if let Some(n) = self.npc_mut(npc) {
+            if on {
+                n.status |= mask;
+            } else {
+                n.status &= !mask;
+            }
+        }
+    }
+    fn set_damage_amount(&mut self, npc: EntityId, amount: i32) {
+        if let Some(n) = self.npc_mut(npc) {
+            n.damage_amount = amount;
+        }
+    }
     fn set_time_stamp_transformed(&mut self, npc: EntityId, t: u32) {
         if let Some(n) = self.npc_mut(npc) {
             n.time_stamp_transformed = t;
         }
     }
-    fn primary_pose(&self, _npc: EntityId) -> u32 {
-        0
+    fn primary_pose(&self, npc: EntityId) -> u32 {
+        self.npc(npc).map_or(0, |n| n.pose)
     }
     fn arena_active(&self, _npc: EntityId) -> bool {
         self.arena
@@ -838,7 +1215,7 @@ impl NpcApi for TestWorld {
     fn find_smalltalk_partner(&self, _npc: EntityId) -> EntityId {
         self.smalltalk_partner
     }
-    fn revolution_attitude(&self, npc: EntityId) -> Attitude {
+    fn revolution_attitude(&self, npc: EntityId, _other: EntityId) -> Attitude {
         self.npc(npc).map_or(Attitude::None, |n| n.revolution)
     }
     fn enclave_status(&self, enclave: EntityId) -> EnclaveStatus {
@@ -865,8 +1242,8 @@ impl NpcApi for TestWorld {
     fn ani_state(&self, npc: EntityId) -> AniState {
         self.npc(npc).map_or(AniState::Stand, |n| n.ani_state)
     }
-    fn current_action(&self, _npc: EntityId) -> Action {
-        Action::None
+    fn current_action(&self, npc: EntityId) -> Action {
+        self.npc(npc).map_or(Action::None, |n| n.action)
     }
     fn current_task(&self, npc: EntityId) -> Option<State> {
         self.npc(npc).and_then(|n| n.task)
@@ -1082,6 +1459,19 @@ impl InventoryApi for TestWorld {
             -1
         }
     }
+    fn hold_stacks(&mut self, _e: EntityId, _right: i32, _left: i32) {}
+    fn drop_slot(&mut self, e: EntityId, slot: Slot) {
+        self.dropped.push(slot);
+        if let Some(n) = self.npc_mut(e) {
+            n.slots.remove(&slot);
+        }
+    }
+    fn delete_unequipped_stacks(&mut self, e: EntityId) {
+        self.stacks_deleted.push(e);
+    }
+    fn generate_plunder(&mut self, e: EntityId) {
+        self.plundered.push(e);
+    }
     fn unequip_stack(&mut self, _e: EntityId, stack: i32) {
         if stack >= 0 {
             self.unequipped.push(stack);
@@ -1102,6 +1492,23 @@ impl InventoryApi for TestWorld {
         self.npc(e)
             .and_then(|n| n.slots.get(&slot))
             .map_or(0, |s| s.category)
+    }
+    fn slot_item_quality(&self, e: EntityId, slot: Slot) -> u32 {
+        self.npc(e)
+            .and_then(|n| n.quality.get(&slot))
+            .map_or(0, |q| q.0)
+    }
+    fn slot_item_name(&self, e: EntityId, slot: Slot) -> String {
+        self.npc(e)
+            .and_then(|n| n.quality.get(&slot))
+            .map(|q| q.1.clone())
+            .unwrap_or_default()
+    }
+    fn chest_is_robe(&self, e: EntityId) -> bool {
+        self.npc(e).is_some_and(|n| n.skills.contains("__robe"))
+    }
+    fn chest_protection_modifier(&self, _e: EntityId, _p: Protection) -> i32 {
+        self.armor_modifier
     }
     fn slot_spell_name(&self, e: EntityId, slot: Slot) -> String {
         self.npc(e)
@@ -1166,6 +1573,22 @@ impl StatsApi for TestWorld {
     fn enclave_player_fame(&self, enclave: EntityId) -> i32 {
         self.enclaves.get(&enclave).map_or(0, |e| e.player_fame)
     }
+    fn player_xp(&self) -> i64 {
+        self.xp
+    }
+    fn set_player_xp(&mut self, xp: i64) {
+        self.xp = xp;
+    }
+    fn set_player_level(&mut self, level: u32) {
+        let p = self.player;
+        if let Some(n) = self.npc_mut(p) {
+            n.level = level;
+            n.level_max = n.level_max.max(level);
+        }
+    }
+    fn add_learning_points(&mut self, n: i32) {
+        self.learning_points += n;
+    }
     fn player_level(&self) -> u32 {
         self.npc(self.player).map_or(1, |n| n.level)
     }
@@ -1187,5 +1610,128 @@ impl StatsApi for TestWorld {
         if let Some(n) = self.npc_mut(e) {
             n.dr.entry(pool).or_insert((0, 0)).1 = v;
         }
+    }
+}
+
+impl WorldApi for TestWorld {
+    fn all_npcs(&self) -> Vec<EntityId> {
+        self.npcs
+            .iter()
+            .filter(|(_, n)| !n.is_player)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+    fn distance(&self, a: EntityId, b: EntityId) -> f32 {
+        self.distances.get(&(a, b)).copied().unwrap_or(0.0)
+    }
+    fn has_free_los(&self, _a: EntityId, _b: EntityId) -> bool {
+        self.los
+    }
+    fn zone_is_outdoor(&self, zone: EntityId) -> bool {
+        self.outdoor_zones.contains(&zone)
+    }
+    fn is_standing(&self, _e: EntityId) -> bool {
+        self.standing
+    }
+    fn quest_open(&self, _name: &str) -> bool {
+        false
+    }
+    fn game_event_set(&self, name: &str) -> bool {
+        self.game_events.contains(name)
+    }
+    fn quest_succeeded(&self, _name: &str) -> bool {
+        false
+    }
+    fn item_is_dropped(&self, item: EntityId) -> bool {
+        self.items_by_id.get(&item).is_some_and(|i| i.dropped)
+    }
+    fn enclave_known_crime(&self, enclave: EntityId) -> PlayerCrime {
+        self.enclaves
+            .get(&enclave)
+            .map_or(PlayerCrime::None, |e| e.known_crime)
+    }
+    fn set_enclave_known_crime(&mut self, enclave: EntityId, crime: PlayerCrime) {
+        if let Some(e) = self.enclaves.get_mut(&enclave) {
+            e.known_crime = crime;
+        }
+    }
+    fn set_enclave_player_fame(&mut self, enclave: EntityId, fame: i32) {
+        if let Some(e) = self.enclaves.get_mut(&enclave) {
+            e.player_fame = fame;
+        }
+    }
+    fn enclave_crime_count(&self, enclave: EntityId, crime: PlayerCrime) -> i32 {
+        self.enclaves
+            .get(&enclave)
+            .and_then(|e| e.crime_counts.get(&crime))
+            .copied()
+            .unwrap_or(0)
+    }
+    fn set_enclave_crime_count(&mut self, enclave: EntityId, crime: PlayerCrime, n: i32) {
+        if let Some(e) = self.enclaves.get_mut(&enclave) {
+            e.crime_counts.insert(crime, n);
+        }
+    }
+    fn clear_enclave_suspect_comment(&mut self, _enclave: EntityId, _crime: PlayerCrime) {}
+    fn enclave_raid(&self, enclave: EntityId) -> bool {
+        self.enclaves.get(&enclave).is_some_and(|e| e.raid)
+    }
+    fn set_enclave_raid(&mut self, enclave: EntityId, v: bool) {
+        if let Some(e) = self.enclaves.get_mut(&enclave) {
+            e.raid = v;
+        }
+    }
+    fn enclave_revolution(&self, enclave: EntityId) -> bool {
+        self.enclaves.get(&enclave).is_some_and(|e| e.revolution)
+    }
+    fn set_enclave_revolution(&mut self, enclave: EntityId, v: bool) {
+        if let Some(e) = self.enclaves.get_mut(&enclave) {
+            e.revolution = v;
+        }
+    }
+    fn set_enclave_status_raw(&mut self, enclave: EntityId, status: EnclaveStatus) {
+        if let Some(e) = self.enclaves.get_mut(&enclave) {
+            e.status = status;
+        }
+    }
+    fn enclave_members(&self, enclave: EntityId) -> Vec<EntityId> {
+        self.enclaves
+            .get(&enclave)
+            .map(|e| e.members.clone())
+            .unwrap_or_default()
+    }
+    fn political_crime_count(&self, alignment: Alignment) -> i32 {
+        self.political_crime_counts
+            .get(&alignment)
+            .copied()
+            .unwrap_or(0)
+    }
+    fn set_political_crime_count(&mut self, alignment: Alignment, n: i32) {
+        self.political_crime_counts.insert(alignment, n);
+    }
+    fn political_player_crime(&self, alignment: Alignment) -> bool {
+        self.wanted.contains(&alignment)
+    }
+    fn on_enclave_state_changed(&mut self, _enclave: EntityId) {}
+    fn find_npc(&self, name: &str) -> EntityId {
+        self.npcs
+            .iter()
+            .find(|(_, n)| n.name == name)
+            .map_or(EntityId::NONE, |(id, _)| *id)
+    }
+    fn find_enclave(&self, name: &str) -> EntityId {
+        self.enclaves
+            .iter()
+            .find(|(_, e)| e.name == name)
+            .map_or(EntityId::NONE, |(id, _)| *id)
+    }
+    fn is_swimming(&self, _e: EntityId) -> bool {
+        self.swimming
+    }
+    fn gui_page_open(&self) -> bool {
+        self.gui_open
+    }
+    fn on_npc_felled(&mut self, victim: EntityId, _killer: EntityId, killed: bool) {
+        self.felled.push((victim, killed));
     }
 }

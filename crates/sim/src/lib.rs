@@ -29,6 +29,7 @@ pub mod item;
 pub mod perception;
 pub mod rng;
 pub mod routine;
+pub mod script_host;
 pub mod sim;
 pub mod tactics;
 pub mod types;

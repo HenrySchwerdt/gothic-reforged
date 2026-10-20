@@ -182,6 +182,9 @@ pub struct Sim<W: WorldQuery> {
     pub dialog_partner: Option<ActorId>,
     pub gui_open: bool,
     pub npc_templates: BTreeMap<String, NpcRecord>,
+    /// Script-port state (routine tasks, interact points, queued AI commands), see
+    /// [`crate::script_host`].
+    pub script: crate::script_host::ScriptTables,
 }
 
 fn two_mut(v: &mut [Actor], i: usize, j: usize) -> (&mut Actor, &mut Actor) {
@@ -245,6 +248,7 @@ impl<W: WorldQuery> Sim<W> {
             dialog_partner: None,
             gui_open: false,
             npc_templates: BTreeMap::new(),
+            script: crate::script_host::ScriptTables::default(),
         }
     }
 

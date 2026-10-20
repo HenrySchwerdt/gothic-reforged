@@ -224,15 +224,20 @@ impl Actor {
     }
 
     /// `CurrentLevel` (S:36b40): transformed player `(LevelMax+Level)/2`; NPC
-    /// `min(GetLevel + <unresolved second term>, LevelMax)` - the second term is treated as 0
-    /// [CA 2.13, U].
+    /// `min(GetLevel + Level, GetLevelMax)` (the second term is the raw `Level` property, as
+    /// resolved by the `gothic-script` port).
     pub fn current_level(&self, cfg: &SimConfig) -> i32 {
         if self.is_player && self.transformed {
             ((self.level_max(cfg) + self.level(cfg)) / 2).max(1)
         } else if self.is_player {
             self.level(cfg)
         } else {
-            self.level(cfg).min(self.level_max(cfg))
+            let raw = if cfg.current_level_adds_raw {
+                self.level.max(0)
+            } else {
+                0
+            };
+            (self.level(cfg) + raw).min(self.level_max(cfg))
         }
     }
 
@@ -320,14 +325,25 @@ impl Actor {
         let sum = self.equipment.protection_sum(ty);
         let chest = self.equipment.body.as_ref().map_or(0, |b| b.protection(ty));
         let robe = self.equipment.wears_robe();
+        let resist = match ty {
+            DamageType::Fire if self.has_perk("perk_resistheat") => 10,
+            DamageType::Ice if self.has_perk("perk_resistcold") => 10,
+            _ => 0,
+        };
         if cfg.extended_content {
-            let mut p = (sum / 5).min(80);
+            // Only Blades and Impact (Physics and None read Impact) are scaled down; the
+            // other four channels are taken as they are (`gothic-script` GetProtection*).
+            let scaled = matches!(
+                ty,
+                DamageType::Blade | DamageType::Impact | DamageType::Physics | DamageType::None
+            );
+            let mut p = if scaled { sum / 5 } else { sum }.min(80);
             if robe && self.has_perk("perk_lightarmor") {
                 p += chest * 20 / 100;
             } else if !robe && self.has_perk("perk_heavyarmor") {
                 p += chest * 5 / 100;
             }
-            p
+            p + resist
         } else {
             let mut p = sum;
             if robe && self.has_perk("perk_lightarmor") {
@@ -335,7 +351,7 @@ impl Actor {
             } else if !robe && self.has_perk("perk_heavyarmor") {
                 p += p / 4;
             }
-            p.min(90)
+            p.min(90) + resist
         }
     }
 
@@ -381,10 +397,11 @@ mod tests {
 
     #[test]
     fn npc_attributes_from_level() {
-        // [CA 2.13] Level 10 / LevelMax 30: STR = 10 + trunc(15) = 25, HP = max(100, 600),
+        // [CA 2.13] Level 5 / LevelMax 30: CurrentLevel = min(GetLevel + Level, LevelMax) = 10
+        // (the gothic-script reading of S:36b40), STR = 10 + trunc(15) = 25, HP = max(100, 600),
         // stamina = max(100, 300), protection = min(80, 45).
         let cfg = SimConfig::default();
-        let o = orc(10, 30);
+        let o = orc(5, 30);
         assert_eq!(o.strength(&cfg), 25);
         assert_eq!(o.hp_max(&cfg), 600);
         assert_eq!(o.stamina_max(&cfg), 300);

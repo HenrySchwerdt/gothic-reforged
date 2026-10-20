@@ -383,7 +383,7 @@ pub fn continue_routine(host: &mut dyn ScriptHost, npc: EntityId) -> Resume {
     let enclave = host.enclave(npc);
     if enclave.is_some() {
         use crate::enums::Attitude;
-        let attitude = host.revolution_attitude(npc);
+        let attitude = host.revolution_attitude(npc, host.player());
         match host.enclave_status(enclave) {
             EnclaveStatus::Attack if matches!(attitude, Attitude::Friendly | Attitude::Hostile) => {
                 host.set_current_target(npc, EntityId::NONE);

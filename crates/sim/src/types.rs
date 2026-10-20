@@ -421,13 +421,13 @@ pub enum AttackReason {
     Enemy = 12,
     Murder = 13,
     Prey = 14,
-    /// I
-    Kill = 15,
-    /// I
-    Duel = 16,
-    /// I
-    Revolution = 17,
+    /// `gEAttackReason` 17 (read from the engine reflection data).
+    Duel = 17,
     Arena = 18,
+    /// 19.
+    Revolution = 19,
+    /// 20.
+    Kill = 20,
 }
 
 impl AttackReason {

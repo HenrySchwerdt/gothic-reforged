@@ -10,8 +10,8 @@
 use crate::config::{Difficulty, EngineSetup, Variants};
 use crate::enums::{
     Action, AiMode, Alignment, AnchorType, AniState, AttackReason, Attitude, EnclaveStatus,
-    GuardStatus, LastFight, NpcClass, NpcType, PartyMemberType, SecurityLevel, Slot, Species,
-    SpellDeity, UseType,
+    GuardStatus, LastFight, NpcClass, NpcType, PartyMemberType, PlayerCrime, SecurityLevel, Slot,
+    Species, SpellDeity, UseType,
 };
 use crate::routine::state::{Callback, State};
 use crate::routine::time::RoutineTime;
@@ -147,6 +147,13 @@ pub enum AiCommand {
         /// Destination entity (a point or an object).
         target: EntityId,
     },
+    /// `_AI_Goto_Ext` toward an entity, stopping `within` cm from it (companions).
+    GotoFollow {
+        /// Entity to follow.
+        target: EntityId,
+        /// Stop distance.
+        within: f32,
+    },
     /// `_AI_Goto_Ext` to a world position (ambient wandering).
     GotoPos {
         /// Destination.
@@ -273,6 +280,69 @@ pub trait NpcApi {
     fn set_current_target(&mut self, npc: EntityId, target: EntityId);
     /// `PSNpc::GetEnclave`.
     fn enclave(&self, npc: EntityId) -> EntityId;
+    /// Write `PSNpc.AttackReason`.
+    fn set_attack_reason(&mut self, npc: EntityId, reason: AttackReason);
+    /// Write `PSNpc.LastPlayerAR`.
+    fn set_last_player_attack_reason(&mut self, npc: EntityId, reason: AttackReason);
+    /// Write `PSNpc.LastFightAgainstPlayer`.
+    fn set_last_fight_vs_player(&mut self, npc: EntityId, result: LastFight);
+    /// `PSNpc.LastPlayerCrime`.
+    fn last_player_crime(&self, npc: EntityId) -> PlayerCrime;
+    /// Write `PSNpc.LastPlayerCrime`.
+    fn set_last_player_crime(&mut self, npc: EntityId, crime: PlayerCrime);
+    /// Write `PSNpc.PoliticalAlignment`.
+    fn set_alignment(&mut self, npc: EntityId, alignment: Alignment);
+    /// `PSNpc.CombatState` (1 while the NPC is part of an engaged group).
+    fn combat_state(&self, npc: EntityId) -> u32;
+    /// Write `PSNpc.CombatState`.
+    fn set_combat_state(&mut self, npc: EntityId, state: u32);
+    /// `PSRoutine::StopAIGoto`.
+    fn stop_ai_goto(&mut self, npc: EntityId);
+    /// `PSRoutine::GetTaskTime` (seconds in the current task).
+    fn task_time(&self, npc: EntityId) -> f32;
+    /// `PSRoutine::SetTaskTime`.
+    fn set_task_time(&mut self, npc: EntityId, t: f32);
+    /// Write `PSRoutine.AniState`.
+    fn set_ani_state(&mut self, npc: EntityId, state: AniState);
+    /// `PSNpc::SetAlternativeTarget`.
+    fn set_alternative_target(&mut self, npc: EntityId, target: EntityId);
+    /// `Entity::SetCollisionGroup`.
+    fn set_collision_group(&mut self, npc: EntityId, group: u32);
+    /// `PSCharacterMovement.CanBePushedWhileIdle`.
+    fn set_can_be_pushed(&mut self, npc: EntityId, v: bool);
+    /// Engine-side character reset (`ResetAll`/`ResetInteraction`: animation, look-at, collision,
+    /// crosshair, effects).
+    fn reset_character(&mut self, npc: EntityId);
+    /// `PSNavigation::SetRoutine`.
+    fn set_routine_name(&mut self, npc: EntityId, routine: &str);
+    /// `PSDialog.MobEnabled`.
+    fn dialog_mob_enabled(&self, npc: EntityId) -> bool;
+    /// `PSNpc.CurrentAttacker`.
+    fn current_attacker(&self, npc: EntityId) -> EntityId;
+    /// `PSNpc::SetCurrentAttacker`.
+    fn set_current_attacker(&mut self, npc: EntityId, attacker: EntityId);
+    /// `PSNpc::GetLastAttacker`.
+    fn last_attacker(&self, npc: EntityId) -> EntityId;
+    /// `PSNpc::SetLastAttacker`.
+    fn set_last_attacker(&mut self, npc: EntityId, attacker: EntityId);
+    /// `PSNpc::SetLastHitTimestamp` (`0` re-arms the hit-duration gate).
+    fn set_last_hit_timestamp(&mut self, npc: EntityId, t: u32);
+    /// Write `PSRoutine.Action`.
+    fn set_current_action(&mut self, npc: EntityId, action: Action);
+    /// `PSRoutine.StatePosition` (stage of the attacker's current move).
+    fn state_position(&self, npc: EntityId) -> u32;
+    /// `PSNpc.DefeatedByPlayer`: the one-shot XP flag.
+    fn defeated_by_player(&self, npc: EntityId) -> bool;
+    /// Write `PSNpc.DefeatedByPlayer`.
+    fn set_defeated_by_player(&mut self, npc: EntityId, v: bool);
+    /// Essential NPCs cannot be killed (`CanBeKilled` configuration, S:2da00 [I]).
+    fn is_immortal(&self, npc: EntityId) -> bool;
+    /// Set or clear status-effect bits (`PSNpc::SetStatusEffects`).
+    fn set_status_bits(&mut self, npc: EntityId, mask: u32, on: bool);
+    /// `PSDamageReceiver.DamageAmount` write.
+    fn set_damage_amount(&mut self, npc: EntityId, amount: i32);
+    /// `PSNpc.TimeStampTransformed` (play-time second the NPC last left a party).
+    fn time_stamp_transformed(&self, npc: EntityId) -> u32;
     /// `PSNpc.TimeStampTransformed` write (used when leaving a party).
     fn set_time_stamp_transformed(&mut self, npc: EntityId, t: u32);
     /// `PSNpc::GetPrimaryPose`: 1 and 2 are the unarmed/relaxed poses.
@@ -288,7 +358,7 @@ pub trait NpcApi {
     fn find_smalltalk_partner(&self, npc: EntityId) -> EntityId;
     /// `GetRevolutionAttitude` (S:ea50, not ported yet): attitude of the NPC in an enclave
     /// uprising or flight.
-    fn revolution_attitude(&self, npc: EntityId) -> Attitude;
+    fn revolution_attitude(&self, npc: EntityId, other: EntityId) -> Attitude;
 
     // ---- PSEnclave -----------------------------------------------------------------------
     /// `PSEnclave.Status`.
@@ -416,6 +486,14 @@ pub trait InventoryApi {
     fn find_stack_index(&self, e: EntityId, slot: Slot) -> i32;
     /// `PSInventory::UnEquipStack`.
     fn unequip_stack(&mut self, e: EntityId, stack: i32);
+    /// `PSInventory::HoldStacks(right, left)`; `-1` empties a hand.
+    fn hold_stacks(&mut self, e: EntityId, right: i32, left: i32);
+    /// `PSInventory::DropItemsFromSlot`.
+    fn drop_slot(&mut self, e: EntityId, slot: Slot);
+    /// Unequip and delete every stack of the inventory (`CleanUpPlunderInv` for Demons).
+    fn delete_unequipped_stacks(&mut self, e: EntityId);
+    /// `PSInventory::GeneratePlunderInvFromTreasureSets`.
+    fn generate_plunder(&mut self, e: EntityId);
     /// Use type of the item in a slot (`UseType::None` if empty).
     fn slot_use_type(&self, e: EntityId, slot: Slot) -> UseType;
     /// `PSInventory::GetUseType(stack)`.
@@ -424,6 +502,15 @@ pub trait InventoryApi {
     fn is_skill_active(&self, e: EntityId, perk: &str) -> bool;
     /// `PSItem::GetCategory` of the item in a slot (`0` = none).
     fn slot_item_category(&self, e: EntityId, slot: Slot) -> u32;
+    /// `PSItem.Quality` flag bits of the item in a slot (0x100 damaged, 0x20/0x40/0x80 bonus,
+    /// 0x2 disease, 0x4 poison, 0x8 fire, 0x10 ice).
+    fn slot_item_quality(&self, e: EntityId, slot: Slot) -> u32;
+    /// Template name of the item in a slot (`Fist` for unarmed).
+    fn slot_item_name(&self, e: EntityId, slot: Slot) -> String;
+    /// Is the chest armor a robe (`PSItem::IsRobe`)?
+    fn chest_is_robe(&self, e: EntityId) -> bool;
+    /// The `PROT_<TYPE>` modifier of the chest armor.
+    fn chest_protection_modifier(&self, e: EntityId, p: Protection) -> i32;
     /// Template name of the spell attached to the item in a slot.
     fn slot_spell_name(&self, e: EntityId, slot: Slot) -> String;
     /// `PSMagic.SpellDeity` of the spell in a slot.
@@ -462,6 +549,14 @@ pub trait StatsApi {
     fn political_fame(&self, alignment: Alignment) -> i32;
     /// `PSEnclave.PlayerFame`.
     fn enclave_player_fame(&self, enclave: EntityId) -> i32;
+    /// `PSPlayerMemory.XP`.
+    fn player_xp(&self) -> i64;
+    /// Write `PSPlayerMemory.XP`.
+    fn set_player_xp(&mut self, xp: i64);
+    /// Write the player's level (`PSNpc.Level`).
+    fn set_player_level(&mut self, level: u32);
+    /// `PSPlayerMemory.LPAttribs += n` (learning points).
+    fn add_learning_points(&mut self, n: i32);
     /// Level of the player entity (`PSNpc.Level`).
     fn player_level(&self) -> u32;
     /// Does the entity have a `PSDamageReceiver`?
@@ -476,6 +571,72 @@ pub trait StatsApi {
     fn dr_set_pool_max(&mut self, e: EntityId, pool: Pool, v: i32);
 }
 
+/// World queries: NPC iteration, geometry (backed by the host's `WorldQuery` / navigation),
+/// quests and the enclave records.
+pub trait WorldApi {
+    /// `Entity::GetNPCs`: every NPC entity (the player excluded).
+    fn all_npcs(&self) -> Vec<EntityId>;
+    /// `Entity::GetDistanceTo` (cm).
+    fn distance(&self, a: EntityId, b: EntityId) -> f32;
+    /// `Entity::IsFreeLOS(a, b)`: unobstructed line of sight.
+    fn has_free_los(&self, a: EntityId, b: EntityId) -> bool;
+    /// `Entity::GetAIZoneType(zone) == Outdoor` (type 1).
+    fn zone_is_outdoor(&self, zone: EntityId) -> bool;
+    /// `Entity::IsStanding`: not moving.
+    fn is_standing(&self, e: EntityId) -> bool;
+    /// The NPC entity with this name, or `NONE` (`Entity::GetEntity`).
+    fn find_npc(&self, name: &str) -> EntityId;
+    /// The enclave entity with this name, or `NONE`.
+    fn find_enclave(&self, name: &str) -> EntityId;
+    /// `PSQuestManager::IsOpen`.
+    fn quest_open(&self, name: &str) -> bool;
+    /// `PSPlayerMemory::IsSetGameEvent`.
+    fn game_event_set(&self, name: &str) -> bool;
+    /// `PSQuestManager::IsSucceeded`.
+    fn quest_succeeded(&self, name: &str) -> bool;
+    /// `PSItem::IsDropped` of an item entity.
+    fn item_is_dropped(&self, item: EntityId) -> bool;
+    /// `PSEnclave.KnownPlayerCrime`.
+    fn enclave_known_crime(&self, enclave: EntityId) -> PlayerCrime;
+    /// Write `PSEnclave.KnownPlayerCrime`.
+    fn set_enclave_known_crime(&mut self, enclave: EntityId, crime: PlayerCrime);
+    /// Write `PSEnclave.PlayerFame`.
+    fn set_enclave_player_fame(&mut self, enclave: EntityId, fame: i32);
+    /// `PSEnclave::GetCrimeCount`.
+    fn enclave_crime_count(&self, enclave: EntityId, crime: PlayerCrime) -> i32;
+    /// `PSEnclave::SetCrimeCount`.
+    fn set_enclave_crime_count(&mut self, enclave: EntityId, crime: PlayerCrime, n: i32);
+    /// `PSEnclave::SetSuspectComment(crime, 0)`: forget the spoken comment of a crime.
+    fn clear_enclave_suspect_comment(&mut self, enclave: EntityId, crime: PlayerCrime);
+    /// `PSEnclave.Raid`.
+    fn enclave_raid(&self, enclave: EntityId) -> bool;
+    /// Write `PSEnclave.Raid`.
+    fn set_enclave_raid(&mut self, enclave: EntityId, v: bool);
+    /// `PSEnclave.Revolution`.
+    fn enclave_revolution(&self, enclave: EntityId) -> bool;
+    /// Write `PSEnclave.Revolution`.
+    fn set_enclave_revolution(&mut self, enclave: EntityId, v: bool);
+    /// Write `PSEnclave.Status` (raw; use `crate::crime::change_enclave_status` for the rules).
+    fn set_enclave_status_raw(&mut self, enclave: EntityId, status: EnclaveStatus);
+    /// `PSEnclave::GetMembers`.
+    fn enclave_members(&self, enclave: EntityId) -> Vec<EntityId>;
+    /// `PSPlayerMemory::GetPoliticalCrimeCount(alignment)`.
+    fn political_crime_count(&self, alignment: Alignment) -> i32;
+    /// `PSPlayerMemory::SetPoliticalCrimeCount`.
+    fn set_political_crime_count(&mut self, alignment: Alignment, n: i32);
+    /// `PSPlayerMemory::GetPoliticalPlayerCrime(alignment)`: the player is wanted by this
+    /// faction.
+    fn political_player_crime(&self, alignment: Alignment) -> bool;
+    /// `Entity::IsSwimming` or diving.
+    fn is_swimming(&self, e: EntityId) -> bool;
+    /// A GUI page (inventory, dialog, ...) is open.
+    fn gui_page_open(&self) -> bool;
+    /// `PSQuestManager::OnNPCKilled` / `OnNPCDefeated` notification.
+    fn on_npc_felled(&mut self, victim: EntityId, killer: EntityId, killed: bool);
+    /// `PSQuestManager::OnEnclaveStateChanged`.
+    fn on_enclave_state_changed(&mut self, enclave: EntityId);
+}
+
 /// Everything a ported script function can call.
-pub trait ScriptHost: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi {}
-impl<T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi> ScriptHost for T {}
+pub trait ScriptHost: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi {}
+impl<T: ScriptCtx + EntityApi + NpcApi + InventoryApi + StatsApi + WorldApi> ScriptHost for T {}

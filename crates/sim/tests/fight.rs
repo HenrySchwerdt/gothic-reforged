@@ -29,7 +29,8 @@ fn duel_is_deterministic_and_terminates() {
 #[test]
 fn damage_numbers_match_the_formulas() {
     // [CA 2.5, 2.7] hero: 50 + STR/2 = 100 minus the orc's 45 percent = 55 per plain hit;
-    // orc: trunc(0.75*25 + 200/7) = 47 flat against an unarmored hero.
+    // orc: CurrentLevel = min(10 + 10, 30) = 20, STR 40: trunc(0.75*40 + 200/7) = 58 flat
+    // against an unarmored hero.
     let items = synthetic_items();
     let r = duel(7, &items, synthetic_orc(), 70);
     for e in &r.events {
@@ -62,10 +63,10 @@ fn damage_numbers_match_the_formulas() {
                     (*action, *damage),
                     (
                         Action::Attack | Action::PierceAttack | Action::PowerAttack,
-                        47
-                    ) | (Action::HackAttack, 94)
-                        | (Action::QuickAttack, 23)
-                        | (Action::WhirlAttack | Action::SimpleWhirl, 47)
+                        58
+                    ) | (Action::HackAttack, 116)
+                        | (Action::QuickAttack, 29)
+                        | (Action::WhirlAttack | Action::SimpleWhirl, 58)
                 );
                 assert!(ok, "unexpected orc damage {action:?} {damage}");
             }

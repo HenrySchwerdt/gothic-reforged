@@ -276,6 +276,40 @@ pub fn is_in_fist_mode(host: &dyn ScriptHost, e: EntityId) -> bool {
         )
 }
 
+/// Spells that are no weapon (the DLL's name list in `HasDangerousWeapon`).
+const HARMLESS_SPELLS: &[&str] = &[
+    "Spl_DuskToDawn",
+    "Spl_Light",
+    "Spl_Cure",
+    "Spl_HealOther",
+    "Spl_CurePoison",
+    "Spl_CureDisease",
+    "Spl_AnimalForm",
+];
+
+/// Port of `HasDangerousWeapon` (S:10630): does `e` hold something that threatens bystanders?
+///
+/// Melee ready: any right-hand item that is not a fist. Ranged ready: always. Magic ready: the
+/// spell is dangerous unless it belongs to no deity or is one of [`HARMLESS_SPELLS`] [I: the
+/// DLL's flag chain was only partly readable]. Anything else is not a weapon.
+pub fn has_dangerous_weapon(host: &dyn ScriptHost, e: EntityId) -> bool {
+    use crate::helpers::{WeaponMode, weapon_mode};
+    let left = host.slot_use_type(e, Slot::LeftHand);
+    let right = host.slot_use_type(e, Slot::RightHand);
+    match weapon_mode(left, right) {
+        WeaponMode::Melee => !matches!(right, UseType::Fist | UseType::PhysicalFist),
+        WeaponMode::Ranged => true,
+        WeaponMode::Magic => {
+            let name = host.slot_spell_name(e, Slot::RightHand);
+            host.slot_spell_deity(e, Slot::RightHand) != crate::enums::SpellDeity::None
+                && !HARMLESS_SPELLS
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&name))
+        }
+        WeaponMode::None => false,
+    }
+}
+
 /// Port of `IsBoss` (S:10bd0): belongs to an enclave and is a political (leader) NPC.
 pub fn is_boss(host: &dyn ScriptHost, e: EntityId) -> bool {
     host.enclave(e).is_some() && host.npc_type(e) == NpcType::Political
@@ -418,6 +452,17 @@ pub const POLITICAL_MATRIX: [[Attitude; 9]; 9] = {
     ]
 };
 
+/// Alignment of an entity as `GetPoliticalAttitude` reads it: an enclave entity has the enclave's
+/// alignment, an NPC its own.
+pub fn alignment_of(host: &dyn ScriptHost, e: EntityId) -> Alignment {
+    let enclave_side = host.enclave_alignment(e);
+    if enclave_side != Alignment::None {
+        enclave_side
+    } else {
+        host.alignment(e)
+    }
+}
+
 /// Port of `GetPoliticalAttitude` (S:f620): attitude of `observer` toward `target` from their
 /// political alignments.
 ///
@@ -427,8 +472,8 @@ pub const POLITICAL_MATRIX: [[Attitude; 9]; 9] = {
 /// the Orc-side check in the DLL additionally exempts two named NPCs that the decompiler did not
 /// preserve [U]. Missing alignments give `Attitude::None`.
 pub fn political_attitude(host: &dyn ScriptHost, observer: EntityId, target: EntityId) -> Attitude {
-    let mut a = host.alignment(observer);
-    let mut b = host.alignment(target);
+    let mut a = alignment_of(host, observer);
+    let mut b = alignment_of(host, target);
     if a == Alignment::Pirate {
         match b {
             Alignment::Out => return Attitude::Neutral,

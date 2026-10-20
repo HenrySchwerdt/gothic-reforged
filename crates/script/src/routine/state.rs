@@ -411,6 +411,14 @@ pub enum Callback {
     OnAnimalSleep,
     /// `OnGateGuard`.
     OnGateGuard,
+    /// `OnFollowPlayer`.
+    OnFollowPlayer,
+    /// `OnWaitForPlayer`.
+    OnWaitForPlayer,
+    /// `OnGuidePlayer`.
+    OnGuidePlayer,
+    /// `OnFollowNPC`.
+    OnFollowNpc,
 }
 
 #[cfg(test)]

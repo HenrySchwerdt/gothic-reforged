@@ -59,6 +59,9 @@ pub struct SimConfig {
     /// The one chapter in which Orcs and Assassins are hostile; friendly in every other
     /// chapter (`GetPoliticalAttitude`, S:f620, ported in `gothic-script`).
     pub orc_ass_hostile_chapter: u32,
+    /// `CurrentLevel` adds the raw `Level` property to `GetLevel` before capping at `LevelMax`
+    /// (decompiled S:36b40, see PORT_NOTES 8.2); off gives `min(GetLevel, LevelMax)`.
+    pub current_level_adds_raw: bool,
     /// Chance (percent) that an unobstructed ranged shot hits. The original has no roll
     /// (collision/aim driven) [CA 0.1]; this stands in for the missing aiming model [I].
     pub ranged_hit_pct: i32,
@@ -79,6 +82,7 @@ impl Default for SimConfig {
             tick_ms: 50,
             game_speed: 12,
             orc_ass_hostile_chapter: 2,
+            current_level_adds_raw: true,
             ranged_hit_pct: 75,
             fov_degrees: 120.0,
             variants: Variants::default(),
