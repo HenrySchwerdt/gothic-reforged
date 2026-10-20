@@ -17,6 +17,7 @@ gothic-world = { path = "../../crates/world" }
 gothic-formats = { path = "../../crates/formats" }
 gothic-importer = { path = "../../crates/importer" }
 gothic-physics = { path = "../../crates/physics" }
+gothic-camera = { path = "../../crates/camera" }
 gothic-animation = { path = "../../crates/animation", optional = true }
 gothic-ui = { path = "../../crates/ui", optional = true }
 gothic-audio = { path = "../../crates/audio", optional = true }

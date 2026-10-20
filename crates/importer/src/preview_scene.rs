@@ -615,6 +615,8 @@ mod tests {
             .map(|id| WorldEntity {
                 source_id: [id; 20],
                 source_offset: 0,
+                enabled: true,
+                processing_disabled: false,
                 name: "test".into(),
                 world_matrix: [[0.0; 4]; 4],
                 local_matrix: [[0.0; 4]; 4],

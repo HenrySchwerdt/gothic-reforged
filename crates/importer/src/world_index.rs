@@ -241,6 +241,8 @@ mod tests {
         let entity = |id: u8, x: f32, assets: &[&str]| WorldEntity {
             source_id: [id; 20],
             source_offset: 0,
+            enabled: true,
+            processing_disabled: false,
             name: format!("e{id}"),
             world_matrix: rec("", x, 0.0, 0.0).world_matrix,
             local_matrix: [[0.0; 4]; 4],

@@ -163,6 +163,7 @@ pub fn build(
 /// Drives every [`Posed`] character: starts the next clip, ends timed loops, restores locomotion.
 pub fn pose_system(
     time: Res<Time>,
+    blendings: Res<super::Blendings>,
     mut lib: ResMut<ActorLibrary>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Animator, &mut Posed)>,
@@ -216,7 +217,10 @@ pub fn pose_system(
         let rig = animator.rig.clone();
         match lib.motion(&rig, &step.motion) {
             Ok(motion) => {
-                animator.play(motion, 0.15, 1.0, 0.0);
+                let fade = animator.current_name().map_or(0.15, |old| {
+                    gothic_animation::blend::script_fade(&blendings.0, old, &step.motion)
+                });
+                animator.play(motion, fade, 1.0, 0.0);
                 let deadline = now + p.loop_secs.unwrap_or(f32::INFINITY);
                 p.current = Some((step.looping, deadline));
             }

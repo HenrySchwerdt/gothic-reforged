@@ -133,6 +133,8 @@ fn dialog_events(
                 player,
                 actor,
             } => {
+                state.dialog_cut += 1;
+                state.dialog_player_speaks = *player;
                 let shown = text.clone().unwrap_or_else(|| format!("[{key}]"));
                 let chars = shown.chars().count();
                 voices.pending_lines.push((speaker.clone(), shown, *player));

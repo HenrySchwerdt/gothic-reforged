@@ -13,6 +13,7 @@
 //! documents and bakes a cell mesh into world space. Mesh decoding is
 //! [`crate::xcmsh`], entity decoding is [`crate::world_node`].
 pub mod spt;
+pub mod spt_gen;
 pub mod vegetation;
 
 use crate::{world_node::WorldDocument, xcmsh::Xcmsh};

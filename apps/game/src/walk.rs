@@ -133,6 +133,11 @@ struct Player {
     scripted_gait: Option<gothic_physics::Gait>,
     /// Jump request of the play mode's input layer (`None`: keyboard Space).
     scripted_jump: Option<bool>,
+    /// Play mode: the camera owns yaw / pitch and the ported movement pipeline
+    /// (`step_command`) drives the controller.
+    command: bool,
+    /// Direction the hero turns to instead of the wish direction (dialog, lock-on, aiming).
+    face: Option<Vec3>,
 }
 
 #[derive(Component)]
@@ -276,6 +281,8 @@ pub fn run(args: &[String]) -> Result<()> {
         scripted_wish: None,
         scripted_gait: None,
         scripted_jump: None,
+        command: false,
+        face: None,
     })
     .insert_resource(Smoke {
         enabled: smoke,
@@ -1143,12 +1150,14 @@ fn player_motion(
     time: Res<Time>,
     stream: Res<Stream>,
     collision: Res<Collision>,
+    caches: Res<Caches>,
     mut player: ResMut<Player>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    if cursor
-        .single()
-        .is_ok_and(|c| c.grab_mode != CursorGrabMode::None)
+    if !player.command
+        && cursor
+            .single()
+            .is_ok_and(|c| c.grab_mode != CursorGrabMode::None)
     {
         player.yaw -= mouse.delta.x * 0.0025;
         player.pitch = (player.pitch - mouse.delta.y * 0.0025).clamp(-1.5, 1.5);
@@ -1221,17 +1230,45 @@ fn player_motion(
         return; // never integrate gravity into a void
     }
     // Speeds come from the PC_Hero movement template (Run 400 cm/s, Sprint 600 cm/s), with the
-    // slower strafe / backward limits relative to the facing; see PHYSICS_MOVEMENT.md.
+    // directional limits of the original; see PHYSICS_MOVEMENT.md.
     let gait = player.scripted_gait.unwrap_or(if sprint {
         gothic_physics::Gait::Sprint
     } else {
         gothic_physics::Gait::Run
     });
-    player.ctrl.facing = Some(Vec2::new(forward.x, forward.z));
     let jump = player
         .scripted_jump
         .take()
         .unwrap_or_else(|| keys.just_pressed(KeyCode::Space));
+    if player.command {
+        // E01/E02: wish direction from the camera frame, the turn model, mode machine and swim
+        // run inside `step_command`. The water surface is the sea level [I: lakes and rivers
+        // have no recorded level yet].
+        let local = player.scripted_wish.unwrap_or(Vec3::ZERO);
+        let keys_axes = gothic_physics::movement::MoveKeys {
+            forward: (-local.z).max(0.0),
+            backward: local.z.max(0.0),
+            left: (-local.x).max(0.0),
+            right: local.x.max(0.0),
+        };
+        let wish = gothic_physics::movement::wish_direction(forward, right, &keys_axes);
+        let water_level = caches
+            .sea_y
+            .map(|y| y * 100.0)
+            .filter(|y| player.ctrl.position.y < y + 400.0);
+        player.ctrl.player_controlled = true;
+        let cmd = gothic_physics::MoveCommand {
+            wish,
+            gait,
+            jump,
+            face: player.face,
+            water_level,
+            ..Default::default()
+        };
+        player.ctrl.step_command(&collision.0, &cmd, dt);
+        return;
+    }
+    player.ctrl.facing = Some(Vec2::new(forward.x, forward.z));
     player.ctrl.step_gait(&collision.0, wish, gait, jump, dt);
 }
 

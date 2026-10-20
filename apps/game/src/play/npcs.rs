@@ -60,18 +60,69 @@ pub fn load_looks(path: &std::path::Path) -> anyhow::Result<Looks> {
     Ok(Looks { map, hero })
 }
 
-pub fn select_roster(file: &NpcFile, looks: &Looks) -> Roster {
+/// (document, name) of the entities whose `eCEntity` header has Enabled
+/// cleared, in the world documents the candidates come from.
+///
+/// Rule [V data]: a disabled entity is not instantiated by the engine. The `*_npc_02` layer of
+/// every city (Ardea: 133 entities, all of them) and the story layers carry Enabled = false;
+/// they hold the post-liberation population and are switched on by story script. At a new game
+/// only the Enabled entities exist.
+fn disabled_source_ids(
+    data_dir: &std::path::Path,
+    docs: &std::collections::BTreeSet<&str>,
+) -> std::collections::HashSet<(String, String)> {
+    use gothic_formats::vfs::VirtualFileSystem;
+    use gothic_formats::world_node::WorldDocument;
+    let mut out = std::collections::HashSet::new();
+    let Ok(mut vfs) = VirtualFileSystem::open_data_dir(data_dir) else {
+        eprintln!("play: cannot open the archives for entity flags; no story filter");
+        return out;
+    };
+    let slots: Vec<_> = vfs
+        .iter()
+        .filter(|(p, _)| docs.contains(p.to_ascii_lowercase().as_str()))
+        .map(|(p, s)| (p.to_owned(), s))
+        .collect();
+    for (path, slot) in slots {
+        let Ok(bytes) = vfs.read(slot) else { continue };
+        let Ok(doc) = WorldDocument::parse(&bytes) else {
+            eprintln!("play: {path}: entity flags unreadable");
+            continue;
+        };
+        for e in doc.entities.iter().filter(|e| !e.enabled) {
+            out.insert((path.to_ascii_lowercase(), e.name.clone()));
+        }
+    }
+    out
+}
+
+pub fn select_roster(file: &NpcFile, looks: &Looks, data_dir: &std::path::Path) -> Roster {
     let origin = Origin(ORIGIN);
     let mut r = Roster::default();
-    for e in &file.entities {
+    let near = |e: &gothic_sim::data::NpcRecord| {
         let p = Vec3::from(e.position);
-        if Vec2::new(p.x, p.z).distance(ARDEA_CENTRE) > ARDEA_RADIUS
-            || !e
-                .inventory
+        Vec2::new(p.x, p.z).distance(ARDEA_CENTRE) <= ARDEA_RADIUS
+            && e.inventory
                 .equipped
                 .iter()
                 .any(|i| i.slot.eq_ignore_ascii_case("Body"))
-        {
+    };
+    let docs: std::collections::BTreeSet<String> = file
+        .entities
+        .iter()
+        .filter(|e| near(e))
+        .map(|e| e.document.to_ascii_lowercase())
+        .collect();
+    let doc_refs = docs.iter().map(String::as_str).collect();
+    let disabled = disabled_source_ids(data_dir, &doc_refs);
+    let mut skipped = 0;
+    for e in &file.entities {
+        let p = Vec3::from(e.position);
+        if !near(e) {
+            continue;
+        }
+        if disabled.contains(&(e.document.to_ascii_lowercase(), e.name.clone())) {
+            skipped += 1;
             continue;
         }
         r.display.insert(
@@ -91,6 +142,10 @@ pub fn select_roster(file: &NpcFile, looks: &Looks) -> Roster {
     r.pending.sort_by_key(|p| p.record.name != "Hamlar");
     separate(&mut r.pending);
     r.total = r.pending.len();
+    eprintln!(
+        "play: story state at new game: {} NPCs enabled, {skipped} disabled (eCEntity Enabled = false) skipped",
+        r.total
+    );
     r
 }
 

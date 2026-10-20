@@ -15,6 +15,7 @@ use crate::walk::{Player, PlayerBody, PlayerCamera, player_motion, update_camera
 use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use gothic_animation::locomotion::GaitHint;
 use gothic_animation::{ActorSpawner, LocomotionInput, Stance, WeaponSpec};
 use gothic_runtime::{Command, CoreCommand, CoreRes, HERO_REACH, SavePath};
 use gothic_sim::item::{Equipment, Use, WeaponMode};
@@ -36,7 +37,7 @@ pub fn register(app: &mut App) {
     app.add_systems(Startup, spawn_hero)
         .add_systems(
             Update,
-            (place_hero, input, focus)
+            (place_hero, face_target, input, focus)
                 .chain()
                 .before(player_motion)
                 .after(crate::walk::input_mode),
@@ -81,6 +82,41 @@ fn spawn_hero(mut spawner: ActorSpawner, mut state: ResMut<PlayState>, kit: Res<
         }
         Err(e) => eprintln!("hero spawn failed: {e:#}"),
     }
+}
+
+/// Where the hero turns to instead of the wish direction: the dialog partner, the fight
+/// target, or the aim direction while a ranged weapon is drawn (`face` of `MoveCommand`).
+fn face_target(
+    mut player: ResMut<Player>,
+    state: Res<PlayState>,
+    core: Res<CoreRes>,
+    time: Res<Time>,
+) {
+    let pos = player.ctrl.position;
+    let toward = |id: ActorId| {
+        core.0
+            .sim
+            .world
+            .actors
+            .get(&id)
+            .map(|w| Vec3::new(w.0.x - pos.x, 0.0, w.0.z - pos.z))
+    };
+    let mut face = None;
+    if state.mode == Mode::Dialog {
+        face = state.dialog_npc.and_then(toward);
+    } else if let Some((id, t)) = state.combat_focus
+        && time.elapsed_secs() - t < 2.5
+    {
+        face = toward(id);
+    } else if state.drawn
+        && matches!(
+            core.0.sim.actor(core.0.hero).equipment.weapon_mode(),
+            WeaponMode::Ranged | WeaponMode::Magic
+        )
+    {
+        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()));
+    }
+    player.face = face.filter(|f| f.length_squared() > 1.0);
 }
 
 fn camera_forward_xz(cam: &Transform) -> Vec2 {
@@ -755,32 +791,32 @@ fn sync(
     let Ok((mut tf, input, mut vis, mut cstance)) = q.single_mut() else {
         return;
     };
-    *vis = if player.placed {
+    *vis = if player.placed && !state.hide_hero {
         Visibility::Inherited
     } else {
         Visibility::Hidden
     };
-    let mut v = state.last_hero_cm.map_or(Vec3::ZERO, |l| (pos - l) / dt);
-    if v.length() > 3000.0 {
-        v = Vec3::ZERO; // teleport
-    }
     state.last_hero_cm = Some(pos);
+    // E01: the animation velocity is the controller's filtered local velocity (forward, right).
+    let (vf, vr) = player.ctrl.local_ani_velocity();
+    let h = player.ctrl.heading;
+    let fwd = Vec3::new(-h.sin(), 0.0, -h.cos());
+    let right = Vec3::new(h.cos(), 0.0, -h.sin());
+    let mut v = fwd * vf + right * vr;
     v.y = if player.ctrl.grounded {
         0.0
     } else {
         player.ctrl.vertical_speed
     };
-    *vel = vel.lerp(v, 0.5);
+    *vel = v;
     let horizontal = Vec2::new(vel.x, vel.z);
-    // Facing: the dialog partner, otherwise the direction of travel.
+    // Facing is the controller's heading (turn model); the target only feeds the turn-in-place.
     let mut target = None;
     if state.mode == Mode::Dialog
         && let Some(id) = state.dialog_npc
         && let Some(p) = core.0.sim.world.actors.get(&id).map(|w| w.0)
     {
         target = Some(yaw_of_dir(p.x - pos.x, p.z - pos.z));
-    } else if horizontal.length() > 70.0 {
-        target = Some(yaw_of_dir(horizontal.x, horizontal.y));
     } else if let Some((id, t)) = state.combat_focus
         && time.elapsed_secs() - t < 2.5
         && let Some(p) = core.0.sim.world.actors.get(&id).map(|w| w.0)
@@ -788,13 +824,8 @@ fn sync(
         target = Some(yaw_of_dir(p.x - pos.x, p.z - pos.z));
     }
     let _ = &npcs;
-    let mut turn_error = 0.0;
-    if let Some(t) = target {
-        let delta = angle_delta(state.hero_yaw, t);
-        let step = (10.0 * dt).min(delta.abs()) * delta.signum();
-        state.hero_yaw += step;
-        turn_error = delta - step;
-    }
+    state.hero_yaw = player.ctrl.heading;
+    let turn_error = target.map_or(0.0, |t| angle_delta(state.hero_yaw, t));
     tf.translation = pos * CM;
     tf.rotation = Quat::from_rotation_y(state.hero_yaw);
     tf.scale = Vec3::splat(CM);
@@ -815,6 +846,13 @@ fn sync(
             Stance::Unarmed
         };
         input.sneak = state.sneaking;
+        input.gait = match player.ctrl.machine.mode() {
+            gothic_physics::MovementMode::Sneaking => Some(GaitHint::Sneak),
+            gothic_physics::MovementMode::Walking => Some(GaitHint::Walk),
+            gothic_physics::MovementMode::Running => Some(GaitHint::Run),
+            gothic_physics::MovementMode::Sprinting => Some(GaitHint::Sprint),
+            _ => None,
+        };
         input.turn_error = if horizontal.length() < 40.0 {
             turn_error
         } else {

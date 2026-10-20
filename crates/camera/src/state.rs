@@ -756,6 +756,16 @@ impl CameraState {
         Vec3::new(d.x, 0.0, d.z).normalize_or(Vec3::NEG_Z)
     }
 
+    /// Host override of the orbit (scripted shots, tests): azimuth in the `view_yaw` convention
+    /// and elevation above the horizon, radians. Filters keep their state.
+    pub fn set_orbit(&mut self, yaw: f32, elevation: f32) {
+        self.yaw = yaw;
+        self.elevation = elevation.clamp(
+            -MAX_ELEVATION_DEG.to_radians(),
+            MAX_ELEVATION_DEG.to_radians(),
+        );
+    }
+
     /// Azimuth of the view direction in radians (hero yaw convention: rotation about Y, forward
     /// -Z at 0).
     pub fn view_yaw(&self) -> f32 {

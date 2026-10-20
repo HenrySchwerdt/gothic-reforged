@@ -27,6 +27,10 @@ pub struct WorldEntity {
     pub source_id: [u8; 20],
     /// Offset in the decoded document, useful for independent evidence checks.
     pub source_offset: usize,
+    /// `eCEntity` Enabled flag of the header (a disabled entity is not instantiated).
+    pub enabled: bool,
+    /// `eCEntity` ProcessingDisabled flag of the header.
+    pub processing_disabled: bool,
     /// Bytes mapped one-to-one to Unicode U+0000..U+00FF; encoding is unspecified.
     pub name: String,
     /// Serialized X/Y/Z basis vectors followed by the translation vector.
@@ -377,8 +381,11 @@ impl<'a> Reader<'a> {
             "unsupported common entity version"
         );
         let source_id = self.take(20)?.try_into()?;
-        for _ in 0..7 {
-            self.flag()?;
+        // eCEntity header flags: Enabled, RenderingEnabled, ProcessingDisabled,
+        // DeactivationEnabled, (unknown), Pickable, CollisionEnabled.
+        let mut header_flags = [false; 7];
+        for f in &mut header_flags {
+            *f = self.flag()?;
         }
         self.take(7)?; // alpha f32, insertion u16, render priority u8.
         for _ in 0..3 {
@@ -418,6 +425,8 @@ impl<'a> Reader<'a> {
         Ok(WorldEntity {
             source_id,
             source_offset,
+            enabled: header_flags[0],
+            processing_disabled: header_flags[2],
             name,
             world_matrix,
             local_matrix,

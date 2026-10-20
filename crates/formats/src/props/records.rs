@@ -645,8 +645,21 @@ pub struct NpcLook {
     pub document: String,
     pub position: [f32; 3],
     pub species: String,
+    /// `gCNPC_PS.Voice`: the stock-voice class (`Hum_Fat_Weak`) of `SVM_<voice>_<event>`.
+    pub voice: String,
     pub visual: ActorVisual,
     pub inventory: LookInventory,
+    /// Routine points (ids of the world entities).
+    pub routine: LookRoutine,
+}
+
+/// The routine point ids of an NPC (`gCNavigation_PS`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct LookRoutine {
+    pub working_points: Vec<String>,
+    pub relaxing_points: Vec<String>,
+    pub sleeping_points: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

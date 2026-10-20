@@ -3265,6 +3265,7 @@ dependencies = [
  "bevy",
  "gothic-animation",
  "gothic-audio",
+ "gothic-camera",
  "gothic-cook",
  "gothic-formats",
  "gothic-gameplay",

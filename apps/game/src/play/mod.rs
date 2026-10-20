@@ -120,6 +120,11 @@ pub struct PlayState {
     pub combat_focus: Option<(ActorId, f32)>,
     /// Smoothed dialog camera position (metres).
     pub dialog_cam: Option<Vec3>,
+    /// Counts spoken dialog lines (the camera cuts on each); who spoke the last one.
+    pub dialog_cut: u32,
+    pub dialog_player_speaks: bool,
+    /// The camera is first person or too close: the hero body is not drawn.
+    pub hide_hero: bool,
     /// The focused thing (object, item, body or character).
     pub target: Option<Target>,
     /// The hero sneaks (`AniState::Sneak` of the ported state).
@@ -163,6 +168,41 @@ pub struct ScriptInput {
     pub choose: Option<usize>,
     pub end_dialog: bool,
     pub acts: std::collections::VecDeque<ScriptAct>,
+}
+
+/// `G3_Ani_Blendings.txt` (intro / extro fade bytes per clip); empty when the archives do not
+/// carry the file, which gives the engine's standard fade everywhere.
+#[derive(Resource, Default)]
+pub struct Blendings(pub gothic_animation::blend::AniBlendings);
+
+/// Looks for `G3_Ani_Blendings.txt` in the non-asset archives of `data_dir`.
+fn load_blendings(data_dir: &std::path::Path) -> Blendings {
+    for pak in [
+        "Library.pak",
+        "Templates.pak",
+        "Workspace.pak",
+        "Projects_compiled.pak",
+        "_compiledAnimation.pak",
+    ] {
+        let Ok(mut a) = gothic_formats::PakArchive::open(data_dir.join(pak)) else {
+            continue;
+        };
+        let Some(i) = a.entries.iter().position(|e| {
+            e.path
+                .to_ascii_lowercase()
+                .ends_with("g3_ani_blendings.txt")
+        }) else {
+            continue;
+        };
+        if let Ok(bytes) = a.read_payload(i) {
+            let table =
+                gothic_animation::blend::AniBlendings::parse(&String::from_utf8_lossy(&bytes));
+            eprintln!("play: G3_Ani_Blendings.txt from {pak}");
+            return Blendings(table);
+        }
+    }
+    eprintln!("play: G3_Ani_Blendings.txt not in the archives, standard fades");
+    Blendings::default()
 }
 
 pub fn requested(args: &[String]) -> bool {
@@ -279,7 +319,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;
     let hero_look = looks.pc_hero();
-    let roster = npcs::select_roster(&npcs, &looks);
+    let roster = npcs::select_roster(&npcs, &looks, &data_dir);
     eprintln!("play: {} NPCs near Ardea", roster.pending.len());
 
     {
@@ -316,6 +356,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         look: hero_look,
     })
     .insert_resource(library)
+    .insert_resource(load_blendings(&data_dir))
     .insert_resource(CoreRes(core))
     .insert_resource(session)
     .insert_resource(UiConfig {
