@@ -45,6 +45,7 @@ pub const F_NB: u32 = 16;
 pub const F_VBLEND: u32 = 32;
 pub const F_MASK: u32 = 64;
 pub const F_FADE: u32 = 256;
+#[allow(dead_code)]
 pub const F_UNLIT: u32 = 512;
 
 #[derive(Clone, Copy, Debug, ShaderType)]

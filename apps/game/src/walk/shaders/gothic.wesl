@@ -42,6 +42,7 @@ const F_VBLEND: u32 = 32u;
 const F_MASK: u32 = 64u;
 const F_FADE: u32 = 256u;
 const F_UNLIT: u32 = 512u;
+const F_NOFLIP: u32 = 1024u;
 
 fn decode_normal(t: vec4<f32>) -> vec3<f32> {
     // DXT5nm: x in alpha, y in green.
@@ -91,7 +92,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
 
     var n_geo = normalize(in.world_normal);
-    if !is_front {
+    if !is_front && (flags & F_NOFLIP) == 0u {
         n_geo = -n_geo;
     }
     var n = n_geo;

@@ -1,4 +1,6 @@
 //! Palette, text/button helpers and small interaction systems.
+use crate::assets::UiAssets;
+use crate::atlas::Pic;
 use crate::{Act, Action};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::picking::hover::Hovered;
@@ -6,18 +8,95 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 use gothic_gameplay::GameDatabase;
 
-pub const GOLD: Color = Color::srgb(0.80, 0.66, 0.36);
-pub const GOLD_DIM: Color = Color::srgb(0.46, 0.37, 0.20);
-pub const PARCH: Color = Color::srgb(0.90, 0.85, 0.72);
-pub const DIM: Color = Color::srgb(0.63, 0.57, 0.46);
-pub const RED: Color = Color::srgb(0.85, 0.30, 0.25);
-pub const GREEN: Color = Color::srgb(0.50, 0.78, 0.38);
-pub const BLUE: Color = Color::srgb(0.38, 0.55, 0.88);
-pub const BG: Color = Color::srgba(0.045, 0.040, 0.035, 0.96);
-pub const BG_ROW: Color = Color::srgba(0.12, 0.105, 0.085, 0.80);
-pub const BG_HOVER: Color = Color::srgba(0.30, 0.22, 0.10, 0.92);
-pub const BG_SEL: Color = Color::srgba(0.40, 0.29, 0.11, 0.95);
-pub const BLACK_BAR: Color = Color::srgba(0.0, 0.0, 0.0, 0.93);
+/// Body text colour sampled from the original screens.
+pub const TEXT: Color = Color::srgb(0.878, 0.769, 0.584);
+pub const TEXT_DIM: Color = Color::srgb(0.60, 0.53, 0.40);
+pub const TEXT_HI: Color = Color::srgb(1.0, 0.97, 0.88);
+pub const TEXT_BAD: Color = Color::srgb(0.85, 0.30, 0.25);
+pub const BORDER: Color = Color::srgb(0.62, 0.52, 0.36);
+pub const SEL: Color = Color::srgba(1.0, 0.85, 0.45, 0.16);
+pub const CELL: Color = Color::srgba(0.17, 0.12, 0.09, 0.78);
+pub const CELL_HOVER: Color = Color::srgba(0.32, 0.24, 0.15, 0.9);
+
+pub type P<'a> = ChildSpawnerCommands<'a>;
+
+/// Absolutely positioned box in the 1024x768 design space.
+pub fn abs(x: f32, y: f32, w: f32, h: f32) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        left: px(x),
+        top: px(y),
+        width: px(w),
+        height: px(h),
+        ..default()
+    }
+}
+
+/// Atlas picture at its native (or the given) size; flat fallback when the atlas is missing.
+pub fn spawn_pic<'a>(
+    p: &'a mut P,
+    a: &UiAssets,
+    pic: Pic,
+    x: f32,
+    y: f32,
+    size: Option<(f32, f32)>,
+) -> EntityCommands<'a> {
+    let (w, h) = size.unwrap_or((pic.w, pic.h));
+    let node = abs(x, y, w, h);
+    match a.page(pic.page) {
+        Some(img) => p.spawn((
+            node,
+            ImageNode {
+                image: img.clone(),
+                rect: Some(Rect::new(pic.x, pic.y, pic.x + pic.w, pic.y + pic.h)),
+                ..default()
+            },
+        )),
+        None => p.spawn((node, BackgroundColor(Color::srgba(0.1, 0.12, 0.13, 0.85)))),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Al {
+    Left,
+    Center,
+    Right,
+}
+
+/// Text in a fixed box (design-space pixels); vertically centred.
+#[allow(clippy::too_many_arguments)]
+pub fn label(
+    p: &mut P,
+    font: &Handle<Font>,
+    s: impl Into<String>,
+    (x, y, w, h): (f32, f32, f32, f32),
+    size: f32,
+    color: Color,
+    al: Al,
+) {
+    let mut n = abs(x, y, w, h);
+    n.align_items = AlignItems::Center;
+    n.justify_content = match al {
+        Al::Left => JustifyContent::FlexStart,
+        Al::Center => JustifyContent::Center,
+        Al::Right => JustifyContent::FlexEnd,
+    };
+    n.overflow = Overflow::clip();
+    p.spawn(n).with_child((
+        Text::new(s),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+        TextLayout::new_with_justify(match al {
+            Al::Left => Justify::Left,
+            Al::Center => Justify::Center,
+            Al::Right => Justify::Right,
+        }),
+    ));
+}
 
 #[derive(Component)]
 pub struct HoverStyle {

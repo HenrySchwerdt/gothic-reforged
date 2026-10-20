@@ -29,7 +29,10 @@ fn u32_at(b: &[u8], at: usize) -> Option<u32> {
 impl Spt {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(bytes.len() >= 24 && bytes.len() <= 1 << 20, "spt size");
-        ensure!(bytes.get(8..20) == Some(b"__IdvSpt_02_"), "not a SpeedTree spt");
+        ensure!(
+            bytes.get(8..20) == Some(b"__IdvSpt_02_"),
+            "not a SpeedTree spt"
+        );
         let mut out = Spt::default();
         let mut at = 20;
         let mut found_size = false;

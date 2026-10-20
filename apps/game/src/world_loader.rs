@@ -429,7 +429,9 @@ impl Loader {
                         entry.positions.push(world[k].to_array());
                         let nrm = sub.normals.get(k).copied().unwrap_or([0.0, 1.0, 0.0]);
                         entry.normals.push([-nrm[0], nrm[1], nrm[2]]);
-                        entry.uvs.push(sub.uvs.get(k).copied().unwrap_or([0.0, 0.0]));
+                        entry
+                            .uvs
+                            .push(sub.uvs.get(k).copied().unwrap_or([0.0, 0.0]));
                         entry.colors.push(vertex_color(sub, k));
                         entry.tangents.push(vertex_tangent(sub, k));
                         o
@@ -862,7 +864,8 @@ impl Loader {
             .cstat_docs
             .iter()
             .filter(|(_, s)| {
-                (s.0 - center.x).abs() <= 5000.0 + TILE_CM && (s.1 - center.z).abs() <= 5000.0 + TILE_CM
+                (s.0 - center.x).abs() <= 5000.0 + TILE_CM
+                    && (s.1 - center.z).abs() <= 5000.0 + TILE_CM
             })
             .map(|(p, _)| p.clone())
             .collect();
@@ -893,10 +896,11 @@ impl Loader {
                     continue;
                 };
                 // The world matrix carries the per-instance scale; the species size is baked in.
-                let transform = Mat4::from_translation(Vec3::new(origin.0.x, -origin.0.y, -origin.0.z))
-                    * f
-                    * m
-                    * f;
+                let transform =
+                    Mat4::from_translation(Vec3::new(origin.0.x, -origin.0.y, -origin.0.z))
+                        * f
+                        * m
+                        * f;
                 stats.trees += 1;
                 parts.push(Part {
                     geom: kind.geom.clone(),
@@ -1067,9 +1071,8 @@ impl Loader {
                         );
                         for (pi, (geom, material)) in entry.parts.iter().enumerate() {
                             let Some(material) = material else { continue };
-                            let slot = accum
-                                .entry((material.name.clone(), pi))
-                                .or_insert_with(|| {
+                            let slot =
+                                accum.entry((material.name.clone(), pi)).or_insert_with(|| {
                                     (
                                         material.clone(),
                                         GeomData {
@@ -1093,12 +1096,13 @@ impl Loader {
                                 g.positions.push(wp.to_array());
                                 let n = xf.transform_vector3(Vec3::from(geom.normals[k]));
                                 // Blend toward up so clumps shade like the ground they stand on.
-                                let n = (n.normalize_or_zero() * 0.5 + Vec3::Y * 0.5)
-                                    .normalize_or_zero();
+                                let n = Vec3::Y + n.normalize_or_zero() * 0.1;
+                                let n = n.normalize_or_zero();
                                 g.normals.push(n.to_array());
                                 g.uvs.push(geom.uvs[k]);
                                 let c = geom.colors[k];
-                                g.colors.push([c[0] * shade, c[1] * shade, c[2] * shade, 1.0]);
+                                g.colors
+                                    .push([c[0] * shade, c[1] * shade, c[2] * shade, 1.0]);
                                 g.tangents.push([1.0, 0.0, 0.0, 1.0]);
                             }
                             g.indices.extend(geom.indices.iter().map(|i| i + base));
@@ -1150,15 +1154,15 @@ fn ground_cover(mat: &MatData) -> Vec<(&'static str, usize, f32)> {
     for (i, names) in mat.layer_names.iter().enumerate() {
         if names.contains("grass") {
             out.extend([
-                ("G3_Brush_Plant_Grass_05.xcmsh", i, 0.20),
-                ("G3_Brush_Plant_Grass_06.xcmsh", i, 0.20),
-                ("G3_Brush_Plant_Grass_07.xcmsh", i, 0.20),
-                ("G3_Brush_Plant_Herb_01.xcmsh", i, 0.10),
-                ("G3_Brush_Plant_Herb_02.xcmsh", i, 0.10),
-                ("G3_Brush_Plant_Herb_03.xcmsh", i, 0.08),
-                ("G3_Brush_Plant_Herb_05.xcmsh", i, 0.08),
-                ("G3_Brush_Plant_Herb_07.xcmsh", i, 0.08),
-                ("G3_Brush_Plant_Herb_08.xcmsh", i, 0.04),
+                ("G3_Brush_Plant_Grass_05.xcmsh", i, 0.06),
+                ("G3_Brush_Plant_Grass_06.xcmsh", i, 0.06),
+                ("G3_Brush_Plant_Grass_07.xcmsh", i, 0.06),
+                ("G3_Brush_Plant_Herb_01.xcmsh", i, 0.03),
+                ("G3_Brush_Plant_Herb_02.xcmsh", i, 0.03),
+                ("G3_Brush_Plant_Herb_03.xcmsh", i, 0.03),
+                ("G3_Brush_Plant_Herb_05.xcmsh", i, 0.03),
+                ("G3_Brush_Plant_Herb_07.xcmsh", i, 0.03),
+                ("G3_Brush_Plant_Herb_08.xcmsh", i, 0.03),
                 ("G3_Brush_Object_Stone_Small_01.xcmsh", i, 0.012),
                 ("G3_Brush_Object_Stone_Small_02.xcmsh", i, 0.012),
                 ("G3_Brush_Plant_Fern_01.xcmsh", i, 0.015),

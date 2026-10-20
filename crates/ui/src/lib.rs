@@ -26,16 +26,20 @@ use std::path::PathBuf;
 /// Everything the UI reads and (for dialogs) mutates.
 #[derive(Resource)]
 pub struct GameSession {
-    pub db: GameDatabase,
+    pub db: std::sync::Arc<GameDatabase>,
     pub state: GameState,
     pub items: ItemCatalog,
     pub assume: Assumptions,
 }
 
 impl GameSession {
-    pub fn new(db: GameDatabase, state: GameState, items: ItemCatalog) -> Self {
+    pub fn new(
+        db: impl Into<std::sync::Arc<GameDatabase>>,
+        state: GameState,
+        items: ItemCatalog,
+    ) -> Self {
         Self {
-            db,
+            db: db.into(),
             state,
             items,
             assume: Assumptions::PERMISSIVE,
@@ -99,6 +103,16 @@ pub struct Notify {
 pub struct OpenTrade {
     pub npc: String,
     pub stock: Vec<(String, u32)>,
+}
+
+/// Host-run dialog (the host's core drives the conversation; the UI only shows it): append
+/// `lines` (speaker, text, is_player) and replace the menu. `open: false` closes the screen.
+#[derive(Message, Clone, Debug)]
+pub struct DialogUpdate {
+    pub session: DialogSession,
+    pub lines: Vec<(String, String, bool)>,
+    pub menu: Vec<Choice>,
+    pub open: bool,
 }
 
 // ---- messages: UI -> host -----------------------------------------------------------
@@ -235,6 +249,7 @@ impl Plugin for GothicUiPlugin {
             .add_message::<TradeRequest>()
             .add_message::<DialogEnded>()
             .add_message::<WorldEffect>()
+            .add_message::<DialogUpdate>()
             .add_message::<Act>()
             .add_systems(Startup, (logic::setup, hud::spawn_hud).chain())
             .add_systems(
@@ -244,6 +259,7 @@ impl Plugin for GothicUiPlugin {
                     logic::hotkeys,
                     logic::dispatch_actions,
                     logic::drive_dialog,
+                    logic::apply_dialog_updates,
                     logic::screens_requests,
                     screens::rebuild,
                     style::hover_style,

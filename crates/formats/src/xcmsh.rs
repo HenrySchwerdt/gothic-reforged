@@ -262,10 +262,26 @@ impl Xcmsh {
                 material,
                 bounds_min,
                 bounds_max,
-                colors4: if colors4.len() == n_vertices { colors4 } else { Vec::new() },
-                colors5: if colors5.len() == n_vertices { colors5 } else { Vec::new() },
-                tangents: if tangents.len() == n_vertices { tangents } else { Vec::new() },
-                uv2: if uv2.len() == n_vertices { uv2 } else { Vec::new() },
+                colors4: if colors4.len() == n_vertices {
+                    colors4
+                } else {
+                    Vec::new()
+                },
+                colors5: if colors5.len() == n_vertices {
+                    colors5
+                } else {
+                    Vec::new()
+                },
+                tangents: if tangents.len() == n_vertices {
+                    tangents
+                } else {
+                    Vec::new()
+                },
+                uv2: if uv2.len() == n_vertices {
+                    uv2
+                } else {
+                    Vec::new()
+                },
             });
         }
         ensure!(c.0.is_empty(), "unexpected trailing XCMSH body bytes");

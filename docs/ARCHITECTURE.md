@@ -66,9 +66,10 @@ L0 data                 gothic-formats (bounded parsers), gothic-importer (VFS, 
 
 ### Current crate map
 
-`formats`, `importer`, `world`, `physics`, `animation`, `audio`, `ui`, `gameplay`, `sim`; apps `game`,
-`inspector`, `questlint`, `dialog-cli`. To add: `runtime` (L2 bridge), `script` (ported Script_Game),
-cook step in `importer`, `mods`.
+`formats`, `importer`, `world`, `physics`, `animation`, `audio`, `ui`, `gameplay`, `sim`, `runtime`
+(L2 bridge: `Core` = sim + dialog + state at 30 Hz, `Command`/`Event` Bevy messages, JSON save/load);
+apps `game` (`--play`: `apps/game/src/play/`), `inspector`, `questlint`, `dialog-cli`. To add: `script`
+(ported Script_Game), cook step in `importer`, `mods`.
 
 ## Data flow
 

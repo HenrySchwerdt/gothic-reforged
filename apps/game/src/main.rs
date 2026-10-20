@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     #[cfg(feature = "viewer")]
     {
         let args: Vec<String> = std::env::args().collect();
-        if args.iter().any(|a| a == "--walk") {
+        if args.iter().any(|a| a == "--walk" || a == "--play") {
             return walk::run(&args);
         }
     }

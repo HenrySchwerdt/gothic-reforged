@@ -114,11 +114,7 @@ pub fn find_sprites(tex: &TexData) -> Vec<Sprite> {
         }
         let (sw, sh) = (x1 - x0 + 1, y1 - y0 + 1);
         let row = y0 + sh * 15 / 100;
-        let top_count = members
-            .iter()
-            .filter(|&&i| i / bw == row)
-            .count()
-            .max(1);
+        let top_count = members.iter().filter(|&&i| i / bw == row).count().max(1);
         out.push(Sprite {
             uv: [
                 x0 as f32 / bw as f32,

@@ -10,6 +10,7 @@ anyhow.workspace = true
 serde_json.workspace = true
 gothic-formats = { path = "../../crates/formats" }
 gothic-importer = { path = "../../crates/importer" }
+gothic-cook = { path = "../../crates/cook" }
 
 [lints]
 workspace = true

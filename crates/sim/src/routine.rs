@@ -230,7 +230,7 @@ pub struct RoutinePoint {
 
 /// Resolve `(npc, routine name, time)` to a point. The routine-name -> point-set mapping
 /// lives in `Game.dll` and is not recovered [CA 11.1 U]; the game plugs its own data in.
-pub trait RoutineResolver {
+pub trait RoutineResolver: Send + Sync {
     fn resolve(&self, npc: &str, routine: &str, time: RoutineTime) -> Option<RoutinePoint>;
 }
 

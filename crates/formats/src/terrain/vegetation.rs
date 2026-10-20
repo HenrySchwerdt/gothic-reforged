@@ -14,6 +14,7 @@
 //! exactly): `u16 version (2)`, 14 opaque bytes, `6 x f32` AABB, then four arrays each written
 //! as `u8 1, u32 n, n elements`: positions (3 x f32), normals (3 x f32), a 2 x f32 pair and
 //! `u32` indices (`n % 3 == 0`).
+#![allow(clippy::chunks_exact_to_as_chunks)]
 use crate::{
     genome::GenomeFile,
     propstream::{Cursor, Strings},
@@ -81,17 +82,28 @@ struct ParsedObject<'a> {
     end: usize,
 }
 
-fn read_object<'a>(bytes: &'a [u8], strings: &Strings, start: usize, limit: usize) -> Result<ParsedObject<'a>> {
+fn read_object<'a>(
+    bytes: &'a [u8],
+    strings: &Strings,
+    start: usize,
+    limit: usize,
+) -> Result<ParsedObject<'a>> {
     let mut cur = Cursor::with_range(bytes, start, limit)?;
     let version = cur.u16()?;
-    ensure!(version == 0x53 || version == 0x52, "unsupported object version");
+    ensure!(
+        version == 0x53 || version == 0x52,
+        "unsupported object version"
+    );
     let size = cur.u32()? as usize;
     ensure!(size <= cur.remaining(), "object exceeds container");
     let end = cur.pos + size;
     let mut cur = Cursor::with_range(bytes, cur.pos, end)?;
     ensure!(cur.u16()? == 30, "unsupported property list version");
     let count = cur.u32()? as usize;
-    ensure!(count <= 4096 && count <= cur.remaining() / 10, "property count");
+    ensure!(
+        count <= 4096 && count <= cur.remaining() / 10,
+        "property count"
+    );
     let mut props = Vec::with_capacity(count);
     for _ in 0..count {
         let name = strings.entry(&mut cur)?;

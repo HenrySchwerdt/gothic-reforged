@@ -3,6 +3,8 @@
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 mod gmat;
+#[path = "play/mod.rs"]
+mod play;
 
 use crate::world_loader::{
     LoaderHandle, MatData, MatKind, Origin, Part, PartKind, Request, Response, TILE_CM, TexData,
@@ -150,7 +152,10 @@ fn parse_shots(spec: &str) -> Vec<Shot> {
     spec.split(';')
         .filter_map(|item| {
             let (name, nums) = item.split_once(':')?;
-            let v: Vec<f32> = nums.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+            let v: Vec<f32> = nums
+                .split(',')
+                .filter_map(|n| n.trim().parse().ok())
+                .collect();
             (v.len() == 5).then(|| Shot {
                 name: name.trim().to_string(),
                 pos: Vec3::new(v[0], v[1], v[2]),
@@ -193,97 +198,115 @@ pub fn run(args: &[String]) -> Result<()> {
         operations_per_frame: 4,
     };
     let fog_end = radius as f32 * TILE_CM * CM * 0.92;
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Gothic Reforged / Ardea walk".into(),
-                resolution: WindowResolution::new(1280, 720),
-                present_mode: if smoke {
-                    PresentMode::AutoNoVsync
-                } else {
-                    PresentMode::AutoVsync
-                },
-                ..default()
-            }),
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "Gothic Reforged / Ardea walk".into(),
+            resolution: std::env::var("GR_RES")
+                .ok()
+                .and_then(|s| {
+                    let (w, h) = s.split_once('x')?;
+                    Some(WindowResolution::new(w.parse().ok()?, h.parse().ok()?))
+                })
+                .unwrap_or_else(|| WindowResolution::new(1280, 720)),
+            present_mode: if smoke {
+                PresentMode::AutoNoVsync
+            } else {
+                PresentMode::AutoVsync
+            },
             ..default()
-        }))
-        .add_plugins(GothicMaterialsPlugin)
-        .insert_resource(LoaderRes {
-            requests: handle.requests,
-            responses: Mutex::new(handle.responses),
-        })
-        .insert_resource(Stream {
-            settings,
-            resident: BTreeSet::new(),
-            in_flight: HashSet::new(),
-            pending: VecDeque::new(),
-            spawned: HashMap::new(),
-            ready: false,
-            loader_ms: 0,
-            records: 0,
-            triangles_nav: 0,
-            statics: 0,
-            statics_with_collision: 0,
-            trees: 0,
-            tiles_loaded: 0,
-            parts_spawned: 0,
-            double_sided: args.iter().any(|a| a == "--double-sided"),
-            last_activity: 0,
-        })
-        .insert_resource(Collision(CollisionWorld::new()))
-        .insert_resource(Caches::default())
-        .insert_resource(Player {
-            ctrl: CharacterController::new(
-                ControllerConfig::default(),
-                Vec3::new(spawn.0, 6000.0, spawn.1),
-            ),
-            yaw: arg("--yaw").and_then(|s| s.parse().ok()).unwrap_or(0.0),
-            pitch: -0.05,
-            fly: args.iter().any(|a| a == "--fly"),
-            third: false,
-            placed: false,
-            fly_pos: Vec3::new(0.0, 25_000.0, 0.0),
-            scripted_wish: None,
-        })
-        .insert_resource(Smoke {
-            enabled: smoke,
-            prefix,
-            stage: 0,
-            frames: 0,
-            frame_times: Vec::new(),
-            walk_log: Vec::new(),
-            stable: 0,
-            shots,
-            shot_index: 0,
-        })
-        .insert_resource(VegStream::default())
-        .insert_resource(SunDir(Quat::from_euler(EulerRot::YXZ, SUN_ROT.0, SUN_ROT.1, 0.0) * Vec3::Z))
-        .insert_resource(ClearColor(Color::srgb(0.52, 0.68, 0.88)))
-        .insert_resource(GlobalAmbientLight {
-            color: Color::srgb(0.75, 0.82, 1.0),
-            brightness: 650.0,
-            ..default()
-        })
-        .insert_resource(FogEnd(fog_end))
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                receive_tiles,
-                stream_tiles,
-                stream_vegetation,
-                spawn_pending,
-                spawn_vegetation,
-                sky_follow,
-                input_mode,
-                player_motion,
-                update_camera,
-                smoke_script,
-                hud,
-            )
-                .chain(),
+        }),
+        ..default()
+    }))
+    .add_plugins(GothicMaterialsPlugin);
+    if std::env::var_os("GR_PROF").is_some() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    app
+    .insert_resource(LoaderRes {
+        requests: handle.requests,
+        responses: Mutex::new(handle.responses),
+    })
+    .insert_resource(Stream {
+        settings,
+        resident: BTreeSet::new(),
+        in_flight: HashSet::new(),
+        pending: VecDeque::new(),
+        spawned: HashMap::new(),
+        ready: false,
+        loader_ms: 0,
+        records: 0,
+        triangles_nav: 0,
+        statics: 0,
+        statics_with_collision: 0,
+        trees: 0,
+        tiles_loaded: 0,
+        parts_spawned: 0,
+        double_sided: args.iter().any(|a| a == "--double-sided"),
+        last_activity: 0,
+    })
+    .insert_resource(Collision(CollisionWorld::new()))
+    .insert_resource(Caches::default())
+    .insert_resource(Player {
+        ctrl: CharacterController::new(
+            ControllerConfig::default(),
+            Vec3::new(spawn.0, 6000.0, spawn.1),
+        ),
+        yaw: arg("--yaw").and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        pitch: -0.05,
+        fly: args.iter().any(|a| a == "--fly"),
+        third: false,
+        placed: false,
+        fly_pos: Vec3::new(0.0, 25_000.0, 0.0),
+        scripted_wish: None,
+    })
+    .insert_resource(Smoke {
+        enabled: smoke,
+        prefix,
+        stage: 0,
+        frames: 0,
+        frame_times: Vec::new(),
+        walk_log: Vec::new(),
+        stable: 0,
+        shots,
+        shot_index: 0,
+    })
+    .insert_resource(bevy::light::DirectionalLightShadowMap {
+        size: env_f32("GR_SHMAP", 2048.0) as usize,
+    })
+    .insert_resource(VegStream::default())
+    .insert_resource(SunDir(
+        Quat::from_euler(EulerRot::YXZ, SUN_ROT.0, SUN_ROT.1, 0.0) * Vec3::Z,
+    ))
+    .insert_resource(ClearColor(Color::srgb(0.52, 0.68, 0.88)))
+    .insert_resource(GlobalAmbientLight {
+        color: Color::srgb(0.75, 0.82, 1.0),
+        brightness: 650.0,
+        ..default()
+    })
+    .insert_resource(FogEnd(fog_end))
+    .add_systems(Startup, setup)
+    .add_systems(
+        Update,
+        (
+            receive_tiles,
+            stream_tiles,
+            stream_vegetation,
+            spawn_pending,
+            spawn_vegetation,
+            sky_follow,
+            input_mode,
+            player_motion,
+            update_camera,
+            smoke_script,
+            hud,
         )
-        .run();
+            .chain(),
+    );
+    if play::requested(args) {
+        play::install(&mut app, args)?;
+    }
+    app.run();
     Ok(())
 }
 
@@ -297,15 +320,15 @@ fn setup(
     fog: Res<FogEnd>,
     sun: Res<SunDir>,
 ) {
-    let fog_color = Color::srgb(0.70, 0.78, 0.88);
+    let fog_color = Color::srgb(0.60, 0.74, 0.92);
     commands.spawn((
         Mesh3d(meshes.add(Sphere::new(1.0).mesh().uv(48, 24))),
         MeshMaterial3d(skies.add(SkyMaterial {
             params: SkyParams {
                 sun_dir: sun.0.extend(0.0),
-                zenith: Vec4::new(0.20, 0.38, 0.78, 1.0),
-                horizon: Vec4::new(0.74, 0.82, 0.92, 1.0),
-                ground: Vec4::new(0.70, 0.78, 0.88, 1.0),
+                zenith: Vec4::new(0.10, 0.30, 0.82, 1.0),
+                horizon: Vec4::new(0.52, 0.70, 0.95, 1.0),
+                ground: Vec4::new(0.60, 0.74, 0.92, 1.0),
                 sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
             },
         })),
@@ -322,13 +345,14 @@ fn setup(
             ..default()
         }),
         Exposure::default(),
+        bevy::core_pipeline::tonemapping::Tonemapping::None,
         Transform::from_xyz(0.0, 250.0, 0.0),
         DistanceFog {
             color: fog_color,
             directional_light_color: Color::srgb(1.0, 0.9, 0.7),
             directional_light_exponent: 30.0,
             falloff: FogFalloff::Linear {
-                start: fog.0 * 0.35,
+                start: fog.0 * 0.55,
                 end: fog.0,
             },
         },
@@ -336,16 +360,16 @@ fn setup(
     ));
     commands.spawn((
         DirectionalLight {
-            illuminance: 16_000.0,
+            illuminance: 24_000.0,
             color: Color::srgb(1.0, 0.96, 0.88),
-            shadow_maps_enabled: true,
+            shadow_maps_enabled: std::env::var_os("GR_NOSHADOW").is_none(),
             ..default()
         },
         CascadeShadowConfigBuilder {
-            num_cascades: 4,
+            num_cascades: env_f32("GR_CASC", 4.0) as usize,
             minimum_distance: 0.1,
-            maximum_distance: 160.0,
-            first_cascade_far_bound: 10.0,
+            maximum_distance: env_f32("GR_SHDIST", 160.0),
+            first_cascade_far_bound: env_f32("GR_SHFIRST", 10.0),
             overlap_proportion: 0.2,
         }
         .build(),
@@ -476,7 +500,7 @@ fn texture_image(texture: &TexData, srgb: bool) -> Option<Image> {
         mag_filter: ImageFilterMode::Linear,
         min_filter: ImageFilterMode::Linear,
         mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: 8,
+        anisotropy_clamp: 16,
         ..default()
     });
     Some(image)
@@ -591,7 +615,7 @@ fn surface_material(
         if flags & F_MASK == 0 {
             params.misc.z = 0.4;
         }
-        flags |= F_MASK;
+        flags |= F_MASK | 1024;
         two_sided = true;
     }
     if kind == PartKind::Foliage {
@@ -602,7 +626,11 @@ fn surface_material(
     params.misc.w = NORMAL_Y_SIGN;
     params.flags = flags;
     params.ao_strength = if kind == PartKind::Terrain { 0.55 } else { 0.7 };
-    params.roughness = if kind == PartKind::Terrain { 0.95 } else { 0.85 };
+    params.roughness = if kind == PartKind::Terrain {
+        0.95
+    } else {
+        0.85
+    };
     let alpha_mode = if flags & F_MASK != 0 {
         AlphaMode::Mask(params.misc.z)
     } else {
@@ -692,7 +720,33 @@ struct Gpu<'w> {
     sun: Res<'w, SunDir>,
 }
 
-fn spawn_part(commands: &mut Commands, part: &Part, gpu: &mut Gpu, force_two_sided: bool) -> Entity {
+fn env_f32(name: &str, default: f32) -> f32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Profiling ablation: `GR_HIDE=terrain,static,tree,foliage,water` hides those part kinds.
+fn profile_hidden(kind: PartKind) -> bool {
+    static HIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let h = HIDE.get_or_init(|| std::env::var("GR_HIDE").unwrap_or_default());
+    let name = match kind {
+        PartKind::Terrain => "terrain",
+        PartKind::Static => "static",
+        PartKind::Tree => "tree",
+        PartKind::Foliage => "foliage",
+        PartKind::Water => "water",
+    };
+    !h.is_empty() && h.split(',').any(|n| n == name)
+}
+
+fn spawn_part(
+    commands: &mut Commands,
+    part: &Part,
+    gpu: &mut Gpu,
+    force_two_sided: bool,
+) -> Entity {
     let mesh = mesh_handle(part, &mut gpu.caches, &mut gpu.meshes);
     let mut transform = Transform::from_matrix(part.transform);
     transform.translation *= CM;
@@ -711,7 +765,12 @@ fn spawn_part(commands: &mut Commands, part: &Part, gpu: &mut Gpu, force_two_sid
             gpu.sun.0,
         );
         return commands
-            .spawn((Mesh3d(mesh), MeshMaterial3d(material), transform, NotShadowCaster))
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                transform,
+                NotShadowCaster,
+            ))
             .id();
     }
     let material = surface_material(
@@ -723,6 +782,9 @@ fn spawn_part(commands: &mut Commands, part: &Part, gpu: &mut Gpu, force_two_sid
         force_two_sided,
     );
     let mut e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform));
+    if profile_hidden(part.kind) {
+        e.insert(Visibility::Hidden);
+    }
     if matches!(part.kind, PartKind::Foliage | PartKind::Tree) {
         e.insert(NotShadowCaster);
     }
@@ -775,7 +837,7 @@ fn stream_vegetation(
     mut veg: ResMut<VegStream>,
     mut commands: Commands,
 ) {
-    if !stream.ready {
+    if !stream.ready || std::env::var_os("GR_NOVEG").is_some() {
         return;
     }
     let center = stream.settings.cell_at(observer_cm(&player));
@@ -840,6 +902,9 @@ fn sky_follow(
 ) {
     if let (Ok(c), Ok(mut s)) = (camera.single(), sky.single_mut()) {
         s.translation = c.translation;
+        if std::env::var_os("GR_NOSKY").is_some() {
+            s.scale = Vec3::ZERO;
+        }
     }
 }
 
@@ -1029,6 +1094,8 @@ fn smoke_script(
     stream: Res<Stream>,
     veg: Res<VegStream>,
     time: Res<Time>,
+    meshes: Query<&ViewVisibility, With<Mesh3d>>,
+    diags: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
     if !smoke.enabled {
         return;
@@ -1074,6 +1141,27 @@ fn smoke_script(
                 shoot(&mut commands, name);
                 let avg = smoke.frame_times[30..].iter().sum::<f32>()
                     / (smoke.frame_times.len() - 30) as f32;
+                let mut lines: Vec<String> = diags
+                    .iter()
+                    .filter(|d| d.path().as_str().starts_with("render/"))
+                    .filter_map(|d| {
+                        d.average()
+                            .map(|a| format!("{}={:.3}", d.path().as_str().replace("render/", ""), a))
+                    })
+                    .collect();
+                lines.sort();
+                if !lines.is_empty() {
+                    eprintln!("DIAG {}", lines.join(" "));
+                }
+                let mut sorted = smoke.frame_times[30..].to_vec();
+                sorted.sort_by(f32::total_cmp);
+                eprintln!(
+                    "FRAME median {:.2} ms p95 {:.2} ms; mesh entities {} visible {}",
+                    sorted[sorted.len() / 2] * 1000.0,
+                    sorted[sorted.len() * 95 / 100] * 1000.0,
+                    meshes.iter().count(),
+                    meshes.iter().filter(|v| v.get()).count()
+                );
                 eprintln!(
                     "FRAME TIME standing in Ardea: {:.2} ms avg ({:.0} fps)",
                     avg * 1000.0,
@@ -1139,9 +1227,12 @@ fn smoke_script(
         5 => {
             let i = smoke.shot_index;
             if i >= smoke.shots.len() {
-                commands.write_message(AppExit::Success);
+                if smoke.frames > 130 {
+                    commands.write_message(AppExit::Success);
+                }
             } else if smoke.frames == 1 {
-                let (pos, yaw, pitch) = (smoke.shots[i].pos, smoke.shots[i].yaw, smoke.shots[i].pitch);
+                let (pos, yaw, pitch) =
+                    (smoke.shots[i].pos, smoke.shots[i].yaw, smoke.shots[i].pitch);
                 player.fly = true;
                 player.fly_pos = pos / CM;
                 player.yaw = yaw;

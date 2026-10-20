@@ -7,10 +7,10 @@
 //! (`RunQuest`/`SucceedQuest`/`CloseQuest`/`AddQuestLog`, see `info.rs`).
 use crate::gdini::{Anomaly, Record, parse_record, split_list};
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Quest {
     pub name: String,
     /// Raw `Type` integer (0..=13 observed); semantics undecoded.

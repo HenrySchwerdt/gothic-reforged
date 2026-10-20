@@ -11,10 +11,10 @@
 use crate::gdini::{Anomaly, Record, parse_record, split_list};
 use crate::quest::{num, num_list, text, text_list};
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ScriptStep {
     pub command: String,
     /// Actor reference: `player`, `npc`, `owner` or a named entity; may be empty.
@@ -27,7 +27,7 @@ pub struct ScriptStep {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Info {
     pub name: String,
     pub sort_id: u32,

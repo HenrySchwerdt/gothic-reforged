@@ -149,6 +149,7 @@ fn main() -> Result<()> {
             if !actors::dispatch(other, &args)?
                 && !gamedata::dispatch(other, &args)?
                 && !propdump::dispatch(other, &args)?
+                && !gothic_cook::cli::dispatch(other, &args)?
             {
                 bail!("unknown command {other}; use --help")
             }

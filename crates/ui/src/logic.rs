@@ -309,3 +309,47 @@ pub(crate) fn screens_requests(
         act.write(Act(Action::Close));
     }
 }
+
+/// Show / update / close a dialog whose conversation is run by the host ([`DialogUpdate`]).
+pub(crate) fn apply_dialog_updates(
+    mut updates: MessageReader<DialogUpdate>,
+    mut ui: ResMut<UiState>,
+) {
+    for u in updates.read() {
+        if !u.open {
+            ui.dialog = None;
+            if ui.screen == Screen::Dialog {
+                ui.set_screen(Screen::None);
+            }
+            continue;
+        }
+        let fresh = ui
+            .dialog
+            .as_ref()
+            .is_none_or(|d| d.session.npc != u.session.npc);
+        if fresh {
+            ui.dialog = Some(DialogView {
+                session: u.session.clone(),
+                lines: Vec::new(),
+                menu: Vec::new(),
+            });
+        }
+        if let Some(view) = ui.dialog.as_mut() {
+            view.session = u.session.clone();
+            for (speaker, text, player) in &u.lines {
+                view.lines.push(DialogLine {
+                    speaker: speaker.clone(),
+                    text: text.clone(),
+                    player: *player,
+                });
+            }
+            let n = view.lines.len();
+            if n > 60 {
+                view.lines.drain(..n - 60);
+            }
+            view.menu = u.menu.clone();
+        }
+        ui.set_screen(Screen::Dialog);
+        ui.dirty = true;
+    }
+}

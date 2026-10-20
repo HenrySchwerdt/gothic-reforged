@@ -1,0 +1,17 @@
+[package]
+name = "gothic-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
+gothic-gameplay = { path = "../gameplay" }
+gothic-sim = { path = "../sim" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

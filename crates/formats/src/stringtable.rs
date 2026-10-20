@@ -9,21 +9,21 @@
 //! Literal `\n` two-character sequences inside texts are the game's line breaks
 //! and are preserved raw (see [`unescape`]).
 use anyhow::{Result, bail, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const MAX_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 2_000_000;
 const MAX_LANGUAGES: usize = 32;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StringEntry {
     pub key: String,
     /// One text per language in [`StringTable::languages`] order.
     pub texts: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StringTable {
     pub languages: Vec<String>,
     pub current_language: String,
@@ -128,6 +128,16 @@ impl StringTable {
             "no [LocAdmin_Languages] section"
         );
         Ok(table)
+    }
+
+    /// Rebuild the key indexes (they are not serialized); call after deserializing.
+    pub fn rebuild_index(&mut self) {
+        self.index.clear();
+        self.index_lower.clear();
+        for (i, e) in self.entries.iter().enumerate() {
+            self.index.entry(e.key.clone()).or_insert(i);
+            self.index_lower.entry(e.key.to_ascii_lowercase()).or_insert(i);
+        }
     }
 
     pub fn language_index(&self, language: &str) -> Option<usize> {

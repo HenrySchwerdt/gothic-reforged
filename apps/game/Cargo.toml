@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 default = []
 ui-demo = ["viewer", "dep:gothic-ui"]
-viewer = ["dep:gothic-animation", "bevy/3d_bevy_render", "bevy/bevy_winit", "bevy/multi_threaded", "bevy/bevy_log", "bevy/bevy_gizmos", "bevy/default_font"]
+viewer = ["dep:gothic-animation", "dep:gothic-ui", "dep:gothic-audio", "dep:gothic-runtime", "dep:gothic-sim", "dep:gothic-gameplay", "bevy/3d_bevy_render", "bevy/bevy_winit", "bevy/multi_threaded", "bevy/bevy_log", "bevy/bevy_gizmos", "bevy/default_font"]
 
 [dependencies]
 bevy = { workspace = true, features = ["std", "async_executor"] }
@@ -18,7 +18,12 @@ gothic-importer = { path = "../../crates/importer" }
 gothic-physics = { path = "../../crates/physics" }
 gothic-animation = { path = "../../crates/animation", optional = true }
 gothic-ui = { path = "../../crates/ui", optional = true }
+gothic-audio = { path = "../../crates/audio", optional = true }
+gothic-runtime = { path = "../../crates/runtime", optional = true }
+gothic-sim = { path = "../../crates/sim", optional = true }
+gothic-gameplay = { path = "../../crates/gameplay", optional = true }
 anyhow.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

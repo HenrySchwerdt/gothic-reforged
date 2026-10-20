@@ -1,4 +1,7 @@
-//! HUD: vitals bars, compass strip and notification toasts.
+//! HUD as in the original: round compass (bottom left), 10-slot quick bar (bottom centre),
+//! three framed bars (bottom right: health, endurance, mana), focus bar (top centre) and the
+//! plain "game messages" text in the screen middle. Positions are the ones in `g3.gui.res`.
+use crate::atlas::*;
 use crate::style::*;
 use crate::*;
 
@@ -7,22 +10,58 @@ pub(crate) struct HudRoot;
 #[derive(Component, Clone, Copy)]
 pub(crate) enum HudBar {
     Hp,
-    Mp,
     Sp,
+    Mp,
+    Focus,
 }
+#[derive(Component)]
+pub(crate) struct SlotsRoot;
+#[derive(Component)]
+pub(crate) struct FocusRoot;
+#[derive(Component)]
+pub(crate) struct Rose;
 #[derive(Component)]
 pub(crate) struct ToastRoot;
 #[derive(Component)]
 pub(crate) struct Toast(Timer);
-#[derive(Component)]
-pub(crate) struct CompassMark(f32);
 
 const TOAST_SECONDS: f32 = 4.5;
 const MAX_TOASTS: usize = 6;
-const COMPASS_W: f32 = 480.0;
+const BAR_W: f32 = 201.0;
+const BAR_H: f32 = 19.0;
+
+/// Item bound to a quick slot (key 1..0).
+#[derive(Clone, Debug)]
+pub struct QuickSlot {
+    pub item: String,
+    pub count: u32,
+}
+
+/// The ten quick slots shown in the bottom bar; the host fills it.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct QuickSlots(pub Vec<Option<QuickSlot>>);
+
+/// Health fraction (0..=1) of the creature in focus; `None` hides the top bar.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct FocusHealth(pub Option<f32>);
+
+fn bar_fill(color: Color, kind: HudBar) -> impl Bundle {
+    (
+        kind,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(12),
+            top: px(4),
+            width: px(176),
+            height: px(12),
+            ..default()
+        },
+        BackgroundColor(color),
+    )
+}
 
 pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
-    let font = &assets.font;
+    let a = assets.clone();
     commands
         .spawn((
             HudRoot,
@@ -35,150 +74,183 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
             },
         ))
         .with_children(|r| {
-            // vitals, bottom left
-            r.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(24),
-                bottom: px(22),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(5),
-                ..default()
-            })
-            .with_children(|b| {
-                for (kind, color) in [
-                    (HudBar::Hp, Color::srgb(0.72, 0.14, 0.12)),
-                    (HudBar::Mp, Color::srgb(0.20, 0.36, 0.78)),
-                    (HudBar::Sp, Color::srgb(0.78, 0.66, 0.22)),
-                ] {
-                    b.spawn((
-                        Node {
-                            width: px(260),
-                            height: px(16),
-                            border: UiRect::all(px(2)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
-                        BorderColor::all(GOLD_DIM),
-                    ))
-                    .with_child((
-                        kind,
-                        Node {
-                            width: percent(100),
-                            height: percent(100),
-                            ..default()
-                        },
-                        BackgroundColor(color),
-                    ));
-                }
+            // compass: wheel in front, rose behind it turning with the view
+            let mut n = abs(0.0, 0.0, 100.0, 100.0);
+            n.left = px(16);
+            n.top = Val::Auto;
+            n.bottom = px(8);
+            r.spawn(n).with_children(|c| {
+                let mut rose = spawn_pic(c, &a, COMPASS_ROSE, 12.0, 12.0, Some((76.0, 76.0)));
+                rose.insert(Rose);
+                spawn_pic(c, &a, COMPASS_WHEEL, 8.0, 8.0, Some((84.0, 84.0)));
             });
-            // compass, top center
-            r.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(14),
-                    left: percent(50),
-                    margin: UiRect::left(px(-COMPASS_W / 2.0)),
-                    width: px(COMPASS_W),
-                    height: px(34),
-                    border: UiRect::axes(px(0), px(2)),
-                    overflow: Overflow::clip(),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
-                BorderColor::all(GOLD_DIM),
-            ))
-            .with_children(|c| {
-                for (i, label) in ["N", "NO", "O", "SO", "S", "SW", "W", "NW"]
-                    .iter()
-                    .enumerate()
-                {
-                    let major = i % 2 == 0;
-                    c.spawn((
-                        CompassMark(i as f32 * 45.0),
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: px(if major { 2 } else { 6 }),
-                            left: px(-100),
-                            width: px(40),
-                            justify_content: JustifyContent::Center,
-                            ..default()
-                        },
-                        children![txt(
-                            font,
-                            *label,
-                            if major { 22.0 } else { 16.0 },
-                            if i == 0 {
-                                RED
-                            } else if major {
-                                GOLD
-                            } else {
-                                DIM
-                            },
-                        )],
-                    ));
-                }
-                c.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: percent(50),
-                        bottom: px(0),
-                        width: px(2),
-                        height: px(8),
-                        ..default()
-                    },
-                    BackgroundColor(PARCH),
-                ));
+            // quick bar
+            let mut n = abs(0.0, 0.0, 520.0, 56.0);
+            n.left = percent(50);
+            n.margin = UiRect::left(px(-260));
+            n.top = Val::Auto;
+            n.bottom = px(24);
+            r.spawn(n).with_children(|c| {
+                spawn_pic(c, &a, QUICKSLOTS, 0.0, 0.0, Some((520.0, 56.0)));
+                c.spawn((SlotsRoot, abs(0.0, 0.0, 520.0, 56.0)));
             });
+            // bars
+            for (i, (kind, color)) in [
+                (HudBar::Hp, Color::srgb(0.74, 0.07, 0.07)),
+                (HudBar::Sp, Color::srgb(0.76, 0.62, 0.18)),
+                (HudBar::Mp, Color::srgb(0.07, 0.46, 0.70)),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut n = abs(0.0, 0.0, BAR_W, BAR_H);
+                n.left = Val::Auto;
+                n.right = px(16);
+                n.top = Val::Auto;
+                n.bottom = px(61.0 - 20.0 * i as f32);
+                r.spawn(n).with_children(|c| {
+                    spawn_pic(c, &a, STATUSBAR, 0.0, 0.0, None);
+                    c.spawn(bar_fill(color, kind));
+                });
+            }
+            // focus bar
+            let mut n = abs(0.0, 0.0, BAR_W, BAR_H);
+            n.left = percent(50);
+            n.margin = UiRect::left(px(-BAR_W / 2.0));
+            n.top = px(10);
+            r.spawn((FocusRoot, n, Visibility::Hidden))
+                .with_children(|c| {
+                    spawn_pic(c, &a, STATUSBAR, 0.0, 0.0, None);
+                    c.spawn(bar_fill(Color::srgb(0.74, 0.07, 0.07), HudBar::Focus));
+                });
         });
-    // toasts stay visible during dialogs, so they live outside the HUD root
+    // game messages (plain text, centre of the screen); they stay visible during dialogs
     commands.spawn((
         ToastRoot,
         GlobalZIndex(20),
         Node {
             position_type: PositionType::Absolute,
-            right: px(24),
-            bottom: px(30),
-            width: px(360),
+            left: px(0),
+            width: percent(100),
+            top: px(308),
             flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            align_items: AlignItems::FlexEnd,
+            row_gap: px(2),
+            align_items: AlignItems::Center,
             ..default()
         },
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_hud(
-    ui: Res<UiState>,
+    mut commands: Commands,
     vitals: Res<PlayerVitals>,
     heading: Res<PlayerHeading>,
-    mut root: Query<&mut Visibility, With<HudRoot>>,
-    mut bars: Query<(&HudBar, &mut Node), Without<CompassMark>>,
-    mut marks: Query<(&CompassMark, &mut Node), Without<HudBar>>,
+    focus: Res<FocusHealth>,
+    slots: Res<QuickSlots>,
+    session: Option<Res<GameSession>>,
+    assets: Res<UiAssets>,
+    mut bars: Query<(&HudBar, &mut Node), Without<SlotsRoot>>,
+    mut rose: Query<&mut UiTransform, With<Rose>>,
+    mut focus_root: Query<&mut Visibility, With<FocusRoot>>,
+    slot_root: Query<(Entity, Option<&Children>), With<SlotsRoot>>,
+    mut last_slots: Local<u32>,
 ) {
-    for mut v in &mut root {
-        *v = if ui.screen != Screen::None {
-            Visibility::Hidden
-        } else {
+    for (b, mut n) in &mut bars {
+        let f = match b {
+            HudBar::Hp => frac(vitals.hp, vitals.hp_max),
+            HudBar::Mp => frac(vitals.mp, vitals.mp_max),
+            HudBar::Sp => frac(vitals.sp, vitals.sp_max),
+            HudBar::Focus => focus.0.unwrap_or(0.0).clamp(0.0, 1.0),
+        };
+        n.width = px(176.0 * f);
+    }
+    for mut v in &mut focus_root {
+        *v = if focus.0.is_some() {
             Visibility::Inherited
+        } else {
+            Visibility::Hidden
         };
     }
-    for (b, mut n) in &mut bars {
-        let (cur, max) = match b {
-            HudBar::Hp => (vitals.hp, vitals.hp_max),
-            HudBar::Mp => (vitals.mp, vitals.mp_max),
-            HudBar::Sp => (vitals.sp, vitals.sp_max),
-        };
-        n.width = percent(if max > 0.0 {
-            (cur / max).clamp(0.0, 1.0) * 100.0
-        } else {
-            0.0
+    for mut t in &mut rose {
+        t.rotation = Rot2::radians(-heading.0);
+    }
+    // rebuild the slot row when the slots change (or on the first frames, once the root exists)
+    let need = slots.is_changed() || *last_slots < 3;
+    *last_slots += 1;
+    if !need {
+        return;
+    }
+    for (root, kids) in &slot_root {
+        for k in kids.into_iter().flatten() {
+            commands.entity(*k).despawn();
+        }
+        commands.entity(root).with_children(|c| {
+            for i in 0..10 {
+                let x = 22.0 + 48.0 * i as f32;
+                let slot = slots.0.get(i).and_then(Option::as_ref);
+                if let Some(s) = slot {
+                    let cat = session
+                        .as_ref()
+                        .and_then(|g| g.items.get(&s.item))
+                        .map_or(6, |i| i.category);
+                    let g = glyph(cat);
+                    spawn_pic(
+                        c,
+                        &assets,
+                        g,
+                        x + (48.0 - g.w) / 2.0,
+                        5.0 + (48.0 - g.h) / 2.0,
+                        None,
+                    );
+                }
+                label(
+                    c,
+                    &assets.font,
+                    if i == 9 {
+                        "10".to_string()
+                    } else {
+                        format!("{}", i + 1)
+                    },
+                    (x + 3.0, 6.0, 20.0, 12.0),
+                    11.0,
+                    TEXT,
+                    Al::Left,
+                );
+                if let Some(s) = slot.filter(|s| s.count > 1) {
+                    label(
+                        c,
+                        &assets.font,
+                        s.count.to_string(),
+                        (x + 14.0, 38.0, 30.0, 12.0),
+                        11.0,
+                        TEXT,
+                        Al::Right,
+                    );
+                }
+            }
         });
     }
-    let yaw = heading.0.to_degrees();
-    for (m, mut n) in &mut marks {
-        let delta = (m.0 - yaw + 540.0).rem_euclid(360.0) - 180.0;
-        let x = COMPASS_W / 2.0 + delta * 3.0 - 20.0;
-        n.left = px(if delta.abs() < 85.0 { x } else { -200.0 });
+}
+
+fn frac(cur: f32, max: f32) -> f32 {
+    if max > 0.0 {
+        (cur / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Item category -> glyph of the icon atlas (the per-item icon cells are not indexed in gui.pak).
+pub(crate) fn glyph(category: i32) -> Pic {
+    match category {
+        1 => GLYPH_WEAPON,
+        2 => GLYPH_ARMOR,
+        4 => GLYPH_POTION,
+        7 => GLYPH_SCROLL,
+        9 => GLYPH_BOOK,
+        3 => GLYPH_ANVIL,
+        _ => GLYPH_MISC,
     }
 }
 
@@ -200,12 +272,6 @@ pub(crate) fn toasts(
     };
     let mut count = live.iter().count();
     for n in msgs.read() {
-        let color = match n.kind {
-            ToastKind::Info => PARCH,
-            ToastKind::Quest => GOLD,
-            ToastKind::Xp => GREEN,
-            ToastKind::Item => Color::srgb(0.75, 0.85, 0.95),
-        };
         if count >= MAX_TOASTS {
             if let Some((e, _)) = live.iter().next() {
                 commands.entity(e).despawn();
@@ -216,14 +282,17 @@ pub(crate) fn toasts(
         let t = commands
             .spawn((
                 Toast(Timer::from_seconds(TOAST_SECONDS, TimerMode::Once)),
-                Node {
-                    padding: UiRect::axes(px(14), px(7)),
-                    border: UiRect::left(px(3)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.03, 0.03, 0.025, 0.88)),
-                BorderColor::all(color),
-                children![txt(&assets.font, n.text.clone(), 20.0, color)],
+                Node::default(),
+                children![(
+                    Text::new(n.text.clone()),
+                    TextFont {
+                        font: assets.font.clone().into(),
+                        font_size: FontSize::Px(18.0),
+                        ..default()
+                    },
+                    TextColor(TEXT),
+                    TextShadow::default(),
+                )],
             ))
             .id();
         commands.entity(root).add_child(t);

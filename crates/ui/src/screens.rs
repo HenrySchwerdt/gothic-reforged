@@ -1,17 +1,19 @@
-//! Screen builders: the whole screen is respawned when `UiState::dirty` is set.
+//! Screens of the original UI, rebuilt from `g3.gui.res`: every view is an atlas panel at the
+//! position/size stored in the resource file (1024x768 design space) with the original's
+//! text rectangles on top. The whole screen is respawned when `UiState::dirty` is set.
+use crate::atlas::*;
+use crate::hud::glyph;
 use crate::style::*;
 use crate::*;
 use gothic_gameplay::model::{Cmd, QuestStatus};
 use gothic_gameplay::state::{GOLD_ITEM, LogKind};
 use gothic_gameplay::transcript::quest_title;
 
-type P<'a> = ChildSpawnerCommands<'a>;
-
 #[derive(Component)]
 pub(crate) struct ScreenRoot;
 
 struct Cx<'a> {
-    font: &'a Handle<Font>,
+    a: &'a UiAssets,
     s: &'a GameSession,
     ui: &'a UiState,
     vitals: PlayerVitals,
@@ -23,6 +25,9 @@ impl Cx<'_> {
     }
     fn scroll_y(&self, name: &'static str) -> f32 {
         self.ui.scroll.get(name).copied().unwrap_or(0.0)
+    }
+    fn font(&self) -> &Handle<Font> {
+        &self.a.font
     }
 }
 
@@ -50,49 +55,15 @@ pub(crate) fn rebuild(
         commands.entity(e).despawn();
     }
     let cx = Cx {
-        font: &assets.font,
+        a: &assets,
         s: &session,
         ui: &ui,
         vitals: *vitals,
     };
-    match ui.screen {
-        Screen::None => {}
-        Screen::Dialog => dialog(&mut commands, &cx),
-        Screen::Journal => journal(&mut commands, &cx),
-        Screen::Inventory => inventory(&mut commands, &cx),
-        Screen::Character => character(&mut commands, &cx),
-        Screen::Trade => trade(&mut commands, &cx),
+    if ui.screen == Screen::None {
+        return;
     }
-}
-
-fn node_col() -> Node {
-    Node {
-        flex_direction: FlexDirection::Column,
-        ..default()
-    }
-}
-
-fn separator(p: &mut P) {
-    p.spawn((
-        Node {
-            width: percent(100),
-            height: px(2),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(GOLD_DIM),
-    ));
-}
-
-/// Centered overlay window with title, optional tab buttons and a close button.
-fn window(
-    commands: &mut Commands,
-    cx: &Cx,
-    title: &str,
-    tabs: Vec<(String, bool, Action)>,
-    body: impl FnOnce(&mut P),
-) {
-    let font = cx.font;
+    // full-window root; the 1024x768 stage is centred inside it
     commands
         .spawn((
             ScreenRoot,
@@ -105,272 +76,467 @@ fn window(
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),
         ))
-        .with_children(|r| {
-            r.spawn((
-                Node {
-                    width: px(1100),
-                    height: px(640),
-                    flex_direction: FlexDirection::Column,
-                    border: UiRect::all(px(2)),
-                    padding: UiRect::all(px(16)),
-                    row_gap: px(10),
-                    ..default()
-                },
-                BackgroundColor(BG),
-                BorderColor::all(GOLD_DIM),
-            ))
-            .with_children(|p| {
-                p.spawn(Node {
-                    width: percent(100),
-                    justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::Center,
-                    flex_shrink: 0.0,
-                    ..default()
-                })
-                .with_children(|h| {
-                    h.spawn(txt(font, title, 32.0, GOLD));
-                    h.spawn((
-                        button(Action::Close, BG_ROW, BG_HOVER),
-                        Node {
-                            width: px(34),
-                            height: px(34),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border: UiRect::all(px(1)),
-                            ..default()
-                        },
-                        BorderColor::all(GOLD_DIM),
-                    ))
-                    .with_child(txt(font, "X", 18.0, PARCH));
-                });
-                if !tabs.is_empty() {
-                    p.spawn(Node {
-                        column_gap: px(6),
-                        flex_shrink: 0.0,
-                        ..default()
-                    })
-                    .with_children(|t| {
-                        for (label, sel, act) in tabs {
-                            t.spawn((
-                                button(act, if sel { BG_SEL } else { BG_ROW }, BG_HOVER),
-                                Node {
-                                    padding: UiRect::axes(px(9), px(5)),
-                                    border: UiRect::all(px(1)),
-                                    ..default()
-                                },
-                                BorderColor::all(if sel { GOLD } else { GOLD_DIM }),
-                            ))
-                            .with_child(txt(
-                                font,
-                                label,
-                                17.0,
-                                if sel { GOLD } else { PARCH },
-                            ));
-                        }
-                    });
-                }
-                separator(p);
-                p.spawn(Node {
-                    flex_grow: 1.0,
-                    min_height: px(0),
-                    width: percent(100),
-                    column_gap: px(18),
-                    ..default()
-                })
-                .with_children(body);
+        .with_children(|root| {
+            root.spawn(Node {
+                width: px(1024),
+                height: px(768),
+                flex_shrink: 0.0,
+                ..default()
+            })
+            .with_children(|p| match ui.screen {
+                Screen::None => {}
+                Screen::Dialog => dialog(p, &cx),
+                Screen::Journal => journal(p, &cx),
+                Screen::Inventory => inventory(p, &cx),
+                Screen::Character => character(p, &cx),
+                Screen::Trade => trade(p, &cx),
             });
         });
 }
 
-fn bar(p: &mut P, w: Val, h: f32, frac: f32, color: Color) {
+// ------------------------------------------------------------------------------ pieces
+fn heading(p: &mut P, cx: &Cx, s: impl Into<String>, r: (f32, f32, f32, f32)) {
+    label(p, &cx.a.heading, s, r, 22.0, TEXT_HI, Al::Center);
+}
+
+fn body(p: &mut P, cx: &Cx, s: impl Into<String>, r: (f32, f32, f32, f32), al: Al, c: Color) {
+    label(p, cx.font(), s, r, 16.0, c, al);
+}
+
+/// "name ....... value" row of the character panels (label x=24, value column 166..290).
+fn kv_row(p: &mut P, cx: &Cx, ox: f32, oy: f32, y: f32, k: &str, v: String) {
+    body(p, cx, k, (ox + 24.0, oy + y, 202.0, 20.0), Al::Left, TEXT);
+    body(p, cx, v, (ox + 166.0, oy + y, 124.0, 20.0), Al::Right, TEXT);
+}
+
+fn frame_box(bg: Color) -> impl Bundle {
+    (
+        BackgroundColor(bg),
+        BorderColor::all(BORDER),
+    )
+}
+
+/// Right-hand page strip (exit + five page buttons) at 946,76.
+fn sidebar(p: &mut P, cx: &Cx, active: Option<Screen>) {
+    let (ox, oy) = (946.0, 76.0);
+    spawn_pic(p, cx.a, SIDEBAR, ox, oy, None);
+    let pages: [(Pic, Option<Screen>); 5] = [
+        (PAGE_INVENTORY, Some(Screen::Inventory)),
+        (PAGE_CHARACTER, Some(Screen::Character)),
+        (PAGE_DOCUMENTS, None),
+        (PAGE_QUESTS, Some(Screen::Journal)),
+        (PAGE_QUILL, None),
+    ];
+    let mut slot = |p: &mut P, pic: Pic, y: f32, act: Option<Action>, on: bool| {
+        let mut n = abs(ox + 8.0, oy + y, 46.0, 46.0);
+        n.border = UiRect::all(px(2));
+        n.align_items = AlignItems::Center;
+        n.justify_content = JustifyContent::Center;
+        let bg = if on {
+            Color::srgba(0.25, 0.42, 0.42, 0.95)
+        } else {
+            Color::srgba(0.05, 0.14, 0.15, 0.92)
+        };
+        let mut e = match act {
+            Some(a) => p.spawn((button(a, bg, Color::srgba(0.16, 0.30, 0.30, 0.95)), n)),
+            None => p.spawn((BackgroundColor(bg), n)),
+        };
+        e.insert(BorderColor::all(if on { TEXT } else { BORDER }));
+        e.with_children(|b| {
+            b.spawn(Node {
+                width: px(pic.w.min(38.0)),
+                height: px(pic.h.min(38.0)),
+                ..default()
+            })
+            .with_children(|i| {
+                spawn_pic(i, cx.a, pic, 0.0, 0.0, Some((pic.w.min(38.0), pic.h.min(38.0))));
+            });
+        });
+    };
+    slot(p, PAGE_EXIT, 48.0, Some(Action::Close), false);
+    for (k, (pic, scr)) in pages.into_iter().enumerate() {
+        slot(
+            p,
+            pic,
+            144.0 + 63.0 * k as f32,
+            scr.map(Action::Open),
+            scr.is_some() && scr == active,
+        );
+    }
+}
+
+/// Item grid: 48px cells, five per row, scrollable (26,85 inside the inventory-style views).
+#[allow(clippy::too_many_arguments)]
+fn item_grid(
+    p: &mut P,
+    cx: &Cx,
+    rect: (f32, f32, f32, f32),
+    scroll: &'static str,
+    list: &[(String, String, u32)],
+    sel: Option<&str>,
+    mk: impl Fn(&str) -> Action,
+) {
+    let (x, y, w, h) = rect;
+    let cols = 5usize;
     p.spawn((
         Node {
-            width: w,
-            height: px(h),
-            border: UiRect::all(px(1)),
-            ..default()
+            flex_wrap: FlexWrap::Wrap,
+            align_content: AlignContent::FlexStart,
+            overflow: Overflow::scroll_y(),
+            ..abs(x, y, 48.0 * cols as f32, h)
         },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
-        BorderColor::all(GOLD_DIM),
+        scroll_area(scroll, cx.scroll_y(scroll)),
     ))
-    .with_children(|b| {
-        b.spawn((
-            Node {
-                width: percent(frac.clamp(0.0, 1.0) * 100.0),
-                height: percent(100),
+    .with_children(|g| {
+        let cells = (list.len().div_ceil(cols) * cols).max(cols * 10);
+        for i in 0..cells {
+            let mut n = Node {
+                width: px(48),
+                height: px(48),
+                border: UiRect::all(px(1)),
+                flex_shrink: 0.0,
                 ..default()
-            },
-            BackgroundColor(color),
-        ));
-    });
-}
-
-fn kv(p: &mut P, cx: &Cx, k: &str, v: String, vc: Color) {
-    p.spawn(Node {
-        width: percent(100),
-        justify_content: JustifyContent::SpaceBetween,
-        ..default()
-    })
-    .with_children(|r| {
-        r.spawn(txt(cx.font, k, 19.0, DIM));
-        r.spawn(txt(cx.font, v, 19.0, vc));
-    });
-}
-
-// ---------------------------------------------------------------------------- dialog
-fn dialog(commands: &mut Commands, cx: &Cx) {
-    let Some(view) = cx.ui.dialog.as_ref() else {
-        return;
-    };
-    let font = cx.font;
-    let npc = view.session.npc.replace('_', " ");
-    commands
-        .spawn((
-            ScreenRoot,
-            GlobalZIndex(10),
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::SpaceBetween,
-                ..default()
-            },
-        ))
-        .with_children(|r| {
-            // top letterbox bar with the partner's name
-            r.spawn((
-                Node {
-                    width: percent(100),
-                    height: px(76),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                BackgroundColor(BLACK_BAR),
-            ))
-            .with_child(txt(font, npc, 34.0, GOLD));
-            // bottom bar: subtitles + choices
-            r.spawn((
-                Node {
-                    width: percent(100),
-                    height: px(380),
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::axes(px(120), px(14)),
-                    row_gap: px(8),
-                    ..default()
-                },
-                BackgroundColor(BLACK_BAR),
-            ))
-            .with_children(|b| {
-                // subtitles: the most recent lines
-                b.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(4),
-                    height: px(150),
-                    flex_shrink: 0.0,
-                    overflow: Overflow::clip(),
-                    justify_content: JustifyContent::FlexEnd,
-                    ..default()
-                })
-                .with_children(|s| {
-                    let n = view.lines.len();
-                    for l in &view.lines[n.saturating_sub(3)..] {
-                        let color = if l.player { BLUE } else { PARCH };
-                        let who = if l.speaker.is_empty() {
-                            String::new()
-                        } else {
-                            format!("{}: ", l.speaker)
-                        };
-                        s.spawn((
-                            Text::new(who),
-                            TextFont {
-                                font: font.clone().into(),
-                                font_size: FontSize::Px(21.0),
-                                ..default()
-                            },
-                            TextColor(if l.player { BLUE } else { GOLD }),
-                            bevy::text::LineHeight::RelativeToFont(1.3),
-                        ))
-                        .with_child(span(
-                            font,
-                            l.text.clone(),
-                            21.0,
-                            color,
-                        ));
-                    }
-                });
-                separator(b);
-                if view.menu.is_empty() {
-                    b.spawn((
-                        button(Action::Close, BG_ROW, BG_HOVER),
-                        Node {
-                            padding: UiRect::axes(px(16), px(8)),
-                            align_self: AlignSelf::Center,
-                            border: UiRect::all(px(1)),
-                            ..default()
-                        },
-                        BorderColor::all(GOLD_DIM),
+            };
+            match list.get(i) {
+                None => {
+                    g.spawn((n, frame_box(CELL), BorderColor::all(Color::srgba(0.5, 0.4, 0.28, 0.45))));
+                }
+                Some((_, key, count)) => {
+                    let is_sel = sel == Some(key.as_str());
+                    n.justify_content = JustifyContent::Center;
+                    n.align_items = AlignItems::Center;
+                    let cat = cx.s.items.get(key).map_or(6, |i| i.category);
+                    let gl = glyph(cat);
+                    g.spawn((
+                        button(
+                            mk(key),
+                            if is_sel { Color::srgba(0.25, 0.38, 0.55, 0.9) } else { CELL },
+                            CELL_HOVER,
+                        ),
+                        n,
+                        BorderColor::all(if is_sel { TEXT } else { BORDER }),
                     ))
-                    .with_child(txt(font, "Weiter  [Leertaste]", 20.0, GOLD));
-                } else {
-                    b.spawn((
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            flex_grow: 1.0,
-                            min_height: px(0),
-                            row_gap: px(3),
-                            overflow: Overflow::scroll_y(),
+                    .with_children(|c| {
+                        c.spawn(Node {
+                            width: px(gl.w),
+                            height: px(gl.h),
                             ..default()
-                        },
-                        scroll_area("dialog", cx.scroll_y("dialog")),
-                    ))
-                    .with_children(|m| {
-                        for (i, c) in view.menu.iter().enumerate() {
-                            let key = if i < 9 {
-                                format!("{}.", i + 1)
-                            } else if i == 9 {
-                                "0.".to_string()
-                            } else {
-                                "-".to_string()
-                            };
-                            m.spawn((
-                                button(Action::Choose(i), Color::NONE, BG_HOVER),
-                                Node {
-                                    padding: UiRect::axes(px(10), px(3)),
-                                    column_gap: px(10),
-                                    flex_shrink: 0.0,
-                                    ..default()
-                                },
-                            ))
-                            .with_children(|row| {
-                                row.spawn((
-                                    Node {
-                                        width: px(34),
-                                        ..default()
-                                    },
-                                    children![txt(font, key, 21.0, GOLD)],
-                                ));
-                                row.spawn(txt(font, c.label.replace('\n', " "), 21.0, PARCH));
-                            });
+                        })
+                        .with_children(|i| {
+                            spawn_pic(i, cx.a, gl, 0.0, 0.0, None);
+                        });
+                        if *count > 1 {
+                            label(
+                                c,
+                                cx.font(),
+                                count.to_string(),
+                                (14.0, 32.0, 30.0, 12.0),
+                                11.0,
+                                TEXT,
+                                Al::Right,
+                            );
                         }
                     });
                 }
-            });
-        });
+            }
+        }
+    });
+    // scroll bar track (decoration; the wheel scrolls)
+    let mut t = abs(x + 48.0 * cols as f32 + 4.0, y, 14.0, h);
+    t.border = UiRect::all(px(1));
+    p.spawn((t, frame_box(Color::srgba(0.08, 0.06, 0.05, 0.9))));
 }
 
-// ---------------------------------------------------------------------------- journal
+fn item_list(cx: &Cx, inv: &std::collections::BTreeMap<String, u32>, cat: Option<i32>) -> Vec<(String, String, u32)> {
+    let mut v: Vec<_> = inv
+        .iter()
+        .filter(|(k, n)| k.as_str() != GOLD_ITEM && **n > 0)
+        .filter(|(k, _)| cat.is_none_or(|c| item_category(cx.s, k) == c))
+        .map(|(k, n)| (item_name(&cx.s.db, k), k.clone(), *n))
+        .collect();
+    v.sort();
+    v
+}
+
+fn item_category(s: &GameSession, name: &str) -> i32 {
+    match s.items.get(name).map(|i| i.category) {
+        Some(0) | None => 6,
+        Some(c) => c,
+    }
+}
+
+/// Character view (left): progress, attributes, protection - at 14,16.
+fn character_view(p: &mut P, cx: &Cx) {
+    let (ox, oy) = (14.0, 16.0);
+    let st = &cx.s.state;
+    let db = &cx.s.db;
+    spawn_pic(p, cx.a, CHARACTER, ox, oy, None);
+    let next = GameState::xp_next(st.level);
+    heading(p, cx, "Erfahrung", (ox + 24.0, oy + 8.0, 260.0, 33.0));
+    kv_row(p, cx, ox, oy, 44.0, "Stufe", st.level.to_string());
+    kv_row(p, cx, ox, oy, 68.0, "Erfahrung", st.xp.to_string());
+    kv_row(p, cx, ox, oy, 92.0, "Nächste Stufe", next.to_string());
+    kv_row(p, cx, ox, oy, 116.0, "Lernpunkte", st.learning_points.to_string());
+    heading(p, cx, "Attribute", (ox + 24.0, oy + 164.0, 260.0, 25.0));
+    let attr = |tag: &str| {
+        st.attributes
+            .get(&tag.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(0)
+            .to_string()
+    };
+    let mut y = 196.0;
+    for tag in ["STR", "HNT", "INT", "SMT", "THF", "ALC"] {
+        kv_row(p, cx, ox, oy, y, &attrib_name(db, tag), attr(tag));
+        y += 23.0;
+    }
+    let v = cx.vitals;
+    for (name, cur, max) in [
+        ("Lebensenergie", v.hp, v.hp_max),
+        ("Ausdauer", v.sp, v.sp_max),
+        ("Mana", v.mp, v.mp_max),
+    ] {
+        kv_row(p, cx, ox, oy, y, name, format!("{cur:.0} / {max:.0}"));
+        y += 23.0;
+    }
+    heading(p, cx, "Rüstungsschutz", (ox + 24.0, oy + 428.0, 260.0, 25.0));
+    for (i, (name, tag)) in [
+        ("Schutz vor Klingen", "prot_blade"),
+        ("Schutz vor Zerschmettern", "prot_impact"),
+        ("Schutz vor Geschossen", "prot_missile"),
+        ("Schutz vor Feuer", "prot_fire"),
+        ("Schutz vor Eis", "prot_ice"),
+        ("Schutz vor Energie", "prot_lightning"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let y = [464.0, 488.0, 512.0, 532.0, 556.0, 580.0][i];
+        kv_row(p, cx, ox, oy, y, name, st.attributes.get(tag).copied().unwrap_or(0).to_string());
+    }
+}
+
+// --------------------------------------------------------------------------- inventory
+const INV_TABS: [(&str, Option<i32>, Pic); 5] = [
+    ("Waffen", Some(1), GLYPH_WEAPON),
+    ("Rüstung", Some(2), GLYPH_ARMOR),
+    ("Schriften", Some(7), GLYPH_SCROLL),
+    ("Alchemie", Some(4), GLYPH_POTION),
+    ("Sonstiges", None, GLYPH_MISC),
+];
+
+fn in_tab(cx: &Cx, name: &str, tab: usize) -> bool {
+    let c = item_category(cx.s, name);
+    match INV_TABS[tab].1 {
+        Some(k) => c == k,
+        None => !matches!(c, 1 | 2 | 4 | 7),
+    }
+}
+
+fn tab_strip(p: &mut P, cx: &Cx, rect: (f32, f32), selected: usize) {
+    for (k, (_, _, g)) in INV_TABS.iter().enumerate() {
+        let mut n = abs(rect.0 + 50.0 * k as f32, rect.1, 46.0, 26.0);
+        n.border = UiRect::all(px(2));
+        n.align_items = AlignItems::Center;
+        n.justify_content = JustifyContent::Center;
+        let on = k == selected;
+        p.spawn((
+            button(
+                Action::InvTab(k),
+                if on { Color::srgba(0.12, 0.30, 0.18, 0.95) } else { Color::srgba(0.02, 0.10, 0.06, 0.92) },
+                Color::srgba(0.12, 0.26, 0.18, 0.95),
+            ),
+            n,
+            BorderColor::all(if on { TEXT } else { BORDER }),
+        ))
+        .with_children(|b| {
+            b.spawn(Node {
+                width: px(g.w.min(26.0)),
+                height: px(g.h.min(18.0)),
+                ..default()
+            })
+            .with_children(|i| {
+                spawn_pic(i, cx.a, *g, 0.0, 0.0, Some((g.w.min(26.0), g.h.min(18.0))));
+            });
+        });
+    }
+}
+
+fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
+    let (ox, oy) = (336.0, 16.0);
+    let db = &cx.s.db;
+    let info = cx.s.items.get(key);
+    spawn_pic(p, cx.a, ITEM, ox, oy, None);
+    heading(p, cx, item_name(db, key), (ox + 12.0, oy + 8.0, 264.0, 28.0));
+    if let Some(d) = db.text(&format!("ITEMDESC_{key}")).filter(|d| d != "-") {
+        p.spawn((
+            Node {
+                overflow: Overflow::clip(),
+                ..abs(ox + 18.0, oy + 44.0, 252.0, 60.0)
+            },
+            children![txt_wrap(cx.font(), d, 14.0, TEXT)],
+        ));
+    }
+    let Some(info) = info else {
+        return;
+    };
+    let mut y = 112.0;
+    let mut row = |p: &mut P, k: String, v: String, c: Color| {
+        body(p, cx, k, (ox + 18.0, oy + y, 170.0, 20.0), Al::Left, TEXT);
+        body(p, cx, v, (ox + 160.0, oy + y, 108.0, 20.0), Al::Right, c);
+        y += 22.0;
+    };
+    if let Some((amount, ty)) = &info.damage {
+        let ty = match ty.as_str() {
+            "Blade" => "Klinge",
+            "Impact" => "Zerschmettern",
+            "Missile" => "Geschoss",
+            "Fire" => "Feuer",
+            "Ice" => "Eis",
+            "Lightning" => "Energie",
+            other => other,
+        };
+        row(p, "Schaden".into(), format!("{amount} ({ty})"), TEXT);
+    }
+    for (tag, v) in info.modifiers.iter().take(4) {
+        row(p, attrib_name(db, tag), format!("{v:+}"), TEXT);
+    }
+    for (tag, need) in info.requirements.iter().take(3) {
+        let have = cx
+            .s
+            .state
+            .attributes
+            .get(&tag.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(0);
+        row(
+            p,
+            format!("Benötigt {}", attrib_name(db, tag)),
+            need.to_string(),
+            if have >= *need { TEXT } else { TEXT_BAD },
+        );
+    }
+    row(p, "Wert".into(), info.value.to_string(), TEXT);
+    for (i, (name, a)) in actions.into_iter().enumerate() {
+        let mut n = abs(ox + 70.0 + 0.0 * i as f32, oy + 308.0, 148.0, 30.0);
+        n.border = UiRect::all(px(2));
+        n.align_items = AlignItems::Center;
+        n.justify_content = JustifyContent::Center;
+        p.spawn((
+            button(a, Color::srgba(0.12, 0.08, 0.05, 0.95), Color::srgba(0.30, 0.20, 0.10, 0.95)),
+            n,
+            BorderColor::all(BORDER),
+        ))
+        .with_child(txt(cx.font(), name, 16.0, TEXT));
+    }
+}
+
+fn txt_wrap(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+    (
+        Text::new(s),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    )
+}
+
+fn inventory(p: &mut P, cx: &Cx) {
+    let st = &cx.s.state;
+    let tab = cx.ui.inv_tab.min(INV_TABS.len() - 1);
+    let (ox, oy) = (634.0, 16.0);
+    character_view(p, cx);
+    let list: Vec<_> = item_list(cx, &st.inventory, None)
+        .into_iter()
+        .filter(|(_, k, _)| in_tab(cx, k, tab))
+        .collect();
+    let sel = cx
+        .ui
+        .inv_sel
+        .clone()
+        .filter(|s| list.iter().any(|(_, k, _)| k == s));
+    spawn_pic(p, cx.a, INVENTORY, ox, oy, None);
+    heading(p, cx, INV_TABS[tab].0, (ox + 26.0, oy + 12.0, 258.0, 25.0));
+    tab_strip(p, cx, (ox + 30.0, oy + 46.0), tab);
+    item_grid(p, cx, (ox + 26.0, oy + 85.0, 258.0, 482.0), "items", &list, sel.as_deref(), |k| {
+        Action::SelectItem(k.to_string())
+    });
+    body(p, cx, cx.t("HUD_GoldAmount", "Gold"), (ox + 32.0, oy + 580.0, 100.0, 20.0), Al::Left, TEXT);
+    body(p, cx, st.gold().to_string(), (ox + 98.0, oy + 580.0, 180.0, 20.0), Al::Right, TEXT);
+    if let Some(k) = &sel {
+        let equip = cx.s.items.get(k).is_some_and(|i| matches!(i.category, 1 | 2));
+        let label = if equip { "Anlegen" } else { "Benutzen" };
+        item_view(p, cx, k, vec![(label.into(), Action::UseItem(k.clone()))]);
+    }
+    sidebar(p, cx, Some(Screen::Inventory));
+}
+
+// ---------------------------------------------------------------------------- character
+fn skill_group(key: &str) -> usize {
+    let k = key.to_ascii_lowercase();
+    let has = |w: &[&str]| w.iter().any(|x| k.contains(x));
+    if has(&["sword", "1h", "2h", "bow", "crossbow", "combat", "weapon", "shield", "fight"]) {
+        0 // Kampf
+    } else if has(&["hunt", "sneak", "sprint", "animal", "pelt", "claw", "teeth", "trophy", "skin"]) {
+        1 // Jagd
+    } else if has(&["magic", "spell", "rune", "mana", "scroll", "summon"]) {
+        2 // Magie
+    } else if has(&["smith", "forge", "blade", "armor"]) {
+        3 // Schmieden
+    } else if has(&["thief", "lock", "pick", "steal", "pocket", "theft"]) {
+        4 // Diebstahl
+    } else if has(&["alch", "potion", "herb", "brew"]) {
+        5 // Alchemie
+    } else {
+        6 // Sonstige
+    }
+}
+
+fn character(p: &mut P, cx: &Cx) {
+    let st = &cx.s.state;
+    let db = &cx.s.db;
+    character_view(p, cx);
+    let (ox, oy) = (325.0, 16.0);
+    spawn_pic(p, cx.a, SKILLS, ox, oy, None);
+    // (heading, heading rect, list rect) from the resource file
+    let groups = [
+        ("Kampf", (32.0, 8.0), (12.0, 40.0, 288.0, 144.0)),
+        ("Jagd", (32.0, 200.0), (12.0, 232.0, 288.0, 96.0)),
+        ("Magie", (32.0, 348.0), (12.0, 380.0, 288.0, 96.0)),
+        ("Schmieden", (32.0, 488.0), (12.0, 532.0, 288.0, 48.0)),
+        ("Diebstahl", (328.0, 12.0), (320.0, 44.0, 288.0, 96.0)),
+        ("Alchemie", (328.0, 156.0), (320.0, 184.0, 288.0, 96.0)),
+        ("Sonstige", (328.0, 300.0), (320.0, 344.0, 288.0, 48.0)),
+    ];
+    let mut buckets: Vec<Vec<String>> = vec![Vec::new(); groups.len()];
+    for k in &st.skills {
+        let name = db
+            .text(&format!("FO_it_{k}"))
+            .or_else(|| db.text(&format!("FO_{k}")))
+            .unwrap_or_else(|| k.clone());
+        buckets[skill_group(k)].push(name);
+    }
+    for (i, (name, h, r)) in groups.into_iter().enumerate() {
+        heading(p, cx, name, (ox + h.0, oy + h.1, 260.0, 25.0));
+        for (j, s) in buckets[i].iter().take((r.3 / 20.0) as usize).enumerate() {
+            body(p, cx, s.clone(), (ox + r.0 + 8.0, oy + r.1 + 20.0 * j as f32, r.2 - 16.0, 20.0), Al::Left, TEXT);
+        }
+    }
+    if st.skills.is_empty() {
+        body(p, cx, "Noch keine Fertigkeiten erlernt.", (ox + 320.0, oy + 444.0, 288.0, 40.0), Al::Center, TEXT_DIM);
+    }
+    sidebar(p, cx, Some(Screen::Character));
+}
+
+// ------------------------------------------------------------------------------ journal
 fn quest_tab_of(s: QuestStatus) -> Option<usize> {
     match s {
         QuestStatus::Running => Some(0),
         QuestStatus::Success | QuestStatus::Won => Some(1),
-        QuestStatus::Failed
-        | QuestStatus::Lost
-        | QuestStatus::Obsolete
-        | QuestStatus::Cancelled => Some(2),
+        QuestStatus::Failed | QuestStatus::Lost | QuestStatus::Obsolete | QuestStatus::Cancelled => Some(2),
         QuestStatus::Open => None,
     }
 }
@@ -385,26 +551,45 @@ fn dialog_excerpt(db: &gothic_gameplay::GameDatabase, info: &str) -> Vec<String>
         .filter(|s| Cmd::parse(&s.command) == Some(Cmd::Say))
         .filter_map(|s| {
             let t = db.text(&s.text)?;
-            let player = s.entity1.eq_ignore_ascii_case("player")
-                || s.entity1.eq_ignore_ascii_case("pc_hero");
+            let player = s.entity1.eq_ignore_ascii_case("player") || s.entity1.eq_ignore_ascii_case("pc_hero");
             Some(format!("{}: {t}", if player { "Du" } else { "Gegenüber" }))
         })
         .collect()
 }
 
-fn journal(commands: &mut Commands, cx: &Cx) {
+fn journal(p: &mut P, cx: &Cx) {
     let db = &cx.s.db;
     let st = &cx.s.state;
-    let tab_names = [
+    let (ox, oy) = (14.0, 16.0);
+    spawn_pic(p, cx.a, QUESTS, ox, oy, None);
+    heading(p, cx, cx.t("HUD_Quests", "Alle Missionen"), (ox + 32.0, oy + 8.0, 872.0, 30.0));
+    // world map (cropped to the 442x392 view)
+    let mut map = WORLD_MAP;
+    map.h = 514.0;
+    spawn_pic(p, cx.a, map, ox + 40.0, oy + 48.0, Some((438.0, 388.0)));
+    // quest tabs
+    let names = [
         cx.t("HUD_Quest_Running", "Aktuell"),
         cx.t("HUD_Quest_Success", "Erfolgreich"),
         cx.t("HUD_Quest_Failed", "Gescheitert"),
     ];
-    let tabs = tab_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.clone(), cx.ui.quest_tab == i, Action::QuestTab(i)))
-        .collect();
+    for (i, n) in names.iter().enumerate() {
+        let on = cx.ui.quest_tab == i;
+        let mut nd = abs(ox + 503.0 + 140.0 * i as f32, oy + 44.0, 136.0, 40.0);
+        nd.border = UiRect::all(px(2));
+        nd.align_items = AlignItems::Center;
+        nd.justify_content = JustifyContent::Center;
+        p.spawn((
+            button(
+                Action::QuestTab(i),
+                if on { Color::srgba(0.05, 0.25, 0.12, 0.95) } else { Color::srgba(0.0, 0.07, 0.04, 0.95) },
+                Color::srgba(0.07, 0.22, 0.12, 0.95),
+            ),
+            nd,
+            BorderColor::all(BORDER),
+        ))
+        .with_child(txt(cx.font(), n.clone(), 16.0, if on { TEXT_HI } else { TEXT }));
+    }
     let mut list: Vec<(String, String)> = st
         .quests
         .iter()
@@ -416,359 +601,129 @@ fn journal(commands: &mut Commands, cx: &Cx) {
         .ui
         .quest_sel
         .clone()
-        .filter(|s| list.iter().any(|(_, n)| n == s))
-        .or_else(|| list.first().map(|(_, n)| n.clone()));
-    let font = cx.font;
-    window(commands, cx, &cx.t("HUD_Quests", "Missionen"), tabs, |p| {
-        p.spawn((
-            Node {
-                width: px(360),
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(3),
-                overflow: Overflow::scroll_y(),
-                flex_shrink: 0.0,
-                ..default()
-            },
-            scroll_area("quests", cx.scroll_y("quests")),
-        ))
-        .with_children(|l| {
-            if list.is_empty() {
-                l.spawn(txt(
-                    font,
-                    cx.t("HUD_NoQuests", "Keine Missionen vorhanden"),
-                    19.0,
-                    DIM,
-                ));
-            }
-            for (title, name) in &list {
-                let sel = selected.as_deref() == Some(name.as_str());
-                l.spawn((
-                    button(
-                        Action::SelectQuest(name.clone()),
-                        if sel { BG_SEL } else { BG_ROW },
-                        BG_HOVER,
-                    ),
-                    Node {
-                        padding: UiRect::axes(px(10), px(6)),
-                        flex_shrink: 0.0,
-                        ..default()
-                    },
-                ))
-                .with_child(txt(
-                    font,
-                    title.clone(),
-                    19.0,
-                    if sel { GOLD } else { PARCH },
-                ));
-            }
-        });
-        p.spawn((
-            Node {
-                height: percent(100),
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8),
-                padding: UiRect::all(px(8)),
-                overflow: Overflow::scroll_y(),
-                ..default()
-            },
-            scroll_area("quest_detail", cx.scroll_y("quest_detail")),
-        ))
-        .with_children(|d| {
-            let Some(name) = &selected else {
-                d.spawn(txt(
-                    font,
-                    cx.t("HUD_NoQuestSelected", "Keine Mission ausgewählt"),
-                    19.0,
-                    DIM,
-                ));
-                return;
-            };
-            d.spawn(txt(font, quest_title(db, name), 28.0, GOLD));
-            if let Some(q) = db.quest_by_name(name) {
-                let mut meta = Vec::new();
-                if !q.folder.is_empty() {
-                    meta.push(q.folder.trim_end_matches('/').replace('/', " / "));
-                }
-                if q.experience_points > 0 {
-                    meta.push(format!("Belohnung: {} EP", q.experience_points));
-                }
-                if !meta.is_empty() {
-                    d.spawn(txt(font, meta.join("   -   "), 16.0, DIM));
-                }
-            }
-            separator(d);
-            let mut any = false;
-            for e in st.log.iter().filter(|e| &e.quest == name) {
-                match &e.kind {
-                    LogKind::Status(s) => {
-                        let t = match s {
-                            QuestStatus::Running => "Aufgabe begonnen",
-                            QuestStatus::Success | QuestStatus::Won => "Aufgabe erfüllt",
-                            QuestStatus::Failed => "Aufgabe gescheitert",
-                            _ => continue,
-                        };
-                        d.spawn(txt(font, format!("- {t} -"), 17.0, GOLD_DIM));
-                        any = true;
-                    }
-                    LogKind::Text(key) => {
-                        if let Some(t) = db.text(key) {
-                            d.spawn(txt(font, t, 19.0, PARCH));
-                            any = true;
-                        }
-                    }
-                    LogKind::Dialog(info) => {
-                        for l in dialog_excerpt(db, info) {
-                            d.spawn(txt(font, l, 18.0, DIM));
-                            any = true;
-                        }
-                    }
-                }
-            }
-            if !any {
-                d.spawn(txt(font, "Noch keine Einträge.", 18.0, DIM));
-            }
-        });
-    });
-}
-
-// ---------------------------------------------------------------------------- inventory
-const INV_TABS: [(&str, Option<i32>); 9] = [
-    ("Alle", None),
-    ("Waffen", Some(1)),
-    ("Rüstung", Some(2)),
-    ("Artefakte", Some(3)),
-    ("Alchemie", Some(4)),
-    ("Sonstiges", Some(6)),
-    ("Schriften", Some(7)),
-    ("Zauber", Some(9)),
-    ("Talente", Some(10)),
-];
-
-fn category_name(c: i32) -> &'static str {
-    match c {
-        1 => "Waffe",
-        2 => "Rüstung",
-        3 => "Artefakt",
-        4 => "Alchemie",
-        7 => "Schrift",
-        9 => "Zauberbuch",
-        10 => "Fertigkeit",
-        _ => "Gegenstand",
-    }
-}
-
-fn item_category(s: &GameSession, name: &str) -> i32 {
-    match s.items.get(name).map(|i| i.category) {
-        Some(0) | None => 6,
-        Some(c) => c,
-    }
-}
-
-fn item_list(
-    cx: &Cx,
-    inv: &std::collections::BTreeMap<String, u32>,
-    cat: Option<i32>,
-) -> Vec<(String, String, u32)> {
-    let mut v: Vec<_> = inv
-        .iter()
-        .filter(|(k, n)| k.as_str() != GOLD_ITEM && **n > 0)
-        .filter(|(k, _)| cat.is_none_or(|c| item_category(cx.s, k) == c))
-        .map(|(k, n)| (item_name(&cx.s.db, k), k.clone(), *n))
-        .collect();
-    v.sort();
-    v
-}
-
-fn item_rows(
-    p: &mut P,
-    cx: &Cx,
-    list: &[(String, String, u32)],
-    sel: Option<&str>,
-    mk: impl Fn(&str) -> Action,
-) {
-    let font = cx.font;
-    if list.is_empty() {
-        p.spawn(txt(font, "Nichts vorhanden.", 19.0, DIM));
-    }
-    for (title, key, n) in list {
-        let is_sel = sel == Some(key.as_str());
-        let value = cx.s.items.get(key).map_or(0, |i| i.value);
-        p.spawn((
-            button(mk(key), if is_sel { BG_SEL } else { BG_ROW }, BG_HOVER),
-            Node {
-                padding: UiRect::axes(px(10), px(5)),
-                justify_content: JustifyContent::SpaceBetween,
-                flex_shrink: 0.0,
-                column_gap: px(8),
-                ..default()
-            },
-        ))
-        .with_children(|r| {
-            let label = if *n > 1 {
-                format!("{title}  x{n}")
-            } else {
-                title.clone()
-            };
-            r.spawn(txt(font, label, 19.0, if is_sel { GOLD } else { PARCH }));
-            r.spawn(txt(font, value.to_string(), 17.0, DIM));
-        });
-    }
-}
-
-fn item_details(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
-    let font = cx.font;
-    let db = &cx.s.db;
-    let info = cx.s.items.get(key);
-    p.spawn(txt(font, item_name(db, key), 28.0, GOLD));
-    let cat = info.map_or(6, |i| if i.category == 0 { 6 } else { i.category });
-    p.spawn(txt(font, category_name(cat), 16.0, DIM));
-    separator(p);
-    if let Some(d) = db.text(&format!("ITEMDESC_{key}")).filter(|d| d != "-") {
-        p.spawn(txt(font, d, 19.0, PARCH));
-    }
-    let Some(info) = info else {
-        return;
-    };
-    p.spawn(node_col()).with_children(|k| {
-        if let Some((amount, ty)) = &info.damage {
-            let ty = match ty.as_str() {
-                "Blade" => "Klinge",
-                "Impact" => "Zerschmettern",
-                "Missile" => "Geschoss",
-                "Fire" => "Feuer",
-                "Ice" => "Eis",
-                "Lightning" => "Energie",
-                other => other,
-            };
-            kv(k, cx, "Schaden", format!("{amount} ({ty})"), PARCH);
-        }
-        for (tag, v) in &info.modifiers {
-            kv(k, cx, &attrib_name(db, tag), format!("{v:+}"), GREEN);
-        }
-        for (tag, need) in &info.requirements {
-            let have =
-                cx.s.state
-                    .attributes
-                    .get(&tag.to_ascii_lowercase())
-                    .copied()
-                    .unwrap_or(0);
-            kv(
-                k,
-                cx,
-                &format!("Benötigt {}", attrib_name(db, tag)),
-                need.to_string(),
-                if have >= *need { PARCH } else { RED },
-            );
-        }
-        kv(k, cx, "Wert", format!("{} Gold", info.value), GOLD);
-    });
-    if !actions.is_empty() {
-        p.spawn(Node {
-            column_gap: px(10),
-            margin: UiRect::top(px(10)),
-            ..default()
-        })
-        .with_children(|r| {
-            for (label, a) in actions {
-                r.spawn((
-                    button(a, BG_ROW, BG_HOVER),
-                    Node {
-                        padding: UiRect::axes(px(16), px(7)),
-                        border: UiRect::all(px(1)),
-                        ..default()
-                    },
-                    BorderColor::all(GOLD),
-                ))
-                .with_child(txt(font, label, 19.0, GOLD));
-            }
-        });
-    }
-}
-
-fn inventory(commands: &mut Commands, cx: &Cx) {
-    let st = &cx.s.state;
-    let tabs = INV_TABS
-        .iter()
-        .enumerate()
-        .map(|(i, (n, _))| (n.to_string(), cx.ui.inv_tab == i, Action::InvTab(i)))
-        .collect();
-    let cat = INV_TABS[cx.ui.inv_tab.min(INV_TABS.len() - 1)].1;
-    let list = item_list(cx, &st.inventory, cat);
-    let sel = cx
-        .ui
-        .inv_sel
-        .clone()
-        .filter(|s| list.iter().any(|(_, k, _)| k == s))
-        .or_else(|| list.first().map(|(_, k, _)| k.clone()));
-    let font = cx.font;
-    window(
-        commands,
-        cx,
-        &cx.t("HUD_SessionKey_InventoryMode", "Inventar"),
-        tabs,
-        |p| {
-            p.spawn(Node {
-                width: px(470),
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(6),
-                flex_shrink: 0.0,
-                ..default()
-            })
-            .with_children(|l| {
-                l.spawn(Node {
-                    justify_content: JustifyContent::SpaceBetween,
-                    ..default()
-                })
-                .with_children(|g| {
-                    g.spawn(txt(font, cx.t("HUD_GoldAmount", "Gold"), 21.0, GOLD));
-                    g.spawn(txt(font, st.gold().to_string(), 21.0, GOLD));
-                });
-                l.spawn((
-                    Node {
-                        flex_grow: 1.0,
-                        min_height: px(0),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(3),
-                        overflow: Overflow::scroll_y(),
-                        ..default()
-                    },
-                    scroll_area("items", cx.scroll_y("items")),
-                ))
-                .with_children(|rows| {
-                    item_rows(rows, cx, &list, sel.as_deref(), |k| {
-                        Action::SelectItem(k.to_string())
-                    });
-                });
-            });
-            p.spawn((
+        .filter(|s| list.iter().any(|(_, n)| n == s));
+    p.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::scroll_y(),
+            ..abs(ox + 508.0, oy + 98.0, 392.0, 176.0)
+        },
+        scroll_area("quests", cx.scroll_y("quests")),
+    ))
+    .with_children(|l| {
+        for (title, name) in &list {
+            let sel = selected.as_deref() == Some(name.as_str());
+            l.spawn((
+                button(
+                    Action::SelectQuest(name.clone()),
+                    if sel { SEL } else { Color::NONE },
+                    SEL,
+                ),
                 Node {
-                    flex_grow: 1.0,
-                    height: percent(100),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(8),
-                    padding: UiRect::all(px(8)),
-                    overflow: Overflow::scroll_y(),
+                    flex_shrink: 0.0,
+                    padding: UiRect::axes(px(4), px(1)),
+                    column_gap: px(4),
+                    align_items: AlignItems::Center,
                     ..default()
                 },
-                scroll_area("item_detail", cx.scroll_y("item_detail")),
+            ))
+            .with_children(|r| {
+                r.spawn(Node {
+                    width: px(18),
+                    height: px(18),
+                    ..default()
+                })
+                .with_children(|i| {
+                    spawn_pic(i, cx.a, MARK_QUEST, 0.0, 0.0, None);
+                });
+                r.spawn(txt(cx.font(), title.clone(), 15.0, if sel { TEXT_HI } else { TEXT }));
+            });
+        }
+    });
+    // detail
+    let detail = (ox + 508.0, oy + 300.0, 410.0, 302.0);
+    match &selected {
+        None => body(
+            p,
+            cx,
+            cx.t("HUD_NoQuestSelected", "Keine Mission ausgewählt"),
+            detail,
+            Al::Center,
+            TEXT,
+        ),
+        Some(name) => {
+            p.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(6),
+                    overflow: Overflow::scroll_y(),
+                    padding: UiRect::axes(px(8), px(4)),
+                    ..abs(detail.0, detail.1, 392.0, detail.3)
+                },
+                scroll_area("quest_detail", cx.scroll_y("quest_detail")),
             ))
             .with_children(|d| {
-                if let Some(k) = &sel {
-                    let info = cx.s.items.get(k);
-                    let equip = info.is_some_and(|i| matches!(i.category, 1 | 2));
-                    let label = if equip { "Anlegen" } else { "Benutzen" };
-                    item_details(d, cx, k, vec![(label.into(), Action::UseItem(k.clone()))]);
+                d.spawn(txt(cx.font(), quest_title(db, name), 18.0, TEXT_HI));
+                for e in st.log.iter().filter(|e| &e.quest == name) {
+                    match &e.kind {
+                        LogKind::Status(s) => {
+                            let t = match s {
+                                QuestStatus::Running => "Aufgabe begonnen",
+                                QuestStatus::Success | QuestStatus::Won => "Aufgabe erfüllt",
+                                QuestStatus::Failed => "Aufgabe gescheitert",
+                                _ => continue,
+                            };
+                            d.spawn(txt(cx.font(), format!("- {t} -"), 14.0, TEXT_DIM));
+                        }
+                        LogKind::Text(key) => {
+                            if let Some(t) = db.text(key) {
+                                d.spawn(txt_wrap(cx.font(), t, 15.0, TEXT));
+                            }
+                        }
+                        LogKind::Dialog(info) => {
+                            for l in dialog_excerpt(db, info) {
+                                d.spawn(txt_wrap(cx.font(), l, 14.0, TEXT_DIM));
+                            }
+                        }
+                    }
                 }
             });
-        },
+        }
+    }
+    // reputation
+    let mut fame: Vec<(String, i32)> = st.fame.iter().map(|(k, v)| (fame_name(db, k), *v)).collect();
+    if fame.is_empty() {
+        fame = [
+            "Ruf in Nordmar",
+            "Ruf bei den Orks",
+            "Ruf bei den Rebellen",
+            "Ruf beim Waldvolk",
+            "Ruf bei den Assassinen",
+            "Ruf bei den Nomaden",
+        ]
+        .into_iter()
+        .map(|s| (s.to_string(), 0))
+        .collect();
+    }
+    for (i, (n, v)) in fame.iter().take(6).enumerate() {
+        let y = 464.0 + 22.0 * i as f32;
+        body(p, cx, n.clone(), (ox + 42.0, oy + y, 200.0, 25.0), Al::Left, TEXT);
+        body(p, cx, v.to_string(), (ox + 206.0, oy + y, 100.0, 25.0), Al::Right, TEXT);
+    }
+    // clock
+    spawn_pic(p, cx.a, TIME_SKY, ox + 330.0, oy + 460.0, None);
+    spawn_pic(p, cx.a, TIME_LABEL, ox + 330.0, oy + 493.0, None);
+    let h = st.hours;
+    body(
+        p,
+        cx,
+        format!("{}. Tag, {:02}:00", h / 24 % 365 + 1, h % 24),
+        (ox + 330.0, oy + 493.0, 158.0, 34.0),
+        Al::Center,
+        TEXT,
     );
+    sidebar(p, cx, Some(Screen::Journal));
 }
-
-// ---------------------------------------------------------------------------- character
-const ATTRS: [&str; 6] = ["STR", "DEX", "INT", "SMT", "ALC", "THF"];
 
 fn fame_name(db: &gothic_gameplay::GameDatabase, key: &str) -> String {
     match key.split_once(':') {
@@ -779,207 +734,109 @@ fn fame_name(db: &gothic_gameplay::GameDatabase, key: &str) -> String {
     .unwrap_or_else(|| key.to_string())
 }
 
-fn character(commands: &mut Commands, cx: &Cx) {
-    let st = &cx.s.state;
-    let db = &cx.s.db;
-    let font = cx.font;
-    let prev = if st.level == 0 {
-        0
-    } else {
-        GameState::xp_next(st.level - 1)
+// -------------------------------------------------------------------------------- dialog
+fn dialog(p: &mut P, cx: &Cx) {
+    let Some(view) = cx.ui.dialog.as_ref() else {
+        return;
     };
-    let next = GameState::xp_next(st.level);
-    let frac = (st.xp.saturating_sub(prev)) as f32 / (next - prev).max(1) as f32;
-    window(commands, cx, "Charakter", Vec::new(), |p| {
-        p.spawn(Node {
-            width: px(500),
-            height: percent(100),
+    // subtitle: the latest spoken line (the original shows no name header)
+    if let Some(l) = view.lines.last() {
+        spawn_pic(p, cx.a, TALK, 227.0, 100.0, None);
+        p.spawn((
+            Node {
+                overflow: Overflow::clip(),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..abs(227.0 + 19.0, 100.0 + 9.0, 532.0, 62.0)
+            },
+            children![(
+                txt_wrap(cx.font(), l.text.clone(), 15.0, if l.player { TEXT_HI } else { TEXT }),
+                TextLayout::new_with_justify(Justify::Center),
+            )],
+        ));
+    }
+    spawn_pic(p, cx.a, DIALOG, 22.0, 534.0, None);
+    p.spawn((
+        Node {
             flex_direction: FlexDirection::Column,
-            row_gap: px(5),
-            flex_shrink: 0.0,
-            ..default()
-        })
-        .with_children(|l| {
-            l.spawn(txt(font, "Held", 30.0, GOLD));
-            kv(l, cx, "Stufe", st.level.to_string(), PARCH);
-            kv(l, cx, "Erfahrung", format!("{} / {}", st.xp, next), PARCH);
-            bar(l, percent(100), 10.0, frac, GOLD);
-            kv(l, cx, "Lernpunkte", st.learning_points.to_string(), GREEN);
-            kv(l, cx, "Gold", st.gold().to_string(), GOLD);
-            l.spawn(Node {
-                height: px(8),
-                ..default()
-            });
-            let v = cx.vitals;
-            for (name, cur, max, c) in [
-                (attrib_name(db, "HP"), v.hp, v.hp_max, RED),
-                (attrib_name(db, "MP"), v.mp, v.mp_max, BLUE),
-                (attrib_name(db, "SP"), v.sp, v.sp_max, GREEN),
-            ] {
-                kv(l, cx, &name, format!("{:.0} / {:.0}", cur, max), PARCH);
-                bar(
-                    l,
-                    percent(100),
-                    8.0,
-                    if max > 0.0 { cur / max } else { 0.0 },
-                    c,
-                );
-            }
-            l.spawn(Node {
-                height: px(8),
-                ..default()
-            });
-            separator(l);
-            for tag in ATTRS {
-                let v = st
-                    .attributes
-                    .get(&tag.to_ascii_lowercase())
-                    .copied()
-                    .unwrap_or(0);
-                kv(l, cx, &attrib_name(db, tag), v.to_string(), PARCH);
-            }
-        });
-        p.spawn(Node {
-            flex_grow: 1.0,
-            height: percent(100),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(5),
-            ..default()
-        })
-        .with_children(|r| {
-            r.spawn(txt(font, "Fertigkeiten", 26.0, GOLD));
-            r.spawn((
+            overflow: Overflow::scroll_y(),
+            ..abs(22.0 + 60.0, 534.0 + 22.0, 858.0, 169.0)
+        },
+        scroll_area("dialog", cx.scroll_y("dialog")),
+    ))
+    .with_children(|m| {
+        if view.menu.is_empty() {
+            m.spawn((
+                button(Action::Close, Color::NONE, SEL),
                 Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(3),
-                    max_height: px(250),
-                    overflow: Overflow::scroll_y(),
+                    padding: UiRect::axes(px(6), px(2)),
                     flex_shrink: 0.0,
                     ..default()
                 },
-                scroll_area("perks", cx.scroll_y("perks")),
-            ))
-            .with_children(|s| {
-                if st.skills.is_empty() {
-                    s.spawn(txt(font, "Noch keine erlernt.", 18.0, DIM));
-                }
-                for k in &st.skills {
-                    let name = db
-                        .text(&format!("FO_it_{k}"))
-                        .or_else(|| db.text(&format!("FO_{k}")))
-                        .unwrap_or_else(|| k.clone());
-                    s.spawn((
-                        Node {
-                            padding: UiRect::axes(px(10), px(4)),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                        BackgroundColor(BG_ROW),
-                        children![txt(font, name, 19.0, PARCH)],
-                    ));
-                }
-            });
-            r.spawn(Node {
-                height: px(6),
-                ..default()
-            });
-            r.spawn(txt(font, "Ansehen", 26.0, GOLD));
-            if st.fame.is_empty() {
-                r.spawn(txt(font, "Noch unbekannt.", 18.0, DIM));
-            }
-            for (k, v) in &st.fame {
-                kv(r, cx, &fame_name(db, k), v.to_string(), PARCH);
-                bar(r, percent(100), 6.0, *v as f32 / 100.0, GOLD_DIM);
-            }
-        });
+                children![txt(cx.font(), "Weiter", 16.0, TEXT)],
+            ));
+        }
+        for (i, c) in view.menu.iter().enumerate() {
+            m.spawn((
+                button(Action::Choose(i), Color::NONE, SEL),
+                Node {
+                    padding: UiRect::axes(px(6), px(2)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                children![txt(cx.font(), c.label.replace('\n', " "), 16.0, TEXT)],
+            ));
+        }
     });
 }
 
-// ---------------------------------------------------------------------------- trade
+// ---------------------------------------------------------------------------------- trade
 /// Layout only: trade rules (price factors, stock refresh) are not decoded yet.
-fn trade(commands: &mut Commands, cx: &Cx) {
+fn trade(p: &mut P, cx: &Cx) {
     let Some((npc, stock)) = cx.ui.trade.as_ref() else {
         return;
     };
-    let font = cx.font;
     let st = &cx.s.state;
     let mine = item_list(cx, &st.inventory, None);
-    let theirs: Vec<(String, String, u32)> = {
-        let mut v: Vec<_> = stock
-            .iter()
-            .filter(|(k, n)| k != GOLD_ITEM && *n > 0)
-            .map(|(k, n)| (item_name(&cx.s.db, k), k.clone(), *n))
-            .collect();
-        v.sort();
-        v
-    };
+    let mut theirs: Vec<(String, String, u32)> = stock
+        .iter()
+        .filter(|(k, n)| k != GOLD_ITEM && *n > 0)
+        .map(|(k, n)| (item_name(&cx.s.db, k), k.clone(), *n))
+        .collect();
+    theirs.sort();
     let sel = cx.ui.inv_sel.clone();
-    window(
-        commands,
+    // vendor (left)
+    spawn_pic(p, cx.a, TRADE_VENDOR, 14.0, 16.0, None);
+    heading(p, cx, npc.replace('_', " "), (14.0 + 26.0, 16.0 + 8.0, 252.0, 25.0));
+    item_grid(p, cx, (14.0 + 22.0, 16.0 + 44.0, 260.0, 384.0), "trade_theirs", &theirs, sel.as_deref(), |k| {
+        Action::Trade(k.to_string(), true)
+    });
+    // player (right)
+    spawn_pic(p, cx.a, TRADE_PLAYER, 691.0, 16.0, None);
+    heading(p, cx, "Dein Inventar", (691.0 + 25.0, 16.0 + 8.0, 252.0, 25.0));
+    item_grid(p, cx, (691.0 + 22.0, 16.0 + 48.0, 260.0, 380.0), "trade_mine", &mine, sel.as_deref(), |k| {
+        Action::Trade(k.to_string(), false)
+    });
+    body(p, cx, "Gold", (691.0 + 33.0, 16.0 + 444.0, 100.0, 25.0), Al::Left, TEXT);
+    body(p, cx, st.gold().to_string(), (691.0 + 117.0, 16.0 + 444.0, 152.0, 25.0), Al::Right, TEXT);
+    // transaction strip
+    spawn_pic(p, cx.a, TRANSACTION, 14.0, 524.0, None);
+    body(
+        p,
         cx,
-        &format!("Handel - {}", npc.replace('_', " ")),
-        Vec::new(),
-        |p| {
-            for (title, list, buy, scroll) in [
-                (cx.t("HUD_Trade", "Tauschen"), &mine, false, "trade_mine"),
-                (npc.replace('_', " "), &theirs, true, "trade_theirs"),
-            ] {
-                p.spawn(Node {
-                    flex_grow: 1.0,
-                    flex_basis: px(0),
-                    height: percent(100),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(6),
-                    ..default()
-                })
-                .with_children(|c| {
-                    c.spawn(Node {
-                        justify_content: JustifyContent::SpaceBetween,
-                        ..default()
-                    })
-                    .with_children(|h| {
-                        h.spawn(txt(
-                            font,
-                            if buy {
-                                title.clone()
-                            } else {
-                                "Dein Inventar".into()
-                            },
-                            23.0,
-                            GOLD,
-                        ));
-                        if !buy {
-                            h.spawn(txt(font, format!("{} Gold", st.gold()), 21.0, GOLD));
-                        }
-                    });
-                    c.spawn((
-                        Node {
-                            flex_grow: 1.0,
-                            min_height: px(0),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: px(3),
-                            overflow: Overflow::scroll_y(),
-                            ..default()
-                        },
-                        scroll_area(scroll, cx.scroll_y(scroll)),
-                    ))
-                    .with_children(|rows| {
-                        item_rows(rows, cx, list, sel.as_deref(), |k| {
-                            Action::Trade(k.to_string(), buy)
-                        });
-                    });
-                    c.spawn(txt(
-                        font,
-                        if buy {
-                            "Klick: kaufen (Preis = Warenwert)"
-                        } else {
-                            "Klick: verkaufen (Preis = Warenwert)"
-                        },
-                        15.0,
-                        DIM,
-                    ));
-                });
-            }
-        },
+        "Klick auf einen Gegenstand: kaufen / verkaufen",
+        (14.0 + 200.0, 524.0 + 40.0, 580.0, 24.0),
+        Al::Center,
+        TEXT_DIM,
     );
+    let mut n = abs(14.0 + 414.0, 524.0 + 128.0, 152.0, 34.0);
+    n.border = UiRect::all(px(2));
+    n.align_items = AlignItems::Center;
+    n.justify_content = JustifyContent::Center;
+    p.spawn((
+        button(Action::Close, Color::srgba(0.12, 0.08, 0.05, 0.95), Color::srgba(0.30, 0.20, 0.10, 0.95)),
+        n,
+        BorderColor::all(BORDER),
+        children![txt(cx.font(), "Schliessen", 16.0, TEXT)],
+    ));
 }

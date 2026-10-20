@@ -153,8 +153,7 @@ impl MaterialGraph {
         for (i, (name, o)) in nodes_objects.iter().enumerate() {
             let inputs = links(o.tail, Some(i));
             let prop = |n: &str| o.props.iter().find(|(k, _)| k == n).map(|(_, v)| *v);
-            let enum_value =
-                |n: &str| prop(n).and_then(|p| p.get(2..6)).map_or(0, |b| u32_le(b));
+            let enum_value = |n: &str| prop(n).and_then(|p| p.get(2..6)).map_or(0, u32_le);
             let node = match name.as_str() {
                 "eCColorSrcSampler" => {
                     let path = prop("ImageFilePath")
@@ -193,11 +192,7 @@ impl MaterialGraph {
         }
         // Root slots: GUIDs in the root tail before the first child object.
         let root_object = &objects[root].1;
-        let first_child = objects
-            .iter()
-            .skip(root + 1)
-            .map(|(_, o)| o.start)
-            .next();
+        let first_child = objects.iter().skip(root + 1).map(|(_, o)| o.start).next();
         let prefix_len = first_child
             .map_or(root_object.tail.len(), |s| {
                 s.saturating_sub(root_object.tail_start)
