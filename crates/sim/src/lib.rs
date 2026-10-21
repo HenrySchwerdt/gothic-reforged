@@ -38,6 +38,7 @@ pub mod routine;
 pub mod script_host;
 pub mod script_magic;
 pub mod script_player;
+pub mod shots;
 pub mod sim;
 pub mod tactics;
 pub mod trade;

@@ -7,6 +7,7 @@ pub mod info;
 pub mod props;
 pub mod propstream;
 pub mod quest;
+pub mod remaster;
 pub mod stringtable;
 pub mod template;
 pub mod terrain;

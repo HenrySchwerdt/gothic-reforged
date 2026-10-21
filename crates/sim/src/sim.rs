@@ -153,6 +153,22 @@ pub enum EventKind {
         /// A spell missile (false: an arrow or bolt).
         spell: bool,
     },
+    /// A projectile touched something: play the impact effect and sound at `at`.
+    ProjectileImpact {
+        /// Id of the shot (`Sim::shot_views`).
+        shot: u64,
+        /// World position of the contact.
+        at: [f32; 3],
+        /// The character it hit, `None` for the level.
+        on_actor: Option<ActorId>,
+        /// A spell missile.
+        spell: bool,
+    },
+    /// A projectile is gone (killed on impact, decayed, or out of range).
+    ProjectileEnded {
+        /// Id of the shot.
+        shot: u64,
+    },
     /// An AI command the presentation should show: use animations at work stations, poses,
     /// stock-voice families (`Action`, `ActionAtPoint`, `AniStateAction`, `StandUp`, `Enjoy`,
     /// `SaySvm`, `UseItem`).

@@ -3,6 +3,7 @@
 //! Bevy-free and deterministic: feed [`CameraInput`] every frame, read [`CameraOutput`]. Presets
 //! come from `Camera_PC_Camera.tple` ([`PresetTable::from_tple`]), tuning from `ge3.INI`
 //! ([`CameraConfig::from_ini`]). Units are centimetres, Y up, the camera looks along local -Z.
+pub mod aim;
 pub mod config;
 pub mod dialog;
 pub mod math;

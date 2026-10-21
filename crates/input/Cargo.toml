@@ -1,0 +1,12 @@
+[package]
+name = "gothic-input"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gothic 3 input layer: session keys, action mapper, per-key state and the player key router"
+
+[dependencies]
+
+[lints]
+workspace = true

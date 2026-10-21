@@ -96,6 +96,9 @@ pub struct CameraOutput {
     /// `gCFocus_PS` mode: 1 in first person, 2 otherwise.
     pub focus_mode: u8,
     pub mode: CameraMode,
+    /// The weapons and held items stay visible although the body fades or hides (first person,
+    /// special bow mode): `EnableItemRendering(true)`.
+    pub items_visible: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -157,6 +160,12 @@ pub struct CameraState {
     rng: Rng,
     last_hero: HeroView,
     time: f32,
+    /// `EnableSpecialBowMode` (`+0x4d5`): the aim mode of the bow fades the hero out.
+    special_bow: bool,
+    /// Seconds in the special bow mode, at most [`crate::aim::SPECIAL_BOW_FADE_SECS`] (`+0x4d8`).
+    special_bow_time: f32,
+    /// `EnableTempFirstPerson` (`+0x4d4`).
+    temp_first_person: bool,
 }
 
 fn dir_from_angles(yaw: f32, elev: f32) -> Vec3 {
@@ -212,7 +221,33 @@ impl CameraState {
             rng: Rng::new(0x9E37_79B9),
             last_hero: HeroView::default(),
             time: 0.0,
+            special_bow: false,
+            special_bow_time: 0.0,
+            temp_first_person: false,
         }
+    }
+
+    /// `PSCamera::EnableSpecialBowMode` (GameDll:0x1002cc20): the script's ranged states switch
+    /// it on; the hero's body fades out over half a second so the arrow flies from the crosshair.
+    pub fn enable_special_bow_mode(&mut self, on: bool) {
+        self.special_bow = on;
+        self.special_bow_time = 0.0;
+    }
+
+    /// `IsInSpecialBowMode`.
+    pub fn in_special_bow_mode(&self) -> bool {
+        self.special_bow
+    }
+
+    /// `PSCamera::EnableTempFirstPerson` (GameDll:0x1002cc00): `IsInFirstPerson` reports true
+    /// while it is set and `SetMode` leaves the mode alone.
+    pub fn enable_temp_first_person(&mut self, on: bool) {
+        self.temp_first_person = on;
+    }
+
+    /// `IsInTempFirstPerson`.
+    pub fn in_temp_first_person(&self) -> bool {
+        self.temp_first_person
     }
 
     /// Seed the shot-choice and tremor generators (tests, replays).
@@ -617,7 +652,7 @@ impl CameraState {
 
     fn update_player(&mut self, hero: &HeroView, dt: f32, world: &dyn CameraWorld) -> CameraOutput {
         let preset = self.preset();
-        let first_person = self.mode == CameraMode::FirstPerson;
+        let first_person = self.mode == CameraMode::FirstPerson || self.temp_first_person;
         let head = hero.head_pos();
         // Pivot: rigid in first person, otherwise relax 2 (0.05 s).
         self.pivot = if first_person {
@@ -690,6 +725,11 @@ impl CameraState {
         if hide {
             alpha = 0.0;
         }
+        if self.special_bow {
+            // `OnProcess`: the body fades with the ease curve over `SPECIAL_BOW_FADE_SECS`.
+            self.special_bow_time = (self.special_bow_time + dt).min(crate::aim::SPECIAL_BOW_FADE_SECS);
+            alpha = crate::aim::special_bow_alpha(self.special_bow_time);
+        }
         CameraOutput {
             position,
             rotation,
@@ -705,6 +745,7 @@ impl CameraState {
             speaker_point: None,
             focus_mode: if first_person { 1 } else { 2 },
             mode: self.mode,
+            items_visible: hide || self.special_bow || first_person,
         }
     }
 
@@ -744,6 +785,7 @@ impl CameraState {
             speaker_point: Some(speaker_point),
             focus_mode: 2,
             mode: CameraMode::Dialog,
+            items_visible: false,
         };
         self.dialog = Some(d);
         out
