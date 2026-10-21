@@ -1,0 +1,27 @@
+[package]
+name = "gothic-video"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Cutscene video playback (Bink and anything else ffmpeg decodes) through an ffmpeg subprocess"
+
+[features]
+default = []
+# Bevy cutscene player: full-screen texture, PCM audio stream, skip, subtitles.
+bevy = ["dep:bevy"]
+# Windowed example player.
+demo = ["bevy", "bevy/bevy_winit", "bevy/x11", "bevy/multi_threaded", "bevy/default_font", "bevy/png"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "bevy_audio", "ui_bevy_render"], optional = true }
+
+[[example]]
+name = "cutscene"
+required-features = ["demo"]
+
+[lints]
+workspace = true

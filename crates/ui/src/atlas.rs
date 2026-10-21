@@ -65,11 +65,14 @@ pub const STATUSBAR: Pic = bg(17, 290, 576, 201, 19).keyed("g3_hud_statusbar_bac
 pub const CONFIRM: Pic = bg(17, 290, 431, 482, 143).keyed("g3_hud_view_menu_confirm_back.tga");
 pub const ITEM: Pic = bg(16, 306, 507, 287, 350).keyed("g3_hud_view_item_back.tga"); // 336,16
 pub const TIP: Pic = bg(16, 595, 507, 350, 279).keyed("g3_hud_view_tutorial_back.tga");
+pub const MAP_BACK: Pic = bg(11, 315, 1, 620, 638).keyed("g3_hud_view_map_back.tga");
 pub const WORLD_MAP: Pic = bg(15, 1, 1, 580, 599).keyed("g3_hud_view_world_back.tga");
 pub const TIME_SKY: Pic = bg(17, 573, 606, 158, 34).keyed("g3_hud_view_quests_time_day.tga");
 pub const TIME_LABEL: Pic = bg(17, 573, 642, 158, 34).keyed("g3_hud_view_quests_time_back.tga");
 
 // icon atlas
+/// The map's player arrow (`G3_HUD_Arrow.tga`, 128x128).
+pub const ARROW: Pic = ic(1, 203, 128, 128).keyed("g3_hud_arrow.tga");
 pub const COMPASS_WHEEL: Pic = ic(218, 16, 169, 170);
 pub const COMPASS_ROSE: Pic = ic(3, 1, 198, 199);
 pub const PAGE_EXIT: Pic = ic(136, 249, 32, 30);
@@ -104,6 +107,15 @@ pub const TIME_OF_DAY: [Pic; 4] = [
 pub const MENU_FILES_BG: Pic = bg(3, 0, 0, 1024, 768).keyed("g3_hud_view_menu_files_back.tga");
 pub const MENU_VIDEO_BG: Pic =
     bg(8, 0, 0, 1024, 768).keyed("g3_hud_view_menu_options_video_back.tga");
+
+pub const MENU_OPTIONS_BG: Pic = bg(1, 0, 0, 1024, 768).keyed("g3_hud_view_menu_options_back.tga");
+/// The wide list page (the performance "customize" picture; also the key list).
+pub const MENU_CUSTOM_BG: Pic =
+    bg(6, 0, 0, 1024, 768).keyed("g3_hud_view_menu_performance_customize_back.tga");
+pub const MENU_AUDIO_BG: Pic =
+    bg(5, 0, 0, 1024, 768).keyed("g3_hud_view_menu_options_audio_back.tga");
+pub const MENU_DIFFICULTY_BG: Pic =
+    bg(4, 0, 0, 1024, 768).keyed("g3_hud_view_menu_difficulty_back.tga");
 
 /// Main-menu banner background (page 02, 1024x768 at the top of the atlas).
 pub const MENU_BG: Pic = bg(2, 0, 0, 1024, 768).keyed("g3_hud_view_menu_main_back.tga");

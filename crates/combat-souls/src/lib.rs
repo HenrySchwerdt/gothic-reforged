@@ -13,6 +13,8 @@
 //! (see [`math`]).
 pub mod actions;
 pub mod animmap;
+#[cfg(feature = "pack")]
+pub mod pack;
 pub mod events;
 pub mod foe;
 pub mod hero;

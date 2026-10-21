@@ -20,6 +20,7 @@ mod hero;
 mod hud;
 mod interact;
 mod kit;
+mod layers;
 pub(crate) mod nav;
 mod npcs;
 mod objects;
@@ -29,7 +30,10 @@ mod record;
 mod routines;
 mod saves;
 mod script;
+mod er_pack;
 mod souls;
+mod teleport;
+mod triggers;
 mod windows;
 
 use crate::walk::{Player, Smoke};
@@ -54,22 +58,86 @@ pub struct HeroActor;
 #[derive(Component, Clone, Copy)]
 pub struct NpcActor(pub ActorId);
 
-pub struct PendingNpc {
+/// One character of the world: where it is stored, whether it is shown and which core actor it
+/// is. The core actor is created when the character is first shown and then kept.
+pub struct Cand {
     pub record: gothic_sim::data::NpcRecord,
     /// Mirrored, origin-relative centimetres (the space the world is built in).
     pub pos_cm: Vec3,
     /// Appearance data (visual body parts + equipped item visuals) of this entity.
     pub look: Option<gothic_formats::props::records::NpcLook>,
+    /// Index into [`Roster::docs`].
+    pub doc: u16,
+    /// The body currently shown.
+    pub visual: Option<Entity>,
+    /// The core actor, once created.
+    pub actor: Option<ActorId>,
+    /// The appearance does not resolve; never retried.
+    pub failed: bool,
+}
+
+/// A world document (sector layer) that holds characters.
+pub struct DocState {
+    /// Lower-case document path.
+    pub path: String,
+    /// Sector (directory) name.
+    pub sector: String,
+    /// The layer exists at the current story state (`Core::document_enabled`).
+    pub enabled: bool,
+}
+
+/// Count / total / worst of a system's run time.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct Cost {
+    pub runs: u32,
+    pub total_us: u64,
+    pub max_us: u64,
+}
+
+impl Cost {
+    pub fn add(&mut self, d: std::time::Duration) {
+        let us = d.as_micros() as u64;
+        self.runs += 1;
+        self.total_us += us;
+        self.max_us = self.max_us.max(us);
+    }
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+pub struct RosterCost {
+    pub scan: Cost,
+    pub spawn: Cost,
+    /// The `ActorSpawner::spawn` call alone.
+    pub build: Cost,
 }
 
 #[derive(Resource, Default)]
 pub struct Roster {
-    pub pending: Vec<PendingNpc>,
-    /// Entities waiting for their `ActorSpawned` event (FIFO, same order as the commands).
-    pub binds: VecDeque<Entity>,
+    pub cands: Vec<Cand>,
+    pub docs: Vec<DocState>,
+    /// Candidate indices per 2 500 cm grid cell.
+    pub grid: HashMap<(i32, i32), Vec<u32>>,
+    /// Indices of the candidates shown now.
+    pub live: Vec<u32>,
+    /// Wanted and not shown yet, nearest first.
+    pub queue: Vec<u32>,
+    /// Bodies waiting for their `ActorSpawned` event (FIFO, same order as the commands) with
+    /// the candidate they belong to.
+    pub binds: VecDeque<(Entity, u32)>,
     pub by_actor: HashMap<ActorId, Entity>,
+    /// Shown now plus wanted: `spawned >= total` means nothing is waiting.
     pub total: usize,
+    /// Bodies created so far (respawns included).
     pub spawned: usize,
+    /// Bodies removed again (left the range, layer switched off).
+    pub despawned: u32,
+    pub last_scan: f32,
+    /// No new body before this time (seconds since start).
+    pub spawn_not_before: f32,
+    /// Main-thread cost of the roster systems (candidate scan, spawning).
+    pub cost: RosterCost,
+    /// Sector switches seen, for the log and the tests: (sector, enabled).
+    pub sector_switches: Vec<(String, bool)>,
     /// Script name -> display name.
     pub display: HashMap<String, String>,
 }
@@ -322,8 +390,27 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;
     let hero_look = looks.pc_hero();
-    let roster = npcs::select_roster(&npcs, &looks, &data_dir);
-    eprintln!("play: {} NPCs near Ardea", roster.pending.len());
+    let layer_flags = layers::load(&data_dir, &npcs::candidate_docs(&npcs, &looks));
+    let roster = npcs::select_roster(&npcs, &looks, &layer_flags);
+    // Register the sectors with the initial flag of their layer roots before any character
+    // exists: the core files each actor under its document's sector.
+    let mut sectors: Vec<gothic_runtime::Command> = Vec::new();
+    for d in &roster.docs {
+        if !sectors.iter().any(|c| matches!(c, gothic_runtime::Command::RegisterSector { name, .. } if *name == d.sector)) {
+            sectors.push(gothic_runtime::Command::RegisterSector {
+                name: d.sector.clone(),
+                enabled: d.enabled,
+            });
+        }
+    }
+    core.tick(0.0, &sectors);
+    let destinations = teleport::Destinations::load();
+    teleport::register_waypoints(&mut core, &destinations);
+    eprintln!(
+        "play: {} characters in the world, {} sectors registered",
+        roster.cands.len(),
+        sectors.len()
+    );
 
     {
         let mut player = app.world_mut().resource_mut::<Player>();
@@ -368,6 +455,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         ..default()
     })
     .insert_resource(roster)
+    .insert_resource(destinations)
+    .insert_resource(triggers::WorldTriggers::new(triggers::load(&data_dir)))
     .init_resource::<ScriptInput>()
     .init_resource::<interact::Interaction>()
     .init_resource::<barks::BarkState>()
@@ -382,6 +471,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     fx::register(app);
     app.add_systems(Update, pose::pose_system.after(crate::walk::update_camera));
     npcs::register(app);
+    teleport::register(app);
+    triggers::register(app);
     routines::register(app);
     nav::register(app, &data_dir);
     events::register(app);

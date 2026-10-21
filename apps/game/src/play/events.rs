@@ -75,10 +75,11 @@ fn bind_actors(
 ) {
     for e in events.read() {
         if let Event::ActorSpawned { actor, .. } = &e.0
-            && let Some(entity) = roster.binds.pop_front()
+            && let Some((entity, cand)) = roster.binds.pop_front()
         {
             commands.entity(entity).insert(NpcActor(*actor));
             roster.by_actor.insert(*actor, entity);
+            roster.cands[cand as usize].actor = Some(*actor);
             // The character's real inventory: worn weapons and everything it carries.
             if let Ok(g) = gear.get(entity) {
                 for t in &g.equip {

@@ -14,6 +14,8 @@ viewer = ["dep:gothic-animation", "dep:gothic-ui", "dep:gothic-audio", "dep:goth
 [dependencies]
 bevy = { workspace = true, features = ["std", "async_executor"] }
 gothic-world = { path = "../../crates/world" }
+gothic-environment = { path = "../../crates/environment" }
+gothic-render-rules = { path = "../../crates/render-rules" }
 gothic-formats = { path = "../../crates/formats" }
 gothic-importer = { path = "../../crates/importer" }
 gothic-physics = { path = "../../crates/physics" }
@@ -26,7 +28,7 @@ gothic-nav = { path = "../../crates/nav", optional = true }
 gothic-sim = { path = "../../crates/sim", optional = true }
 gothic-gameplay = { path = "../../crates/gameplay", optional = true }
 gothic-cook = { path = "../../crates/cook", default-features = false, optional = true }
-gothic-combat-souls = { path = "../../crates/combat-souls", features = ["plugin"], optional = true }
+gothic-combat-souls = { path = "../../crates/combat-souls", features = ["plugin", "pack"], optional = true }
 gothic-fx = { path = "../../crates/fx", features = ["render"], optional = true }
 anyhow.workspace = true
 serde_json.workspace = true
