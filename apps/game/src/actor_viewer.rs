@@ -3,6 +3,7 @@
 //! ```text
 //! gothic-reforged --actor Hero [--motion walk|run|idle|<name>] [--stance 1h] [--sword]
 //!                 [--yaw DEG] [--smoke] [--screenshot PATH]
+//!                 [--clip-pack FILE.grcp] [--shots T1,T2,...]
 //! gothic-reforged --actor Hero --crowd 100 [--bench] [--smoke] [--screenshot PATH]
 //! gothic-reforged --actor Hero --body G3_Hero_Body_FatSmith --head G3_Head_Fat_Myrtana_02
 //!                 --lipsync LINE.xlip [--smoke]   (writes .local/lipsync-{1,2,3}.png)
@@ -40,6 +41,8 @@ struct Config {
     sword: bool,
     yaw_degrees: f32,
     times: [f32; 2],
+    /// `--shots`: motion times (seconds) to photograph, one screenshot each (`PATH-<k>.png`).
+    shots: Vec<f32>,
     /// Upper-body overlay action (`ArmsCrossed`, ...) and initial ground speed (cm/s).
     overlay: Option<String>,
     speed: f32,
@@ -168,6 +171,9 @@ pub fn run() -> Result<()> {
             flag("--time-a").map(str::parse).transpose()?.unwrap_or(0.0),
             flag("--time-b").map(str::parse).transpose()?.unwrap_or(0.5),
         ],
+        shots: flag("--shots")
+            .map(|s| s.split(',').filter_map(|t| t.parse().ok()).collect())
+            .unwrap_or_default(),
         overlay: flag("--overlay").map(str::to_string),
         speed: flag("--speed").map(str::parse).transpose()?.unwrap_or(0.0),
         zoo: has("--zoo"),
@@ -176,8 +182,12 @@ pub fn run() -> Result<()> {
         body: flag("--body").map(str::to_string),
         head: flag("--head").map(str::to_string),
     };
-    let library = ActorLibrary::open(&data_dir)
+    let mut library = ActorLibrary::open(&data_dir)
         .map_err(|e| e.context(format!("opening archives in {}", data_dir.display())))?;
+    if let Some(pack) = flag("--clip-pack") {
+        let pack = library.load_clip_pack(std::path::Path::new(pack))?;
+        eprintln!("clip pack: {} clips", pack.clips.len());
+    }
     eprintln!(
         "motion catalog: {} named motions; actors: {}",
         library.catalog.len(),
@@ -655,7 +665,10 @@ fn smoke_drive(
     for mut animator in &mut query {
         animator.paused = true;
         let duration = animator.current_clip().map_or(0.0, |c| c.duration);
-        let t = if frames.count < 130 {
+        let t = if !config.shots.is_empty() {
+            let k = (frames.count.saturating_sub(70) / 25) as usize;
+            config.shots[k.min(config.shots.len() - 1)]
+        } else if frames.count < 130 {
             config.times[0]
         } else {
             config.times[1] * duration * 2.0
@@ -730,6 +743,18 @@ fn capture(
             report(&frames, &stats, config.crowd);
             commands.write_message(AppExit::Success);
         } else if !config.bench && frame == 200 {
+            commands.write_message(AppExit::Success);
+        }
+    } else if !config.shots.is_empty() {
+        let stem = config.screenshot.trim_end_matches(".png");
+        for k in 0..config.shots.len() as u32 {
+            if frame == 90 + 25 * k {
+                commands
+                    .spawn(Screenshot::primary_window())
+                    .observe(save_to_disk(format!("{stem}-{k}.png")));
+            }
+        }
+        if frame == 120 + 25 * config.shots.len() as u32 {
             commands.write_message(AppExit::Success);
         }
     } else {

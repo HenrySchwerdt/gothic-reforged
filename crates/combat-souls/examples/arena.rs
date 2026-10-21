@@ -4,6 +4,10 @@
 //! cargo run -p gothic-combat-souls --example arena --features demo -- [--combat souls]
 //!     [--classic]   foes attack like the original (no telegraph)
 //!     [--shots]     scripted run that writes .local/souls-*.png and exits
+//!     [--actor [--stance 1h|2h] [--clip-pack FILE] [--data-dir DIR]]
+//!                   draw the Gothic 3 hero (needs the game data) instead of the capsule; with a
+//!                   local clip pack (default `.local/er/er_clips.grcp` if present) the pack's
+//!                   clips and action windows drive it, exactly as in `--play --combat souls`
 //! ```
 //! Controls: WASD move, Shift walk, Space tap = roll / backstep, Space hold = sprint, LMB light,
 //! RMB heavy (hold to charge), Q guard (press just before a hit to parry, then attack to
@@ -16,10 +20,15 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::{CursorGrabMode, CursorOptions, PresentMode, PrimaryWindow, WindowResolution};
+use gothic_animation::{
+    ActorLibrary, ActorSpawner, AnimationPlugin, Animator, LocomotionInput, NpcSpec, Stance,
+    WeaponSpec, pack_overlay as ov,
+};
 use gothic_camera::{
     CameraConfig, CameraInput, CameraMode, CameraState, HeroView, NoWorld, PresetTable,
 };
 use gothic_combat_souls::actions::ActionId;
+use gothic_combat_souls::animmap::{self, PackPose};
 use gothic_combat_souls::events::Event as SEvent;
 use gothic_combat_souls::foe::FoeState;
 use gothic_combat_souls::hero::{Button, State};
@@ -74,7 +83,21 @@ struct EventLog(Vec<String>);
 #[derive(Resource)]
 struct Opts {
     shots: bool,
+    /// `--shot-prefix er-`: screenshots are `.local/souls-<prefix><name>.png`.
+    prefix: String,
 }
+
+/// `--actor`: the Gothic 3 hero drawn instead of the capsule.
+#[derive(Resource)]
+struct ActorOpt {
+    stance: Stance,
+    /// Lock-on strafe clips exist in the pack.
+    strafe: bool,
+    pack: bool,
+}
+
+#[derive(Component)]
+struct ActorVis;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -86,8 +109,49 @@ fn main() {
         FoeProfile::telegraphed()
     };
 
+    let flag = |name: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .filter(|s| !s.starts_with("--"))
+            .cloned()
+    };
     let tuning = Tuning::default();
     let mut res = SoulsRes::new(SoulsWorld::new(from_bevy(Vec3::ZERO), 400.0, tuning));
+    // `--actor`: open the game archives, load the clip pack if there is one.
+    let actor = if args.iter().any(|a| a == "--actor") {
+        let dir = flag("--data-dir")
+            .unwrap_or_else(|| r"D:\SteamLibrary\steamapps\common\Gothic 3\Data".into());
+        let mut lib =
+            ActorLibrary::open(std::path::Path::new(&dir)).expect("opening Gothic 3 archives");
+        let pack_path = flag("--clip-pack").unwrap_or_else(|| ".local/er/er_clips.grcp".into());
+        let (mut pack, mut strafe) = (false, false);
+        if std::path::Path::new(&pack_path).exists() {
+            let p = lib
+                .load_clip_pack(std::path::Path::new(&pack_path))
+                .expect("clip pack");
+            let inst = gothic_combat_souls::pack::install(&mut res.anim, &p);
+            eprintln!("arena: clip pack {pack_path}: {inst:?}");
+            pack = inst.remapped > 0;
+            strafe = inst.strafe;
+        } else {
+            eprintln!("arena: no clip pack at {pack_path}, Gothic motions");
+        }
+        let stance = match flag("--stance").as_deref() {
+            Some("2h") => Stance::TwoHand,
+            _ => Stance::OneHand,
+        };
+        Some((
+            lib,
+            ActorOpt {
+                stance,
+                strafe,
+                pack,
+            },
+        ))
+    } else {
+        None
+    };
     let mut sink = SimpleSink::default();
     sink.add(HERO, 400.0, 40.0, 0.0);
     for (i, (x, z)) in [(0.0, -650.0), (-600.0, -1000.0), (650.0, -1050.0)]
@@ -122,7 +186,10 @@ fn main() {
         }),
     })
     .insert_resource(ClearColor(Color::srgb(0.07, 0.07, 0.09)))
-    .insert_resource(Opts { shots })
+    .insert_resource(Opts {
+        shots,
+        prefix: flag("--shot-prefix").unwrap_or_default(),
+    })
     .init_resource::<EventLog>()
     .insert_resource(GlobalAmbientLight {
         brightness: 350.0,
@@ -144,6 +211,13 @@ fn main() {
             .chain()
             .after(gothic_combat_souls::plugin::gather_input),
     );
+    if let Some((lib, opt)) = actor {
+        app.add_plugins(AnimationPlugin)
+            .insert_resource(lib)
+            .insert_resource(opt)
+            .add_systems(Startup, spawn_actor.after(setup))
+            .add_systems(Update, pose_actor.after(pose_hero));
+    }
     if shots {
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / 60.0,
@@ -558,6 +632,103 @@ fn pose_hero(
     }
 }
 
+fn spawn_actor(mut spawner: ActorSpawner, opt: Res<ActorOpt>) {
+    let mut spec = NpcSpec::new("G3_Hero_Body_Player")
+        .with_part("G3_Hero_Head_Player")
+        .with_stance(opt.stance)
+        .with_weapon(WeaponSpec::one_hand_sword(
+            if opt.stance == Stance::TwoHand {
+                "G3_Weapon_2H_Sword_01"
+            } else {
+                "G3_Weapon_1H_Sword_01"
+            },
+        ));
+    spec.start_time = 0.0;
+    match spawner.spawn(&spec, Transform::from_scale(Vec3::splat(CM))) {
+        Ok(e) => {
+            spawner.commands.entity(e).insert(ActorVis);
+        }
+        Err(e) => eprintln!("arena: hero actor failed: {e:#}"),
+    }
+}
+
+/// Moves the hero actor with the flow's hero and picks its animation: the pack's clips (or the
+/// stock locomotion) by the same rules as the game glue.
+#[allow(clippy::too_many_arguments)]
+fn pose_actor(
+    time: Res<Time>,
+    res: Res<SoulsRes>,
+    opt: Res<ActorOpt>,
+    mut lib: ResMut<ActorLibrary>,
+    mut actor: Query<(&mut Transform, &mut LocomotionInput, &mut Animator), With<ActorVis>>,
+    mut vis: Query<&mut Visibility, With<HeroVis>>,
+    mut prev: Local<Option<Vec3>>,
+) {
+    let Ok((mut tf, mut input, mut animator)) = actor.single_mut() else {
+        return;
+    };
+    for mut v in &mut vis {
+        *v = Visibility::Hidden;
+    }
+    let dt = time.delta_secs().max(1e-4);
+    let h = &res.world.hero;
+    let pos = to_bevy(h.pos);
+    let velocity = prev.map_or(Vec3::ZERO, |p| (pos - p) / dt);
+    *prev = Some(pos);
+    tf.translation = pos * CM;
+    tf.rotation = yaw_rot(h.yaw);
+    tf.scale = Vec3::splat(CM);
+    input.velocity = velocity;
+    input.stance = opt.stance;
+    if !opt.pack {
+        return;
+    }
+    use gothic_combat_souls::pack::{PREFIX, style};
+    let Some(style) = style(opt.stance) else {
+        return;
+    };
+    let pose = animmap::pack_pose(
+        h,
+        &res.world.tuning,
+        opt.strafe && res.world.lock.target.is_some(),
+        gothic_combat_souls::plugin::from_bevy(velocity),
+    );
+    match pose {
+        PackPose::Action { id, frame } => {
+            // Start the action's clip the first frame of the action, then pin it to the frame.
+            let Some(pattern) = animmap::pack_clip(id) else {
+                return;
+            };
+            let name = format!("{PREFIX}{}", pattern.replace("{S}", style));
+            let fresh = !animator
+                .overlay
+                .as_ref()
+                .is_some_and(|o| o.motion.clip.name.eq_ignore_ascii_case(&name));
+            if fresh && !ov::start(&mut lib, &mut animator, &name, 0.0) {
+                return;
+            }
+            ov::follow_time(
+                &mut animator,
+                PREFIX,
+                frame / gothic_combat_souls::tuning::ANIM_FPS,
+            );
+        }
+        PackPose::Guard => {
+            let name = format!("{PREFIX}{style}_Guard");
+            if !ov::hold_loop(&mut lib, &mut animator, PREFIX, &name, 1.0) {
+                ov::fade_out(&mut animator, PREFIX, dt, 0.14);
+            }
+        }
+        PackPose::Strafe { gait, dir, rate } => {
+            let name = format!("{PREFIX}{gait}_{dir}");
+            if !ov::hold_loop(&mut lib, &mut animator, PREFIX, &name, rate) {
+                ov::fade_out(&mut animator, PREFIX, dt, 0.14);
+            }
+        }
+        PackPose::None => ov::fade_out(&mut animator, PREFIX, dt, 0.14),
+    }
+}
+
 fn pose_foes(
     res: Res<SoulsRes>,
     foes: Query<(&FoeVis, Entity)>,
@@ -759,10 +930,12 @@ fn script_input(
             (70, "lockon"),
             (128, "telegraph"),
             (152, "roll"),
+            (172, "roll2"),
             (306, "attack"),
             (392, "parry"),
+            (470, "strafe"),
         ];
-        script.exit_at = Some(450);
+        script.exit_at = Some(520);
     }
     let tick = res.world.tick;
     let was = latch.current;
@@ -784,6 +957,10 @@ fn script_input(
     if (284..286).contains(&tick) {
         light = tick == 284;
     }
+    // Circle the locked-on foe to the right (the lock-on strafe).
+    if (410..505).contains(&tick) {
+        mv = Vec2::X;
+    }
     // Guard just before the second swing for a parry.
     if (375..400).contains(&tick) {
         guard = true;
@@ -803,6 +980,7 @@ fn script_input(
 }
 
 fn script_shots(
+    opts: Res<Opts>,
     mut commands: Commands,
     mut script: ResMut<Script>,
     mut res: ResMut<SoulsRes>,
@@ -833,7 +1011,7 @@ fn script_shots(
         .collect();
     script.shot_pending.retain(|(t, _)| *t > tick);
     for (_, name) in due {
-        let path = format!(".local/souls-{name}.png");
+        let path = format!(".local/souls-{}{name}.png", opts.prefix);
         eprintln!("souls: shot {path} at tick {tick}");
         commands
             .spawn(Screenshot::primary_window())
