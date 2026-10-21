@@ -1,10 +1,8 @@
 # VR mode (PC VR first)
 
-<<<<<<< HEAD
 Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06, #48 VR-12.
-=======
+
 Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06, #47 VR-11.
->>>>>>> origin/cloud/47-vr-commands
 
 Everything here is developed and tested with **synthetic content only** (greybox boxes,
 capsule dummies, procedural weapons). No Gothic 3 assets, data or decompiled code are used.
@@ -37,11 +35,9 @@ cargo run -p gothic-vr --example greybox -- --headless   # scripted CI run (exit
 cargo run -p gothic-vr-sandbox                           # everything: props, dummies, duel, range
 cargo run -p gothic-vr-sandbox -- --peaceful --strength 120
 cargo run -p gothic-vr-sandbox -- --headless             # scripted CI duel (exit code)
-<<<<<<< HEAD
 cargo run -p gothic-vr-npc --example exec_duel           # VR-12: original-AI intents vs scripted player
-=======
+
 cargo run -p gothic-vr-interact --example interact_greybox # VR-11: every mapping against a stub core (exit code)
->>>>>>> origin/cloud/47-vr-commands
 ```
 
 On Linux the windowed builds use X11 (`libxkbcommon-x11` is needed at runtime). Without a GPU,
@@ -115,7 +111,6 @@ costs and caching.
 * **Weapons**: replace `props::*` specs and `profiles::profile_for` with data from the item
   templates (mass, length, grip, blade/point geometry).
 
-<<<<<<< HEAD
 ## Execution layer for the original AI (VR-12)
 
 `gothic_vr_npc::exec` keeps the original AI in charge of **when**, **whom** and **which move**
@@ -148,7 +143,7 @@ value) into an `Executor` per NPC:
 Not done yet (needs the game): reading the intents from `gothic-sim` per frame, mapping
 entity ids, the Bevy plugin wiring of `Executor` next to `VrNpc`, and a ragdoll body for
 quadrupeds (the kinematic body is a stand-in).
-=======
+
 ## Interaction mapping onto core commands (VR-11)
 
 `gothic_vr_interact::InteractMapper` turns tracked poses and buttons into the same
@@ -187,4 +182,3 @@ Integration hooks:
 Not done (needs the game): the target registry from real world entities, highlighting the
 focused target, haptics, and the physics hands holding the grabbed item instead of `PickUp`
 moving it straight into the inventory.
->>>>>>> origin/cloud/47-vr-commands
