@@ -5,7 +5,7 @@
 //! contains the generic bone table of a humanoid source skeleton with Havok-style names.
 use bevy::math::{Mat3, Quat, Vec3};
 use gothic_animation::{
-    clip_pack::{ClipPack, ClipTiming, PackClip},
+    clip_pack::{ClipPack, PackClip},
     retarget::{Grip, Options, Pair, Retargeter, SrcAnims},
     rig::Rig,
 };
@@ -153,7 +153,7 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .position(|a| a == "--timing")
         .and_then(|i| args.get(i + 1))
-        .map(|p| std::fs::read_to_string(p))
+        .map(std::fs::read_to_string)
         .transpose()?
         .map(|t| gothic_animation::clip_pack::parse_timing(&t))
         .unwrap_or_default();

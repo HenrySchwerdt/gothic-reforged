@@ -660,6 +660,61 @@ fn pick_duration(
         })
 }
 
+
+impl Zone {
+    /// Build a zone from the decoded `eCWeatherZone_PS` property set of a world entity.
+    pub fn from_properties(set: &gothic_formats::propstream::PropertySet) -> Option<Self> {
+        use gothic_formats::propstream::PropValue;
+        let f = |n: &str| set.float(n).unwrap_or(0.0);
+        let v3 = |n: &str| match set.get(n) {
+            Some(PropValue::Vec3(v)) | Some(PropValue::ColorRgb(v)) | Some(PropValue::Euler(v)) => {
+                *v
+            }
+            _ => [0.0; 3],
+        };
+        let mode = |n: &str| match set.get(n) {
+            Some(PropValue::Enum { value, .. }) => Overwrite::from_raw(*value),
+            _ => Overwrite::None,
+        };
+        let shape = match set.get("Shape") {
+            Some(PropValue::Enum { value, .. }) => ZoneShape::from_raw(*value),
+            _ => return None,
+        };
+        let env = set.string("WeatherEnvironment")?.to_string();
+        let fl = |m: &str, v: &str| Field {
+            mode: mode(m),
+            value: f(v),
+        };
+        let co = |m: &str, v: &str| Field {
+            mode: mode(m),
+            value: v3(v),
+        };
+        Some(Self {
+            shape,
+            inner_extends: v3("InnerExtends"),
+            outer_extends: v3("OuterExtends"),
+            inner_radius: f("InnerRadius"),
+            outer_radius: f("OuterRadius"),
+            environment: env,
+            overwrites: ZoneOverwrites {
+                light_diffuse: co("LightDiffuseOverwrite", "LightDiffuseColor"),
+                light_specular: co("LightSpecularOverwrite", "LightSpecularColor"),
+                light_intensity: fl("LightIntensityOverwrite", "LightIntensity"),
+                ambient_back: co("AmbientBackLightOverwrite", "AmbientBackLightColor"),
+                ambient_general: co("AmbientGeneralOverwrite", "AmbientGeneralColor"),
+                ambient_intensity: fl("AmbientIntensityOverwrite", "AmbientIntensity"),
+                fog_color: co("FogColorOverwrite", "FogColor"),
+                fog_start: fl("FogStartrOverwrite", "FogStart"),
+                fog_end: fl("FogEndrOverwrite", "FogEnd"),
+                sky_color: co("SkyColorOverwrite", "SkyColor"),
+                haze_color: co("HazeColorOverwrite", "HazeColor"),
+                cloud_thickness: fl("CloudThicknessrOverwrite", "CloudThickness"),
+                cloud_color: co("CloudColorOverwrite", "CloudColor"),
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,10 +792,12 @@ mod tests {
     #[test]
     fn dungeon_zone_replaces_light() {
         let mut a = admin();
-        let mut ov = ZoneOverwrites::default();
-        ov.light_intensity = Field {
-            mode: Overwrite::Replace,
-            value: 0.0,
+        let ov = ZoneOverwrites {
+            light_intensity: Field {
+                mode: Overwrite::Replace,
+                value: 0.0,
+            },
+            ..ZoneOverwrites::default()
         };
         a.set_zones(vec![Zone {
             shape: ZoneShape::Box3d,
@@ -811,59 +868,5 @@ mod tests {
         assert_eq!(r.sun_intensity, 2.0);
         let m = r.mix(&EnvRecord::from_state(&state("Y", 4.0), 0.3), 0.5);
         assert_eq!(m.sun_intensity, 3.0);
-    }
-}
-
-impl Zone {
-    /// Build a zone from the decoded `eCWeatherZone_PS` property set of a world entity.
-    pub fn from_properties(set: &gothic_formats::propstream::PropertySet) -> Option<Self> {
-        use gothic_formats::propstream::PropValue;
-        let f = |n: &str| set.float(n).unwrap_or(0.0);
-        let v3 = |n: &str| match set.get(n) {
-            Some(PropValue::Vec3(v)) | Some(PropValue::ColorRgb(v)) | Some(PropValue::Euler(v)) => {
-                *v
-            }
-            _ => [0.0; 3],
-        };
-        let mode = |n: &str| match set.get(n) {
-            Some(PropValue::Enum { value, .. }) => Overwrite::from_raw(*value),
-            _ => Overwrite::None,
-        };
-        let shape = match set.get("Shape") {
-            Some(PropValue::Enum { value, .. }) => ZoneShape::from_raw(*value),
-            _ => return None,
-        };
-        let env = set.string("WeatherEnvironment")?.to_string();
-        let fl = |m: &str, v: &str| Field {
-            mode: mode(m),
-            value: f(v),
-        };
-        let co = |m: &str, v: &str| Field {
-            mode: mode(m),
-            value: v3(v),
-        };
-        Some(Self {
-            shape,
-            inner_extends: v3("InnerExtends"),
-            outer_extends: v3("OuterExtends"),
-            inner_radius: f("InnerRadius"),
-            outer_radius: f("OuterRadius"),
-            environment: env,
-            overwrites: ZoneOverwrites {
-                light_diffuse: co("LightDiffuseOverwrite", "LightDiffuseColor"),
-                light_specular: co("LightSpecularOverwrite", "LightSpecularColor"),
-                light_intensity: fl("LightIntensityOverwrite", "LightIntensity"),
-                ambient_back: co("AmbientBackLightOverwrite", "AmbientBackLightColor"),
-                ambient_general: co("AmbientGeneralOverwrite", "AmbientGeneralColor"),
-                ambient_intensity: fl("AmbientIntensityOverwrite", "AmbientIntensity"),
-                fog_color: co("FogColorOverwrite", "FogColor"),
-                fog_start: fl("FogStartrOverwrite", "FogStart"),
-                fog_end: fl("FogEndrOverwrite", "FogEnd"),
-                sky_color: co("SkyColorOverwrite", "SkyColor"),
-                haze_color: co("HazeColorOverwrite", "HazeColor"),
-                cloud_thickness: fl("CloudThicknessrOverwrite", "CloudThickness"),
-                cloud_color: co("CloudColorOverwrite", "CloudColor"),
-            },
-        })
     }
 }
