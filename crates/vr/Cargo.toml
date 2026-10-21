@@ -1,0 +1,19 @@
+[package]
+name = "gothic-vr"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "VR foundation: tracked head/hands input, desktop fallback, stereo rig, comfort locomotion and full-body IK"
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "3d_bevy_render", "bevy_winit", "multi_threaded", "bevy_gizmos", "default_font", "x11"] }
+gothic-physics = { path = "../physics" }
+gothic-runtime = { path = "../runtime" }
+gothic-sim = { path = "../sim" }
+glam = { version = "0.33", features = ["serde"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
