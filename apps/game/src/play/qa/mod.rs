@@ -238,7 +238,8 @@ pub fn register(app: &mut App, scenario: &str) {
         );
         std::process::exit(2);
     };
-    let dir = PathBuf::from(format!(".local/qa/{scenario}"));
+    let base = std::env::var("GR_QA_DIR").unwrap_or_else(|_| ".local/qa".into());
+    let dir = PathBuf::from(format!("{base}/{scenario}"));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     app.insert_resource(Qa {

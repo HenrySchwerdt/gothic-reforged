@@ -14,7 +14,7 @@ use std::collections::HashSet;
 #[derive(Resource)]
 pub struct NavRes(pub SharedNav);
 
-/// Decodes the authored navigation zones and corridors of the Ardea documents on a worker
+/// Decodes the authored navigation zones and corridors of every world document on a worker
 /// thread and installs the original-graph `FindWay` (E39-E43) in the shared handle when done.
 /// Positions go through the same mirrored, origin-relative map as the NPC placements.
 fn spawn_graph_build(nav: SharedNav, data_dir: std::path::PathBuf) {
@@ -31,7 +31,11 @@ fn spawn_graph_build(nav: SharedNav, data_dir: std::path::PathBuf) {
                 .iter()
                 .filter(|(p, _)| {
                     let l = p.to_ascii_lowercase();
-                    l.contains("ardea") && (l.ends_with(".node") || l.ends_with(".lrentdat"))
+                    // The whole world: every authored layer can hold zones and corridors
+                    // (gCNavZone_PS / gCNavPath_PS); unlisted level meshes carry none.
+                    (l.ends_with(".node") || l.ends_with(".lrentdat"))
+                        && !l.contains("levelmesh")
+                        && !is_static_cell(&l)
                 })
                 .map(|(p, s)| (p.to_owned(), s))
                 .collect();
@@ -39,7 +43,7 @@ fn spawn_graph_build(nav: SharedNav, data_dir: std::path::PathBuf) {
             for (path, slot) in &slots {
                 match vfs.read(*slot) {
                     Ok(bytes) => {
-                        if let Err(e) = scene.add_document(&bytes, true) {
+                        if let Err(e) = scene.add_document(&bytes, false) {
                             eprintln!("play: nav graph: {path}: {e:#}");
                         }
                     }
@@ -58,6 +62,13 @@ fn spawn_graph_build(nav: SharedNav, data_dir: std::path::PathBuf) {
             );
             nav.set_graph(std::sync::Arc::new(graph));
         });
+}
+
+/// `x95000y0z-15000.node`: a static-geometry cell, never holds navigation property sets.
+fn is_static_cell(path: &str) -> bool {
+    let stem = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let b = stem.as_bytes();
+    b.len() > 4 && b[0] == b'x' && (b[1].is_ascii_digit() || b[1] == b'-') && stem.contains('y')
 }
 
 pub fn register(app: &mut App, data_dir: &std::path::Path) {

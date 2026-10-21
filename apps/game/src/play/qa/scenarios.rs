@@ -33,6 +33,7 @@ pub const NAMES: &[&str] = &[
     "teleport",
     "walk_to_reddock",
     "world_walk",
+    "world_census",
 ];
 
 pub fn build(name: &str) -> Option<Sc> {
@@ -66,6 +67,7 @@ pub fn build(name: &str) -> Option<Sc> {
         "teleport" => super::world::teleport(),
         "walk_to_reddock" => super::world::walk_to_reddock(),
         "world_walk" => super::world::world_walk(),
+        "world_census" => super::world::world_census(),
         "triggers" => super::world::triggers(),
         "perf_idle" => super::world::perf_idle(),
         _ => return None,

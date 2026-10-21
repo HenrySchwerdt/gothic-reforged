@@ -620,3 +620,125 @@ pub fn triggers() -> Sc {
     });
     sc
 }
+
+/// Population check: at each place the characters of the enabled layers inside the 4000 box
+/// around the hero (the data) against the bodies shown and the queue; plus the world totals.
+pub fn world_census() -> Sc {
+    let mut sc = Sc::new(900.0);
+    frame_watch(&mut sc);
+    grab(&mut sc);
+    sc.act("world totals from the data", |cx| {
+        let r = cx.world.resource::<Roster>();
+        let on = r
+            .cands
+            .iter()
+            .filter(|c| r.docs[c.doc as usize].enabled)
+            .count();
+        let mut by_doc: std::collections::BTreeMap<String, usize> = Default::default();
+        for c in &r.cands {
+            if r.docs[c.doc as usize].enabled {
+                *by_doc
+                    .entry(r.docs[c.doc as usize].sector.clone())
+                    .or_default() += 1;
+            }
+        }
+        let top: Vec<String> = by_doc
+            .iter()
+            .filter(|(_, n)| **n >= 40)
+            .map(|(k, n)| format!("{k}={n}"))
+            .collect();
+        cx.note(format!(
+            "world: {} candidates in {} layers, {on} in enabled layers; big sectors: {top:?}",
+            r.cands.len(),
+            r.docs.len()
+        ));
+        cx.st.n.insert("ft_on".into(), 1.0);
+    });
+    let places: [(&'static str, &'static str); 9] = [
+        ("Ardea", "ardea_npc_01"),
+        ("Reddock", "reddock_npc_01"),
+        ("Faring", "faring"),
+        ("KapDun", "kap_dun_npc_01"),
+        ("Gotha", "gotha_npc_01"),
+        ("Montera", "montera"),
+        ("Geldern", "geldern"),
+        ("Silden", "silden"),
+        ("Trelis", "trelis"),
+    ];
+    for (city, doc) in places {
+        sc.act(format!("setup: hop to {city}"), move |cx| {
+            let at = centroid(cx, &[doc])
+                .or_else(|| {
+                    cx.world
+                        .resource::<crate::walk::play::teleport::Destinations>()
+                        .point_cm(&format!("Teleport_{city}"))
+                })
+                .unwrap_or(Vec3::ZERO);
+            cx.st.n.insert(
+                format!("has_{city}"),
+                if centroid(cx, &[doc]).is_some() {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
+            let at = cluster(cx, &[doc]).unwrap_or(at);
+            place_hero(cx, at + Vec3::Y * 300.0);
+        });
+        sc.until(format!("{city}: standing"), 120.0, |cx| {
+            cx.player().ctrl.grounded
+        });
+        sc.until(format!("{city}: queue drained"), 60.0, |cx| {
+            let r = cx.world.resource::<Roster>();
+            r.queue.is_empty() && cx.t > 6.0
+        });
+        sc.wait(2.0);
+        sc.act(format!("{city}: census"), move |cx| {
+            let hero = cx.player().ctrl.position;
+            let (want, live, queued, failed) = {
+                let r = cx.world.resource::<Roster>();
+                let near = |p: Vec3| (p.x - hero.x).abs().max((p.z - hero.z).abs()) <= 4_000.0;
+                let want = r
+                    .cands
+                    .iter()
+                    .filter(|c| r.docs[c.doc as usize].enabled && near(c.pos_cm))
+                    .count();
+                let failed = r
+                    .cands
+                    .iter()
+                    .filter(|c| c.failed && r.docs[c.doc as usize].enabled && near(c.pos_cm))
+                    .count();
+                (want, r.live.len(), r.queue.len(), failed)
+            };
+            let actors = cx.core().0.sim.actors.len();
+            cx.note(format!(
+                "CENSUS {city}: data {want} in range, shown {live}, queued {queued}, appearance failed {failed}, core actors {actors}"
+            ));
+            cx.st.n.insert(format!("c_{city}"), (want as i64 - failed as i64 - live as i64) as f64);
+        });
+        sc.shot(city);
+    }
+    sc.act("stop the frame clock", |cx| {
+        cx.st.n.insert("ft_on".into(), 0.0);
+    });
+    sc.check(
+        "shown equals the data in range (minus unresolved looks) at every place",
+        move |cx| {
+            let bad: Vec<String> = places
+                .iter()
+                .filter(|(c, _)| cx.st.n.get(&format!("has_{c}")).copied().unwrap_or(0.0) > 0.5)
+                .filter_map(|(c, _)| {
+                    let d = cx.st.n.get(&format!("c_{c}")).copied().unwrap_or(0.0);
+                    (d.abs() > 0.5).then(|| format!("{c}: {d}"))
+                })
+                .collect();
+            expect(
+                bad.is_empty(),
+                "all places complete".to_string(),
+                format!("short: {bad:?}"),
+            )
+        },
+    );
+    report_frames(&mut sc, "census hops", 0);
+    sc
+}

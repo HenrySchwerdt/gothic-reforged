@@ -405,7 +405,10 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;
     let hero_look = looks.pc_hero();
-    let layer_flags = layers::load(&data_dir, &npcs::candidate_docs(&npcs, &looks));
+    let object_defs = objects::WorldObjects::load_defs();
+    let mut flag_docs = npcs::candidate_docs(&npcs, &looks);
+    flag_docs.extend(object_defs.iter().map(|d| d.document.clone()));
+    let layer_flags = layers::load(&data_dir, &flag_docs);
     let roster = npcs::select_roster(&npcs, &looks, &layer_flags);
     // Register the sectors with the initial flag of their layer roots before any character
     // exists: the core files each actor under its document's sector.
@@ -415,6 +418,18 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
             sectors.push(gothic_runtime::Command::RegisterSector {
                 name: d.sector.clone(),
                 enabled: d.enabled,
+            });
+        }
+    }
+    let objects = objects::WorldObjects::build(object_defs, &layer_flags);
+    for d in &objects.docs {
+        let name = layers::sector_name(&d.path);
+        if !sectors.iter().any(
+            |c| matches!(c, gothic_runtime::Command::RegisterSector { name: n, .. } if *n == name),
+        ) {
+            sectors.push(gothic_runtime::Command::RegisterSector {
+                name,
+                enabled: d.on,
             });
         }
     }
@@ -442,9 +457,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         units_per_meter: 1.0,
         ..audio.settings
     };
-    let objects = objects::WorldObjects::load();
     eprintln!(
-        "play: {} world entities around Ardea, {} item meshes",
+        "play: {} world entities (interact objects, items, points), {} item meshes",
         objects.list.len(),
         objects.item_mesh.len()
     );

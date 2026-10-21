@@ -724,6 +724,23 @@ fn focus(
     // Candidates for the ported focus rules (`gothic_gameplay::focus`); `ids` maps a
     // candidate's index back to what it stands for. Sizes and the line of sight are the host's
     // estimates [I]: half-extents of 40 cm for characters and objects, 15 cm for items.
+    // The focus mode follows the hero's combat task (`PSFocus.CurrentMode`).
+    let mode = match core.0.sim.hero_script_state().0 {
+        Some(ScriptState::PsMelee) => FocusMode::Melee,
+        Some(ScriptState::PsRanged) => FocusMode::Ranged,
+        Some(ScriptState::PsMagic) => FocusMode::Magic,
+        _ if state.drawn => match core.0.sim.actor(core.0.hero).equipment.weapon_mode() {
+            WeaponMode::Ranged => FocusMode::Ranged,
+            WeaponMode::Magic => FocusMode::Magic,
+            _ => FocusMode::Normal,
+        },
+        _ => FocusMode::Normal,
+    };
+    // CollectInteractionEntities: only what lies within the largest scan range of the mode
+    // (`gCFocus_PS::GetCurrentMaxRange`, Game:0x1006c1d0). The world holds tens of thousands of
+    // objects and every character the hero ever met, so reject by distance before collecting.
+    let max_range = FocusConfig::hero().max_range(mode);
+    let near = |p: [f32; 3]| (p[0] - hero.x).hypot(p[2] - hero.z) <= max_range;
     let mut ids: Vec<Target> = Vec::new();
     let mut cands: Vec<FocusCandidate> = Vec::new();
     let mut push = |t: Target, class: FocusClass, p: [f32; 3], radius: f32| {
@@ -745,6 +762,9 @@ fn focus(
         let Some(p) = core.0.sim.world.actors.get(&a.id).map(|w| w.0) else {
             continue;
         };
+        if !near([p.x, p.y, p.z]) {
+            continue;
+        }
         let t = if a.is_alive() {
             Target::Npc(a.id)
         } else {
@@ -753,6 +773,9 @@ fn focus(
         push(t, FocusClass::Character, [p.x, p.y, p.z], 40.0);
     }
     for (i, o) in objects.list.iter().enumerate() {
+        if !near([o.pos_cm.x, o.pos_cm.y, o.pos_cm.z]) || !objects.docs[o.doc as usize].on {
+            continue;
+        }
         let usable = if o.def.is_item {
             !o.taken && o.entity.is_some() && o.visual.is_some()
         } else {
@@ -768,18 +791,6 @@ fn focus(
             push(Target::Object(i), FocusClass::Interact, p, 40.0);
         }
     }
-    // The focus mode follows the hero's combat task (`PSFocus.CurrentMode`).
-    let mode = match core.0.sim.hero_script_state().0 {
-        Some(ScriptState::PsMelee) => FocusMode::Melee,
-        Some(ScriptState::PsRanged) => FocusMode::Ranged,
-        Some(ScriptState::PsMagic) => FocusMode::Magic,
-        _ if state.drawn => match core.0.sim.actor(core.0.hero).equipment.weapon_mode() {
-            WeaponMode::Ranged => FocusMode::Ranged,
-            WeaponMode::Magic => FocusMode::Magic,
-            _ => FocusMode::Normal,
-        },
-        _ => FocusMode::Normal,
-    };
     let viewer = FocusViewer {
         pos: [hero.x, hero.y, hero.z],
         yaw: fwd.x.atan2(fwd.y),
