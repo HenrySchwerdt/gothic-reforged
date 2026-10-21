@@ -231,10 +231,23 @@ fn developer_menus_are_not_dialog_partners() {
     let report = play(&fixture::world_driven(), BotOptions::default());
     assert!(!report.completed.iter().any(|c| c == "Q_Cheated"));
     assert!(
-        !report
-            .trace
-            .iter()
-            .any(|s| matches!(&s.action, Action::Talk { npc, .. } if npc.eq_ignore_ascii_case("sh")))
+        !report.trace.iter().any(
+            |s| matches!(&s.action, Action::Talk { npc, .. } if npc.eq_ignore_ascii_case("sh"))
+        )
     );
     assert!(report.stuck.iter().any(|s| s.quest == "Q_Cheated"));
+}
+
+#[test]
+fn reputation_lines_are_unlocked_by_earning_fame() {
+    let report = play(&fixture::world_driven(), BotOptions::default());
+    assert!(
+        report.completed.iter().any(|c| c == "Q_Fame"),
+        "{}",
+        report.to_text(true)
+    );
+    assert!(report.trace.iter().any(|s| matches!(
+        &s.action,
+        Action::Cheat(Cheat::Earn { what, amount: 75, .. }) if what.starts_with("fame")
+    )));
 }

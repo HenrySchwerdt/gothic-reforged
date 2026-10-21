@@ -117,7 +117,16 @@ impl<'a> Engine<'a> {
         use InfoCond::*;
         matches!(
             self.cond(id),
-            Hello | Join | MobJoin | SlaveJoin | Dismiss | MobDismiss | Wait | Companion | Teach | Trade
+            Hello
+                | Join
+                | MobJoin
+                | SlaveJoin
+                | Dismiss
+                | MobDismiss
+                | Wait
+                | Companion
+                | Teach
+                | Trade
         ) || self.ty(id) == InfoType::Parent
             || !self.db.info(id).cond_player_party_member.is_empty()
     }

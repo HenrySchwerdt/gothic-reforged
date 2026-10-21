@@ -130,7 +130,13 @@ impl Planner {
     /// Infos that close or fail a quest of the route score 0 unless `allow_spoilers`: the bot
     /// takes them only when nothing else is left (`Beliar_Contact` closes `Innos_Contact`; a
     /// player picks one side).
-    pub fn score(&self, db: &GameDatabase, st: &GameState, id: InfoId, allow_spoilers: bool) -> i32 {
+    pub fn score(
+        &self,
+        db: &GameDatabase,
+        st: &GameState,
+        id: InfoId,
+        allow_spoilers: bool,
+    ) -> i32 {
         self.score_depth(db, st, id, 0, allow_spoilers)
     }
 

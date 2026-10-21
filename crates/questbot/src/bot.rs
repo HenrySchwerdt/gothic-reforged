@@ -253,21 +253,43 @@ impl<'a> QuestBot<'a> {
         let route = self.planner.route_infos().to_vec();
         for id in route {
             let info = db.info(id);
-            if info.cond_secondary_npc.is_empty()
+            let friend = matches!(
+                InfoCond::from_raw(info.condition_type),
+                InfoCond::EnclaveFriend | InfoCond::PoliticalFriend
+            );
+            if (info.cond_secondary_npc.is_empty() && !friend)
                 || (!info.quest.is_empty() && self.state.quest_status(&info.quest).is_finished())
             {
                 continue;
             }
-            for _ in 0..info.cond_secondary_npc.len() {
+            for _ in 0..=info.cond_secondary_npc.len() {
                 let partner = if info.owner.eq_ignore_ascii_case(PLAYER_OWNER) {
                     ""
                 } else {
                     info.owner.as_str()
                 };
-                let Err(Unmet::NpcStatus { npc, status }) =
-                    self.engine.check(&self.state, id, partner)
-                else {
-                    break;
+                let (npc, status) = match self.engine.check(&self.state, id, partner) {
+                    Err(Unmet::NpcStatus { npc, status }) => (npc, status),
+                    // Reputation lines (`EnclaveFriend` / `PoliticalFriend`): the player earns
+                    // the fame with the faction's quests first.
+                    Err(Unmet::Flag(what)) if what.contains("fame >= 75") => {
+                        let key = if what.starts_with("Enclave") {
+                            "enc:friends"
+                        } else {
+                            "pol:friends"
+                        };
+                        self.state.add_fame(key, 75);
+                        self.record(
+                            Action::Cheat(Cheat::Earn {
+                                what: format!("fame ({key})"),
+                                amount: 75,
+                                info: info.name.clone(),
+                            }),
+                            &ExecResult::default(),
+                        );
+                        continue;
+                    }
+                    _ => break,
                 };
                 match status {
                     2 => {
@@ -334,9 +356,9 @@ impl<'a> QuestBot<'a> {
                     .cond_item_container
                     .get(idx)
                     .or_else(|| info.cond_item_container.first());
-                if !container
-                    .is_some_and(|c| c.eq_ignore_ascii_case("pc_hero") || c.eq_ignore_ascii_case("player"))
-                {
+                if !container.is_some_and(|c| {
+                    c.eq_ignore_ascii_case("pc_hero") || c.eq_ignore_ascii_case("player")
+                }) {
                     break;
                 }
                 let need = info.cond_item_amounts.get(idx).copied().unwrap_or(1).max(1);
@@ -370,7 +392,9 @@ impl<'a> QuestBot<'a> {
             .iter()
             .filter(|q| match self.state.quest_status(&q.name) {
                 QuestStatus::Running => true,
-                QuestStatus::Open => self.planner.is_relevant(&q.name) && self.orphans.contains(&norm(&q.name)),
+                QuestStatus::Open => {
+                    self.planner.is_relevant(&q.name) && self.orphans.contains(&norm(&q.name))
+                }
                 _ => false,
             })
             .collect();
@@ -497,13 +521,7 @@ impl<'a> QuestBot<'a> {
                     }
                     QuestType::SpellCast => {
                         let mut r = ExecResult::default();
-                        questmgr::on_spell_cast(
-                            db,
-                            &mut self.state,
-                            entity,
-                            &q.spell_name,
-                            &mut r,
-                        );
+                        questmgr::on_spell_cast(db, &mut self.state, entity, &q.spell_name, &mut r);
                         self.record(
                             Action::Cheat(Cheat::Cast {
                                 target: entity.clone(),
@@ -524,7 +542,8 @@ impl<'a> QuestBot<'a> {
         if self.futile.contains(&norm(&self.db.info(id).name)) {
             return 0;
         }
-        self.planner.score(self.db, &self.state, id, self.allow_spoilers)
+        self.planner
+            .score(self.db, &self.state, id, self.allow_spoilers)
     }
 
     /// The not yet visited NPC with the most useful offer, with its score.
@@ -549,7 +568,11 @@ impl<'a> QuestBot<'a> {
                 hero_best = hero_best.max(self.score(id));
             }
         }
-        let key = (fingerprint(&self.state), self.state.hours, self.allow_spoilers);
+        let key = (
+            fingerprint(&self.state),
+            self.state.hours,
+            self.allow_spoilers,
+        );
         if self.cache.key != key {
             self.cache.key = key;
             self.cache.scores.clear();

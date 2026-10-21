@@ -134,7 +134,9 @@ fn isolated(
                     b.owner,
                     b.condition,
                     b.unmet,
-                    b.hint.as_ref().map_or(String::new(), |h| format!(" -- {h}"))
+                    b.hint
+                        .as_ref()
+                        .map_or(String::new(), |h| format!(" -- {h}"))
                 );
             }
         }
@@ -164,7 +166,12 @@ fn dump(db: &GameDatabase, name: &str) {
         let cmds: Vec<String> = i
             .script
             .iter()
-            .filter(|s| !matches!(s.command.as_str(), "Say" | "SaySvm" | "SaySound" | "Description"))
+            .filter(|s| {
+                !matches!(
+                    s.command.as_str(),
+                    "Say" | "SaySvm" | "SaySound" | "Description"
+                )
+            })
             .map(|s| format!("{}({},{},{})", s.command, s.entity1, s.id1, s.id2))
             .collect();
         println!(
@@ -194,8 +201,13 @@ fn dump(db: &GameDatabase, name: &str) {
                 matches!(s.command.as_str(), "SetGameEvent" | "ClearGameEvent")
                     && s.id1.eq_ignore_ascii_case(ev)
             });
-            let needs = i.cond_player_knows.iter().any(|e| e.eq_ignore_ascii_case(ev))
-                || i.cond_player_knows_not.iter().any(|e| e.eq_ignore_ascii_case(ev));
+            let needs = i
+                .cond_player_knows
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(ev))
+                || i.cond_player_knows_not
+                    .iter()
+                    .any(|e| e.eq_ignore_ascii_case(ev));
             if touches || needs {
                 line(gothic_gameplay::InfoId(n as u32));
             }

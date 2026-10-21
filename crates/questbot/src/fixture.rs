@@ -581,6 +581,7 @@ pub fn gated() -> GameDatabase {
 /// * `Q_Child`: its activator is a child of a plain `Info` (not `Parent`) line, itself only
 ///   reachable through that line;
 /// * `Q_Paid`: the activator costs gold, the engine refuses without it;
+/// * `Q_Fame`: the line that unlocks it needs reputation (`EnclaveFriend`, fame >= 75);
 /// * `Q_Cheated`: only the developer menu `sh` offers it.
 pub fn world_driven() -> GameDatabase {
     use cond::*;
@@ -639,6 +640,37 @@ pub fn world_driven() -> GameDatabase {
         "Pam",
         "",
         "Q_Paid",
+        DELIVERY,
+        INFO,
+        "",
+        &[say("T_THANKS")],
+    ));
+    quests.push(quest("Q_Fame", REPORT, "", "Fay", "1", ""));
+    infos.push(info(
+        "F_Friend",
+        "Fay",
+        "",
+        "",
+        24,
+        INFO,
+        "",
+        &[ask("T_HELLO"), event("Fay_Friend")],
+    ));
+    infos.push(info(
+        "F_Start",
+        "Fay",
+        "",
+        "Q_Fame",
+        ACTIVATOR,
+        INFO,
+        "Fay_Friend",
+        &[ask("T_WORK")],
+    ));
+    infos.push(info(
+        "F_Done",
+        "Fay",
+        "",
+        "Q_Fame",
         DELIVERY,
         INFO,
         "",
