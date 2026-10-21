@@ -3,6 +3,7 @@
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 mod env;
+mod env_synth;
 mod gmat;
 #[path = "play/mod.rs"]
 mod play;

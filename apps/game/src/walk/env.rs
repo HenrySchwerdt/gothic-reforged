@@ -3,6 +3,7 @@
 //!
 //! The numbers and rules live in `gothic-environment`; this module only moves the resulting
 //! packet into Bevy resources and the material uniforms. Disable with `GR_ORIG_ENV=0`.
+//! `GR_ENV_SYNTH=auto|1` feeds synthetic placeholder states instead (see `env_synth.rs`).
 //!
 //! Options: `--hour H` (0..24) or `GR_TIME=<day fraction>`, `--day-speed N` (game days per real
 //! second), `--weather STATE` (force the Myrtana environment into a named state, e.g. `Rainy`).
@@ -105,7 +106,7 @@ impl OrigEnv {
 
     /// Take the weather data and zones delivered by the loader.
     pub fn install(&mut self, payload: WeatherPayload) {
-        let Some(data) = payload.data else {
+        let Some(data) = super::env_synth::weather_data(payload.data) else {
             eprintln!("environment: WeatherStates.g3ws missing, keeping the built-in light set");
             self.enabled = false;
             return;
