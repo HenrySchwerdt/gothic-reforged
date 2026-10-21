@@ -246,14 +246,40 @@ fn setters(db: &GameDatabase, event: &str) -> Vec<String> {
         .collect()
 }
 
-fn hint(db: &GameDatabase, st: &GameState, unmet: &Unmet) -> Option<String> {
+/// Why a setter info has not run: already told (it ran, so the event was set and cleared
+/// again, or the script line is conditional), available now, or its own unmet condition.
+fn setter_state(db: &GameDatabase, engine: &Engine<'_>, st: &GameState, name: &str) -> String {
+    let Some(id) = db.info_id(name) else {
+        return format!("{name} (missing)");
+    };
+    let info = db.info(id);
+    if st.told.contains(&norm(&info.name)) {
+        return format!("{name} (already told)");
+    }
+    let partner = if info.owner.eq_ignore_ascii_case(PLAYER_OWNER) {
+        db.owners()
+            .find(|o| !o.eq_ignore_ascii_case(PLAYER_OWNER))
+            .unwrap_or("")
+            .to_string()
+    } else {
+        info.owner.clone()
+    };
+    match engine.check(st, id, &partner) {
+        Ok(()) => format!("{name} @{} (available, never chosen)", info.owner),
+        Err(u) => format!("{name} @{} (unmet: {u:?})", info.owner),
+    }
+}
+
+fn hint(db: &GameDatabase, engine: &Engine<'_>, st: &GameState, unmet: &Unmet) -> Option<String> {
     Some(match unmet {
         Unmet::Event(e) => {
             let s = setters(db, e);
             if s.is_empty() {
                 format!("no info sets game event {e}")
             } else {
-                format!("event {e} is set by {}", s.join(", "))
+                let states: Vec<String> =
+                    s.iter().map(|n| setter_state(db, engine, st, n)).collect();
+                format!("event {e} is set by {}", states.join(", "))
             }
         }
         Unmet::PrerequisiteQuest(p) => format!("quest {p} is {}", st.quest_status(p).name()),
@@ -321,7 +347,7 @@ pub fn analyse_stuck(
                     owner: info.owner.clone(),
                     condition: format!("{cond:?}"),
                     unmet: format!("{u:?}"),
-                    hint: hint(db, st, &u),
+                    hint: hint(db, engine, st, &u),
                 });
             }
         }
