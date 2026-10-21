@@ -101,7 +101,15 @@ fn isolated(
         .unwrap_or((0, 1));
     let mut rows = Vec::new();
     let mut done = 0usize;
+    // `--isolated --quest A --quest B`: only those quests.
+    let only = options.targets.clone();
     for q in db.quests.iter().skip(si).step_by(sn) {
+        if only
+            .as_ref()
+            .is_some_and(|o| !o.iter().any(|n| n.eq_ignore_ascii_case(&q.name)))
+        {
+            continue;
+        }
         let report = play(
             db,
             BotOptions {
@@ -118,6 +126,18 @@ fn isolated(
             "unsuccessful".to_string()
         };
         println!("{:<44} {result}", q.name);
+        if let Some(st) = report.stuck.first() {
+            for b in st.blockers.iter().take(6) {
+                println!(
+                    "    {} ({}, {}): {}{}",
+                    b.info,
+                    b.owner,
+                    b.condition,
+                    b.unmet,
+                    b.hint.as_ref().map_or(String::new(), |h| format!(" -- {h}"))
+                );
+            }
+        }
         rows.push((q.name.clone(), result));
     }
     println!("isolated: {done}/{} completed", rows.len());
@@ -170,6 +190,9 @@ fn dump(db: &GameDatabase, name: &str) {
     if name == "--owners" {
         println!("owners: {}, infos: {}", db.owners().count(), db.infos.len());
         println!("PC_Hero infos: {}", db.infos_of("PC_Hero").len());
+        for o in db.owners() {
+            println!("{o} {}", db.infos_of(o).len());
+        }
         return;
     }
     if let Some(&id) = db.infos_of(name).first() {

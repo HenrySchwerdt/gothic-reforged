@@ -25,7 +25,7 @@ use gothic_gameplay::dialog::PLAYER_OWNER;
 use gothic_gameplay::model::{Cmd, InfoCond, QuestStatus, QuestType};
 use gothic_gameplay::questmgr;
 use gothic_gameplay::script::{self, ExecResult, Output};
-use gothic_gameplay::state::norm;
+use gothic_gameplay::state::{GOLD_ITEM, norm};
 use gothic_gameplay::{Assumptions, Engine, GameDatabase, GameState};
 use std::collections::BTreeSet;
 
@@ -155,6 +155,7 @@ impl<'a> QuestBot<'a> {
             rounds += 1;
             if self.options.cheats {
                 self.world_cheats();
+                self.obtain_required_items();
             }
             let talked = !self.all_finished() && self.talk_round();
             if seen.insert(fingerprint(&self.state)) {
@@ -214,6 +215,59 @@ impl<'a> QuestBot<'a> {
             action,
             quest_changes: changes,
         });
+    }
+
+    /// Items the player must carry for a route info to be available (a delivery asking for
+    /// raw meat, a quest line requiring a key): the player hunts / buys / finds them.
+    fn obtain_required_items(&mut self) {
+        let db = self.db;
+        let route = self.planner.route_infos().to_vec();
+        for id in route {
+            let info = db.info(id);
+            if info.cond_items.is_empty() {
+                continue;
+            }
+            let qs = self.state.quest_status(&info.quest);
+            if !info.quest.is_empty() && qs.is_finished() {
+                continue;
+            }
+            for _ in 0..info.cond_items.len() {
+                let partner = if info.owner.eq_ignore_ascii_case(PLAYER_OWNER) {
+                    ""
+                } else {
+                    info.owner.as_str()
+                };
+                let Err(gothic_gameplay::conditions::Unmet::Items(item)) =
+                    self.engine.check(&self.state, id, partner)
+                else {
+                    break;
+                };
+                let idx = info.cond_items.iter().position(|i| *i == item).unwrap_or(0);
+                let container = info
+                    .cond_item_container
+                    .get(idx)
+                    .or_else(|| info.cond_item_container.first());
+                if !container
+                    .is_some_and(|c| c.eq_ignore_ascii_case("pc_hero") || c.eq_ignore_ascii_case("player"))
+                {
+                    break;
+                }
+                let need = info.cond_item_amounts.get(idx).copied().unwrap_or(1).max(1);
+                let have = self.state.item_count(&item);
+                if have >= need {
+                    break;
+                }
+                self.state.add_item(&item, need - have);
+                self.record(
+                    Action::Cheat(Cheat::GiveItems {
+                        item: item.clone(),
+                        amount: need - have,
+                        quest: info.quest.clone(),
+                    }),
+                    &ExecResult::default(),
+                );
+            }
+        }
     }
 
     /// Objectives outside dialogs, for running quests (and quests without any starter).
@@ -393,6 +447,7 @@ impl<'a> QuestBot<'a> {
             .db
             .owners()
             .filter(|o| !o.eq_ignore_ascii_case(PLAYER_OWNER))
+            .filter(|o| !DEBUG_OWNERS.iter().any(|d| o.eq_ignore_ascii_case(d)))
             .filter(|o| !self.visited.contains(&norm(o)))
             .map(str::to_string)
             .collect();
@@ -452,6 +507,36 @@ impl<'a> QuestBot<'a> {
         true
     }
 
+    /// Give the player what a refused info lacks (`IS_Running_NotEnoughGold` /
+    /// `IS_Running_NotEnoughLP`, `refusal` in the info executor). Returns whether it did.
+    fn provide_for_refusal(&mut self, id: gothic_gameplay::InfoId, why: &str) -> bool {
+        let info = self.db.info(id);
+        let (kind, amount) = match why {
+            "IS_Running_NotEnoughGold" => {
+                let need = info.gold_cost.saturating_sub(self.state.gold());
+                self.state.add_item(GOLD_ITEM, need);
+                ("gold", need)
+            }
+            "IS_Running_NotEnoughLP" => {
+                let need = info
+                    .teach_attrib_value
+                    .saturating_sub(self.state.learning_points);
+                self.state.learning_points += need;
+                ("learning points", need)
+            }
+            _ => return false,
+        };
+        self.record(
+            Action::Cheat(Cheat::Earn {
+                what: kind.into(),
+                amount,
+                info: info.name.clone(),
+            }),
+            &ExecResult::default(),
+        );
+        true
+    }
+
     /// Infos told since `before` (what actually ran), in database order.
     fn ran_since(&self, before: &BTreeSet<String>) -> Vec<String> {
         self.db
@@ -481,6 +566,7 @@ impl<'a> QuestBot<'a> {
             );
         }
         let mut chosen: BTreeSet<String> = BTreeSet::new();
+        let mut stepped_out: BTreeSet<Option<u32>> = BTreeSet::new();
         for _ in 0..self.options.max_choices {
             if session.ended {
                 break;
@@ -499,6 +585,10 @@ impl<'a> QuestBot<'a> {
                 if let Some(leave) = menu.iter().find(|c| c.info.is_none()) {
                     self.engine.choose(&mut self.state, &mut session, leave);
                 } else if let Some(first) = menu.first() {
+                    // Stepping out of a child menu with its first entry once is enough.
+                    if !stepped_out.insert(first.info.map(|i| i.0)) {
+                        break;
+                    }
                     let told = self.state.told.clone();
                     let res = self.engine.choose(&mut self.state, &mut session, first);
                     let ran = self.ran_since(&told);
@@ -519,7 +609,15 @@ impl<'a> QuestBot<'a> {
             chosen.insert(self.db.info(id).name.clone());
             let told = self.state.told.clone();
             let before = fingerprint(&self.state);
-            let res = self.engine.choose(&mut self.state, &mut session, &choice);
+            let mut res = self.engine.choose(&mut self.state, &mut session, &choice);
+            // The engine refused for lack of gold / learning points: the player earns them
+            // (loot, trade, level-ups) and tries again.
+            if self.options.cheats
+                && let Some(why) = res.refused.clone()
+                && self.provide_for_refusal(id, &why)
+            {
+                res = self.engine.choose(&mut self.state, &mut session, &choice);
+            }
             if fingerprint(&self.state) == before {
                 self.futile.insert(norm(&self.db.info(id).name));
                 // Its owner's cached score is stale (every NPC's for a hero info).
@@ -542,6 +640,10 @@ impl<'a> QuestBot<'a> {
         }
     }
 }
+
+/// Info owners that are developer cheat menus, not NPCs a player can talk to: `sh` (365
+/// infos: "Gib mir ...", "Befreie Myrtana!" which succeeds quests, gold and item gifts).
+const DEBUG_OWNERS: &[&str] = &["sh"];
 
 /// Hours the clock jumps ahead when no NPC has anything useful left.
 const WAIT_HOURS: u64 = 24;

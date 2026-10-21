@@ -32,6 +32,12 @@ pub enum Cheat {
         area: String,
         quest: String,
     },
+    /// The player earns gold / learning points an info demanded.
+    Earn {
+        what: String,
+        amount: u32,
+        info: String,
+    },
     /// The player picks the quest items up (they reach the quest destination).
     Pickup {
         item: String,
