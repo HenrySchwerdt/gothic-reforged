@@ -1,0 +1,19 @@
+[package]
+name = "gothic-vr-sandbox"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Greybox VR sandbox: locomotion, physics hands, melee dummies, a duel NPC and an archery range (synthetic content only)"
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "3d_bevy_render", "bevy_winit", "multi_threaded", "bevy_gizmos", "default_font", "x11"] }
+avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "default-collider", "xpbd_joints", "parallel", "debug-plugin"] }
+gothic-vr = { path = "../../crates/vr" }
+gothic-vr-physics = { path = "../../crates/vr-physics" }
+gothic-vr-melee = { path = "../../crates/vr-melee" }
+gothic-vr-npc = { path = "../../crates/vr-npc" }
+gothic-vr-archery = { path = "../../crates/vr-archery" }
+
+[lints]
+workspace = true

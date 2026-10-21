@@ -12,3 +12,6 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # VR (docs/vr/README.md): desktop-fallback demos in scripted headless mode, exit code = result.
+      - run: cargo run -p gothic-vr --example greybox --locked -- --headless
+      - run: cargo run -p gothic-vr-sandbox --locked -- --headless

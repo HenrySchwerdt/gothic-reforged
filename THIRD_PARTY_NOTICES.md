@@ -51,3 +51,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Rust dependencies retain their respective licenses. No original Gothic 3 data is included in this repository. Local analysis output and extracted samples belong under ignored `.local/`.
+
+# Physics dependency (VR)
+
+`crates/vr-physics`, `crates/vr-melee`, `crates/vr-npc`, `crates/vr-archery` and `apps/vr-sandbox` use [avian3d](https://github.com/avianphysics/avian) 0.8.0 (MIT OR Apache-2.0) and, transitively, parry3d (Apache-2.0). Used as a library only; no source is vendored.
