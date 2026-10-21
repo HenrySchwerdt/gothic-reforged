@@ -31,6 +31,7 @@ pub mod crime;
 pub mod data;
 pub mod economy;
 pub mod item;
+pub mod moves;
 pub mod perception;
 pub mod persist;
 pub mod rng;

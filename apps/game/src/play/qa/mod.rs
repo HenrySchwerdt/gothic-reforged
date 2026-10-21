@@ -29,6 +29,8 @@ mod melee;
 mod more;
 mod more2;
 mod more3;
+mod moves;
+mod moves2;
 mod ranged;
 mod scenarios;
 mod world;

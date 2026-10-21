@@ -227,6 +227,7 @@ impl ActorSpawner<'_, '_> {
             stance: spec.stance,
             sneak: false,
             parade: false,
+            body: Default::default(),
         };
         if let Some(name) = &spec.motion {
             let motion = library.motion(&rig, name)?;

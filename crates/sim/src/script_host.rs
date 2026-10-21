@@ -696,8 +696,11 @@ impl<W: WorldQuery> EntityApi for SimHost<'_, W> {
             None => false,
         }
     }
-    fn is_sprinting(&self, _e: EntityId) -> bool {
-        false
+    fn is_sprinting(&self, e: EntityId) -> bool {
+        // `gCCharacterMovement_PS::IsSprinting` (mode 5): the host reports the hero's body.
+        actor_of(e).is_some_and(|a| {
+            self.sim.hero == Some(a) && self.sim.hero_move == crate::vitals::Movement::Sprinting
+        })
     }
     fn cheat_god(&self) -> bool {
         self.sim.script.god

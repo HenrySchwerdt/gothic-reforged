@@ -98,6 +98,19 @@ pub enum Command {
     ToggleSneak,
     /// Jump.
     Jump,
+    /// The movement mode machine of the hero's body changed the mode
+    /// (`OnMovementModeChanged`, S:adbf0): raw `gECharMovementMode` values and the time spent in
+    /// the left state. Answered by [`Event::ModeChanged`].
+    HeroModeChanged {
+        /// `GetLastMovementMode`.
+        last: u8,
+        /// `GetMovementMode`.
+        mode: u8,
+        /// Seconds in the left state (the fall time when leaving the fall mode).
+        state_secs: f32,
+    },
+    /// What the hero's body is doing (read by the stamina tick, S:b0520).
+    HeroMovement(gothic_sim::vitals::Movement),
     /// Dodge (`ZS_Evade*`).
     Dodge {
         /// Direction.
@@ -347,6 +360,8 @@ pub enum Event {
     Notice(String),
     /// A simulation event (hit, kill, aggro, ...).
     Sim(EventKind),
+    /// What `OnMovementModeChanged` made of a mode change of the hero's body.
+    ModeChanged(gothic_sim::moves::ModeOutcome),
     /// A character says a stock voice line: play `SVM_<voice>_<key>`
     /// (`gothic_audio::PlayVoice::svm(voice, key)`).
     Voice {
@@ -820,6 +835,18 @@ impl Core {
             }
             Command::ToggleSneak => self.sim.player_toggle_sneak(),
             Command::Jump => self.sim.player_jump(),
+            Command::HeroModeChanged {
+                last,
+                mode,
+                state_secs,
+            } => {
+                let hero = self.hero;
+                let outcome = self
+                    .sim
+                    .movement_mode_changed(hero, *last, *mode, *state_secs);
+                out.push(Event::ModeChanged(outcome));
+            }
+            Command::HeroMovement(m) => self.sim.hero_move = *m,
             Command::Dodge { direction } => {
                 self.sim.player_dodge(*direction);
             }

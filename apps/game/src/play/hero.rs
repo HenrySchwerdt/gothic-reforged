@@ -48,6 +48,7 @@ pub fn register(app: &mut App) {
         );
     app.add_systems(Update, key_events.after(input));
     super::hero_moves::register(app);
+    super::move_states::register(app);
 }
 
 /// The quick slot and potion keys the melee loop took out of the queue (`PS_Melee_Loop`'s jump

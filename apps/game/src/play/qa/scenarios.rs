@@ -33,6 +33,10 @@ pub const NAMES: &[&str] = &[
     "teleport",
     "walk_to_reddock",
     "world_walk",
+    "p4_jump",
+    "p4_fall",
+    "p4_slide",
+    "p4_swim",
 ];
 
 pub fn build(name: &str) -> Option<Sc> {
@@ -61,6 +65,10 @@ pub fn build(name: &str) -> Option<Sc> {
         "shaman_duel" => super::ranged::shaman_duel(),
         "hud_focus" => super::ranged::hud_focus(),
         "swim" => super::more2::swim(),
+        "p4_jump" => super::moves::p4_jump(),
+        "p4_fall" => super::moves::p4_fall(),
+        "p4_slide" => super::moves2::p4_slide(),
+        "p4_swim" => super::moves2::p4_swim(),
         "routine_reentry" => super::more2::routine_reentry(),
         "sector_switch" => super::world::sector_switch(),
         "teleport" => super::world::teleport(),

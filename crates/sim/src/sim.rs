@@ -247,6 +247,9 @@ pub struct Sim<W: WorldQuery> {
     /// The NPC of the running dialog (`npc` / `self` in forwarded effects).
     pub dialog_partner: Option<ActorId>,
     pub gui_open: bool,
+    /// What the hero's body does (`Entity::IsSprinting` etc. in the stamina tick, S:b0520); the
+    /// host sets it from the movement mode machine.
+    pub hero_move: vitals::Movement,
     pub npc_templates: BTreeMap<String, NpcRecord>,
     /// Script-port state (routine tasks, interact points, queued AI commands), see
     /// [`crate::script_host`].
@@ -319,6 +322,7 @@ impl<W: WorldQuery> Sim<W> {
             bark: Default::default(),
             dialog_partner: None,
             gui_open: false,
+            hero_move: vitals::Movement::Idle,
             npc_templates: BTreeMap::new(),
             script: crate::script_host::ScriptTables::default(),
             processing: None,
@@ -572,6 +576,11 @@ impl<W: WorldQuery> Sim<W> {
         let id = self.actors[i].id;
         let env = TickEnv {
             gui_open: self.gui_open,
+            movement: if self.actors[i].is_player {
+                self.hero_move
+            } else {
+                vitals::Movement::Idle
+            },
             ..TickEnv::default()
         };
         vitals::apply_tick(&self.cfg, &mut self.actors[i], &env);
