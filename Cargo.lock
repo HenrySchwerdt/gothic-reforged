@@ -3577,6 +3577,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-questbot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gothic-formats",
+ "gothic-gameplay",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gothic-questlint"
 version = "0.1.0"
 dependencies = [
