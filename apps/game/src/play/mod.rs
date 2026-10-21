@@ -22,6 +22,7 @@ mod interact;
 mod kit;
 mod layers;
 pub(crate) mod nav;
+mod npc_stream;
 mod npcs;
 mod objects;
 mod pose;
@@ -471,6 +472,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     fx::register(app);
     app.add_systems(Update, pose::pose_system.after(crate::walk::update_camera));
     npcs::register(app);
+    npc_stream::register(app, &data_dir);
     teleport::register(app);
     triggers::register(app);
     routines::register(app);

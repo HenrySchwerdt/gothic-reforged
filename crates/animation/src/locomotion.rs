@@ -58,6 +58,20 @@ pub enum Stance {
 }
 
 impl Stance {
+    /// Every stance, in declaration order.
+    pub const ALL: [Stance; 10] = [
+        Stance::Unarmed,
+        Stance::Fist,
+        Stance::OneHand,
+        Stance::OneHandShield,
+        Stance::TwoHand,
+        Stance::Bow,
+        Stance::CrossBow,
+        Stance::Staff,
+        Stance::Magic,
+        Stance::Torch,
+    ];
+
     /// `(left hand, right hand)` tokens of the motion names.
     pub fn hands(self) -> (&'static str, &'static str) {
         match self {
@@ -147,6 +161,18 @@ pub struct LocoKey {
     pub dir: MoveDir,
     pub stance: Stance,
     pub sneak: bool,
+}
+
+impl LocoKey {
+    /// Standing idle in `stance` (the key a freshly spawned character plays).
+    pub fn idle(stance: Stance) -> Self {
+        Self {
+            kind: MoveKind::Idle,
+            dir: MoveDir::Fwd,
+            stance,
+            sneak: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

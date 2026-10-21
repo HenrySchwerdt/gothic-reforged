@@ -28,6 +28,7 @@ pub mod clip;
 pub mod clip_pack;
 pub mod face;
 pub mod library;
+pub mod library_source;
 pub mod pack_overlay;
 pub mod locomotion;
 pub mod lookat;
@@ -44,6 +45,7 @@ pub mod visual;
 pub use face::{FaceRig, LipSyncStart};
 pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
 pub use library::{ActorLibrary, AssetStores, Composition};
+pub use library_source::LibrarySource;
 pub use locomotion::{Locomotion, LocomotionInput, Stance};
 pub use runtime::{ActorSpawner, AnimationStats, AttachSpec, NpcSpec, WeaponSpec};
 pub use stream::{
