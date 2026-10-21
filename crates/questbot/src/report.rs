@@ -32,6 +32,23 @@ pub enum Cheat {
         area: String,
         quest: String,
     },
+    /// The player picks the quest items up (they reach the quest destination).
+    Pickup {
+        item: String,
+        amount: u32,
+        quest: String,
+    },
+    /// An enclave changes hands (`OnEnclaveStateChanged`).
+    FreeEnclave {
+        enclave: String,
+        quest: String,
+    },
+    /// The player casts the quest spell at the target (`OnSpellCast`).
+    Cast {
+        target: String,
+        spell: String,
+        quest: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

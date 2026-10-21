@@ -22,7 +22,8 @@ use crate::plan::Planner;
 use crate::report::{Action, BotReport, Cheat, QuestChange, TraceStep, analyse_stuck};
 use gothic_gameplay::conditions::is_item_name;
 use gothic_gameplay::dialog::PLAYER_OWNER;
-use gothic_gameplay::model::{QuestStatus, QuestType};
+use gothic_gameplay::model::{Cmd, InfoCond, QuestStatus, QuestType};
+use gothic_gameplay::questmgr;
 use gothic_gameplay::script::{self, ExecResult, Output};
 use gothic_gameplay::state::norm;
 use gothic_gameplay::{Assumptions, Engine, GameDatabase, GameState};
@@ -64,10 +65,23 @@ pub struct QuestBot<'a> {
     planner: Planner,
     trace: Vec<TraceStep>,
     cheated: BTreeSet<(String, &'static str)>,
+    /// Quests nothing in the data can start (no activator info, no `RunQuest`): the quest
+    /// manager hooks act on `Open` quests too (`GAME_RULES.md` 2.4, `CheckDeliveryEntitiesStatus`
+    /// runs for Open/Running/Lost), so the world objective alone completes them.
+    orphans: BTreeSet<String>,
     /// Infos chosen without effect since the last progress (normalised names).
     futile: BTreeSet<String>,
     /// NPCs talked to since the last progress.
     visited: BTreeSet<String>,
+    /// Per-NPC best score of the own (and partner-dependent hero) infos, valid for the state
+    /// and clock it was computed in.
+    cache: ScoreCache,
+}
+
+#[derive(Default)]
+struct ScoreCache {
+    key: (u64, u64),
+    scores: std::collections::HashMap<String, i32>,
 }
 
 impl<'a> QuestBot<'a> {
@@ -76,8 +90,30 @@ impl<'a> QuestBot<'a> {
             .targets
             .clone()
             .unwrap_or_else(|| db.quests.iter().map(|q| q.name.clone()).collect());
+        let started: BTreeSet<String> = db
+            .infos
+            .iter()
+            .flat_map(|i| i.script.iter())
+            .filter(|s| Cmd::parse(&s.command) == Some(Cmd::RunQuest))
+            .map(|s| norm(&s.id1))
+            .collect();
+        let orphans = db
+            .quests
+            .iter()
+            .filter(|q| {
+                !started.contains(&norm(&q.name))
+                    && !db.infos_of_quest(&q.name).iter().any(|&id| {
+                        matches!(
+                            InfoCond::from_raw(db.info(id).condition_type),
+                            InfoCond::Activator | InfoCond::Reactivator
+                        )
+                    })
+            })
+            .map(|q| norm(&q.name))
+            .collect();
         Self {
             db,
+            orphans,
             state: GameState::new(),
             engine: Engine::with(db, options.assumptions),
             planner: Planner::new(db, &targets),
@@ -86,6 +122,7 @@ impl<'a> QuestBot<'a> {
             cheated: BTreeSet::new(),
             futile: BTreeSet::new(),
             visited: BTreeSet::new(),
+            cache: ScoreCache::default(),
         }
     }
 
@@ -105,27 +142,30 @@ impl<'a> QuestBot<'a> {
         let mut stuck = false;
         // Whether the clock already jumped ahead since the last progress.
         let mut waited = false;
+        // Every state seen at the end of a round: returning to one (two permanent lines
+        // swapping a status back and forth, e.g. the companion quests that make each other
+        // `Lost`) is not progress.
+        let mut seen: BTreeSet<u64> = BTreeSet::new();
+        seen.insert(fingerprint(&self.state));
         while !self.all_finished() {
             if rounds >= self.options.max_rounds {
                 stuck = true;
                 break;
             }
             rounds += 1;
-            let before = fingerprint(&self.state);
             if self.options.cheats {
                 self.world_cheats();
             }
             let talked = !self.all_finished() && self.talk_round();
-            if fingerprint(&self.state) != before {
+            if seen.insert(fingerprint(&self.state)) {
                 self.futile.clear();
                 self.visited.clear();
                 waited = false;
                 self.state.hours += 1;
                 continue;
             }
-            // No progress. `QuestRunning` infos need two hours since their quest started, so
-            // idle rounds let a few hours pass.
-            self.state.hours += 3;
+            // No progress. The clock stays put while the sweep goes on (scores are cached per
+            // state); `QuestRunning` / `Overtime` infos get their time from the day jump below.
             if talked {
                 continue;
             }
@@ -176,30 +216,51 @@ impl<'a> QuestBot<'a> {
         });
     }
 
-    /// Objectives outside dialogs, for running quests.
+    /// Objectives outside dialogs, for running quests (and quests without any starter).
+    ///
+    /// Each is the player action whose quest manager hook the original runs: kills
+    /// (`OnNPCKilled`), defeats (`OnNPCDefeated`), entering an area (`OnEnter`), picking items
+    /// up (`OnReceiveItem`), freeing an enclave (`OnEnclaveStateChanged`), casting a spell
+    /// (`OnSpellCast`).
     fn world_cheats(&mut self) {
         let db = self.db;
         let running: Vec<&gothic_formats::quest::Quest> = db
             .quests
             .iter()
-            .filter(|q| self.state.quest_status(&q.name) == QuestStatus::Running)
+            .filter(|q| match self.state.quest_status(&q.name) {
+                QuestStatus::Running => true,
+                QuestStatus::Open => self.planner.is_relevant(&q.name) && self.orphans.contains(&norm(&q.name)),
+                _ => false,
+            })
             .collect();
         for q in running {
             let ty = QuestType::from_raw(q.quest_type);
+            let running_now = self.state.quest_status(&q.name) == QuestStatus::Running;
             let kind: &'static str = match ty {
-                QuestType::HasItems => "items",
+                QuestType::HasItems | QuestType::Plunder => "items",
                 QuestType::Kill | QuestType::DriveAway => "kill",
                 QuestType::Defeat | QuestType::Arena | QuestType::Sparring => "defeat",
                 QuestType::EnterArea => "enter",
+                QuestType::FreeEnclave => "enclave",
+                QuestType::SpellCast => "cast",
                 _ => continue,
             };
             if !self.cheated.insert((norm(&q.name), kind)) {
                 continue;
             }
+            let has_delivery = db.infos_of_quest(&q.name).iter().any(|&id| {
+                matches!(
+                    InfoCond::from_raw(db.info(id).condition_type),
+                    InfoCond::Delivery | InfoCond::PartDelivery
+                )
+            });
             for (i, entity) in q.delivery_entities.iter().enumerate() {
                 let need = q.delivery_amounts.get(i).copied().unwrap_or(1).max(1);
                 match ty {
-                    QuestType::HasItems if is_item_name(db, entity) => {
+                    // Handed in by a Delivery info: the items sit in the inventory.
+                    QuestType::HasItems
+                        if running_now && has_delivery && is_item_name(db, entity) =>
+                    {
                         let have = self.state.item_count(entity);
                         if have < need {
                             self.state.add_item(entity, need - have);
@@ -212,6 +273,35 @@ impl<'a> QuestBot<'a> {
                                 &ExecResult::default(),
                             );
                         }
+                    }
+                    // Items that reach the quest destination by themselves (the player's
+                    // pickup, `OnReceiveItem`); `Plunder` takes them from the destination.
+                    QuestType::HasItems | QuestType::Plunder => {
+                        let (from, to) = if ty == QuestType::Plunder {
+                            (q.destination_entity.as_str(), "PC_Hero")
+                        } else {
+                            ("", q.destination_entity.as_str())
+                        };
+                        let mut r = ExecResult::default();
+                        for _ in 0..need {
+                            questmgr::on_receive_item(
+                                db,
+                                &mut self.state,
+                                from,
+                                to,
+                                entity,
+                                1,
+                                &mut r,
+                            );
+                        }
+                        self.record(
+                            Action::Cheat(Cheat::Pickup {
+                                item: entity.clone(),
+                                amount: need,
+                                quest: q.name.clone(),
+                            }),
+                            &r,
+                        );
                     }
                     QuestType::Kill | QuestType::DriveAway => {
                         for _ in 0..need {
@@ -253,6 +343,35 @@ impl<'a> QuestBot<'a> {
                             &r,
                         );
                     }
+                    QuestType::FreeEnclave => {
+                        let mut r = ExecResult::default();
+                        questmgr::on_enclave_state_changed(db, &mut self.state, entity, &mut r);
+                        self.record(
+                            Action::Cheat(Cheat::FreeEnclave {
+                                enclave: entity.clone(),
+                                quest: q.name.clone(),
+                            }),
+                            &r,
+                        );
+                    }
+                    QuestType::SpellCast => {
+                        let mut r = ExecResult::default();
+                        questmgr::on_spell_cast(
+                            db,
+                            &mut self.state,
+                            entity,
+                            &q.spell_name,
+                            &mut r,
+                        );
+                        self.record(
+                            Action::Cheat(Cheat::Cast {
+                                target: entity.clone(),
+                                spell: q.spell_name.clone(),
+                                quest: q.name.clone(),
+                            }),
+                            &r,
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -278,19 +397,53 @@ impl<'a> QuestBot<'a> {
             .map(str::to_string)
             .collect();
         npcs.sort();
-        let best = npcs
-            .iter()
-            .filter_map(|npc| {
-                let score = self
-                    .engine
-                    .root_list(&self.state, npc)
-                    .into_iter()
-                    .map(|id| self.score(id))
-                    .max()?;
-                (score > 0).then_some((score, npc.clone()))
-            })
-            // Highest score, ties by name (deterministic).
-            .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+        // `PC_Hero` infos are offered to every NPC; the ones that do not depend on the partner
+        // are evaluated once per round instead of once per NPC.
+        let mut hero_best = 0;
+        let mut hero_dependent = Vec::new();
+        for id in self.engine.hero_root_candidates() {
+            if self.engine.hero_info_depends_on_partner(id) {
+                hero_dependent.push(id);
+            } else if self.engine.is_available(&self.state, id, "") {
+                hero_best = hero_best.max(self.score(id));
+            }
+        }
+        let key = (fingerprint(&self.state), self.state.hours);
+        if self.cache.key != key {
+            self.cache.key = key;
+            self.cache.scores.clear();
+        }
+        let mut best: Option<(i32, String)> = None;
+        for npc in &npcs {
+            let own = match self.cache.scores.get(npc) {
+                Some(&v) => v,
+                None => {
+                    let v = self
+                        .engine
+                        .own_root_available(&self.state, npc)
+                        .into_iter()
+                        .chain(
+                            hero_dependent
+                                .iter()
+                                .copied()
+                                .filter(|&i| self.engine.is_available(&self.state, i, npc)),
+                        )
+                        .map(|id| self.score(id))
+                        .max()
+                        .unwrap_or(0);
+                    self.cache.scores.insert(npc.clone(), v);
+                    v
+                }
+            };
+            let score = own.max(hero_best);
+            if score <= 0 {
+                continue;
+            }
+            // Highest score, ties by name (deterministic; `npcs` is sorted).
+            if best.as_ref().is_none_or(|(b, _)| score > *b) {
+                best = Some((score, npc.clone()));
+            }
+        }
         let Some((_, npc)) = best else {
             return false;
         };
@@ -369,6 +522,12 @@ impl<'a> QuestBot<'a> {
             let res = self.engine.choose(&mut self.state, &mut session, &choice);
             if fingerprint(&self.state) == before {
                 self.futile.insert(norm(&self.db.info(id).name));
+                // Its owner's cached score is stale (every NPC's for a hero info).
+                if self.db.info(id).owner.eq_ignore_ascii_case(PLAYER_OWNER) {
+                    self.cache.scores.clear();
+                } else {
+                    self.cache.scores.remove(npc);
+                }
             }
             let ran = self.ran_since(&told);
             self.record(
@@ -387,13 +546,21 @@ impl<'a> QuestBot<'a> {
 /// Hours the clock jumps ahead when no NPC has anything useful left.
 const WAIT_HOURS: u64 = 24;
 
-/// Serialised state without the clock (waiting is not progress) and without the quest log
-/// (permanent lines append to it every time they run, which is not progress either).
-fn fingerprint(st: &GameState) -> String {
+/// Hash of the serialised state without the clock (waiting is not progress), the quest log
+/// (permanent lines append to it every time they run) and the `QuestRunning` run times.
+fn fingerprint(st: &GameState) -> u64 {
+    use std::hash::{Hash, Hasher};
     let mut s = st.clone();
     s.hours = 0;
     s.log.clear();
-    serde_json::to_string(&s).unwrap_or_default()
+    s.info_last_run.clear();
+    // Having talked only ever removes `Hello` lines.
+    for n in s.npcs.values_mut() {
+        n.talked = false;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&s).unwrap_or_default().hash(&mut h);
+    h.finish()
 }
 
 /// Run the bot with options and return its report.

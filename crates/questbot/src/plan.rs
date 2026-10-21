@@ -10,7 +10,7 @@
 //! [`Planner::score`] ranks an available info by how directly it advances that route; the bot
 //! always takes the highest-scoring option.
 use gothic_gameplay::conditions::is_permanent;
-use gothic_gameplay::model::{Cmd, InfoCond, InfoType};
+use gothic_gameplay::model::{Cmd, InfoCond};
 use gothic_gameplay::state::norm;
 use gothic_gameplay::{GameDatabase, GameState, InfoId};
 use std::collections::BTreeSet;
@@ -135,7 +135,9 @@ impl Planner {
                 _ => {}
             }
         }
-        if InfoType::from_raw(info.info_type) == InfoType::Parent && depth < 6 {
+        // Any info that has children opens them after it ran (`OnInfoScriptFinished`), not
+        // only `Parent` infos: `FILLER140` is a plain `Info` whose children start Braga_Tribut.
+        if depth < 6 {
             for &c in db.children_of(&info.name) {
                 if !st.told.contains(&norm(&db.info(c).name)) {
                     best = best.max(self.score_depth(db, st, c, depth + 1));
