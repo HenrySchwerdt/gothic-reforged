@@ -80,7 +80,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         if lc.r + lc.g + lc.b > 0.0 {
             let d = params.lights[i].xyz - in.world_position.xyz;
             let att = saturate(1.0 - dot(d, d) * params.lights[i].w);
-            light = light + lc * att * att * max(dot(n, normalize(d)), 0.0);
+            // ge_default.fx: max(1 - d^2 / range^2, 0) * max(N.L, 0), colour already x 2.
+            light = light + lc * att * max(dot(n, normalize(d)), 0.0);
         }
     }
 

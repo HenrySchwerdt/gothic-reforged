@@ -4,9 +4,11 @@
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 mod env;
 mod gmat;
-mod post;
 #[path = "play/mod.rs"]
 mod play;
+mod post;
+mod precip;
+mod windsys;
 
 use crate::world_loader::{
     LoaderHandle, MatData, MatKind, Origin, Part, PartKind, Request, Response, TILE_CM, TexData,
@@ -322,7 +324,7 @@ pub fn run(args: &[String]) -> Result<()> {
     })
     .insert_resource(FogEnd(fog_end))
     .insert_resource(env::OrigEnv::new(ORIGIN, args))
-    .add_plugins(env::EnvPlugin)
+    .add_plugins((env::EnvPlugin, precip::PrecipPlugin, windsys::WindPlugin))
     .add_systems(Startup, setup)
     .add_systems(
         Update,
@@ -372,6 +374,9 @@ fn setup(
             ground: Vec4::new(0.60, 0.74, 0.92, 1.0),
             sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
             cloud: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            moon: Vec4::new(0.0, -1.0, 0.0, 0.07),
+            moon_color: Vec4::new(0.8, 0.737, 0.733, 0.0),
+            sun_misc: Vec4::new(0.1, 1.0, 0.0, 0.0),
         },
     });
     commands.insert_resource(SkyHandle(sky_handle.clone()));
@@ -384,27 +389,27 @@ fn setup(
     ));
     let cam = commands
         .spawn((
-        Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection {
-            fov: 70f32.to_radians(),
-            near: 0.05,
-            far: 4000.0,
-            ..default()
-        }),
-        Exposure::default(),
-        bevy::core_pipeline::tonemapping::Tonemapping::None,
-        Transform::from_xyz(0.0, 250.0, 0.0),
-        DistanceFog {
-            color: fog_color,
-            directional_light_color: Color::srgb(1.0, 0.9, 0.7),
-            directional_light_exponent: 30.0,
-            falloff: FogFalloff::Linear {
-                start: fog.0 * 0.55,
-                end: fog.0,
+            Camera3d::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: 70f32.to_radians(),
+                near: 0.05,
+                far: 4000.0,
+                ..default()
+            }),
+            Exposure::default(),
+            bevy::core_pipeline::tonemapping::Tonemapping::None,
+            Transform::from_xyz(0.0, 250.0, 0.0),
+            DistanceFog {
+                color: fog_color,
+                directional_light_color: Color::srgb(1.0, 0.9, 0.7),
+                directional_light_exponent: 30.0,
+                falloff: FogFalloff::Linear {
+                    start: fog.0 * 0.55,
+                    end: fog.0,
+                },
             },
-        },
-        PlayerCamera,
-    ))
+            PlayerCamera,
+        ))
         .id();
     if std::env::var_os("GR_NOBLOOM").is_none() {
         commands.entity(cam).insert(post::BloomPost::original());
@@ -424,7 +429,11 @@ fn setup(
             num_cascades: env_f32("GR_CASC", 3.0) as usize,
             minimum_distance: 0.1,
             maximum_distance: env_f32("GR_SHDIST", 90.0),
-            first_cascade_far_bound: env_f32("GR_SHFIRST", 12.0),
+            // The LsPSM detail map of the original covers `ms_fDetailShadowRadius` (22 m).
+            first_cascade_far_bound: env_f32(
+                "GR_SHFIRST",
+                gothic_render_rules::shadows::DETAIL_RADIUS * CM,
+            ),
             overlap_proportion: 0.2,
         }
         .build(),
@@ -450,6 +459,7 @@ fn receive_tiles(
     mut skies: ResMut<Assets<SkyMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut orig_env: ResMut<env::OrigEnv>,
+    mut precip_tex: ResMut<precip::PrecipTexture>,
 ) {
     let rx = loader.responses.lock().expect("loader channel");
     while let Ok(msg) = rx.try_recv() {
@@ -467,6 +477,12 @@ fn receive_tiles(
                 let _ = loader
                     .requests
                     .send(Request::Texture("wolkentest_01".into()));
+                let _ = loader.requests.send(Request::Texture("rainandsnow".into()));
+            }
+            Response::Texture(name, tex) if name.contains("rainandsnow") => {
+                precip_tex.0 = tex
+                    .and_then(|t| texture_image(&t, true))
+                    .map(|img| images.add(img));
             }
             Response::Texture(_, tex) => {
                 if let Some(img) = tex.and_then(|t| texture_image(&t, false))
@@ -639,7 +655,22 @@ fn surface_material(
         return h.clone();
     }
     let foliage = matches!(kind, PartKind::Foliage | PartKind::Tree | PartKind::TreeFar);
+    let wind_mode = match kind {
+        PartKind::Foliage => gmat::WindMode::Vegetation,
+        PartKind::TreeBark | PartKind::TreeFarBark => gmat::WindMode::Tree,
+        PartKind::Tree => gmat::WindMode::TreeLeaves,
+        _ => gmat::WindMode::None,
+    };
     let mut params = GothicParams::default();
+    if wind_mode != gmat::WindMode::None {
+        // Leaf cards are about 3 % of the tree height (metres).
+        params.wind_mat = Vec4::new(
+            wind_mode as i32 as f32,
+            data.wind_height,
+            data.wind_height * CM * 0.03,
+            0.0,
+        );
+    }
     let mut flags = 0;
     let (l0, l1) = (data.layers.first(), data.layers.get(1));
     let a0 = l0.and_then(|l| image_handle(&l.tex[0], true, caches, images));
@@ -705,6 +736,8 @@ fn surface_material(
         two_sided = true;
     }
     if kind == PartKind::Foliage {
+        // The vertex alpha of ground cover is the wind weight, not a layer blend.
+        flags &= !F_VBLEND;
         flags |= F_FADE;
         params.misc.x = FOLIAGE_FADE.0;
         params.misc.y = FOLIAGE_FADE.1;
@@ -742,6 +775,9 @@ fn surface_material(
             || matches!(kind, PartKind::TreeBark | PartKind::TreeFarBark),
     });
     caches.surfaces.insert(cache_key, handle.clone());
+    if wind_mode != gmat::WindMode::None {
+        gmat::register_wind_material(handle.id());
+    }
     handle
 }
 
@@ -926,7 +962,9 @@ fn spawn_part(
             ((hi - lo).length() * 0.5).max(0.0)
         });
         let scale = transform.scale.max_element().abs();
-        let radius_m = r * scale;
+        // Placed visuals with LoD meshes use the bounding sphere of the whole visual so every
+        // stage switches at the same distances.
+        let radius_m = part.lod.map_or(r * scale, |l| l.radius_cm * CM);
         if std::env::var_os("GR_DUMP").is_some() && radius_m > 3.0 {
             let t = transform.translation;
             if (t.x - 40.0).abs() < 30.0 && (t.z - 40.0).abs() < 30.0 {
@@ -962,12 +1000,34 @@ fn spawn_part(
             radius_m,
             gothic_render_rules::cull::screen_cull_factor(0),
         );
-        e.insert(bevy::camera::visibility::VisibilityRange {
+        let mut range = bevy::camera::visibility::VisibilityRange {
             start_margin: 0.0..0.0,
             // Floor of 15 m so pick-up items stay visible (deviation: the original has no floor).
             end_margin: fade_start.clamp(15.0, 600.0)..fade_end.clamp(20.0, 800.0),
             use_aabb: true,
-        });
+        };
+        if let Some(l) = part.lod {
+            // Mesh LoD stages (`CalculateLoDStage`): hard switches at the distances where the
+            // area factor crosses the stage table.
+            let global = env_f32("GR_LODG", gothic_render_rules::lod::global_factor(0));
+            let d = gothic_render_rules::lod::stage_distances(
+                radius_m,
+                usize::from(l.stages),
+                global,
+                1.0,
+            );
+            let stage = usize::from(l.stage);
+            let start = if stage == 0 { 0.0 } else { d[stage - 1] };
+            range.start_margin = start..start;
+            range.use_aabb = false;
+            if let Some(&end) = d.get(stage) {
+                range.end_margin = end..end;
+            } else {
+                let a = range.end_margin.start.max(start + 1.0);
+                range.end_margin = a..range.end_margin.end.max(a + 1.0);
+            }
+        }
+        e.insert(range);
     }
     if profile_hidden(part.kind) {
         e.insert(Visibility::Hidden);

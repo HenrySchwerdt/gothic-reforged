@@ -7,6 +7,9 @@
 //! (0x10296b60) / `DoOverwrites` (0x10296ed0) and `eCHemisphere_PS::UpdateSHHemisphere`
 //! (0x100ecf50). Everything is plain data so a generic, data-driven weather system can be fed
 //! from [`EnvPacket`].
+pub mod precip;
+pub mod sky;
+pub mod wind;
 use gothic_formats::weather::{WeatherData, WeatherState};
 
 /// L0 / L1 real spherical-harmonic constants (floats at Engine.dll:0x10426c94 / 0x10426c98).
@@ -376,6 +379,10 @@ pub struct EnvPacket {
     /// cm, already clipped to the far plane.
     pub fog_start: f32,
     pub fog_end: f32,
+    /// Unit vector towards the moon (see [`sky::moon_direction`]).
+    pub moon_dir: [f32; 3],
+    /// Visibility of the star field 0..1 (see [`sky::star_visibility`]).
+    pub star_visibility: f32,
 }
 
 /// Port of the fog clip at the end of `eCWeatherAdmin::Process`: when the fog end exceeds the far
@@ -435,6 +442,8 @@ pub fn packet(rec: &EnvRecord, day_time: f32, azimuth: f32, far_cm: f32) -> EnvP
         fog_color: rgb(rec.fog_color),
         fog_start,
         fog_end,
+        moon_dir: sky::moon_direction(&sun),
+        star_visibility: sky::star_visibility(rgb(rec.sky_color)),
     }
 }
 
@@ -560,6 +569,66 @@ impl WeatherAdmin {
             return Some(a);
         }
         let b = EnvRecord::from_state(&self.data.states[run.next], t);
+        Some(a.mix(&b, run.blend))
+    }
+
+    /// Precipitation emitter at a probe position: the states of the zones' environments (with
+    /// their cross-fades) blended with the same weights as [`WeatherAdmin::evaluate`], applied to
+    /// the world's `base` emitter (`eCWeatherAdmin::Process` pushes the state values into the
+    /// precipitation entity).
+    pub fn evaluate_precipitation(
+        &self,
+        base: &precip::PrecipParams,
+        mut local_of: impl FnMut(usize, &Zone) -> Option<[f32; 3]>,
+    ) -> precip::PrecipParams {
+        let mut acc: Option<precip::PrecipParams> = None;
+        let mut total = 0.0;
+        let mut add = |p: precip::PrecipParams, w: f32, acc: &mut Option<precip::PrecipParams>| {
+            total += w;
+            *acc = Some(match acc.take() {
+                None => p,
+                Some(a) => a.mix(&p, w / total),
+            });
+        };
+        let mut used = 0.0;
+        for &zi in &self.order {
+            let zone = &self.zones[zi];
+            let Some(local) = local_of(zi, zone) else {
+                continue;
+            };
+            let f = zone.blend_factor(local);
+            if f <= 0.0 {
+                continue;
+            }
+            let w = f.min(1.0 - used);
+            let Some(p) = self.env_precipitation(&zone.environment, base) else {
+                continue;
+            };
+            add(p, w, &mut acc);
+            used += w;
+            if used >= 1.0 {
+                break;
+            }
+        }
+        if used < 1.0
+            && let Some(p) = self.env_precipitation(&self.default_env, base)
+        {
+            add(p, 1.0 - used, &mut acc);
+        }
+        acc.unwrap_or_else(|| base.clone())
+    }
+
+    fn env_precipitation(
+        &self,
+        name: &str,
+        base: &precip::PrecipParams,
+    ) -> Option<precip::PrecipParams> {
+        let run = self.runs.iter().find(|r| r.name == name)?;
+        let a = base.with_state(&self.data.states[run.current]);
+        if run.blend <= 0.0 || run.current == run.next {
+            return Some(a);
+        }
+        let b = base.with_state(&self.data.states[run.next]);
         Some(a.mix(&b, run.blend))
     }
 
@@ -802,6 +871,31 @@ mod tests {
         a.force_state("Myrtana", "Rainy");
         let r = a.evaluate(0.5, |_, _| None);
         assert_eq!(r.sun_intensity, 1.0);
+    }
+
+    #[test]
+    fn precipitation_follows_the_forced_state() {
+        let mut a = admin();
+        a.data.states[1].particles_per_second = 3000;
+        a.data.states[1].current_texture_tile = 2;
+        let base = precip::PrecipParams::default();
+        let dry = a.evaluate_precipitation(&base, |_, _| None);
+        assert_eq!(dry.particles_per_second, 0.0);
+        a.force_state("Myrtana", "Rainy");
+        let wet = a.evaluate_precipitation(&base, |_, _| None);
+        assert_eq!(wet.particles_per_second, 3000.0);
+        assert_eq!(wet.current_tile, 2);
+    }
+
+    #[test]
+    fn moon_and_stars_in_the_packet() {
+        let mut rec = EnvRecord::default();
+        rec.sky_color = [0.02, 0.08, 0.15, 1.0];
+        let night = packet(&rec, 0.0, 0.9, 100_000.0);
+        assert_eq!(night.star_visibility, 1.0);
+        assert!(night.moon_dir[1] >= 0.0);
+        rec.sky_color = [0.3, 0.5, 0.75, 1.0];
+        assert_eq!(packet(&rec, 0.5, 0.9, 100_000.0).star_visibility, 0.0);
     }
 
     #[test]

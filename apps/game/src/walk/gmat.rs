@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 
 static GOTHIC_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_PREPASS_FS: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_VS: OnceLock<Handle<Shader>> = OnceLock::new();
 static SKY_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static WATER_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 
@@ -23,10 +24,15 @@ impl Plugin for GothicMaterialsPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/gothic.wesl");
         embedded_asset!(app, "shaders/gothic_prepass.wesl");
+        embedded_asset!(app, "shaders/gothic_vertex.wesl");
         embedded_asset!(app, "shaders/sky.wesl");
         embedded_asset!(app, "shaders/water.wesl");
         let _ = GOTHIC_FS.set(load_embedded_asset!(app, "shaders/gothic.wesl"));
         let _ = GOTHIC_PREPASS_FS.set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
+        // `GR_NOWIND=1` keeps Bevy's own vertex stage (wind off, for A/B comparisons).
+        if std::env::var_os("GR_NOWIND").is_none() {
+            let _ = GOTHIC_VS.set(load_embedded_asset!(app, "shaders/gothic_vertex.wesl"));
+        }
         let _ = SKY_FS.set(load_embedded_asset!(app, "shaders/sky.wesl"));
         let _ = WATER_FS.set(load_embedded_asset!(app, "shaders/water.wesl"));
         embedded_asset!(app, "shaders/char.wesl");
@@ -79,6 +85,165 @@ pub struct GothicParams {
     pub uv_d_rot: Vec4,
     pub uv_n_scroll: Vec4,
     pub uv_n_rot: Vec4,
+    /// Wind: x mode (see [`WindMode`]), y tree height in local units, z leaf card size (m).
+    pub wind_mat: Vec4,
+    /// Vegetation wave: xy angular wave numbers (1/cm), zw phase rates (rad/s).
+    pub veg: Vec4,
+    /// xy wave amplitudes (cm), z grass response range (cm), w grass response intensity (cm).
+    pub veg_amp: Vec4,
+    /// Grass response focus (world metres), w = 1 when active.
+    pub player: Vec4,
+    /// Packed `eCSpeedTreeWind_PS` parameters, see [`pack_speedtree_wind`].
+    pub wind: [Vec4; 7],
+}
+
+/// Wind mode of a material (`GothicParams::wind_mat.x`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindMode {
+    None = 0,
+    /// Ground cover: two travelling waves and the grass response (`ge_vegetation.fx`).
+    Vegetation = 1,
+    /// SpeedTree bark.
+    Tree = 2,
+    /// SpeedTree leaf cards: sway plus leaf rocking and rustling.
+    TreeLeaves = 3,
+}
+
+/// Pack the SpeedTree wind parameters for the vertex shader (layout documented in
+/// `shaders/gothic_vertex.wesl`).
+pub fn pack_speedtree_wind(w: &gothic_environment::wind::SpeedTreeWind) -> [Vec4; 7] {
+    let yaw = w.direction[0].atan2(w.direction[2]);
+    [
+        Vec4::new(
+            w.strength,
+            w.gust_period(),
+            w.gust_duration[0],
+            w.gust_duration[1],
+        ),
+        Vec4::new(
+            w.gust_strength[0],
+            w.gust_strength[1],
+            w.max_bend_angle.to_radians(),
+            w.strength_adjustment_exponent,
+        ),
+        Vec4::new(
+            w.bend_low[0],
+            w.bend_high[0],
+            w.vibration_angle(0.0),
+            w.vibration_angle(1.0),
+        ),
+        Vec4::new(
+            w.vibration_frequency[0],
+            w.vibration_frequency[1],
+            yaw,
+            w.leaf_strength_exponent,
+        ),
+        Vec4::new(
+            w.leaf_rocking[0],
+            w.leaf_rocking_high[0],
+            w.leaf_rocking_angles[0],
+            w.leaf_rocking_angles[1],
+        ),
+        Vec4::new(
+            w.leaf_rustling[0],
+            w.leaf_rustling_high[0],
+            w.leaf_rustling_angles[0],
+            w.leaf_rustling_angles[1],
+        ),
+        Vec4::new(
+            w.leaf_rocking_frequency[0],
+            w.leaf_rocking_frequency[1],
+            w.leaf_rustling_frequency[0],
+            w.leaf_rustling_frequency[1],
+        ),
+    ]
+}
+
+/// World wind constants shared by every wind material: the SpeedTree packet and the vegetation
+/// wave / grass response constants.
+#[derive(Clone, Copy)]
+pub struct WindEnv {
+    pub wind: [Vec4; 7],
+    pub veg: Vec4,
+    pub veg_amp: Vec4,
+}
+
+impl WindEnv {
+    pub fn new(tree: &gothic_environment::wind::SpeedTreeWind) -> Self {
+        use gothic_environment::wind::{
+            GRASS_RESPONSE_INTENSITY, GRASS_RESPONSE_RANGE, VegetationWind,
+        };
+        let v = VegetationWind::original();
+        let mut intensity = GRASS_RESPONSE_INTENSITY;
+        let mut range = GRASS_RESPONSE_RANGE;
+        if std::env::var_os("GR_NOGRASSRESP").is_some() {
+            intensity = 0.0;
+            range = 1.0;
+        }
+        Self {
+            wind: pack_speedtree_wind(tree),
+            veg: Vec4::new(
+                v.wave_number[0],
+                v.wave_number[1],
+                v.phase_rate[0],
+                v.phase_rate[1],
+            ),
+            veg_amp: Vec4::new(v.amplitude[0], v.amplitude[1], range, intensity),
+        }
+    }
+}
+
+fn wind_env_cell() -> &'static std::sync::RwLock<WindEnv> {
+    static W: OnceLock<std::sync::RwLock<WindEnv>> = OnceLock::new();
+    W.get_or_init(|| {
+        std::sync::RwLock::new(WindEnv::new(
+            &gothic_environment::wind::SpeedTreeWind::default(),
+        ))
+    })
+}
+
+/// The wind constants new materials start with.
+pub fn wind_env() -> WindEnv {
+    *wind_env_cell()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Install the world's wind parameters (the `sysdyn` entity) and write them into the registered
+/// wind materials.
+pub fn set_wind_env(env: WindEnv, materials: &mut Assets<GothicMaterial>) {
+    *wind_env_cell()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = env;
+    for id in wind_materials() {
+        if let Some(mut m) = materials.get_mut(id) {
+            m.params.wind = env.wind;
+            m.params.veg = env.veg;
+            m.params.veg_amp = env.veg_amp;
+        }
+    }
+}
+
+fn wind_registry() -> &'static std::sync::Mutex<Vec<AssetId<GothicMaterial>>> {
+    static R: OnceLock<std::sync::Mutex<Vec<AssetId<GothicMaterial>>>> = OnceLock::new();
+    R.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// Remember a material that carries wind so the wind systems can reach it without touching the
+/// other materials (mutating an asset re-prepares its bind group).
+pub fn register_wind_material(id: AssetId<GothicMaterial>) {
+    wind_registry()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(id);
+}
+
+/// Snapshot of the registered wind materials.
+pub fn wind_materials() -> Vec<AssetId<GothicMaterial>> {
+    wind_registry()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 /// Material admin: copy the animated sampler parameters of a material graph into the uniforms
@@ -209,6 +374,11 @@ impl Default for GothicParams {
             uv_d_rot: Vec4::ZERO,
             uv_n_scroll: Vec4::ZERO,
             uv_n_rot: Vec4::ZERO,
+            wind_mat: Vec4::ZERO,
+            veg: wind_env().veg,
+            veg_amp: wind_env().veg_amp,
+            player: Vec4::ZERO,
+            wind: wind_env().wind,
         }
     }
 }
@@ -259,6 +429,12 @@ impl Material for GothicMaterial {
             .get()
             .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
+    fn vertex_shader() -> ShaderRef {
+        GOTHIC_VS
+            .get()
+            .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
+    }
+    // The shadow/depth prepass has no `globals` binding: shadows of swaying geometry stay static.
     fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
     }
@@ -285,6 +461,12 @@ pub struct SkyParams {
     pub ground: Vec4,
     pub sun_color: Vec4,
     pub cloud: Vec4,
+    /// Moon: xyz direction to the moon, w angular radius (`MoonSize`).
+    pub moon: Vec4,
+    /// Moon colour (`MoonColor`), w = visibility of the star field 0..1.
+    pub moon_color: Vec4,
+    /// x: sun billboard half extent (`SunSize`), y: star count / 2000 density scale.
+    pub sun_misc: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]

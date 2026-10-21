@@ -20,6 +20,12 @@ struct SkyParams {
     sun_color: vec4<f32>,
     // colClouds
     cloud: vec4<f32>,
+    // xyz direction to the moon, w angular radius (MoonSize)
+    moon: vec4<f32>,
+    // MoonColor, w = star field visibility
+    moon_color: vec4<f32>,
+    // x: sun billboard half extent (SunSize)
+    sun_misc: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> sky: SkyParams;
 @group(3) @binding(1) var clouds: texture_2d<f32>;
@@ -49,6 +55,40 @@ fn fbm(p: vec2<f32>) -> f32 {
     return s;
 }
 
+// Star field of eCSkydome_PS (StarCount = 2000 stars of half extent 0.01 .. 0.02 on the unit
+// dome): the dome is cut into cube-face cells, each cell holds a star with the probability that
+// gives ~2000 stars over the upper hemisphere, at a jittered position and with a random size.
+const STAR_CELLS: f32 = 40.0;
+const STAR_PROB: f32 = 0.42;
+
+fn star_field(dir: vec3<f32>) -> f32 {
+    let a = abs(dir);
+    var uv: vec2<f32>;
+    var face: f32;
+    if a.x >= a.y && a.x >= a.z {
+        uv = dir.yz / a.x;
+        face = select(0.0, 1.0, dir.x < 0.0);
+    } else if a.y >= a.z {
+        uv = dir.xz / a.y;
+        face = select(2.0, 3.0, dir.y < 0.0);
+    } else {
+        uv = dir.xy / a.z;
+        face = select(4.0, 5.0, dir.z < 0.0);
+    }
+    let g = uv * 0.5 * STAR_CELLS;
+    let cell = floor(g);
+    let f = (g - cell - 0.5) * (2.0 / STAR_CELLS);
+    let key = cell + vec2<f32>(face * 71.0, face * 37.0);
+    if hash21(key) > STAR_PROB {
+        return 0.0;
+    }
+    let jitter = (vec2<f32>(hash21(key + 11.7), hash21(key + 3.1)) - 0.5) * (1.2 / STAR_CELLS);
+    let r = mix(0.01, 0.02, hash21(key + 29.3)) * 0.35;
+    let d = length(f - jitter);
+    let bright = mix(0.55, 1.0, hash21(key + 5.5));
+    return smoothstep(r, r * 0.25, d) * bright;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> FragmentOutput {
     let dir = normalize(in.world_position.xyz - view.world_position.xyz);
@@ -67,6 +107,27 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // Sun disc.
     let disc = smoothstep(0.9994, 0.9998, sun_amount);
     col = mix(col, sky.sun_color.rgb * 3.0, disc * step(0.0, sun.y));
+
+    // Night sky: stars (tint alpha = visibility) and the moon billboard (MoonSize / MoonColor).
+    let night = sky.moon_color.w;
+    if night > 0.0 && h > 0.0 {
+        col = col + vec3<f32>(star_field(dir)) * night * 1.4;
+    }
+    let moon_dir = normalize(sky.moon.xyz);
+    let moon_cos = dot(dir, moon_dir);
+    let moon_r = sky.moon.w;
+    let moon_ang = acos(clamp(moon_cos, -1.0, 1.0));
+    if moon_ang < moon_r * 1.6 && moon_dir.y > -0.05 {
+        let edge = 1.0 - smoothstep(moon_r * 0.92, moon_r, moon_ang);
+        // Maria and craters: low-frequency noise over the disc.
+        let local = (dir - moon_dir * moon_cos) / max(moon_r, 0.001);
+        let t1 = normalize(cross(moon_dir, vec3<f32>(0.0, 1.0, 0.0)) + vec3<f32>(0.0001, 0.0, 0.0));
+        let t2 = cross(t1, moon_dir);
+        let tex = 0.78 + 0.22 * fbm(vec2<f32>(dot(local, t1), dot(local, t2)) * 2.2 + vec2<f32>(3.7, 1.3));
+        let halo = pow(max(1.0 - moon_ang / (moon_r * 1.6), 0.0), 3.0) * 0.18;
+        let by_day = 1.0 - clamp(sun.y * 3.0, 0.0, 1.0) * 0.85;
+        col = col + sky.moon_color.rgb * (edge * tex * 1.4 + halo) * by_day;
+    }
 
     // Clouds on a virtual plane above the viewer.
     if h > 0.015 {

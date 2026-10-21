@@ -76,6 +76,8 @@ pub struct MatData {
     /// Texture-coordinate animation of the first diffuse and the first normal sampler
     /// (scroller / rotator nodes of the material graph, see `gothic_fx::matadmin`).
     pub anim: [gothic_formats::xshmat::graph::UvAnim; 2],
+    /// SpeedTree height in local units (wind weight normalisation); 0 for other materials.
+    pub wind_height: f32,
 }
 
 /// GPU-ready geometry in local (mirrored) space; shared between instances.
@@ -119,6 +121,20 @@ pub struct Part {
     /// Origin-relative cm transform (mirrored space).
     pub transform: Mat4,
     pub kind: PartKind,
+    /// Mesh LoD stage this part belongs to (`eCRenderContextMesh::CalculateLoDStage`); `None`
+    /// for geometry without LoD meshes.
+    pub lod: Option<LodPart>,
+}
+
+/// One stage of a placed mesh that has several LoD meshes (`.xlmsh`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodPart {
+    /// 0 = full detail.
+    pub stage: u8,
+    /// Number of stages (LoD meshes) of the visual.
+    pub stages: u8,
+    /// Bounding sphere radius of the placed visual (cm).
+    pub radius_cm: f32,
 }
 
 pub struct TilePayload {
@@ -262,6 +278,12 @@ pub struct WeatherPayload {
     pub zones: Vec<ZoneInstance>,
     /// Every `eCStaticPointLight_PS`: world position, colour and range (Gothic cm).
     pub lights: Vec<StaticLightRaw>,
+    /// The world's `eCSpeedTreeWind_PS` (system entity), if present.
+    pub wind: Option<gothic_environment::wind::SpeedTreeWind>,
+    /// The world's `eCPrecipitation_PS` (system entity), if present.
+    pub precipitation: Option<gothic_environment::precip::PrecipParams>,
+    /// The world's `eCSkydome_PS` (system entity), if present.
+    pub skydome: Option<gothic_environment::sky::SkydomeParams>,
 }
 
 pub struct StaticLightRaw {
@@ -277,6 +299,8 @@ struct VegInstance {
     rotation: Quat,
     scale: [f32; 2],
     color: u32,
+    /// `eCVegetation_Mesh::WindStrength` of the brush mesh.
+    wind: f32,
 }
 
 struct TerrainSub {
@@ -294,6 +318,42 @@ struct MeshEntry {
     /// Submesh index of each part (empty submeshes are skipped) and the lightmap name stem.
     sub_index: Vec<usize>,
     stem: String,
+    /// Coarser LoD meshes of an `.xlmsh` (stage 1, 2, ...), loaded with the same rules.
+    lods: Vec<Arc<MeshEntry>>,
+    /// Bounding sphere radius of the full-detail parts (local units).
+    radius: f32,
+}
+
+impl MeshEntry {
+    fn new(
+        parts: Vec<(Arc<GeomData>, Option<Arc<MatData>>)>,
+        sub_index: Vec<usize>,
+        stem: String,
+    ) -> Self {
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for (g, _) in &parts {
+            for p in &g.positions {
+                lo = lo.min(Vec3::from(*p));
+                hi = hi.max(Vec3::from(*p));
+            }
+        }
+        let radius = if lo.x <= hi.x {
+            (hi - lo).length() * 0.5
+        } else {
+            0.0
+        };
+        Self {
+            parts,
+            sub_index,
+            stem,
+            lods: Vec::new(),
+            radius,
+        }
+    }
+
+    fn triangles(&self) -> usize {
+        self.parts.iter().map(|(g, _)| g.indices.len() / 3).sum()
+    }
 }
 
 struct CellInfo {
@@ -695,6 +755,7 @@ impl Loader {
                 normals,
                 layer_names,
                 anim,
+                wind_height: 0.0,
             }))
         });
         self.materials.insert(key, mat.clone());
@@ -724,7 +785,29 @@ impl Loader {
             }
             let lod = Xlmsh::parse(&bytes).ok()?;
             let level = lod.levels.iter().find(|l| l.source_index == 0)?;
-            return self.mesh(&level.mesh.clone(), depth + 1);
+            let first = self.mesh(&level.mesh.clone(), depth + 1)?;
+            // Coarser stages: only worth the extra entities for meshes with real geometry.
+            let min_tris: usize = std::env::var("GR_LODMINTRI")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1500);
+            if std::env::var_os("GR_NOLOD").is_some()
+                || lod.levels.len() < 2
+                || first.triangles() < min_tris
+            {
+                return Some(first);
+            }
+            let mut entry = MeshEntry::new(
+                first.parts.clone(),
+                first.sub_index.clone(),
+                first.stem.clone(),
+            );
+            for l in lod.levels.iter().filter(|l| l.source_index > 0).take(4) {
+                if let Some(coarse) = self.mesh(&l.mesh.clone(), depth + 1) {
+                    entry.lods.push(coarse);
+                }
+            }
+            return Some(Arc::new(entry));
         }
         let mesh = Xcmsh::parse(&bytes).ok()?;
         let mut parts = Vec::new();
@@ -761,11 +844,7 @@ impl Loader {
             parts.push((geom, material));
         }
         let stem = key.rsplit_once('.').map_or(key, |(s, _)| s).to_string();
-        Some(Arc::new(MeshEntry {
-            parts,
-            sub_index,
-            stem,
-        }))
+        Some(Arc::new(MeshEntry::new(parts, sub_index, stem)))
     }
 
     /// Replacement geometry from the local remaster profile (`GR_REMASTER`, see
@@ -818,6 +897,7 @@ impl Loader {
                         normals: [normal.map(|t| (t, [1.0, 1.0])), None],
                         layer_names: vec![sub.diffuse.to_ascii_lowercase()],
                         anim: Default::default(),
+                        wind_height: 0.0,
                     })
                 })
             };
@@ -827,12 +907,9 @@ impl Loader {
             return None;
         }
         let stem = key.rsplit_once('.').map_or(key, |(s, _)| s).to_string();
-        Some(Arc::new(MeshEntry {
-            // No original lightmap block matches the new geometry.
-            sub_index: vec![usize::MAX; parts.len()],
-            parts,
-            stem,
-        }))
+        // No original lightmap block matches the new geometry.
+        let sub_index = vec![usize::MAX; parts.len()];
+        Some(Arc::new(MeshEntry::new(parts, sub_index, stem)))
     }
 
     /// Per part: a copy of the geometry carrying the baked static-light colour of this placed
@@ -972,6 +1049,7 @@ impl Loader {
             };
             let material = self.material(&mat_name);
             parts.push(Part {
+                lod: None,
                 geom: Arc::new(GeomData {
                     id: self.id(),
                     positions: geom.0,
@@ -1039,6 +1117,17 @@ impl Loader {
             let mut any_solid = false;
             let mut water_only = true;
             let lit = self.instance_light(&mesh, &entity_id);
+            let stages = (1 + mesh.lods.len()).min(5) as u8;
+            let lod_info = |stage: u8| {
+                (stages > 1).then(|| {
+                    let sc = transform.to_scale_rotation_translation().0;
+                    LodPart {
+                        stage,
+                        stages,
+                        radius_cm: mesh.radius * sc.abs().max_element(),
+                    }
+                })
+            };
             for (pi, (geom, material)) in mesh.parts.iter().enumerate() {
                 let geom = lit.get(pi).and_then(Option::as_ref).unwrap_or(geom);
                 // Distant-LOD proxy submeshes (low-poly world atlas) overlap the real geometry.
@@ -1056,6 +1145,7 @@ impl Loader {
                 any_solid |= solid;
                 water_only &= is_water;
                 parts.push(Part {
+                    lod: if is_water { None } else { lod_info(0) },
                     geom: geom.clone(),
                     material: material.clone(),
                     transform,
@@ -1065,6 +1155,30 @@ impl Loader {
                         PartKind::Static
                     },
                 });
+            }
+            // Coarser stages, switched by the area factor rule (distance bands in the viewer).
+            for (li, coarse) in mesh.lods.iter().enumerate().take(4) {
+                let stage = li as u8 + 1;
+                for (pi, (geom, material)) in coarse.parts.iter().enumerate() {
+                    if material.as_ref().is_some_and(|m| {
+                        m.kind == MatKind::Water
+                            || m.name.contains("world_lowpoly")
+                            || m.layer_names.iter().any(|n| n.contains("world_lowpoly"))
+                    }) {
+                        continue;
+                    }
+                    let geom = match lit.get(pi).and_then(Option::as_ref) {
+                        Some(fine) => Arc::new(transfer_light(geom, fine)),
+                        None => geom.clone(),
+                    };
+                    parts.push(Part {
+                        lod: lod_info(stage),
+                        geom,
+                        material: material.clone(),
+                        transform,
+                        kind: PartKind::Static,
+                    });
+                }
             }
             if water_only {
                 continue;
@@ -1170,6 +1284,7 @@ impl Loader {
                     as usize];
                 if let Some(g) = &variant.bark {
                     parts.push(Part {
+                        lod: None,
                         geom: g.clone(),
                         material: Some(kind.bark_mat.clone()),
                         transform,
@@ -1178,6 +1293,7 @@ impl Loader {
                 }
                 if let Some(g) = &variant.cards {
                     parts.push(Part {
+                        lod: None,
                         geom: g.clone(),
                         material: Some(kind.card_mat.clone()),
                         transform,
@@ -1186,6 +1302,7 @@ impl Loader {
                 }
                 if let Some(g) = &kind.far_bark {
                     parts.push(Part {
+                        lod: None,
                         geom: g.clone(),
                         material: Some(kind.bark_mat.clone()),
                         transform,
@@ -1193,6 +1310,7 @@ impl Loader {
                     });
                 }
                 parts.push(Part {
+                    lod: None,
                     geom: kind.far.clone(),
                     material: Some(kind.card_mat.clone()),
                     transform,
@@ -1240,6 +1358,7 @@ impl Loader {
                 })?
             };
             let mk = |g: GeomData| Arc::new(g);
+            let species_height = species.height;
             let variants = species
                 .near
                 .into_iter()
@@ -1268,6 +1387,7 @@ impl Loader {
                 normals: [None, None],
                 layer_names: vec![atlas_stem],
                 anim: Default::default(),
+                wind_height: species_height,
             });
             let id = self.id();
             let bark_mat = Arc::new(MatData {
@@ -1285,6 +1405,7 @@ impl Loader {
                 normals: [None, None],
                 layer_names: Vec::new(),
                 anim: Default::default(),
+                wind_height: species_height,
             });
             Some(Arc::new(TreeKind {
                 variants,
@@ -1320,26 +1441,49 @@ impl Loader {
             .collect();
         let mut zones = Vec::new();
         let mut lights = Vec::new();
+        let (mut wind, mut precipitation, mut skydome) = (None, None, None);
         for slot in slots {
             let Ok(bytes) = self.vfs.read(slot) else {
                 continue;
             };
             // Cheap reject: the class name is stored in the document's string table.
-            if !bytes
-                .windows(16)
-                .any(|w| w == b"eCWeatherZone_PS" || w == b"eCStaticPointLig")
-            {
+            if !bytes.windows(12).any(|w| {
+                w == b"eCWeatherZon"
+                    || w == b"eCStaticPoin"
+                    || w == b"eCSpeedTreeW"
+                    || w == b"eCPrecipitat"
+                    || w == b"eCSkydome_PS"
+            }) {
                 continue;
             }
             let mut stats = gothic_formats::propstream::DecodeStats::default();
             let Ok((doc, sets)) = gothic_formats::world_node::WorldDocument::parse_with_properties(
                 &bytes,
-                &|c| c == "eCWeatherZone_PS" || c == "eCStaticPointLight_PS",
+                &|c| {
+                    matches!(
+                        c,
+                        "eCWeatherZone_PS"
+                            | "eCStaticPointLight_PS"
+                            | "eCSpeedTreeWind_PS"
+                            | "eCPrecipitation_PS"
+                            | "eCSkydome_PS"
+                    )
+                },
                 &mut stats,
             ) else {
                 continue;
             };
             for (e, s) in doc.entities.iter().zip(&sets) {
+                if let Some(w) = s.iter().find(|p| p.class == "eCSpeedTreeWind_PS") {
+                    wind = Some(gothic_environment::wind::SpeedTreeWind::from_properties(w));
+                }
+                if let Some(w) = s.iter().find(|p| p.class == "eCPrecipitation_PS") {
+                    precipitation =
+                        Some(gothic_environment::precip::PrecipParams::from_properties(w));
+                }
+                if let Some(w) = s.iter().find(|p| p.class == "eCSkydome_PS") {
+                    skydome = Some(gothic_environment::sky::SkydomeParams::from_properties(w));
+                }
                 if let Some(l) = s.iter().find(|p| p.class == "eCStaticPointLight_PS") {
                     let m = Mat4::from_cols_array_2d(&e.world_matrix);
                     let off = match l.get("Offset") {
@@ -1381,6 +1525,9 @@ impl Loader {
             data,
             zones,
             lights,
+            wind,
+            precipitation,
+            skydome,
         }
     }
 
@@ -1420,6 +1567,11 @@ impl Loader {
                                 .iter()
                                 .map(|m| (m.mesh_id, m.mesh.as_str()))
                                 .collect();
+                            let wind_of: HashMap<u16, f32> = area
+                                .meshes
+                                .iter()
+                                .map(|m| (m.mesh_id, m.wind_strength))
+                                .collect();
                             for e in &grid.entries {
                                 let Some(name) = names.get(&e.mesh_id) else {
                                     continue;
@@ -1435,6 +1587,7 @@ impl Loader {
                                     ),
                                     scale: e.scale,
                                     color: e.color,
+                                    wind: wind_of.get(&e.mesh_id).copied().unwrap_or(0.0),
                                 });
                             }
                         }
@@ -1470,6 +1623,13 @@ impl Loader {
                     (inst.color & 255) as f32 / 255.0,
                 ];
                 instances += 1;
+                // Wind weight per vertex: `((y - y_min) / height)^2 * WindStrength` over the box of
+                // the brush mesh (`eCVegetation_GridNode::CacheInGeometry`).
+                let (y_min, y_max) = entry.parts.iter().fold((f32::MAX, f32::MIN), |a, (g, _)| {
+                    g.positions
+                        .iter()
+                        .fold(a, |a, p| (a.0.min(p[1]), a.1.max(p[1])))
+                });
                 for (pi, (geom, material)) in entry.parts.iter().enumerate() {
                     let Some(material) = material else { continue };
                     let slot = accum.entry((material.name.clone(), pi)).or_insert_with(|| {
@@ -1501,8 +1661,14 @@ impl Loader {
                         g.normals.push(n.to_array());
                         g.uvs.push(geom.uvs[k]);
                         let c = geom.colors[k];
+                        let weight = gothic_environment::wind::vegetation_weight(
+                            geom.positions[k][1],
+                            y_min,
+                            y_max - y_min,
+                            inst.wind,
+                        );
                         g.colors
-                            .push([c[0] * tint[0], c[1] * tint[1], c[2] * tint[2], 1.0]);
+                            .push([c[0] * tint[0], c[1] * tint[1], c[2] * tint[2], weight]);
                         g.tangents.push([1.0, 0.0, 0.0, 1.0]);
                     }
                     g.indices.extend(geom.indices.iter().map(|i| i + base));
@@ -1516,6 +1682,7 @@ impl Loader {
             }
             geom.id = self.id();
             parts.push(Part {
+                lod: None,
                 geom: Arc::new(geom),
                 material: Some(material),
                 transform: Mat4::IDENTITY,
@@ -1635,8 +1802,9 @@ impl Loader {
                                 g.normals.push(n.to_array());
                                 g.uvs.push(geom.uvs[k]);
                                 let c = geom.colors[k];
+                                let h = (geom.positions[k][1] / 60.0).clamp(0.0, 1.0);
                                 g.colors
-                                    .push([c[0] * shade, c[1] * shade, c[2] * shade, 1.0]);
+                                    .push([c[0] * shade, c[1] * shade, c[2] * shade, h * h]);
                                 g.tangents.push([1.0, 0.0, 0.0, 1.0]);
                             }
                             g.indices.extend(geom.indices.iter().map(|i| i + base));
@@ -1652,6 +1820,7 @@ impl Loader {
             }
             geom.id = self.id();
             parts.push(Part {
+                lod: None,
                 geom: Arc::new(geom),
                 material: Some(material),
                 transform: Mat4::IDENTITY,
@@ -1663,6 +1832,74 @@ impl Loader {
             parts,
             instances,
         }
+    }
+}
+
+/// Baked vertex light of a coarser LoD mesh: every vertex takes the colour of the nearest vertex of
+/// the full-detail mesh (the lightmap of an instance is authored for LoD 0 only).
+fn transfer_light(coarse: &GeomData, fine: &GeomData) -> GeomData {
+    let n = coarse.positions.len();
+    if fine.light.len() != fine.positions.len() || fine.positions.is_empty() {
+        return GeomData {
+            id: coarse.id,
+            positions: coarse.positions.clone(),
+            normals: coarse.normals.clone(),
+            uvs: coarse.uvs.clone(),
+            indices: coarse.indices.clone(),
+            colors: coarse.colors.clone(),
+            tangents: coarse.tangents.clone(),
+            light: Vec::new(),
+        };
+    }
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for p in &fine.positions {
+        lo = lo.min(Vec3::from(*p));
+        hi = hi.max(Vec3::from(*p));
+    }
+    let cell = ((hi - lo).max_element() / 24.0).max(1e-3);
+    let key = |p: Vec3| {
+        let q = (p - lo) / cell;
+        (q.x as i32, q.y as i32, q.z as i32)
+    };
+    let mut grid: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
+    for (i, p) in fine.positions.iter().enumerate() {
+        grid.entry(key(Vec3::from(*p))).or_default().push(i as u32);
+    }
+    let mut light = Vec::with_capacity(n);
+    for p in &coarse.positions {
+        let p = Vec3::from(*p);
+        let (cx, cy, cz) = key(p);
+        let mut best = (f32::MAX, 0usize);
+        for r in 1..=3 {
+            for dx in -r..=r {
+                for dy in -r..=r {
+                    for dz in -r..=r {
+                        if let Some(list) = grid.get(&(cx + dx, cy + dy, cz + dz)) {
+                            for &i in list {
+                                let d = Vec3::from(fine.positions[i as usize]).distance_squared(p);
+                                if d < best.0 {
+                                    best = (d, i as usize);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if best.0 < f32::MAX {
+                break;
+            }
+        }
+        light.push(fine.light[best.1]);
+    }
+    GeomData {
+        id: coarse.id,
+        positions: coarse.positions.clone(),
+        normals: coarse.normals.clone(),
+        uvs: coarse.uvs.clone(),
+        indices: coarse.indices.clone(),
+        colors: coarse.colors.clone(),
+        tangents: coarse.tangents.clone(),
+        light,
     }
 }
 
@@ -1753,6 +1990,7 @@ fn merge_statics(parts: &mut Vec<Part>, first_id: u64) -> u64 {
     let mut next = first_id;
     for part in parts.drain(..) {
         let mergeable = part.kind == PartKind::Static
+            && part.lod.is_none()
             && part.material.as_ref().is_some_and(|m| {
                 m.kind == MatKind::Surface && !matches!(m.blend_mode, Some(2 | 7 | 8))
             })
@@ -1837,6 +2075,7 @@ fn merge_statics(parts: &mut Vec<Part>, first_id: u64) -> u64 {
         geom.id = next + consumed;
         consumed += 1;
         keep.push(Part {
+            lod: None,
             geom: Arc::new(geom),
             material: Some(material),
             transform: Mat4::IDENTITY,
