@@ -3930,6 +3930,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-vr-bridge"
+version = "0.1.0"
+dependencies = [
+ "avian3d",
+ "bevy",
+ "glam",
+ "gothic-formats",
+ "gothic-gameplay",
+ "gothic-physics",
+ "gothic-runtime",
+ "gothic-sim",
+ "gothic-vr",
+ "gothic-vr-melee",
+ "gothic-vr-physics",
+]
+
+[[package]]
 name = "gothic-vr-melee"
 version = "0.1.0"
 dependencies = [

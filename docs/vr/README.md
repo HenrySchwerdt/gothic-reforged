@@ -1,6 +1,6 @@
 # VR mode (PC VR first)
 
-Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06.
+Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06, #20 VR-09.
 
 Everything here is developed and tested with **synthetic content only** (greybox boxes,
 capsule dummies, procedural weapons). No Gothic 3 assets, data or decompiled code are used.
@@ -15,6 +15,7 @@ local maintainer step; the hooks for it are listed below.
 | `crates/vr-physics` (`gothic-vr-physics`) | VR-03 | avian3d 0.8, physics hands (strength-limited PD force/torque), grip points, two-handed grabs, throwing, procedural props, headless test rig |
 | `crates/vr-melee` (`gothic-vr-melee`) | VR-04 | swept blade/blunt/pierce contact model, stabs (stick/pull-out), block/parry, `HitEvent`, hitzones, training dummy |
 | `crates/vr-npc` (`gothic-vr-npc`) | VR-05 | active ragdoll (balance, stagger, fall, get-up), combat AI (telegraphs, attack slots, blocking, recoil), Bevy plugin |
+| `crates/vr-bridge` (`gothic-vr-bridge`) | VR-09 | adapters to `gothic-physics` / `gothic-runtime`: units, level chunks as avian trimeshes, runtime actors as melee proxies, hits as `Command::Attack`, 30 Hz core ticking beside 90 Hz physics (see `PHYSICS.md`) |
 | `crates/vr-archery` (`gothic-vr-archery`) | VR-06 | quiver/nock/draw/release, ballistic arrows that stick, aim assist, damage hook |
 | `apps/vr-sandbox` (`gothic-vr-sandbox`) | all | greybox level with everything above |
 
@@ -70,7 +71,7 @@ enable it in `docs/vr/OPENXR.md`.
 ## Tests
 
 ```sh
-cargo test -p gothic-vr -p gothic-vr-physics -p gothic-vr-melee -p gothic-vr-npc -p gothic-vr-archery
+cargo test -p gothic-vr -p gothic-vr-physics -p gothic-vr-melee -p gothic-vr-npc -p gothic-vr-archery -p gothic-vr-bridge
 ```
 
 All tests are headless and deterministic (fixed 90 Hz steps; avian runs inside a
