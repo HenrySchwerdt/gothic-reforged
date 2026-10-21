@@ -13,7 +13,7 @@ cargo run -p gothic-questbot --release -- <Data> --quest Q_Name --quest Q_Other 
 Options: `--language German|English|...` (string table language, default German),
 `--quest NAME` (repeatable; default: every quest), `--strict` (no world assumptions: owner
 proximity, unknown NPC inventories and BringNpc deliveries fail), `--trace` (print every
-step), `--isolated` (every quest alone, with only its prerequisites; prints one line per quest and the total), `--json FILE`. Exit code 0 = every target completed successfully, 2 = otherwise.
+step), `--isolated` (every quest alone, with only its prerequisites; prints one line per quest and the total), `--max-rounds N` (default 10000), `--json FILE`. Exit code 0 = every target completed successfully, 2 = otherwise.
 
 ## How it plays
 
