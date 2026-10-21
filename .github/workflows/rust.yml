@@ -97,6 +97,7 @@ jobs:
       # Scripted headless runs of the desktop fallback; the exit code is the result.
       - run: cargo run -p gothic-vr --example greybox --locked -- --headless
       - run: cargo run -p gothic-vr-sandbox --locked -- --headless
+      - run: cargo run -p gothic-vr-interact --example interact_greybox --locked
 
   # Release build of the game executable; no game data is ever packaged.
   release:

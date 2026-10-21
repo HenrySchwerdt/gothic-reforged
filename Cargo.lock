@@ -3930,6 +3930,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-vr-interact"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "glam",
+ "gothic-runtime",
+ "gothic-sim",
+ "gothic-vr",
+ "serde",
+]
+
+[[package]]
 name = "gothic-vr-melee"
 version = "0.1.0"
 dependencies = [
