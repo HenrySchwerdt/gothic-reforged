@@ -8,6 +8,7 @@ use crate::walk::Player;
 use bevy::prelude::*;
 use gothic_animation::{ActorLibrary, Animator, Stance};
 use gothic_audio::PlaySfx;
+use gothic_gameplay::treasure::{Distribution, Roll, TreasureBook, set_from_pairs};
 use gothic_runtime::{Command, CoreCommand, CoreEvent, CoreRes, Event};
 use gothic_sim::script::enums::UseType;
 use gothic_sim::script::host::EntityId;
@@ -15,6 +16,7 @@ use gothic_sim::script::player::api::{PlayerEvent, Refusal, SkillCategory, UiWin
 use gothic_sim::script::player::craft::Synth;
 use gothic_sim::script::player::interact::{Mode as StationMode, station_for_use};
 use gothic_sim::script::player::normal::Confirm;
+use gothic_sim::sim::EventKind;
 use gothic_sim::types::ActorId;
 use gothic_ui::{Notify, ToastKind};
 
@@ -23,13 +25,15 @@ use gothic_ui::{Notify, ToastKind};
 pub enum LineAction {
     Take(usize),
     Craft(i32),
-    None,
 }
 
 #[derive(Clone, Debug)]
 pub struct WindowLine {
     pub text: String,
     pub action: LineAction,
+    /// Item template shown as the cell icon.
+    pub item: String,
+    pub count: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -40,10 +44,12 @@ pub enum WindowKind {
     Body { actor: ActorId },
     /// Recipes of a work station.
     Station { window: UiWindow },
+    /// The trade page with a merchant (`gCHUDPageTrade2`).
+    Trade { npc: ActorId },
 }
 
-/// A window of the play mode (loot, plunder, recipes). The original pages are the HUD pages of
-/// `g3.gui.res`; this one is a plain text list [placeholder, see `windows.rs`].
+/// A window of the play mode (loot, plunder, recipes, trade). It is drawn by the HUD pages of the
+/// UI crate (`windows.rs`); `lines` is the model of the loot-style pages.
 #[derive(Clone, Debug)]
 pub struct OpenWindow {
     pub kind: WindowKind,
@@ -63,6 +69,12 @@ pub struct Interaction {
     pub window_key: Option<usize>,
     pub window_enter: bool,
     pub window_close: bool,
+    /// A merchant whose trade page opens next (`TradeOpened` of a dialog).
+    pub pending_trade: Option<ActorId>,
+    /// The deal key (Enter) was pressed on the trade page.
+    pub trade_deal: bool,
+    /// The UI shows the page of the open window.
+    pub page_shown: bool,
     /// The hero holds a seat / bed / station pose until he leaves.
     pub holding_pose: bool,
     pub release_pose: bool,
@@ -74,7 +86,7 @@ pub struct Interaction {
 pub fn register(app: &mut App) {
     app.add_systems(
         Update,
-        (handle_events, window_input, refresh_window).chain(),
+        (start_trade, handle_events, window_input, refresh_window).chain(),
     );
 }
 
@@ -166,13 +178,7 @@ fn handle_events(
                     Confirm::Loot(body) => {
                         let a = actor_of(*body);
                         let actor = core.0.sim.actor(a);
-                        let mut lines = Vec::new();
-                        for (k, n) in actor.inventory.iter().filter(|(_, n)| **n > 0) {
-                            lines.push(WindowLine {
-                                text: format!("{n} x {}", item_name(&core, k)),
-                                action: LineAction::None,
-                            });
-                        }
+                        let lines = body_lines(&core, a);
                         inter.window = Some(OpenWindow {
                             kind: WindowKind::Body { actor: a },
                             title: actor.name.replace('_', " "),
@@ -300,7 +306,7 @@ fn handle_events(
                     PlayerEvent::BookRead { book } => {
                         say(&mut notify, format!("Buch gelesen: {book}"))
                     }
-                    PlayerEvent::TimeScale(_) | PlayerEvent::InteractStarted { .. } => {}
+                    PlayerEvent::TimeScale(_) => {}
                 }
             }
             Event::CraftResult(r) => {
@@ -322,6 +328,11 @@ fn handle_events(
                             .replace("$(name)", p),
                     ),
                     Synth::Crafted { .. } | Synth::Unknown => {}
+                }
+            }
+            Event::Sim(EventKind::TradeOpened { npc }) => {
+                if inter.window.is_none() {
+                    inter.pending_trade = Some(*npc);
                 }
             }
             Event::ItemUsed(o) => inter.log.push(format!("used {o:?}")),
@@ -371,6 +382,8 @@ fn loot_window(core: &CoreRes, _objects: &WorldObjects, object: u32) -> OpenWind
                 .map(|(i, (item, n))| WindowLine {
                     text: format!("{n} x {}", item_name(core, item)),
                     action: LineAction::Take(i),
+                    item: item.clone(),
+                    count: *n as i32,
                 })
                 .collect()
         })
@@ -423,6 +436,8 @@ fn station_window(core: &CoreRes, objects: &WorldObjects, window: UiWindow) -> O
         lines.push(WindowLine {
             text: format!("{} ({})", item_name(core, &r.result), ing.join(", ")),
             action: LineAction::Craft(*id),
+            item: r.result.clone(),
+            count: 1,
         });
     }
     lines.sort_by(|a, b| a.text.cmp(&b.text));
@@ -440,12 +455,75 @@ fn station_window(core: &CoreRes, objects: &WorldObjects, window: UiWindow) -> O
     }
 }
 
+/// Stacks of a body's inventory as loot lines (equipped and in-use stacks stay with it).
+fn body_lines(core: &CoreRes, body: ActorId) -> Vec<WindowLine> {
+    core.0
+        .sim
+        .actor(body)
+        .inventory
+        .stacks()
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.amount > 0 && s.is_disposable())
+        .map(|(i, s)| WindowLine {
+            text: format!("{} x {}", s.amount, item_name(core, &s.template)),
+            action: LineAction::Take(i),
+            item: s.template.clone(),
+            count: s.amount,
+        })
+        .collect()
+}
+
+/// Open the trade page with a merchant (`gCGUIManager::BeginTrade`): stock the merchant from
+/// its trade treasure sets once, then show the baskets.
+pub fn open_trade(
+    core: &mut CoreRes,
+    objects: &WorldObjects,
+    inter: &mut Interaction,
+    cmd: &mut MessageWriter<CoreCommand>,
+    npc: ActorId,
+) {
+    let sets = core.0.sim.actor(npc).inventory.treasure_sets.clone();
+    let mut book = TreasureBook::default();
+    for name in sets.iter().filter(|n| !n.is_empty()) {
+        let Some(t) = objects.treasure.get(name) else {
+            continue;
+        };
+        let Some(distribution) = Distribution::from_name(&t.distribution) else {
+            continue;
+        };
+        book.insert(
+            name,
+            set_from_pairs(
+                &core.0.sim.items,
+                distribution,
+                t.min_stacks,
+                t.max_stacks,
+                &t.stacks,
+            ),
+        );
+    }
+    let mut dice = Roll(super::data::seed_of(&core.0.sim.actor(npc).name));
+    core.0.sim.trade_open(npc, &book, &mut dice);
+    let title = core.0.sim.actor(npc).name.replace('_', " ");
+    inter.window = Some(OpenWindow {
+        kind: WindowKind::Trade { npc },
+        title,
+        lines: Vec::new(),
+        footer: String::new(),
+        dirty: true,
+    });
+    cmd.write(CoreCommand(Command::GuiOpen(true)));
+}
+
 /// Keys of an open window -> core commands.
+#[allow(clippy::too_many_arguments)]
 fn window_input(
     mut inter: ResMut<Interaction>,
-    core: Res<CoreRes>,
+    mut core: ResMut<CoreRes>,
     time: Res<Time>,
     mut cmd: MessageWriter<CoreCommand>,
+    mut notify: MessageWriter<Notify>,
 ) {
     let Some(win) = inter.window.clone() else {
         inter.window_key = None;
@@ -455,6 +533,10 @@ fn window_input(
     };
     let now = time.elapsed_secs();
     if std::mem::take(&mut inter.window_close) {
+        if let WindowKind::Trade { npc } = win.kind {
+            core.0.sim.trade_cancel(npc);
+            core.0.sync_inventory();
+        }
         cmd.write(CoreCommand(Command::GuiOpen(false)));
         inter.window = None;
         inter.window_key = None;
@@ -472,6 +554,9 @@ fn window_input(
                     index: Some(*i),
                 }));
             }
+            (WindowKind::Body { actor }, LineAction::Take(i)) => {
+                take_from_body(&mut core, *actor, Some(*i), &mut notify);
+            }
             (WindowKind::Station { .. }, LineAction::Craft(id)) => {
                 cmd.write(CoreCommand(Command::Craft { recipe: *id }));
             }
@@ -488,7 +573,7 @@ fn window_input(
                 }));
             }
             WindowKind::Body { actor } => {
-                cmd.write(CoreCommand(Command::QuickLoot { body: actor.0 + 1 }));
+                take_from_body(&mut core, *actor, None, &mut notify);
             }
             WindowKind::Station { .. } => {
                 if let Some(WindowLine {
@@ -499,10 +584,27 @@ fn window_input(
                     cmd.write(CoreCommand(Command::Craft { recipe: *id }));
                 }
             }
+            WindowKind::Trade { .. } => inter.trade_deal = true,
         }
         inter.refresh_at = Some(now + 0.15);
     }
-    let _ = &core;
+}
+
+/// Move one stack (or all) of a body into the hero's inventory and tell the player.
+fn take_from_body(
+    core: &mut CoreRes,
+    body: ActorId,
+    idx: Option<usize>,
+    notify: &mut MessageWriter<Notify>,
+) {
+    let taken = core.0.sim.loot_body(body, idx);
+    core.0.sync_inventory();
+    for (template, n) in taken {
+        notify.write(Notify {
+            text: format!("+{n} {}", item_name(core, &template)),
+            kind: ToastKind::Item,
+        });
+    }
 }
 
 /// Rebuild the lines of an open window from the core state after a take / craft.
@@ -523,25 +625,34 @@ fn refresh_window(
     let fresh = match &win.kind {
         WindowKind::Loot { object } => Some(loot_window(&core, &objects, *object)),
         WindowKind::Station { window } => Some(station_window(&core, &objects, *window)),
-        WindowKind::Body { actor } => {
-            let a = core.0.sim.actor(*actor);
-            let lines = a
-                .inventory
-                .iter()
-                .filter(|(_, n)| **n > 0)
-                .map(|(k, n)| WindowLine {
-                    text: format!("{n} x {}", item_name(&core, k)),
-                    action: LineAction::None,
-                })
-                .collect();
-            Some(OpenWindow {
-                lines,
-                dirty: true,
-                ..win.clone()
-            })
-        }
+        WindowKind::Body { actor } => Some(OpenWindow {
+            lines: body_lines(&core, *actor),
+            dirty: true,
+            ..win.clone()
+        }),
+        WindowKind::Trade { .. } => Some(OpenWindow {
+            dirty: true,
+            ..win.clone()
+        }),
     };
     if let Some(f) = fresh {
         inter.window = Some(f);
     }
+}
+
+/// A dialog asked for the trade page (`DoTrade`): end the conversation and open the page.
+fn start_trade(
+    mut inter: ResMut<Interaction>,
+    mut core: ResMut<CoreRes>,
+    objects: Res<WorldObjects>,
+    state: Res<PlayState>,
+    mut cmd: MessageWriter<CoreCommand>,
+) {
+    let Some(npc) = inter.pending_trade.take() else {
+        return;
+    };
+    if state.mode == Mode::Dialog {
+        cmd.write(CoreCommand(Command::EndDialog));
+    }
+    open_trade(&mut core, &objects, &mut inter, &mut cmd, npc);
 }

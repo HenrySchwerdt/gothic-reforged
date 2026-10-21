@@ -54,6 +54,8 @@ pub const CHARACTER: Pic = bg(14, 1, 1, 312, 638).keyed("g3_hud_view_character_b
 pub const SIDEBAR: Pic = bg(16, 604, 1, 62, 499).keyed("g3_hud_view_sidebar_back.tga"); // 946,76
 pub const TRADE_VENDOR: Pic = bg(16, 1, 507, 303, 493).keyed("g3_hud_view_trade_vendor_back.tga"); // 14,16
 pub const TRADE_PLAYER: Pic = bg(16, 668, 1, 304, 493).keyed("g3_hud_view_trade_player_back.tga"); // 691,16
+/// Loot pool view (14,16, 312x638); the fallback rectangle is a guess, the igl resolves it.
+pub const LOOT_POOL: Pic = bg(16, 330, 1, 312, 638).keyed("g3_hud_view_loot_back.tga");
 pub const TRANSACTION: Pic =
     bg(17, 1, 216, 980, 213).keyed("g3_hud_view_trade_transaction_back.tga"); // 14,524
 pub const DIALOG: Pic = bg(17, 1, 1, 980, 213).keyed("g3_hud_view_dialog_back.tga"); // 22,534
@@ -87,5 +89,7 @@ pub const MARK_QUEST: Pic = ic(481, 284, 18, 18).keyed("g3_hud_icon_location_ard
 
 /// Main-menu banner background (page 02, 1024x768 at the top of the atlas).
 pub const MENU_BG: Pic = bg(2, 0, 0, 1024, 768).keyed("g3_hud_view_menu_main_back.tga");
+#[allow(dead_code)]
 pub const MEDAL_ON: Pic = ic(131, 203, 39, 39).keyed("g3_hud_alternative_balancing_03.tga");
+#[allow(dead_code)]
 pub const MEDAL_OFF: Pic = ic(459, 203, 39, 39).keyed("g3_hud_alternative_balancing_00.tga");

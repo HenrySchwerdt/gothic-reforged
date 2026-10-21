@@ -239,6 +239,25 @@ impl Inventory {
         std::mem::take(&mut self.events)
     }
 
+    /// Remove and return only the attribute modifier events (`kind`, tag, operation, value),
+    /// leaving the stack and link events for the host that mirrors them.
+    pub fn take_stat_events(&mut self) -> Vec<(StatKind, String, i32, i32)> {
+        let mut out = Vec::new();
+        self.events.retain(|e| match e {
+            InventoryEvent::Stat {
+                kind,
+                tag,
+                op,
+                value,
+            } => {
+                out.push((*kind, tag.clone(), *op, *value));
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+
     fn rebuild_counts(&mut self) {
         self.counts.clear();
         for s in &self.stacks {

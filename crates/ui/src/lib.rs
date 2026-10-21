@@ -12,12 +12,14 @@ pub mod demo;
 mod hud;
 pub mod items;
 mod logic;
+pub mod pages;
 mod screens;
 mod style;
 
 pub use assets::{Page, UiAssets};
 pub use hud::{FocusHealth, QuickSlot, QuickSlots};
 pub use items::{ItemCatalog, ItemInfo};
+pub use pages::{LootView, PageEvent, PageRow, PageView, PlayerPanel, ShowPage, TradeView};
 
 use bevy::prelude::*;
 use gothic_gameplay::dialog::{Choice, DialogSession};
@@ -84,6 +86,8 @@ pub enum Screen {
     Inventory,
     Character,
     Trade,
+    /// Loot and work-station list page (host-driven, see [`pages`]).
+    Loot,
     /// Full-screen main menu (banner background, entries report [`MenuChoice`]).
     MainMenu,
 }
@@ -219,6 +223,7 @@ pub struct PlayerHeading(pub f32);
 
 // ---- internal state ------------------------------------------------------------------
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct DialogLine {
     pub speaker: String,
     pub text: String,
@@ -242,6 +247,7 @@ pub(crate) enum Action {
     SelectItem(String),
     UseItem(String),
     Trade(String, bool),
+    Page(PageEvent),
     Menu(MenuEntry),
     Modal(bool),
     TipCheck,
@@ -259,6 +265,8 @@ pub struct UiState {
     pub(crate) quest_tab: usize,
     pub(crate) quest_sel: Option<String>,
     pub(crate) trade: Option<(String, Vec<(String, u32)>)>,
+    /// The host-driven page on show (trade / loot).
+    pub(crate) page: Option<PageView>,
     pub(crate) scroll: HashMap<&'static str, f32>,
     pub(crate) dirty: bool,
     pub(crate) modal: Option<Modal>,
@@ -296,6 +304,8 @@ impl Plugin for GothicUiPlugin {
             .add_message::<ChooseOption>()
             .add_message::<UseItem>()
             .add_message::<TradeRequest>()
+            .add_message::<ShowPage>()
+            .add_message::<PageEvent>()
             .add_message::<DialogEnded>()
             .add_message::<WorldEffect>()
             .add_message::<DialogUpdate>()

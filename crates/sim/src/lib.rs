@@ -39,6 +39,7 @@ pub mod script_magic;
 pub mod script_player;
 pub mod sim;
 pub mod tactics;
+pub mod trade;
 pub mod types;
 pub mod vitals;
 pub mod world;

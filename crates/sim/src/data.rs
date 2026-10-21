@@ -104,6 +104,9 @@ impl NpcRecord {
                 a.inventory.add(&s.item, s.amount as u32);
             }
         }
+        for (i, t) in self.inventory.treasure_sets.iter().take(5).enumerate() {
+            a.inventory.treasure_sets[i] = t.clone();
+        }
         a.inventory.rebind(items);
         a.refresh(cfg);
         a

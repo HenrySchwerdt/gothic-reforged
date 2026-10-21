@@ -122,6 +122,7 @@ pub fn txt(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -
     )
 }
 
+#[allow(dead_code)]
 pub fn span(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
         TextSpan::new(s),

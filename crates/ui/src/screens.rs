@@ -92,6 +92,7 @@ pub(crate) fn rebuild(
                 Screen::Inventory => inventory(p, &cx),
                 Screen::Character => character(p, &cx),
                 Screen::Trade => trade(p, &cx),
+                Screen::Loot => loot_page(p, &cx),
             });
             if let Some(m) = ui.modal.clone() {
                 root.spawn((
@@ -958,6 +959,9 @@ fn dialog(p: &mut P, cx: &Cx) {
 // ---------------------------------------------------------------------------------- trade
 /// Layout only: trade rules (price factors, stock refresh) are not decoded yet.
 fn trade(p: &mut P, cx: &Cx) {
+    if let Some(PageView::Trade(v)) = cx.ui.page.as_ref() {
+        return trade_page(p, cx, v);
+    }
     let Some((npc, stock)) = cx.ui.trade.as_ref() else {
         return;
     };
@@ -1198,5 +1202,390 @@ fn modal(p: &mut P, cx: &Cx, m: &Modal) {
             );
             modal_button(p, cx, "Ok", (ox + 165.0, oy + 330.0, 120.0, 32.0), true);
         }
+    }
+}
+
+// ------------------------------------------------------------- host-driven pages
+type Box4 = (f32, f32, f32, f32);
+
+/// Icon cells of a page list: `cols` cells of 48 px per row, scrollable. `mk` makes the
+/// click action of a row (`None`: the cells only show). The count sits bottom right, the
+/// unit price top left.
+#[allow(clippy::too_many_arguments)]
+fn row_grid(
+    p: &mut P,
+    cx: &Cx,
+    rect: Box4,
+    scroll: &'static str,
+    rows: &[&PageRow],
+    cols: usize,
+    mk: Option<&dyn Fn(&PageRow) -> Action>,
+) {
+    let (x, y, _w, h) = rect;
+    p.spawn((
+        Node {
+            flex_wrap: FlexWrap::Wrap,
+            align_content: AlignContent::FlexStart,
+            overflow: Overflow::scroll_y(),
+            ..abs(x, y, 48.0 * cols as f32, h)
+        },
+        scroll_area(scroll, cx.scroll_y(scroll)),
+    ))
+    .with_children(|g| {
+        let min_cells = cols * ((h / 48.0) as usize).max(1);
+        let cells = (rows.len().div_ceil(cols) * cols).max(min_cells);
+        for i in 0..cells {
+            let n = Node {
+                width: px(44),
+                height: px(44),
+                margin: UiRect::all(px(2)),
+                border: UiRect::all(px(1)),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            };
+            let Some(row) = rows.get(i) else {
+                g.spawn((
+                    n,
+                    BackgroundColor(CELL),
+                    BorderColor::all(Color::srgba(0.5, 0.4, 0.28, 0.45)),
+                ));
+                continue;
+            };
+            let (gl, full) = item_icon(cx.a, cx.s.items.get(&row.item), false);
+            let (gw, gh) = if full { (42.0, 42.0) } else { (gl.w, gl.h) };
+            let fill = |g: &mut P| {
+                g.spawn(Node {
+                    width: px(gw),
+                    height: px(gh),
+                    ..default()
+                })
+                .with_children(|i| {
+                    spawn_pic(i, cx.a, gl, 0.0, 0.0, Some((gw, gh)));
+                });
+                if row.count > 1 {
+                    label(
+                        g,
+                        cx.font(),
+                        row.count.to_string(),
+                        (6.0, 29.0, 34.0, 12.0),
+                        11.0,
+                        TEXT,
+                        Al::Right,
+                    );
+                }
+                if row.price > 0 {
+                    label(
+                        g,
+                        cx.font(),
+                        row.price.to_string(),
+                        (3.0, 1.0, 38.0, 11.0),
+                        10.0,
+                        Color::srgb(0.78, 0.65, 0.28),
+                        Al::Left,
+                    );
+                }
+            };
+            match mk {
+                Some(mk) if !row.locked => {
+                    g.spawn((
+                        button(mk(row), CELL, CELL_HOVER),
+                        n,
+                        BorderColor::all(BORDER),
+                    ))
+                    .with_children(|c| fill(c));
+                }
+                _ => {
+                    g.spawn((
+                        n,
+                        BackgroundColor(CELL),
+                        BorderColor::all(Color::srgba(0.5, 0.4, 0.28, 0.45)),
+                    ))
+                    .with_children(|c| fill(c));
+                }
+            }
+        }
+    });
+    let mut t = abs(x + 48.0 * cols as f32 + 4.0, y, 12.0, h);
+    t.border = UiRect::all(px(1));
+    p.spawn((t, frame_box(Color::srgba(0.08, 0.06, 0.05, 0.9))));
+}
+
+/// A text button; `action: None` draws it greyed out.
+fn page_button(p: &mut P, cx: &Cx, text: &str, r: Box4, action: Option<Action>) {
+    let mut n = abs(r.0, r.1, r.2, r.3);
+    n.border = UiRect::all(px(2));
+    n.align_items = AlignItems::Center;
+    n.justify_content = JustifyContent::Center;
+    match action {
+        Some(a) => {
+            p.spawn((
+                button(
+                    a,
+                    Color::srgba(0.12, 0.08, 0.05, 0.95),
+                    Color::srgba(0.30, 0.20, 0.10, 0.95),
+                ),
+                n,
+                BorderColor::all(BORDER),
+                children![txt(cx.font(), text, 16.0, TEXT)],
+            ));
+        }
+        None => {
+            p.spawn((
+                n,
+                BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.9)),
+                BorderColor::all(Color::srgba(0.4, 0.34, 0.25, 0.6)),
+                children![txt(cx.font(), text, 16.0, TEXT_DIM)],
+            ));
+        }
+    }
+}
+
+fn gold_line(p: &mut P, cx: &Cx, at: (f32, f32), label_w: f32, value: i64) {
+    body(
+        p,
+        cx,
+        cx.t("HUD_GoldAmount", "Gold"),
+        (at.0, at.1, label_w, 25.0),
+        Al::Left,
+        TEXT,
+    );
+    body(
+        p,
+        cx,
+        thousands(value),
+        (at.0 + label_w, at.1, 152.0, 25.0),
+        Al::Right,
+        TEXT,
+    );
+}
+
+/// `1234567` -> `1.234.567` (German grouping).
+fn thousands(v: i64) -> String {
+    let s = v.abs().to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push('.');
+        }
+        out.push(c);
+    }
+    if v < 0 { format!("-{out}") } else { out }
+}
+
+/// The hero's inventory panel with the category tabs (right side of both pages).
+fn player_panel(
+    p: &mut P,
+    cx: &Cx,
+    bgpic: Pic,
+    (ox, oy): (f32, f32),
+    panel: &PlayerPanel,
+    trade: bool,
+) {
+    let tab = cx.ui.inv_tab.min(INV_TABS.len() - 1);
+    spawn_pic(p, cx.a, bgpic, ox, oy, None);
+    let title = if panel.title.is_empty() {
+        INV_TABS[tab].0.to_string()
+    } else {
+        panel.title.clone()
+    };
+    let rows: Vec<&PageRow> = panel
+        .rows
+        .iter()
+        .filter(|r| in_tab(cx, &r.item, tab))
+        .collect();
+    if trade {
+        heading(p, cx, title, (ox + 25.0, oy + 8.0, 252.0, 25.0));
+        tab_strip(p, cx, (ox + 25.0, oy + 48.0), tab);
+        let mk = |r: &PageRow| {
+            Action::Page(PageEvent::TradeAdd {
+                player_side: true,
+                key: r.key,
+            })
+        };
+        row_grid(
+            p,
+            cx,
+            (ox + 22.0, oy + 92.0, 260.0, 336.0),
+            "page_player",
+            &rows,
+            5,
+            Some(&mk),
+        );
+        gold_line(p, cx, (ox + 33.0, oy + 444.0), 84.0, panel.gold);
+    } else {
+        heading(p, cx, title, (ox + 28.0, oy + 12.0, 258.0, 25.0));
+        tab_strip(p, cx, (ox + 30.0, oy + 46.0), tab);
+        row_grid(
+            p,
+            cx,
+            (ox + 28.0, oy + 88.0, 258.0, 482.0),
+            "page_player",
+            &rows,
+            5,
+            None,
+        );
+        gold_line(p, cx, (ox + 32.0, oy + 580.0), 64.0, panel.gold);
+    }
+}
+
+fn trade_page(p: &mut P, cx: &Cx, v: &TradeView) {
+    // vendor (left)
+    spawn_pic(p, cx.a, TRADE_VENDOR, 14.0, 16.0, None);
+    heading(
+        p,
+        cx,
+        v.vendor.replace('_', " "),
+        (14.0 + 26.0, 16.0 + 8.0, 252.0, 25.0),
+    );
+    let vendor_rows: Vec<&PageRow> = v.vendor_rows.iter().collect();
+    let add = |r: &PageRow| {
+        Action::Page(PageEvent::TradeAdd {
+            player_side: false,
+            key: r.key,
+        })
+    };
+    row_grid(
+        p,
+        cx,
+        (14.0 + 22.0, 16.0 + 44.0, 260.0, 384.0),
+        "page_vendor",
+        &vendor_rows,
+        5,
+        Some(&add),
+    );
+    gold_line(p, cx, (14.0 + 30.0, 16.0 + 444.0), 88.0, v.vendor_gold);
+    // hero (right)
+    player_panel(p, cx, TRADE_PLAYER, (691.0, 16.0), &v.player, true);
+    // transaction strip
+    spawn_pic(p, cx.a, TRANSACTION, 14.0, 524.0, None);
+    let ask: Vec<&PageRow> = v.ask_rows.iter().collect();
+    let offer: Vec<&PageRow> = v.offer_rows.iter().collect();
+    let rm_ask = |r: &PageRow| {
+        Action::Page(PageEvent::TradeRemove {
+            player_side: false,
+            key: r.key,
+        })
+    };
+    let rm_offer = |r: &PageRow| {
+        Action::Page(PageEvent::TradeRemove {
+            player_side: true,
+            key: r.key,
+        })
+    };
+    row_grid(
+        p,
+        cx,
+        (14.0 + 64.0, 524.0 + 10.0, 306.0, 144.0),
+        "page_ask",
+        &ask,
+        6,
+        Some(&rm_ask),
+    );
+    row_grid(
+        p,
+        cx,
+        (14.0 + 600.0, 524.0 + 10.0, 306.0, 144.0),
+        "page_offer",
+        &offer,
+        6,
+        Some(&rm_offer),
+    );
+    for (x, side) in [(14.0, false), (14.0 + 920.0, true)] {
+        page_button(
+            p,
+            cx,
+            "X",
+            (x, 524.0 + 84.0, 44.0, 44.0),
+            Some(Action::Page(PageEvent::TradeClear { player_side: side })),
+        );
+    }
+    gold_line(p, cx, (14.0 + 74.0, 524.0 + 164.0), 76.0, v.ask_total);
+    gold_line(p, cx, (14.0 + 658.0, 524.0 + 164.0), 76.0, v.offer_total);
+    page_button(
+        p,
+        cx,
+        &cx.t("HUD_GoldBalance", "Gold-Ausgleich"),
+        (14.0 + 414.0, 524.0 + 56.0, 152.0, 34.0),
+        v.balance.then_some(Action::Page(PageEvent::TradeBalance)),
+    );
+    page_button(
+        p,
+        cx,
+        &cx.t("HUD_Trade", "Tauschen"),
+        (14.0 + 414.0, 524.0 + 92.0, 152.0, 34.0),
+        v.deal.then_some(Action::Page(PageEvent::TradeDeal)),
+    );
+    page_button(
+        p,
+        cx,
+        &cx.t("HUD_Close", "Schliessen"),
+        (14.0 + 414.0, 524.0 + 128.0, 152.0, 34.0),
+        Some(Action::Close),
+    );
+    if !v.hint.is_empty() {
+        body(
+            p,
+            cx,
+            v.hint.clone(),
+            (14.0 + 64.0, 524.0 + 188.0, 840.0, 20.0),
+            Al::Center,
+            TEXT_BAD,
+        );
+    }
+}
+
+fn loot_page(p: &mut P, cx: &Cx) {
+    let Some(PageView::Loot(v)) = cx.ui.page.as_ref() else {
+        return;
+    };
+    spawn_pic(p, cx.a, LOOT_POOL, 14.0, 16.0, None);
+    heading(
+        p,
+        cx,
+        v.title.clone(),
+        (14.0 + 26.0, 16.0 + 12.0, 258.0, 25.0),
+    );
+    if v.take_all {
+        page_button(
+            p,
+            cx,
+            &cx.t("HUD_TakeAll", "Alles nehmen"),
+            (14.0 + 26.0, 16.0 + 42.0, 120.0, 36.0),
+            Some(Action::Page(PageEvent::LootTakeAll)),
+        );
+    }
+    page_button(
+        p,
+        cx,
+        &cx.t("HUD_Close", "Schliessen"),
+        (14.0 + 166.0, 16.0 + 42.0, 120.0, 36.0),
+        Some(Action::Close),
+    );
+    let rows: Vec<&PageRow> = v.rows.iter().collect();
+    let take = |r: &PageRow| Action::Page(PageEvent::LootTake { key: r.key });
+    row_grid(
+        p,
+        cx,
+        (14.0 + 26.0, 16.0 + 88.0, 260.0, 480.0),
+        "page_loot",
+        &rows,
+        5,
+        Some(&take),
+    );
+    if let Some(g) = v.pool_gold {
+        gold_line(p, cx, (14.0 + 34.0, 16.0 + 578.0), 84.0, g);
+    }
+    player_panel(p, cx, INVENTORY, (688.0, 16.0), &v.player, false);
+    if !v.hint.is_empty() {
+        body(
+            p,
+            cx,
+            v.hint.clone(),
+            (14.0, 16.0 + 640.0, 312.0, 20.0),
+            Al::Center,
+            TEXT_DIM,
+        );
     }
 }

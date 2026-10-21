@@ -439,6 +439,17 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.drive_player();
         self.tick_magic();
+        self.apply_inventory_stats();
+    }
+
+    /// Hand the attribute modifier events of worn and consumed items to the hero
+    /// (`gCInventorySlot::OnApplyStats` -> `gCPlayerMemory_PS::ApplyMod`).
+    fn apply_inventory_stats(&mut self) {
+        let Some(h) = self.hero else { return };
+        let evs = self.actors[h.0 as usize].inventory.take_stat_events();
+        for (kind, tag, op, value) in evs {
+            self.actors[h.0 as usize].apply_stat(kind, &tag, op, value);
+        }
     }
 
     pub fn run_ticks(&mut self, n: u64) {

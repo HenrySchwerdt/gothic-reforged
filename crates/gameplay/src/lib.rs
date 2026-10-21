@@ -11,13 +11,18 @@
 pub mod conditions;
 pub mod db;
 pub mod dialog;
+pub mod focus;
 pub mod inventory;
 pub mod lint;
 pub mod model;
+pub mod mover;
 pub mod questmgr;
 pub mod script;
 pub mod state;
+pub mod stats;
+pub mod trade;
 pub mod transcript;
+pub mod treasure;
 
 pub use conditions::Assumptions;
 pub use db::{GameDatabase, InfoId, QuestId};

@@ -72,6 +72,13 @@ pub(crate) fn hotkeys(
     if ui.screen == Screen::MainMenu {
         return;
     }
+    if ui.page.is_some() {
+        // trade and loot pages: the host reads the keys, only Esc closes here
+        if keys.just_pressed(KeyCode::Escape) {
+            act.write(Act(Action::Close));
+        }
+        return;
+    }
     if ui.screen == Screen::Dialog {
         let n = ui.dialog.as_ref().map_or(0, |d| d.menu.len());
         for (i, k) in DIGITS.iter().enumerate() {
@@ -104,12 +111,14 @@ pub(crate) fn hotkeys(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_actions(
     mut acts: MessageReader<Act>,
     mut ui: ResMut<UiState>,
     mut choose: MessageWriter<ChooseOption>,
     mut use_item: MessageWriter<UseItem>,
     mut trade: MessageWriter<TradeRequest>,
+    mut pages: MessageWriter<PageEvent>,
     mut ended: MessageWriter<DialogEnded>,
     mut menu: MessageWriter<MenuChoice>,
     mut answer: MessageWriter<ModalAnswer>,
@@ -120,6 +129,9 @@ pub(crate) fn dispatch_actions(
                 choose.write(ChooseOption { index });
             }
             Action::Close => {
+                if ui.page.take().is_some() {
+                    pages.write(PageEvent::Close);
+                }
                 if let Some(d) = ui.dialog.take() {
                     ended.write(DialogEnded {
                         npc: d.session.npc.clone(),
@@ -129,7 +141,10 @@ pub(crate) fn dispatch_actions(
             }
             Action::Open(s) => {
                 let ok = match s {
-                    Screen::Trade => ui.trade.is_some(),
+                    Screen::Trade => {
+                        ui.trade.is_some() || matches!(ui.page, Some(PageView::Trade(_)))
+                    }
+                    Screen::Loot => matches!(ui.page, Some(PageView::Loot(_))),
                     Screen::Dialog => ui.dialog.is_some(),
                     _ => true,
                 };
@@ -183,6 +198,9 @@ pub(crate) fn dispatch_actions(
             }
             Action::Trade(item, buy) => {
                 trade.write(TradeRequest { item, buy });
+            }
+            Action::Page(e) => {
+                pages.write(e);
             }
         }
     }
@@ -332,6 +350,7 @@ pub(crate) fn screens_requests(
     mut open: MessageReader<OpenScreen>,
     mut close: MessageReader<CloseScreen>,
     mut trades: MessageReader<OpenTrade>,
+    mut pages: MessageReader<ShowPage>,
     mut modals: MessageReader<ShowModal>,
     mut act: MessageWriter<Act>,
     mut ui: ResMut<UiState>,
@@ -341,7 +360,26 @@ pub(crate) fn screens_requests(
         ui.tip_never = false;
         ui.dirty = true;
     }
+    for p in pages.read() {
+        match p.0.clone() {
+            Some(v) => {
+                let screen = match v {
+                    PageView::Trade(_) => Screen::Trade,
+                    PageView::Loot(_) => Screen::Loot,
+                };
+                ui.page = Some(v);
+                ui.set_screen(screen);
+            }
+            None => {
+                ui.page = None;
+                if matches!(ui.screen, Screen::Trade | Screen::Loot) {
+                    ui.set_screen(Screen::None);
+                }
+            }
+        }
+    }
     for t in trades.read() {
+        ui.page = None;
         ui.trade = Some((t.npc.clone(), t.stock.clone()));
         ui.set_screen(Screen::Trade);
     }

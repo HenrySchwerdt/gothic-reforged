@@ -17,6 +17,10 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use gothic_animation::locomotion::GaitHint;
 use gothic_animation::{ActorSpawner, LocomotionInput, Stance, WeaponSpec};
+use gothic_gameplay::focus::{
+    Candidate as FocusCandidate, Class as FocusClass, CombatMode as FocusMode, FocusConfig,
+    Viewer as FocusViewer, find_focus,
+};
 use gothic_runtime::{Command, CoreCommand, CoreRes, HERO_REACH, SavePath};
 use gothic_sim::item::{Equipment, Use, WeaponMode};
 use gothic_sim::script::enums::Action as ScriptAction;
@@ -26,10 +30,8 @@ use gothic_sim::world::Pos;
 use gothic_ui::{OpenScreen, UiState};
 
 const CM: f32 = 0.01;
-/// Talk range of the interaction focus (cm).
-pub const TALK_RANGE: f32 = 300.0;
-/// Reach for objects, loose items and bodies (cm) [I: the focus ranges are template data].
-pub const USE_RANGE: f32 = 250.0;
+/// Weapon reach plus the hero's half size, the scale of the focus range rating (cm) [I].
+const FOCUS_REACH: f32 = 190.0;
 /// How far ahead the hero picks a target for bow and spells (cm) [I].
 pub const RANGED_REACH: f32 = 3500.0;
 
@@ -680,8 +682,9 @@ fn nearest_in_front(core: &CoreRes, hero_cm: Vec3, fwd: Vec2, reach: f32) -> Opt
     best.map(|b| b.1)
 }
 
-/// The thing the camera looks at within reach: a character (talk), a body (loot), an interact
-/// object or a loose item (`gCFocus_PS`; ranges and the view cone are [I]).
+/// The thing the hero looks at: a character (talk), a body (loot), an interact object or a loose
+/// item. Selection is the port of `gCFocus_PS::FindFocusEntity` (ranges, view windows and
+/// priorities of the hero template, `gothic_gameplay::focus`); the view direction is the camera's.
 #[allow(clippy::too_many_arguments)]
 fn focus(
     player: Res<Player>,
@@ -701,11 +704,22 @@ fn focus(
     let Ok(cam) = cam.single() else { return };
     let fwd = camera_forward_xz(cam);
     let hero = player.ctrl.position;
-    let mut best: Option<(f32, Target)> = None;
-    let mut consider = |score: f32, t: Target| {
-        if best.is_none_or(|b| score < b.0) {
-            best = Some((score, t));
-        }
+    // Candidates for the ported focus rules (`gothic_gameplay::focus`); `ids` maps a
+    // candidate's index back to what it stands for. Sizes and the line of sight are the host's
+    // estimates [I]: half-extents of 40 cm for characters and objects, 15 cm for items.
+    let mut ids: Vec<Target> = Vec::new();
+    let mut cands: Vec<FocusCandidate> = Vec::new();
+    let mut push = |t: Target, class: FocusClass, p: [f32; 3], radius: f32| {
+        cands.push(FocusCandidate {
+            id: ids.len(),
+            class,
+            pos: p,
+            radius,
+            high_priority: false,
+            script_priority: 0.0,
+            los: true,
+        });
+        ids.push(t);
     };
     for a in &core.0.sim.actors {
         if a.id == core.0.hero {
@@ -714,22 +728,12 @@ fn focus(
         let Some(p) = core.0.sim.world.actors.get(&a.id).map(|w| w.0) else {
             continue;
         };
-        let d = Vec2::new(p.x - hero.x, p.z - hero.z);
-        let dist = d.length();
-        let range = if a.is_alive() { TALK_RANGE } else { USE_RANGE };
-        if dist > range || dist < 1.0 {
-            continue;
-        }
-        let cos = d.normalize().dot(fwd);
-        if cos < 0.55 {
-            continue;
-        }
         let t = if a.is_alive() {
             Target::Npc(a.id)
         } else {
             Target::Body(a.id)
         };
-        consider(dist / range + (1.0 - cos), t);
+        push(t, FocusClass::Character, [p.x, p.y, p.z], 40.0);
     }
     for (i, o) in objects.list.iter().enumerate() {
         let usable = if o.def.is_item {
@@ -740,23 +744,30 @@ fn focus(
         if !usable {
             continue;
         }
-        let d = Vec2::new(o.pos_cm.x - hero.x, o.pos_cm.z - hero.z);
-        let dist = d.length();
-        if dist > USE_RANGE || dist < 1.0 {
-            continue;
-        }
-        let cos = d.normalize().dot(fwd);
-        if cos < 0.5 {
-            continue;
-        }
-        let t = if o.def.is_item {
-            Target::Item(i)
+        let p = [o.pos_cm.x, o.pos_cm.y, o.pos_cm.z];
+        if o.def.is_item {
+            push(Target::Item(i), FocusClass::Item, p, 15.0);
         } else {
-            Target::Object(i)
-        };
-        consider(dist / USE_RANGE + (1.0 - cos), t);
+            push(Target::Object(i), FocusClass::Interact, p, 40.0);
+        }
     }
-    state.target = best.map(|b| b.1);
+    let mode = if state.drawn {
+        match core.0.sim.actor(core.0.hero).equipment.weapon_mode() {
+            WeaponMode::Melee => FocusMode::Melee,
+            WeaponMode::Ranged => FocusMode::Ranged,
+            WeaponMode::Magic => FocusMode::Magic,
+            WeaponMode::None => FocusMode::Normal,
+        }
+    } else {
+        FocusMode::Normal
+    };
+    let viewer = FocusViewer {
+        pos: [hero.x, hero.y, hero.z],
+        yaw: fwd.x.atan2(fwd.y),
+        reach: FOCUS_REACH,
+    };
+    let found = find_focus(&FocusConfig::hero(), mode, &viewer, &cands);
+    state.target = found.map(|i| ids[i]);
     state.focus = match state.target {
         Some(Target::Npc(a)) => Some(a),
         _ => None,

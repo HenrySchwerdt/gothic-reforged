@@ -5,7 +5,8 @@ use crate::brain::Brain;
 use crate::config::SimConfig;
 use crate::item::{DamageDef, Equipment};
 use crate::types::*;
-use gothic_gameplay::inventory::Inventory;
+use gothic_gameplay::inventory::{Inventory, StatKind};
+use gothic_gameplay::stats::{self, Stat, StatMods};
 use std::collections::BTreeSet;
 
 /// Player attribute record (`PSPlayerMemory`) [CA 2.13 "New-game player values"].
@@ -67,6 +68,9 @@ pub struct Actor {
     pub level: i32,
     pub level_max: i32,
     pub base: PlayerAttrs,
+    /// Temporary modifiers of worn equipment and consumables (`Modifier` and
+    /// `MaximumModifier` of the player's attributes, see `gothic_gameplay::stats`).
+    pub stats: StatMods,
     pub hp: i32,
     pub stamina: i32,
     pub mana: i32,
@@ -133,6 +137,7 @@ impl Actor {
                 mana_max: 0,
                 stamina_max: 0,
             },
+            stats: StatMods::default(),
             hp: 0,
             stamina: 0,
             mana: 0,
@@ -247,21 +252,21 @@ impl Actor {
         if self.uses_npc_formulas() {
             10 + (3 * self.current_level(cfg)) / 2
         } else {
-            self.base.str + self.equipment.modifier_sum("STR")
+            self.base.str + self.equipment.modifier_sum("STR") + self.stats.modifier("STR")
         }
     }
     pub fn dexterity(&self, cfg: &SimConfig) -> i32 {
         if self.uses_npc_formulas() {
             10 + (3 * self.current_level(cfg)) / 2
         } else {
-            self.base.dex + self.equipment.modifier_sum("DEX")
+            self.base.dex + self.equipment.modifier_sum("DEX") + self.stats.modifier("DEX")
         }
     }
     pub fn intelligence(&self, cfg: &SimConfig) -> i32 {
         if self.uses_npc_formulas() {
             10 + (3 * self.current_level(cfg)) / 2
         } else {
-            self.base.int + self.equipment.modifier_sum("INT")
+            self.base.int + self.equipment.modifier_sum("INT") + self.stats.modifier("INT")
         }
     }
     /// Theft skill (NPC `10 + trunc(0.5*L)`, S:339f0) [CA 2.13].
@@ -269,7 +274,7 @@ impl Actor {
         if self.uses_npc_formulas() {
             10 + self.current_level(cfg) / 2
         } else {
-            self.base.theft + self.equipment.modifier_sum("THF")
+            self.base.theft + self.equipment.modifier_sum("THF") + self.stats.modifier("THF")
         }
     }
 
@@ -293,7 +298,7 @@ impl Actor {
                 (20 * self.level_max(cfg)).max(100)
             }
         } else {
-            self.base.hp_max
+            self.base.hp_max + self.stats.max_modifier("HP")
         }
     }
 
@@ -303,7 +308,7 @@ impl Actor {
             let v = (10 * self.level_max(cfg)).max(100);
             if self.species.is_humanoid() { v } else { 2 * v }
         } else {
-            self.base.stamina_max
+            self.base.stamina_max + self.stats.max_modifier("SP")
         }
     }
 
@@ -312,7 +317,7 @@ impl Actor {
         if self.uses_npc_formulas() {
             1000
         } else {
-            self.base.mana_max
+            self.base.mana_max + self.stats.max_modifier("MP")
         }
     }
 
@@ -323,7 +328,7 @@ impl Actor {
         if self.uses_npc_formulas() {
             return ((3 * self.level_max(cfg)) / 2).min(80);
         }
-        let sum = self.equipment.protection_sum(ty);
+        let sum = self.equipment.protection_sum(ty) + self.stats.modifier(ty.protection_tag());
         let chest = self.equipment.body.as_ref().map_or(0, |b| b.protection(ty));
         let robe = self.equipment.wears_robe();
         let resist = match ty {
@@ -354,6 +359,76 @@ impl Actor {
             }
             p.min(90) + resist
         }
+    }
+
+    /// The attribute / pool `tag` as the player memory holds it: base values from the actor, the
+    /// temporary modifiers from [`Actor::stats`].
+    fn stat_of(&self, tag: &str) -> Stat {
+        let mut s = match tag.to_ascii_uppercase().as_str() {
+            "HP" => Stat::pool(self.hp, self.base.hp_max),
+            "MP" => Stat::pool(self.mana, self.base.mana_max),
+            "SP" => Stat::pool(self.stamina, self.base.stamina_max),
+            "STR" => Stat::attribute(self.base.str),
+            "DEX" => Stat::attribute(self.base.dex),
+            "INT" => Stat::attribute(self.base.int),
+            "THF" => Stat::attribute(self.base.theft),
+            "ALC" => Stat::attribute(self.base.alchemy),
+            "SMT" => Stat::attribute(self.base.smithing),
+            _ => Stat::attribute(0),
+        };
+        self.stats.load(tag, &mut s);
+        if s.pool {
+            // the pool's current value is kept whole in the actor
+            let value = match tag.to_ascii_uppercase().as_str() {
+                "HP" => self.hp,
+                "MP" => self.mana,
+                _ => self.stamina,
+            };
+            s.base = value - s.modifier;
+        }
+        s
+    }
+
+    fn store_stat(&mut self, tag: &str, s: &Stat) {
+        self.stats.store(tag, s);
+        match tag.to_ascii_uppercase().as_str() {
+            "HP" => {
+                self.hp = s.value();
+                self.base.hp_max = s.base_max;
+            }
+            "MP" => {
+                self.mana = s.value();
+                self.base.mana_max = s.base_max;
+            }
+            "SP" => {
+                self.stamina = s.value();
+                self.base.stamina_max = s.base_max;
+            }
+            "STR" => self.base.str = s.base,
+            "DEX" => self.base.dex = s.base,
+            "INT" => self.base.int = s.base,
+            "THF" => self.base.theft = s.base,
+            "ALC" => self.base.alchemy = s.base,
+            "SMT" => self.base.smithing = s.base,
+            _ => {}
+        }
+    }
+
+    /// Port of the player memory entry points (`ApplyMod` Game:0x14efa0, `UnapplyMod` 0x14f0a0,
+    /// `Consume` 0x14ed60): apply an item modifier event to the hero. Characters that use
+    /// the NPC formulas have no attribute store and ignore it.
+    pub fn apply_stat(&mut self, kind: StatKind, tag: &str, op: i32, value: i32) -> bool {
+        if self.uses_npc_formulas() {
+            return false;
+        }
+        let mut s = self.stat_of(tag);
+        let ok = match kind {
+            StatKind::Apply => stats::apply_mod(&mut s, tag, value, op),
+            StatKind::Unapply => stats::unapply_mod(&mut s, tag, value, op),
+            StatKind::Consume => stats::consume(&mut s, value, op),
+        };
+        self.store_stat(tag, &s);
+        ok
     }
 
     /// `IsGuard`: enclave-type NPC with an alignment [CA 10.4, I on the enclave match].
