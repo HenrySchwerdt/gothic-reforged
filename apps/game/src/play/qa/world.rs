@@ -884,3 +884,86 @@ pub fn world_routines() -> Sc {
     });
     sc
 }
+
+/// A chest outside Ardea: from the Reddock market the hero walks to the nearest unlocked chest
+/// of an existing layer and opens it with the use key; the contents come from the chest's
+/// treasure sets.
+pub fn world_chest() -> Sc {
+    use super::more::{Goal, approach};
+    use std::sync::Arc;
+    let mut sc = Sc::new(400.0);
+    grab(&mut sc);
+    sc.act("setup: stand at the Reddock market", |cx| {
+        let at = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
+        place_hero(cx, at + Vec3::Y * 300.0);
+    });
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.wait(6.0);
+    let goal: Goal = Arc::new(|cx| {
+        let hero = cx.hero_pos();
+        let w = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
+        w.list
+            .iter()
+            .enumerate()
+            .filter(|(i, o)| {
+                o.entity.is_some()
+                    && w.layer_on(*i)
+                    && !o.def.is_item
+                    && o.def.script_use() == gothic_sim::script::enums::UseType::Chest
+                    && o.def.lock.as_ref().is_none_or(|l| !l.locked)
+                    && (o.pos_cm - hero).length() < 20_000.0
+            })
+            .map(|(_, o)| o)
+            .min_by(|a, b| {
+                (a.pos_cm - hero)
+                    .length()
+                    .total_cmp(&(b.pos_cm - hero).length())
+            })
+            .map(|o| o.pos_cm)
+    });
+    approach(
+        &mut sc,
+        "chest",
+        goal,
+        140.0,
+        -0.3,
+        Arc::new(|cx| matches!(cx.play().target, Some(crate::walk::play::Target::Object(_)))),
+    );
+    sc.act("note where we are", |cx| {
+        let p = cx.player().ctrl.position;
+        let (r, name) = {
+            let o = cx
+                .world
+                .resource::<crate::walk::play::objects::WorldObjects>();
+            let near = o
+                .list
+                .iter()
+                .filter(|e| e.entity.is_some() && !e.def.is_item)
+                .min_by(|a, b| (a.pos_cm - p).length().total_cmp(&(b.pos_cm - p).length()))
+                .map(|e| e.def.name.clone());
+            (live_in(cx, "reddock"), near)
+        };
+        cx.note(format!(
+            "at the chest: {r} Reddock bodies shown, nearest object {name:?}"
+        ));
+        cx.use_key();
+    });
+    sc.until("loot page", 10.0, |cx| {
+        cx.ui().screen == gothic_ui::Screen::Loot
+    });
+    sc.wait(1.0);
+    sc.shot("chest_open");
+    sc.check("the chest outside Ardea shows its contents", |cx| {
+        let n = cx.inter().window.as_ref().map_or(0, |w| w.lines.len());
+        expect(
+            n > 0,
+            format!("{n} window lines"),
+            format!("{n} window lines"),
+        )
+    });
+    sc.act("Esc", |cx| cx.tap(KeyCode::Escape));
+    sc.wait(1.0);
+    sc
+}
