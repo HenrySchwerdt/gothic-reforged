@@ -87,6 +87,7 @@ fn damage_start(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnReactToDamage` (S:20af0): poll the surroundings; give up when the target is
 /// farther than 7 m (30 m for archers and mages) or after ten seconds.
 pub fn on_react_to_damage(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_react_to_damage");
     crate::assess::assess_active_perception(host, npc);
     let target = host.current_target(npc);
     let mut range = 700.0;
@@ -124,6 +125,7 @@ fn damage_go_back(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 
 /// Port of `OnReactToDamage_GoBack` (S:20f90): stop walking once within 3 m.
 pub fn on_react_to_damage_go_back(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_react_to_damage_go_back");
     if host.state_time(npc) > 0.1 {
         let target = host.current_target(npc);
         if host.distance(npc, target) < 300.0 {
@@ -183,6 +185,7 @@ fn weapon_start(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnReactToWeapon` (S:216e0): the player walked away (beyond 10 m) with a threat
 /// still drawn: "YesGetLost" and end; one who lowered the weapon within 10 m earns "WiseMove".
 pub fn on_react_to_weapon(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_react_to_weapon");
     let player = host.player();
     if host.distance(npc, player) <= 1000.0 {
         if !has_dangerous_weapon(host, player) {
@@ -266,6 +269,7 @@ fn player_in_guarded_zone(host: &dyn ScriptHost) -> bool {
 /// ("ISaidGetOutOfHere", enclave zones) and attacked with reason Intruder after 8 s; leaving
 /// the guarded zone calms everything down.
 pub fn on_react_to_zone(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_react_to_zone");
     let player = host.player();
     if host.distance(npc, player) > 500.0 {
         return false;
@@ -324,6 +328,7 @@ fn threaten_face(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `ZS_Threaten_Loop` (S:26440): a creature that hisses at an intruder attacks below
 /// 7 m (reason Angry), loses interest beyond 10 m, and attacks after 5 s anyway.
 fn threaten_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("threaten_loop");
     let target = host.current_target(npc);
     let d = host.distance(npc, target);
     if d < 700.0 {
@@ -380,6 +385,7 @@ fn flee_goto_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnFlee_GotoFleePoint` (S:1dff0): every half second check whether the flee point is
 /// reached (5 m); then flee again from the pursuer, or watch for a follower.
 pub fn on_flee_goto_fleepoint(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_flee_goto_fleepoint");
     if host.state_time(npc) <= 0.5 {
         return false;
     }
@@ -429,6 +435,7 @@ fn flee_go_back_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 
 /// Port of `OnFlee_GoBack` (S:1e470): once the pursuer is within 20 m watch it.
 pub fn on_flee_go_back(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_flee_go_back");
     if host.state_time(npc) > 0.5 {
         let target = host.current_target(npc);
         if host.distance(npc, target) < 2000.0 {
@@ -491,6 +498,7 @@ fn watch_start(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnWatchFight` (S:27e40): a fight where somebody is dead or down ends the show
 /// (applause for the player's victory); a fight that left the arena zone is ignored.
 pub fn on_watch_fight(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_watch_fight");
     let player = host.player();
     let a = host.current_target(npc);
     let b = host.alternative_target(npc);
@@ -567,6 +575,7 @@ fn watch_back_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 
 /// Port of `OnWatchFight_GoBack` (S:286b0): stop once the fight is 6 m away again.
 pub fn on_watch_fight_go_back(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_watch_fight_go_back");
     if host.state_time(npc) > 0.1 {
         let target = host.current_target(npc);
         if host.distance(npc, target) <= 600.0 {
@@ -600,6 +609,7 @@ fn watch_goto_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnWatchFight_Goto` (S:28a60): walk toward the fight until 6 m away; chasing longer
 /// than `GetFollowTime` makes the spectator wait for the fighters to flee.
 pub fn on_watch_fight_goto(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_watch_fight_goto");
     let target = host.current_target(npc);
     if host.state_time(npc) <= 0.5 || host.distance(npc, target) >= 600.0 {
         if host.state_time(npc) > 0.5
@@ -673,6 +683,7 @@ pub fn cheer_fight(
     victim: EntityId,
     heavy: bool,
 ) -> Option<&'static str> {
+    gothic_portcov::hit!("cheer_fight");
     if !is_humanoid(host, spectator) || !host.has_svm_sample(spectator, "Watchfight") {
         return None;
     }
@@ -732,6 +743,7 @@ fn observe_face(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// who lost sight of the suspect starts over; a harmless suspect far away (7 m) or watched for
 /// more than 4 s ends the observation [I on the zone/guard clauses].
 fn observe_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("observe_loop");
     if host.state_time(npc) <= 1.0 {
         return Out::Abort;
     }
@@ -850,6 +862,7 @@ fn eat_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnEatBody_Perception` (S:1d5a0): a meal that is disturbed by a hostile creature
 /// within 5 m is defended (`AssessTarget` with reason DriveAway) against up to five candidates.
 pub fn on_eat_body_perception(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_eat_body_perception");
     let mut candidates = vec![host.alternative_target(npc)];
     for n in host.all_npcs() {
         if n != npc && host.distance(npc, n) < 500.0 {
@@ -913,6 +926,7 @@ fn ransack_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 
 /// Port of `OnRansackBody` (S:1fd70): a body that stopped being down ends the ransacking.
 pub fn on_ransack_body(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_ransack_body");
     crate::assess::assess_active_perception(host, npc);
     let body = host.current_target(npc);
     if body.is_some() && host.ai_mode(body) != AiMode::Down {
@@ -984,6 +998,7 @@ fn talk_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `ZS_Lee_Teleport` (S:25c00): Lee stands up, takes the Vengard temple teleport rune
 /// and casts it, then goes back to his routine.
 fn lee_stand(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("lee_stand");
     queue(host, npc, AiCommand::StandUp)
 }
 

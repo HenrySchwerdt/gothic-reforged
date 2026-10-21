@@ -24,11 +24,13 @@ fn uses_player_memory(host: &dyn ScriptHost, e: EntityId) -> bool {
 /// Port of `GetLevel` (S:36cb0): the NPC's `Level` property, +10 on hard and -10 on easy
 /// (minimum 1). The player is never adjusted.
 pub fn level(host: &dyn ScriptHost, e: EntityId) -> u32 {
+    gothic_portcov::hit!("level");
     adjusted_level(host, e, host.level_raw(e))
 }
 
 /// Port of `GetLevelMax` (S:36db0): `LevelMax` with the same difficulty shift as [`level`].
 pub fn level_max(host: &dyn ScriptHost, e: EntityId) -> u32 {
+    gothic_portcov::hit!("level_max");
     adjusted_level(host, e, host.level_max_raw(e))
 }
 
@@ -47,6 +49,7 @@ fn adjusted_level(host: &dyn ScriptHost, e: EntityId, raw: u32) -> u32 {
 /// property on top of the difficulty-adjusted level; as `LevelMax` is normally equal to `Level`
 /// in the data the cap makes this equal to `GetLevelMax` for stock NPCs [V code, I data].
 pub fn current_level(host: &dyn ScriptHost, e: EntityId) -> u32 {
+    gothic_portcov::hit!("current_level");
     if e == host.player() {
         if !host.is_transformed(e) {
             return host.level_raw(e);
@@ -64,6 +67,7 @@ pub fn current_level(host: &dyn ScriptHost, e: EntityId) -> u32 {
 
 /// Port of `GetDiffToPlayerLevel` (S:36eb0): `CurrentLevel(npc) - player level`, 0 for the player.
 pub fn diff_to_player_level(host: &dyn ScriptHost, e: EntityId) -> i32 {
+    gothic_portcov::hit!("diff_to_player_level");
     if e == host.player() {
         return 0;
     }
@@ -86,6 +90,7 @@ const fn attribute_halves(attr: Attribute) -> i32 {
 /// Player: the player-memory base value. Otherwise `10 + trunc(f * CurrentLevel)` with
 /// `f = 1.5` for STR/DEX/INT and `0.5` for the three skills.
 pub fn attribute(host: &dyn ScriptHost, e: EntityId, attr: Attribute) -> i32 {
+    gothic_portcov::hit!("attribute");
     if uses_player_memory(host, e) {
         return host.pm_attribute(attr);
     }
@@ -95,6 +100,7 @@ pub fn attribute(host: &dyn ScriptHost, e: EntityId, attr: Attribute) -> i32 {
 /// Port of `SetStrength` (S:33ae0), `SetDexterity` (S:33ba0), `SetIntelligence` (S:33c60),
 /// `SetAlchemy` (S:33d20), `SetSmithing` (S:33de0), `SetTheft` (S:33ea0): player only.
 pub fn set_attribute(host: &mut dyn ScriptHost, e: EntityId, attr: Attribute, value: i32) -> bool {
+    gothic_portcov::hit!("set_attribute");
     if e == host.player() {
         host.pm_set_attribute(attr, value);
     }
@@ -105,6 +111,7 @@ pub fn set_attribute(host: &mut dyn ScriptHost, e: EntityId, attr: Attribute, va
 /// `AddAlchemy` (S:34260), `AddSmithing` (S:34360), `AddTheft` (S:34460): adds to the player's
 /// base value and prints the gain (`STR`, `DEX`, `INT`, `ALC`, `SMT`, `THF`); no-op for NPCs.
 pub fn add_attribute(host: &mut dyn ScriptHost, e: EntityId, attr: Attribute, delta: i32) -> bool {
+    gothic_portcov::hit!("add_attribute");
     if e == host.player() {
         host.pm_add_attribute(attr, delta);
     }
@@ -119,6 +126,7 @@ pub fn add_attribute(host: &mut dyn ScriptHost, e: EntityId, attr: Attribute, de
 /// `ExtendedContent` (shipped); capped at 80. Fire and Ice add 10 with `Perk_ResistHeat` /
 /// `Perk_ResistCold`. NPC or transformed player: `min(80, trunc(1.5 * LevelMax))`.
 pub fn protection(host: &dyn ScriptHost, e: EntityId, prot: Protection) -> i32 {
+    gothic_portcov::hit!("protection");
     if !uses_player_memory(host, e) {
         return (level_max(host, e) as i32 * 3 / 2).min(PROTECTION_CAP);
     }
@@ -143,6 +151,7 @@ pub fn protection(host: &dyn ScriptHost, e: EntityId, prot: Protection) -> i32 {
 /// `SetProtectionMissile` (S:34de0), `SetProtectionFire` (S:34ea0), `SetProtectionIce` (S:34f60),
 /// `SetProtectionLightning` (S:35020): player only.
 pub fn set_protection(host: &mut dyn ScriptHost, e: EntityId, prot: Protection, v: i32) -> bool {
+    gothic_portcov::hit!("set_protection");
     if e == host.player() {
         host.pm_set_protection(prot, v);
     }
@@ -152,6 +161,7 @@ pub fn set_protection(host: &mut dyn ScriptHost, e: EntityId, prot: Protection, 
 /// Port of `AddProtectionBlades` (S:350e0), `...Impact` (S:351a0), `...Missile` (S:35260),
 /// `...Fire` (S:35320), `...Ice` (S:353e0), `...Lightning` (S:354a0): player only.
 pub fn add_protection(host: &mut dyn ScriptHost, e: EntityId, prot: Protection, d: i32) -> bool {
+    gothic_portcov::hit!("add_protection");
     if e == host.player() {
         host.pm_add_protection(prot, d);
     }
@@ -163,6 +173,7 @@ pub fn add_protection(host: &mut dyn ScriptHost, e: EntityId, prot: Protection, 
 /// Player memory first, then the damage receiver (hit points and stamina), else 0; mana of a
 /// non-player is the constant 1000.
 pub fn pool(host: &dyn ScriptHost, e: EntityId, which: Pool) -> i32 {
+    gothic_portcov::hit!("pool");
     if e == host.player() {
         return host.pm_pool(which);
     }
@@ -180,6 +191,7 @@ pub fn pool(host: &dyn ScriptHost, e: EntityId, which: Pool) -> i32 {
 /// receiver. NPC stamina: `max(100, 10 * LevelMax)` for humanoids, `max(100, 20 * LevelMax)` for
 /// other species, 100 without a damage receiver. Mana 1000.
 pub fn pool_max(host: &dyn ScriptHost, e: EntityId, which: Pool) -> i32 {
+    gothic_portcov::hit!("pool_max");
     if which == Pool::Hit && is_ambient_creature(host, e) {
         return 1;
     }
@@ -207,6 +219,7 @@ pub fn pool_max(host: &dyn ScriptHost, e: EntityId, which: Pool) -> i32 {
 /// `GetStaminaPointsPercent` (S:36560): `100 * value / max`, never negative; 100 for an entity
 /// without a damage receiver.
 pub fn pool_percent(host: &dyn ScriptHost, e: EntityId, which: Pool) -> i32 {
+    gothic_portcov::hit!("pool_percent");
     if e != host.player() && which != Pool::Mana && !host.has_damage_receiver(e) {
         return 100;
     }
@@ -227,6 +240,7 @@ pub fn pool_percent(host: &dyn ScriptHost, e: EntityId, which: Pool) -> i32 {
 /// maximum, then written to the NPC receiver and mirrored into player memory for the player.
 /// Returns `false` for an entity with neither store (hit points / stamina only).
 pub fn set_pool(host: &mut dyn ScriptHost, e: EntityId, which: Pool, value: i32) -> bool {
+    gothic_portcov::hit!("set_pool");
     let is_player = e == host.player();
     if which == Pool::Mana {
         if is_player {
@@ -258,6 +272,7 @@ pub fn set_pool(host: &mut dyn ScriptHost, e: EntityId, which: Pool, value: i32)
 /// (S:367a0): writes the maximum and re-clamps the current value (`HitPointsMax` also floors the
 /// current value at 0).
 pub fn set_pool_max(host: &mut dyn ScriptHost, e: EntityId, which: Pool, max: i32) -> bool {
+    gothic_portcov::hit!("set_pool_max");
     let is_player = e == host.player();
     if which == Pool::Mana {
         if is_player {
@@ -288,6 +303,7 @@ pub fn set_pool_max(host: &mut dyn ScriptHost, e: EntityId, which: Pool, max: i3
 
 /// Port of `AddHitPoints` (S:35b50): `SetHitPoints(GetHitPoints + delta)`. No god-mode rule here.
 pub fn add_hit_points(host: &mut dyn ScriptHost, e: EntityId, delta: i32) -> bool {
+    gothic_portcov::hit!("add_hit_points");
     let now = pool(host, e, Pool::Hit);
     set_pool(host, e, Pool::Hit, now.saturating_add(delta));
     true
@@ -297,6 +313,7 @@ pub fn add_hit_points(host: &mut dyn ScriptHost, e: EntityId, delta: i32) -> boo
 /// delta goes to player memory (no effect for NPCs, whose mana is constant). Returns whether the
 /// change was applied.
 pub fn add_mana_points(host: &mut dyn ScriptHost, e: EntityId, delta: i32) -> bool {
+    gothic_portcov::hit!("add_mana_points");
     let is_player = e == host.player();
     if is_player && host.cheat_god() && delta < 0 {
         return false;
@@ -311,6 +328,7 @@ pub fn add_mana_points(host: &mut dyn ScriptHost, e: EntityId, delta: i32) -> bo
 /// the free-action timer runs (`GuardStatus == Active`, COMBAT_AI_RULES 9.5); otherwise
 /// `SetStaminaPoints(GetStaminaPoints + delta)`. Returns whether it was applied.
 pub fn add_stamina_points(host: &mut dyn ScriptHost, e: EntityId, delta: i32) -> bool {
+    gothic_portcov::hit!("add_stamina_points");
     use crate::enums::GuardStatus;
     if e == host.player() && (host.cheat_god() || host.guard_status(e) == GuardStatus::Active) {
         return false;
@@ -324,6 +342,7 @@ pub fn add_stamina_points(host: &mut dyn ScriptHost, e: EntityId, delta: i32) ->
 /// (S:36a20): the player's maximum grows (and the gain is printed as `HP`/`MP`/`SP`); no-op for
 /// NPCs.
 pub fn add_pool_max(host: &mut dyn ScriptHost, e: EntityId, which: Pool, delta: i32) -> bool {
+    gothic_portcov::hit!("add_pool_max");
     if e == host.player() {
         host.pm_add_pool_max(which, delta);
     }

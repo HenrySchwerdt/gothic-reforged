@@ -103,12 +103,51 @@ pub enum Command {
         /// Direction.
         direction: gothic_sim::script::player::evade::Direction,
     },
-    /// A melee move of the `PS_Melee_*` family against an actor.
-    MeleeMove {
-        /// Attack action (`QuickAttack`, `PowerAttack`, ...).
-        action: gothic_sim::script::enums::Action,
-        /// Opponent.
-        target: ActorId,
+    /// A key action of the hero: `OnPlayerGameKeyPressed` queues this `gEAction` id with the
+    /// focus entity in the player's action queue; the loop state of the current task
+    /// (`PS_Melee_Loop`) reads it.
+    PlayerAction {
+        /// `gEAction` id.
+        id: u32,
+        /// The focus entity at the time of the key.
+        focus: Option<ActorId>,
+    },
+    /// `FullStop` + `SetState(name)` of the hero (the riposte out of the guard, the chains of
+    /// `OnPlayerAction`); `name` is a `PS_*` state name.
+    PlayerEnterState {
+        /// State name.
+        name: String,
+    },
+    /// The weapon key in `PS_Normal_Loop` (`OnPlayerSelectWeapon`).
+    SelectWeapon,
+    /// The host's per-frame view of the hero's control layer (`PSFocus`, `PSCamera`, the movement
+    /// key latch of the script DLL).
+    HeroControl {
+        /// `PSFocus::GetFocusEntity(melee)`.
+        melee_focus: Option<ActorId>,
+        /// `PSFocus::GetFocusEntity()`.
+        focus: Option<ActorId>,
+        /// `PSCamera::IsInFirstPerson`.
+        first_person: bool,
+        /// A movement key is down.
+        movement_key: bool,
+    },
+    /// The host plays the hero's animations and reports their moments back.
+    HostDrivesHero(bool),
+    /// The `Hit` clip of the hero's combat move reached the damage moment (`OnHit`).
+    HeroMoveHit {
+        /// Sequence number of the `HeroMove` event.
+        seq: u32,
+    },
+    /// The hero's instruction (combat move or hold) ended.
+    HeroExecDone {
+        /// Sequence number of the event.
+        seq: u32,
+    },
+    /// The `Begin` clip of the hero's hold ended: the item changes slots.
+    HeroHoldSwap {
+        /// Sequence number of the `HeroHold` event.
+        seq: u32,
     },
     /// Take stack `index` (or everything) of an opened container into the hero's inventory.
     TakeLoot {
@@ -119,11 +158,6 @@ pub enum Command {
     },
     /// The host opened (true) or closed (false) a full-screen window that holds the world.
     GuiOpen(bool),
-    /// Raise the guard against `target` (hold of the right mouse button).
-    Parade {
-        /// Opponent.
-        target: ActorId,
-    },
     // ---- magic and ranged (ported `PS_Magic*` / `PS_Ranged*`, see `gothic_script::magic`) ----
     /// Hold a spell item (rune, scroll, potion) in the right hand and enter the magic mode.
     SelectSpell {
@@ -667,6 +701,7 @@ impl Core {
     /// Port of the range part of `eCEntityAdmin::Process`: the hero (the camera stand-in) centres
     /// the region of interest; actors outside it are not thought for.
     fn update_processing_range(&mut self, out: &mut Vec<Event>) {
+        gothic_portcov::hit!("update_processing_range");
         if !self.range.enabled {
             // Everything is processed except the actors of switched-off sector layers.
             let sectors = &self.range.scene().sectors;
@@ -788,10 +823,27 @@ impl Core {
             Command::Dodge { direction } => {
                 self.sim.player_dodge(*direction);
             }
-            Command::MeleeMove { action, target } => {
-                self.sim.player_melee(*action, *target);
+            Command::PlayerAction { id, focus } => self.sim.player_push_action(*id, *focus),
+            Command::PlayerEnterState { name } => {
+                if let Some(state) = gothic_sim::script::routine::state::State::from_name(name) {
+                    self.sim.player_enter_state(state);
+                }
             }
-            Command::Parade { target } => self.sim.player_parade(*target),
+            Command::SelectWeapon => {
+                self.sim.player_select_weapon();
+            }
+            Command::HeroControl {
+                melee_focus,
+                focus,
+                first_person,
+                movement_key,
+            } => self
+                .sim
+                .set_hero_control(*melee_focus, *focus, *first_person, *movement_key),
+            Command::HostDrivesHero(on) => self.sim.script.player.host_drives = *on,
+            Command::HeroMoveHit { seq } => self.sim.hero_move_hit(*seq),
+            Command::HeroExecDone { seq } => self.sim.hero_exec_done(*seq),
+            Command::HeroHoldSwap { seq } => self.sim.hero_hold_swap(*seq),
             Command::TakeLoot { object, index } => {
                 let taken = self.sim.script.take_loot(EntityId(*object), *index);
                 for (item, n) in taken {

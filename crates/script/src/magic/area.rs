@@ -278,6 +278,7 @@ pub fn assess_mist(
     caster: EntityId,
     aggressive: bool,
 ) -> bool {
+    gothic_portcov::hit!("assess_mist");
     if !crate::perception::can_receive_perception_from(host, npc, caster, false) {
         return false;
     }
@@ -307,6 +308,7 @@ pub fn assess_mist(
 /// Port of `MagicMistTick` (S:5c820) and `MagicMistTickNoAggro`: characters inside the mist that
 /// are not yet under it get the status bit and assess the mist; those that left it lose the bit.
 pub fn magic_mist_tick(host: &mut dyn ScriptHost, fx: &AreaEffect, aggressive: bool) {
+    gothic_portcov::hit!("magic_mist_tick");
     for npc in host.all_npcs() {
         let inside = host.position(npc).distance(fx.at) <= MIST_RADIUS;
         let misted = host.has_status(npc, STATUS_CONTROLLED);
@@ -326,6 +328,7 @@ pub fn magic_mist_tick(host: &mut dyn ScriptHost, fx: &AreaEffect, aggressive: b
 /// d100 roll of at most `chance + min(5 n, 70)` (n candidates) and then hits one random
 /// candidate for `base + rand(rand)`. Returns false when no candidate was left.
 pub fn area_damage_tick(host: &mut dyn ScriptHost, fx: &mut AreaEffect, cfg: &AreaConfig) -> bool {
+    gothic_portcov::hit!("area_damage_tick");
     let owner = fx.owner;
     let owner_leader = host.party_leader(owner);
     let radius = cfg.radius;
@@ -396,6 +399,7 @@ pub const FREEZE_UNIT_SECS: f32 = 0.1;
 /// Port of `ZS_Stunned` (S:5dd70): the victim stumbles and stands dazed; `ZS_Stunned_Loop` waits
 /// out [`STUN_SECS`] and `ZS_Stunned_End` stands up and picks the routine (or the fight) up again.
 fn zs_stunned(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_stunned");
     match step(host, npc) {
         0 => {
             host.full_stop(npc);
@@ -418,6 +422,7 @@ fn zs_stunned(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 
 /// Port of `ZS_Stunned_Loop` (S:5e300): wait until the stun is over, then `ZS_Stunned_End`.
 fn zs_stunned_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_stunned_loop");
     if host.task_time(npc) > STUN_SECS {
         host.set_state(npc, State::StunnedEnd);
         return Flow::Done;
@@ -429,6 +434,7 @@ fn zs_stunned_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// Port of `ZS_Stunned_End` (S:5e4d0): stand up; a victim who knows its attacker assesses him
 /// (`AssessAgressor`), otherwise the routine continues.
 fn zs_stunned_end(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_stunned_end");
     match step(host, npc) {
         0 => {
             host.queue_ai(npc, AiCommand::StandUp);
@@ -454,6 +460,7 @@ fn zs_stunned_end(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// Port of `ZS_Freeze` (S:58fd0): the victim stops where it is, its time stands still and the
 /// status bit is set (the length was stored in the task position by the hit).
 fn zs_freeze(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_freeze");
     host.full_stop(npc);
     host.set_ai_mode(npc, AiMode::Sleep);
     host.set_status_bits(npc, STATUS_FROZEN, true);
@@ -470,6 +477,7 @@ fn zs_freeze(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// Port of `ZS_Freeze_Loop` (S:59160): when the ice melts the victim thaws and turns on whoever
 /// froze it (or resumes its routine).
 fn zs_freeze_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_freeze_loop");
     let length = host.task_position(npc) as f32 * FREEZE_UNIT_SECS;
     if host.task_time(npc) < length {
         host.queue_ai(npc, AiCommand::WaitMs { ms: 100 });
@@ -499,6 +507,7 @@ fn zs_freeze_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// Port of `ZS_MagicSleep` (S:59350) and `ZS_MagicHypnosis` (S:599d0): the victim drops
 /// everything it fights with, stands, then lies down (`AniStateAction` 0x54) in sleep mode.
 fn zs_magic_sleep(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_magic_sleep");
     match step(host, npc) {
         0 => {
             host.set_ai_mode(npc, AiMode::Sleep);
@@ -530,6 +539,7 @@ fn zs_magic_sleep(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// second the sleeper may wake. A sleeper wakes after 30 s (the hero after 5 s) by the sleep
 /// spell, after 60 s from hypnosis; the caster is then its alternative target and it attacks.
 fn zs_magic_sleep_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_magic_sleep_loop");
     let hypnosis = host.current_task(npc) == Some(State::MagicHypnosis);
     let limit = if hypnosis {
         HYPNOSIS_SECS
@@ -552,6 +562,7 @@ fn zs_magic_sleep_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// Port of `ZS_Misted` (S:5d1e0): a character under the mist goes into reaction mode, stands up
 /// and loses its destination; the loop lets it go as soon as the mist bit is gone.
 fn zs_misted(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_misted");
     match step(host, npc) {
         0 => {
             host.set_ai_mode(npc, AiMode::Reaction);
@@ -569,6 +580,7 @@ fn zs_misted(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 /// Port of `ZS_Misted_Loop` (S:5d410): while the 0x40 bit holds the character stands; afterwards the
 /// routine continues.
 fn zs_misted_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_misted_loop");
     if host.has_status(npc, STATUS_CONTROLLED) {
         host.queue_ai(npc, AiCommand::WaitMs { ms: 200 });
         return Flow::Yield;
@@ -579,12 +591,14 @@ fn zs_misted_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 
 /// Port of `ZS_Decay` (S:5a4d0): the entity plays its end effect and is removed.
 fn zs_decay(host: &mut dyn ScriptHost, e: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_decay");
     host.remove_entity(e);
     Flow::Done
 }
 
 /// Port of `ZS_WaitForMeteor` (S:5a000) and `ZS_WaitForDawn`: the DLL's bodies are empty.
 fn zs_nothing(_host: &mut dyn ScriptHost, _e: EntityId) -> Flow {
+    gothic_portcov::hit!("zs_nothing");
     Flow::Done
 }
 

@@ -189,6 +189,12 @@ impl<W: WorldQuery> Sim<W> {
         self.script.magic.hero_aim = aim;
     }
 
+    /// The hero's casting hand in world space (cm); spell missiles of the hero start there
+    /// (`MagicProjectile`: the pose of the item in the hand slot) instead of at the chest.
+    pub fn set_hero_hand(&mut self, hand: Option<Vec3>) {
+        self.script.magic.hero_hand = hand;
+    }
+
     /// Replace the template values of a projectile (`gCProjectile_PS` and rigid body
     /// properties of a decoded template), by template name.
     pub fn set_projectile_params(&mut self, template: &str, params: ProjectileParams) {
@@ -262,7 +268,11 @@ impl<W: WorldQuery> Sim<W> {
         let target_id = target.map(|t| u64::from(t.0));
         if !spec.spell.is_empty() {
             let power = spec.path == gothic_script::magic::api::PathStyle::Missile;
-            let mut l = launch::spell_missile(&params, owner_id, chest, forward, target_id, power);
+            let origin = match self.script.magic.hero_hand {
+                Some(h) if self.hero == Some(owner) => h,
+                _ => chest,
+            };
+            let mut l = launch::spell_missile(&params, owner_id, origin, forward, target_id, power);
             l.projectile.params.shoot_velocity = if spec.velocity > 0.0 {
                 spec.velocity
             } else {

@@ -45,6 +45,7 @@ fn target_of(host: &dyn ScriptHost, p: EntityId) -> EntityId {
 /// Otherwise he enters combat mode, remembers the spell (`LastSpell`), holds it in the right
 /// hand and stands up; then `PS_Magic_Loop`.
 fn ps_magic(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Magic {
         host.set_task(p, State::PsNormal);
         return Flow::Done;
@@ -74,6 +75,7 @@ fn ps_magic(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// ones) takes the focused character as target; otherwise there is none. The hero stays here
 /// until the weapon is put away.
 fn ps_magic_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_loop");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Magic {
         host.set_task(p, State::PsNormal);
         return Flow::Done;
@@ -94,6 +96,7 @@ fn ps_magic_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// animation and run the cast. Afterwards `Spl_SoulTravel` leaves the body (`PS_Ghost`),
 /// `Spl_DuskToDawn` runs `PS_DuskToDawn`, everything else reloads.
 fn ps_magic_cast(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_cast");
     let state = host.current_state(p).unwrap_or(State::PsMagicCast);
     let (action, power) = match state {
         State::PsMagicQuickCast => (Action::QuickCast, false),
@@ -118,6 +121,13 @@ fn ps_magic_cast(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
         _ => {
             let last = host.slot_spell_name(p, Slot::RightHand);
             cast::run_cast(host, p, power);
+            // The `Cast_Hit` and `Cast_Recover` clips play after the missile left.
+            let (hit, recover) = match action {
+                Action::QuickCast => (200, 360),
+                Action::PowerCast => (240, 760),
+                _ => (280, 840),
+            };
+            host.queue_ai(p, AiCommand::WaitMs { ms: hit + recover });
             let next = match last.as_str() {
                 "Spl_SoulTravel" => {
                     host.full_stop(p);
@@ -140,6 +150,7 @@ fn ps_magic_cast(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Magic_Summon_Abort` (S:7c2f0): the hero lets go of a summon spell in the middle
 /// of the cast; the mana paid comes back (cast phase 3).
 fn ps_magic_summon_abort(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_summon_abort");
     let stack = host.find_stack_index(p, Slot::RightHand);
     cast::start_cast_phase(host, p, EntityId::NONE, stack, Phase::Abort);
     host.set_state(p, State::PsMagicLoop);
@@ -150,6 +161,7 @@ fn ps_magic_summon_abort(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// hand (`AssureItems` with flag 8, hands: nothing right, the sword left), use the scroll up and
 /// let the routine continue (the sword is a weapon now, the mode follows).
 fn ps_magic_flame_sword(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_flame_sword");
     match step(host, p) {
         0 => {
             let target = target_of(host, p);
@@ -209,6 +221,7 @@ fn ps_magic_flame_sword(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// one whose scroll is gone) sends the hero to `PS_Normal`; otherwise he holds the spell again,
 /// waits the spell's reload delay and returns to the loop.
 fn ps_magic_reload(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_reload");
     let stack = host.find_stack_index(p, Slot::RightHand);
     match step(host, p) {
         0 => {
@@ -247,6 +260,7 @@ fn ps_magic_reload(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Magic_StaffParade` (S:7c630) and `PS_Magic_StaffParade_Loop` (S:7c8c0): with the
 /// staff the mage parries (`_AI_Parade`); the loop leaves it when a cast key comes.
 fn ps_magic_staff_parade(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_staff_parade");
     match step(host, p) {
         0 => {
             let target = target_of(host, p);
@@ -269,6 +283,7 @@ fn ps_magic_staff_parade_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_MagicPotion` (S:7d870): the hero stops, puts his hands down, drinks (the spell
 /// potions of the animal forms and the like) and the potion's spell is cast as a quick cast.
 fn ps_magic_potion(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_magic_potion");
     match step(host, p) {
         0 => {
             host.full_stop(p);
@@ -378,6 +393,7 @@ fn book_line(book: Book, page: i32) -> &'static str {
 /// two) and gains Intelligence; a finished book sends him to `BS_NothingNew`. The bookstand is
 /// marked used.
 fn bs_book(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("bs_book");
     let book = match host.current_state(p) {
         Some(State::BsBookOfRhobar) => Book::Rhobar,
         Some(State::BsBookOfZuben) => Book::Zuben,
@@ -421,6 +437,7 @@ fn bs_book(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `BS_AncientWisdom` (S:65080): the bookstand of the ancient wisdom picks the book the
 /// hero has not finished: Flood, then Rhobar, then Zuben, and when all are read `BS_NothingNew`.
 fn bs_ancient_wisdom(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("bs_ancient_wisdom");
     let next = [Book::Flood, Book::Rhobar, Book::Zuben]
         .into_iter()
         .find(|b| host.book_progress(*b) < book_pages(*b))
@@ -432,6 +449,7 @@ fn bs_ancient_wisdom(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `BS_NothingNew` (S:64da0): half a second, then one of three remarks
 /// (`NothingNew_00..02`), and on with the routine.
 fn bs_nothing_new(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("bs_nothing_new");
     match step(host, p) {
         0 => {
             host.queue_ai(p, AiCommand::WaitMs { ms: 500 });
@@ -453,6 +471,7 @@ fn bs_nothing_new(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `BS_Alchemy` (S:66a00) and `BS_Smith`: after half a second a remark (`AlchemyBook`,
 /// `SmithBook`) and +3 Alchemy or Smithing (+5 without `ExtendedContent`); the stand is used up.
 fn bs_skill_book(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("bs_skill_book");
     let alchemy = host.current_state(p) == Some(State::BsAlchemy);
     match step(host, p) {
         0 => {
@@ -482,6 +501,7 @@ fn bs_skill_book(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// `Dargoth_Chronicles` marks it. The five remarks and the quest hooks of the DLL are story data
 /// [U]; the port raises the event and continues.
 fn bs_chronicles(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("bs_chronicles");
     match step(host, p) {
         0 => {
             host.queue_ai(p, AiCommand::WaitMs { ms: 500 });
@@ -502,6 +522,7 @@ fn bs_chronicles(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Ghost` (S:673f0): the soul has left the body. The hero changes action, puts his
 /// hands down, loses his focus and stands up, then waits in `PS_Ghost_Loop`.
 fn ps_ghost(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ghost");
     match step(host, p) {
         0 => {
             host.set_ai_mode(p, AiMode::Talk);
@@ -533,6 +554,7 @@ fn ps_ghost(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Ghost_Loop` (S:67900): the ghost looks at whatever is in focus; a jump key sends
 /// him into `PS_Ghost_Jump`.
 fn ps_ghost_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ghost_loop");
     let focus = host.focus_entity();
     host.set_current_target(p, focus);
     host.queue_ai(p, AiCommand::WaitMs { ms: 100 });
@@ -541,6 +563,7 @@ fn ps_ghost_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 
 /// Port of `PS_Ghost_Jump` (S:67a70): one jump, then back to the loop.
 fn ps_ghost_jump(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ghost_jump");
     match step(host, p) {
         0 => {
             crate::combat::commands::start_jump(host, p, false);
@@ -563,6 +586,7 @@ fn ps_ghost_jump(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_GhostSummoner` (S:67c80) and `PS_GhostSummoner_Loop`: the body the soul left behind
 /// is abandoned: hands down, standing, idle.
 fn ps_ghost_summoner(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ghost_summoner");
     match step(host, p) {
         0 => {
             host.set_ai_mode(p, AiMode::Abandoned);

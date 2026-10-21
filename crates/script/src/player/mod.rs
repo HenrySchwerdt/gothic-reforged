@@ -10,6 +10,7 @@
 //! * [`melee`]: the `PS_Melee*` input-to-attack mapping.
 //! * [`magic`]: the `PS_Magic*` spell states and the `BS_*` book stands.
 //! * [`ranged`]: bow and crossbow, `Shoot`.
+//! * [`select_weapon`]: `OnPlayerSelectWeapon`, the weapon key.
 //! * [`boulder`]: orc boulders and carried stones.
 //!
 //! The states are plain [`Def`]s run by the same interpreter as the NPC states (the player is an
@@ -26,6 +27,7 @@ pub mod magic;
 pub mod melee;
 pub mod normal;
 pub mod ranged;
+pub mod select_weapon;
 pub mod use_item;
 
 use crate::enums::AiMode;
@@ -294,22 +296,103 @@ mod tests {
         assert!(!commands::dodge(&mut w, p, Direction::Right));
     }
 
-    #[test]
-    fn melee_moves_swing_at_the_target() {
-        let mut w = TestWorld::new();
+    fn melee_hero(w: &mut TestWorld) -> (EntityId, EntityId) {
         let p = w.player();
         let foe = w.spawn_npc("Foe", crate::enums::Species::Human, 5, 5);
-        assert!(
-            !commands::melee_move(&mut w, p, Action::QuickAttack, foe),
-            "unarmed"
-        );
         w.set_slot(p, crate::enums::Slot::RightHand, UseType::OneH, 0);
-        assert!(commands::melee_move(&mut w, p, Action::PowerAttack, foe));
+        w.set_primary_pose(p, 1);
+        w.set_task_directly(p, State::PsMeleeLoop);
+        w.pl.melee_focus = foe;
+        (p, foe)
+    }
+
+    #[test]
+    fn the_melee_loop_turns_queued_actions_into_moves() {
+        use crate::host::{AiCommand, MovePhase};
+        let mut w = TestWorld::new();
+        let (p, foe) = melee_hero(&mut w);
+        commands::push_action(&mut w, Action::QuickAttack.raw(), foe);
+        commands::run(&mut w, p);
+        assert_eq!(w.current_state(p), Some(State::PsMeleeQuickAttack));
+        assert_eq!(w.current_target(p), foe, "the loop wrote the combat target");
+        commands::run(&mut w, p);
+        let cmds = w.finish_commands(p);
+        // `_AI_QuickAttack`: pay, one Hit clip with the right hand first, wait 100 ms.
+        assert!(matches!(cmds[0], AiCommand::AddStamina(-12)));
+        assert!(matches!(
+            cmds[1],
+            AiCommand::CombatMove {
+                action: Action::QuickAttackR,
+                phase: MovePhase::Hit,
+                ..
+            }
+        ));
+        assert!(matches!(cmds[2], AiCommand::WaitMs { ms: 100 }));
+        commands::run(&mut w, p);
+        assert_eq!(w.current_state(p), Some(State::PsMeleeLoop));
+        // The next quick attack uses the other hand (HitDirection alternates).
+        commands::push_action(&mut w, Action::QuickAttack.raw(), foe);
+        commands::run(&mut w, p);
         commands::run(&mut w, p);
         let cmds = w.finish_commands(p);
         assert!(cmds.iter().any(|c| matches!(
             c,
-            AiCommand::Attack { action: Action::PowerAttack, target } if *target == foe
+            AiCommand::CombatMove { action: Action::QuickAttackL, .. }
         )));
+    }
+
+    #[test]
+    fn a_power_attack_pays_after_its_raise_clip_and_aligns_to_the_target() {
+        use crate::host::{AiCommand, MovePhase};
+        let mut w = TestWorld::new();
+        let (p, foe) = melee_hero(&mut w);
+        commands::push_action(&mut w, Action::PowerAttack.raw(), foe);
+        commands::run(&mut w, p);
+        commands::run(&mut w, p);
+        let cmds = w.finish_commands(p);
+        assert!(matches!(
+            cmds[0],
+            AiCommand::CombatMove { phase: MovePhase::Raise, speed, .. } if (speed - 1.5).abs() < 1e-4
+        ));
+        assert!(matches!(cmds[1], AiCommand::AddStamina(-20)));
+        assert!(matches!(
+            cmds[2],
+            AiCommand::CombatMove { phase: MovePhase::Hit, speed, .. } if (speed - 1.0).abs() < 1e-4
+        ));
+        assert_eq!(w.pl.alignment.get(&p), Some(&foe));
+        assert_eq!(w.pl.constraints.get(&p), Some(&360.0));
+    }
+
+    #[test]
+    fn the_guard_aligns_the_body_and_sets_the_pose() {
+        use crate::host::{AiCommand, MovePhase};
+        let mut w = TestWorld::new();
+        let (p, foe) = melee_hero(&mut w);
+        commands::push_action(&mut w, Action::Parade.raw(), foe);
+        commands::run(&mut w, p);
+        assert_eq!(w.current_state(p), Some(State::PsMeleeParade));
+        commands::run(&mut w, p);
+        let cmds = w.finish_commands(p);
+        // A sword without a shield has no `Begin` clip: the pose snaps (`_AI_Parade`).
+        assert!(cmds.iter().all(|c| !matches!(c, AiCommand::CombatMove { phase: MovePhase::Begin, .. })));
+        commands::run(&mut w, p);
+        assert_eq!(w.ani_state(p), crate::enums::AniState::Parade);
+        assert_eq!(w.pl.alignment.get(&p), Some(&foe));
+        // In the guard the loop keeps the alignment up each pass.
+        commands::run(&mut w, p);
+        assert_eq!(w.pl.constraints.get(&p), Some(&360.0));
+    }
+
+    #[test]
+    fn the_weapon_key_holsters_from_the_melee_loop_and_draws_from_normal() {
+        let mut w = TestWorld::new();
+        let (p, foe) = melee_hero(&mut w);
+        commands::push_action(&mut w, 68, foe);
+        commands::run(&mut w, p);
+        assert_eq!(w.current_task(p), Some(State::PsNormal));
+        assert!(w.pl.queue.is_empty());
+        w.set_task_directly(p, State::PsNormalLoop);
+        assert!(commands::select_weapon(&mut w, p));
+        assert_eq!(w.current_task(p), Some(State::PsMelee));
     }
 }

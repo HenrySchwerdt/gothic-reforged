@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 type Goal = Arc<dyn Fn(&mut Cx) -> Option<Vec3> + Send + Sync>;
 
-fn flat(v: Vec3) -> Vec3 {
+pub(super) fn flat(v: Vec3) -> Vec3 {
     Vec3::new(v.x, 0.0, v.z)
 }
 
 /// Nearest living start raider.
-fn raider(cx: &Cx) -> Option<ActorId> {
+pub(super) fn raider(cx: &Cx) -> Option<ActorId> {
     let hero = cx.hero_pos();
     cx.core()
         .0
@@ -26,14 +26,14 @@ fn raider(cx: &Cx) -> Option<ActorId> {
         .map(|a| a.1)
 }
 
-fn target_goal() -> Goal {
+pub(super) fn target_goal() -> Goal {
     Arc::new(|cx| {
         let id = ActorId(cx.st.n.get("tgt").copied()? as u32);
         cx.actor_pos(id)
     })
 }
 
-fn pick_target(sc: &mut Sc) {
+pub(super) fn pick_target(sc: &mut Sc) {
     sc.act("choose the nearest raider", |cx| {
         let Some(id) = raider(cx) else {
             cx.check("a raider exists", false, "none alive");
@@ -48,7 +48,7 @@ fn pick_target(sc: &mut Sc) {
     });
 }
 
-fn grab(sc: &mut Sc) {
+pub(super) fn grab(sc: &mut Sc) {
     sc.wait(1.0);
     sc.act("grab the mouse with a click", |cx| {
         cx.cursor_to(Vec2::new(640.0, 360.0));
@@ -57,7 +57,7 @@ fn grab(sc: &mut Sc) {
     sc.wait(0.4);
 }
 
-fn tgt_id(cx: &Cx) -> Option<ActorId> {
+pub(super) fn tgt_id(cx: &Cx) -> Option<ActorId> {
     cx.st.n.get("tgt").map(|v| ActorId(*v as u32))
 }
 
@@ -70,7 +70,7 @@ pub fn combat_basic() -> Sc {
     sc.check("the sword is drawn", |cx| {
         expect(cx.play().drawn, "drawn", "state.drawn is false after Space")
     });
-    // Parry: hold the right button; dodge: double tap A.
+    // Parry: hold the right button; double tap A is no dodge in the original.
     sc.act("hold right mouse (parry)", |cx| {
         if cx.play().hero_down {
             return;
@@ -89,7 +89,7 @@ pub fn combat_basic() -> Sc {
     sc.wait(0.12);
     sc.act("second tap", |cx| cx.tap(KeyCode::KeyA));
     sc.wait(1.2);
-    sc.check("the dodge moved the hero (or the hero is down)", |cx| {
+    sc.check("no double-tap dodge in the player layer (the hero strafes two short steps)", |cx| {
         let p = cx.hero_pos();
         let d = Vec2::new(
             p.x - cx.st.n["dodge_x"] as f32,
@@ -97,9 +97,9 @@ pub fn combat_basic() -> Sc {
         )
         .length();
         expect(
-            d > 40.0 || cx.play().hero_down,
+            d < 260.0,
             format!("moved {d:.0} cm"),
-            format!("only {d:.0} cm after the double tap"),
+            format!("{d:.0} cm after two taps: a dodge slide ran"),
         )
     });
     approach(
@@ -195,94 +195,7 @@ pub fn combat_basic() -> Sc {
 }
 
 pub fn magic_bow() -> Sc {
-    let mut sc = Sc::new(300.0);
-    grab(&mut sc);
-    pick_target(&mut sc);
-    sc.act(
-        "setup: fireball rune in quick slot 6 (the spell book's drag does this)",
-        |cx| {
-            cx.world
-                .resource_mut::<crate::walk::play::PlayState>()
-                .quick[5] = Some("It_Spell_Fireball".into());
-            super::scenarios::grant(cx, "It_Spell_Fireball", 1);
-        },
-    );
-    approach(
-        &mut sc,
-        "the raider",
-        target_goal(),
-        650.0,
-        -0.2,
-        Arc::new(|_| true),
-    );
-    sc.act("record", |cx| {
-        let f = cx.world.resource::<FxLog>();
-        cx.st.n.insert("missiles0".into(), f64::from(f.missiles));
-        cx.st.n.insert("arrows0".into(), f64::from(f.arrows));
-        cx.tap(KeyCode::Digit6);
-    });
-    sc.step("aim 1.5 s", |cx| {
-        if let Some(p) = tgt_id(cx).and_then(|i| cx.actor_pos(i)) {
-            cx.aim_at(p, -0.15);
-        }
-        if cx.t > 1.5 { Poll::Done } else { Poll::Wait }
-    });
-    sc.act("hold left (cast)", |cx| cx.mouse_down(MouseButton::Left));
-    sc.wait(0.2);
-    sc.act("release left", |cx| cx.mouse_up(MouseButton::Left));
-    sc.wait(1.5);
-    sc.shot("spell");
-    sc.check("the fireball flew", |cx| {
-        let m = cx.world.resource::<FxLog>().missiles;
-        let m0 = cx.st.n["missiles0"] as u32;
-        let hero = cx.core().0.sim.actor(cx.core().0.hero);
-        expect(
-            m > m0,
-            format!("missiles {m0} -> {m}"),
-            format!(
-                "no missile; mode {:?} mana {} right {:?}",
-                hero.equipment.weapon_mode(),
-                hero.mana,
-                hero.equipment.right.as_ref().map(|i| i.name.clone())
-            ),
-        )
-    });
-    sc.act("bow: quick slot 3", |cx| cx.tap(KeyCode::Digit3));
-    sc.step("aim 2 s", |cx| {
-        if let Some(p) = tgt_id(cx).and_then(|i| cx.actor_pos(i)) {
-            cx.aim_at(p, -0.1);
-        }
-        if cx.t > 2.0 { Poll::Done } else { Poll::Wait }
-    });
-    sc.act("hold left (draw the string)", |cx| {
-        cx.mouse_down(MouseButton::Left)
-    });
-    sc.step("draw 1.2 s", |cx| {
-        if let Some(p) = tgt_id(cx).and_then(|i| cx.actor_pos(i)) {
-            cx.aim_at(p, -0.1);
-        }
-        if cx.t > 1.2 { Poll::Done } else { Poll::Wait }
-    });
-    sc.act("release (shoot)", |cx| cx.mouse_up(MouseButton::Left));
-    sc.wait(1.5);
-    sc.shot("arrow");
-    sc.check("an arrow flew", |cx| {
-        let a = cx.world.resource::<FxLog>().arrows;
-        let a0 = cx.st.n["arrows0"] as u32;
-        let hero = cx.core().0.sim.actor(cx.core().0.hero);
-        expect(
-            a > a0,
-            format!("arrows {a0} -> {a}"),
-            format!(
-                "no arrow; mode {:?} drawn {} right {:?} left {:?}",
-                hero.equipment.weapon_mode(),
-                cx.play().drawn,
-                hero.equipment.right.as_ref().map(|i| i.name.clone()),
-                hero.equipment.left.as_ref().map(|i| i.name.clone())
-            ),
-        )
-    });
-    sc
+    super::ranged::magic_bow()
 }
 
 pub fn swim() -> Sc {
@@ -706,7 +619,7 @@ pub fn souls_er() -> Sc {
         expect(ok, "ok", "pack clip not playing")
     });
     sc.wait(1.6);
-    sc.act("hold Q: guard", |cx| cx.key_down(KeyCode::KeyQ));
+    sc.act("hold right: guard", |cx| cx.mouse_down(MouseButton::Right));
     sc.wait(0.7);
     sc.act("sample the hero overlay (ov_guard)", |cx| {
         let o = hero_overlay(cx);
@@ -720,7 +633,15 @@ pub fn souls_er() -> Sc {
         let ok = !pack || cx.st.n["ov_guard"] > 0.5;
         expect(ok, "ok", "pack clip not playing")
     });
-    sc.act("release Q", |cx| cx.key_up(KeyCode::KeyQ));
+    sc.act("release right", |cx| cx.mouse_up(MouseButton::Right));
     sc.wait(0.6);
     sc
+}
+
+/// Keeps the hero up in long observation scenarios (setup, not a rule).
+pub(super) fn stay_alive(cx: &mut Cx) {
+    let hero = cx.core().0.hero;
+    let mut core = cx.core_mut();
+    let a = core.0.sim.actor_mut(hero);
+    a.hp = a.hp.max(120);
 }

@@ -48,16 +48,19 @@ fn join(host: &mut dyn ScriptHost, npc: EntityId, message: &str, kind: PartyMemb
 
 /// Port of `JoinPlayerParty` (S:a8480): message `GO_PartyJoin`, member type Party.
 pub fn join_player_party(host: &mut dyn ScriptHost, npc: EntityId) -> Joined {
+    gothic_portcov::hit!("join_player_party");
     join(host, npc, "GO_PartyJoin", PartyMemberType::Party)
 }
 
 /// Port of `JoinPlayerMob` (S:a8900): message `GO_MobJoin`, member type Mob.
 pub fn join_player_mob(host: &mut dyn ScriptHost, npc: EntityId) -> Joined {
+    gothic_portcov::hit!("join_player_mob");
     join(host, npc, "GO_MobJoin", PartyMemberType::Mob)
 }
 
 /// Port of `JoinPlayerSlavery` (S:a8d30): message `GO_SlaveJoin`, member type Slave.
 pub fn join_player_slavery(host: &mut dyn ScriptHost, npc: EntityId) -> Joined {
+    gothic_portcov::hit!("join_player_slavery");
     join(host, npc, "GO_SlaveJoin", PartyMemberType::Slave)
 }
 
@@ -89,17 +92,20 @@ fn dismiss(host: &mut dyn ScriptHost, npc: EntityId, message: &str, resume_contr
 /// Port of `DismissPlayerParty` (S:a8690): message `GO_PartyDismiss`; a Controlled member also
 /// restarts its routine. A summoned creature is killed instead.
 pub fn dismiss_player_party(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("dismiss_player_party");
     dismiss(host, npc, "GO_PartyDismiss", true);
 }
 
 /// Port of `DismissPlayerMob` (S:a8b10): message `GO_MobDismiss`.
 pub fn dismiss_player_mob(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("dismiss_player_mob");
     dismiss(host, npc, "GO_MobDismiss", false);
 }
 
 /// Port of `WaitPlayerParty` (S:a8f40): the member waits where it stands (`GO_SlaveDismiss`
 /// message, `Waiting` set, `ZS_WaitForPlayer`). Summoned creatures ignore the call.
 pub fn wait_player_party(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("wait_player_party");
     if host.party_member_type(npc) == PartyMemberType::Summoned {
         return true;
     }
@@ -115,6 +121,7 @@ pub fn wait_player_party(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// out-of-range companion is dismissed to make room and an active, in-range one blocks, so at
 /// most one active companion exists.
 pub fn can_join_player_party(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("can_join_player_party");
     if host.party_member_type(npc) == PartyMemberType::Summoned {
         return true;
     }
@@ -134,6 +141,7 @@ pub fn can_join_player_party(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `StartGuidePlayer` (S:a9110): the NPC becomes the player's guide (the player's
 /// `PSParty` leader is set to the NPC).
 pub fn start_guide_player(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("start_guide_player");
     let player = host.player();
     host.set_party_leader(player, npc);
 }
@@ -141,6 +149,7 @@ pub fn start_guide_player(host: &mut dyn ScriptHost, npc: EntityId) {
 /// Port of `StopGuidePlayer` (S:a9200): only the current guide can stop guiding; the guide link
 /// is cleared and the stop time recorded. Returns false when `npc` is not the guide.
 pub fn stop_guide_player(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("stop_guide_player");
     let player = host.player();
     if host.party_leader(player) != npc {
         return false;
@@ -154,6 +163,7 @@ pub fn stop_guide_player(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `StopBringNPC` (S:a9370): clears the dialog's `PartyEnabled` flag so the NPC can no
 /// longer be asked to join.
 pub fn stop_bring_npc(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("stop_bring_npc");
     host.set_dialog_party_enabled(npc, false);
 }
 

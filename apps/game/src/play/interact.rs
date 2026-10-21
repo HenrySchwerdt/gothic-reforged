@@ -198,6 +198,8 @@ fn handle_events(
             Event::Player(p) => {
                 inter.log.push(format!("player {p:?}"));
                 match p {
+                    // The quick slot and potion keys of `PS_Melee_Loop` (hero.rs performs them).
+                    PlayerEvent::QuickSlot(_) | PlayerEvent::PotionKey(_) => {}
                     PlayerEvent::InteractStarted { object } => {
                         let idx = objects.index_of_entity(object.0);
                         inter.active = idx;

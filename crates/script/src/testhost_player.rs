@@ -54,6 +54,30 @@ pub struct PlayerSide {
     pub books: HashMap<Book, i32>,
     /// Weight class per boulder.
     pub boulders: HashMap<EntityId, BoulderClass>,
+    /// Alignment target per entity.
+    pub alignment: HashMap<EntityId, EntityId>,
+    /// Movement constraint per entity (degrees).
+    pub constraints: HashMap<EntityId, f32>,
+    /// The player's action queue.
+    pub queue: std::collections::VecDeque<(u32, EntityId)>,
+    /// The melee-mode focus the engine search found.
+    pub melee_focus: EntityId,
+    /// The focus entity.
+    pub focus: EntityId,
+    /// Focus settings written by the script: current mode, look-at mode, range rating.
+    pub focus_modes: (u32, u32, bool),
+    /// First-person camera.
+    pub first_person: bool,
+    /// Camera mode last set.
+    pub camera_mode: u32,
+    /// A movement key is held.
+    pub movement_key: bool,
+    /// `LastWeaponConfig`.
+    pub weapon_config: u32,
+    /// Azimuth / elevation the engine would report, per `(from, to)`.
+    pub aziel: HashMap<(EntityId, EntityId), (f32, f32)>,
+    /// `HitDirection` per entity.
+    pub hit_dir: HashMap<EntityId, u32>,
 }
 
 impl TestWorld {
@@ -102,6 +126,66 @@ impl TestWorld {
 }
 
 impl PlayerApi for TestWorld {
+    fn set_alignment_target(&mut self, e: EntityId, target: EntityId) {
+        self.pl.alignment.insert(e, target);
+    }
+    fn set_movement_constraints(&mut self, e: EntityId, degrees: f32) {
+        self.pl.constraints.insert(e, degrees);
+    }
+    fn action_queue_head(&self) -> Option<(u32, EntityId)> {
+        self.pl.queue.front().copied()
+    }
+    fn action_queue_push(&mut self, id: u32, entity: EntityId) {
+        self.pl.queue.push_back((id, entity));
+    }
+    fn action_queue_pop(&mut self) {
+        self.pl.queue.pop_front();
+    }
+    fn action_queue_clear(&mut self) {
+        self.pl.queue.clear();
+    }
+    fn melee_focus(&self) -> EntityId {
+        self.pl.melee_focus
+    }
+    fn current_focus(&self) -> EntityId {
+        self.pl.focus
+    }
+    fn set_focus_entity(&mut self, e: EntityId) {
+        self.pl.focus = e;
+    }
+    fn set_focus_current_mode(&mut self, mode: u32) {
+        self.pl.focus_modes.0 = mode;
+    }
+    fn set_focus_look_at_mode(&mut self, mode: u32) {
+        self.pl.focus_modes.1 = mode;
+    }
+    fn set_focus_range_rating(&mut self, on: bool) {
+        self.pl.focus_modes.2 = on;
+    }
+    fn camera_in_first_person(&self) -> bool {
+        self.pl.first_person
+    }
+    fn set_camera_mode(&mut self, mode: u32) {
+        self.pl.camera_mode = mode;
+    }
+    fn movement_key_down(&self) -> bool {
+        self.pl.movement_key
+    }
+    fn last_weapon_config(&self) -> u32 {
+        self.pl.weapon_config
+    }
+    fn set_last_weapon_config(&mut self, v: u32) {
+        self.pl.weapon_config = v;
+    }
+    fn azimuth_elevation(&self, from: EntityId, to: EntityId) -> (f32, f32) {
+        self.pl.aziel.get(&(from, to)).copied().unwrap_or((0.0, 0.0))
+    }
+    fn hit_direction(&self, e: EntityId) -> u32 {
+        self.pl.hit_dir.get(&e).copied().unwrap_or(0)
+    }
+    fn set_hit_direction(&mut self, e: EntityId, dir: u32) {
+        self.pl.hit_dir.insert(e, dir);
+    }
     fn book_progress(&self, book: Book) -> i32 {
         self.pl.books.get(&book).copied().unwrap_or(0)
     }

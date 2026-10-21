@@ -226,6 +226,7 @@ impl ActorSpawner<'_, '_> {
             dir: MoveDir::Fwd,
             stance: spec.stance,
             sneak: false,
+            parade: false,
         };
         if let Some(name) = &spec.motion {
             let motion = library.motion(&rig, name)?;
