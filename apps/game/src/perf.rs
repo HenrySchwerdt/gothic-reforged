@@ -136,10 +136,10 @@ fn shadow_preset(mut lights: Query<&mut bevy::light::CascadeShadowConfig>) {
     }
     for mut cfg in &mut lights {
         *cfg = bevy::light::CascadeShadowConfigBuilder {
-            num_cascades: 3,
+            num_cascades: 2,
             minimum_distance: 0.1,
             maximum_distance: 100.0,
-            first_cascade_far_bound: 6.0,
+            first_cascade_far_bound: 20.0,
             overlap_proportion: 0.2,
         }
         .build();

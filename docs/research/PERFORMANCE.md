@@ -78,3 +78,21 @@ Remaining ~9 ms is shadow bins: merge static props into fewer meshes or instance
   loaded machine (statics+shadows are still ~5 ms; without shadows ~6 ms).
 - Sea: one camera-following 8 km water plane at sea level; sea-level tile water is hidden.
 - Sky: clouds sampled from the original `sky/Wolkentest_01` density texture (loaded through the loader thread).
+
+## Regression bisect (2026-10-21, performance agent)
+Build: release, LTO off, `--play --bench`, 2560x1440 default window, AutoNoVsync, min of several runs (machine shared with compiling agents; load 100 % makes runs vary 8.7..19 ms).
+The reported 21 ms was load noise plus a non-LTO build; bloom, SpeedTree, lighting and the camera are not the cause.
+
+| Toggle (play, avg ms) | ms |
+|---|---|
+| HEAD, 3 cascades / 100 m | 10.0-10.1 (main CPU 3.0) |
+| GR_NOBLOOM | 9.7 (bloom ~0.4) |
+| GR_NOVEG | 9.7 |
+| GR_NOCHAR | 7.3 (29 NPCs incl. their shadows ~2.7) |
+| GR_NOSHADOW | 4.4 (shadows ~5.7) |
+| 2 cascades / 60 m / 8 | 7.9 |
+| 2 cascades / 100 m / 20 (new default) | 8.65-8.7 |
+
+Change: `perf::shadow_preset` now 2 cascades, 100 m, first bound 20 m. Walk: 8.2 best (noisy). The remaining cost is per-mesh shadow bins; thin/fat LTO (shipping profile) is a further ~25-35 %, so expect play ~6-7 ms there (not rebuilt: 17-30 min under load).
+Startup (warm cache, OS-cached): database from cooked cache 50 ms, actor/audio/NPC data 0.7 s, world loader thread (VFS + 134k placed-mesh index) 1.9 s in parallel; process start to bench end for a 1 s bench = 3.8 s, i.e. ~2.8 s to the first playable frame. Already < 3 s; a nav/terrain cook was not needed. Next: cache the placed-mesh index in the cooker.
+Root `Cargo.toml`: `[profile.dev]`/`[profile.test]` debug = "line-tables-only" so test binaries link.
