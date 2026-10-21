@@ -51,18 +51,44 @@ pub struct QuickSlots(pub Vec<Option<QuickSlot>>);
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct FocusHealth(pub Option<f32>);
 
+/// Brightness of the nine pixel rows of a bar fill, top to bottom: sampled from the original's
+/// `gCHUDStatusBar` fills (a soft top edge, a solid core, a long fade to the dark bottom).
+const FILL_ROWS: [f32; 9] = [0.72, 1.0, 1.0, 1.0, 0.99, 0.86, 0.67, 0.31, 0.10];
+
+/// Fill colours of the original bars (health, stamina, mana, enemy health), sampled from
+/// screenshots of the shipped game.
+pub const FILL_HEALTH: Color = Color::srgb(159.0 / 255.0, 24.0 / 255.0, 19.0 / 255.0);
+pub const FILL_STAMINA: Color = Color::srgb(199.0 / 255.0, 166.0 / 255.0, 72.0 / 255.0);
+pub const FILL_MANA: Color = Color::srgb(12.0 / 255.0, 112.0 / 255.0, 151.0 / 255.0);
+
+/// The fill of a 201x19 status bar: x 12..188, y 6..15 inside the frame art, nine shaded rows.
+/// The entity's width follows the value.
 fn bar_fill(color: Color, kind: HudBar) -> impl Bundle {
+    let rows = FILL_ROWS.map(move |f| {
+        let c = color.to_srgba();
+        (
+            Node {
+                width: percent(100),
+                height: px(1),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(c.red * f, c.green * f, c.blue * f)),
+        )
+    });
     (
         kind,
         Node {
             position_type: PositionType::Absolute,
             left: px(12),
-            top: px(4),
+            top: px(6),
             width: px(176),
-            height: px(12),
+            height: px(9),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::clip(),
             ..default()
         },
-        BackgroundColor(color),
+        Children::spawn(SpawnIter(rows.into_iter())),
     )
 }
 
@@ -102,9 +128,9 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
             });
             // bars
             for (i, (kind, color)) in [
-                (HudBar::Hp, Color::srgb(0.74, 0.07, 0.07)),
-                (HudBar::Sp, Color::srgb(0.76, 0.62, 0.18)),
-                (HudBar::Mp, Color::srgb(0.07, 0.46, 0.70)),
+                (HudBar::Hp, FILL_HEALTH),
+                (HudBar::Sp, FILL_STAMINA),
+                (HudBar::Mp, FILL_MANA),
             ]
             .into_iter()
             .enumerate()
@@ -127,7 +153,7 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
             r.spawn((FocusRoot, n, Visibility::Hidden))
                 .with_children(|c| {
                     spawn_pic(c, &a, STATUSBAR, 0.0, 0.0, None);
-                    c.spawn(bar_fill(Color::srgb(0.74, 0.07, 0.07), HudBar::Focus));
+                    c.spawn(bar_fill(FILL_HEALTH, HudBar::Focus));
                 });
         });
     // game messages (plain text, centre of the screen); they stay visible during dialogs
