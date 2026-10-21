@@ -5,10 +5,10 @@
 //!   matrix places (and scales) the tree.
 //! * `eCVegetation_PS` entities carry a list of `eCVegetation_Mesh` objects. Each holds a brush
 //!   mesh (`MeshFilePath`, an authoring-machine absolute path whose basename is the real
-//!   resource), a `MinSpacing` (cm) and, in the class tail, the **painted ground surface**: a
-//!   bounding box (metres, relative to the entity) and an indexed triangle mesh (positions,
-//!   normals, per-vertex pairs, `u32` indices). The engine scatters brush instances over this
-//!   surface; the per-instance transforms are *not* stored (scattering is runtime).
+//!   resource), a `MinSpacing` (cm) and, in the class tail, the brush mesh geometry cache: a
+//!   bounding box and an indexed triangle mesh (positions, normals, uv pairs, `u32` indices).
+//!   The placed instances are stored after the last brush mesh in an `eCVegetation_Grid`
+//!   ([`VegetationGrid`]).
 //!
 //! Tail layout of `eCVegetation_Mesh` (verified: all tails of the installation are consumed
 //! exactly): `u16 version (2)`, 14 opaque bytes, `6 x f32` AABB, then four arrays each written
@@ -42,6 +42,8 @@ pub struct BrushMesh {
     /// Minimum instance spacing in cm.
     pub min_spacing: f32,
     pub wind_strength: f32,
+    /// Index used by `VegetationEntry::mesh_id`.
+    pub mesh_id: u16,
     pub double_sided: bool,
     /// Raw `eEVegetationMeshShading` value.
     pub shading: u32,
@@ -66,6 +68,36 @@ pub struct VegetationArea {
     pub fade_out_start: f32,
     pub grid_node_size: f32,
     pub meshes: Vec<BrushMesh>,
+    /// Placed instances of the vegetation grid (`eCVegetation_Grid`), if the tail decodes.
+    pub grid: Option<VegetationGrid>,
+}
+
+/// One stored vegetation instance (a 44-byte grid-node entry).
+///
+/// Port of the entry layout used by `eCVegetation_GridNode::CacheInGeometry`
+/// (Engine.dll:0x1027d830): the engine builds the instance transform from the quaternion and the
+/// scale and the mesh from `mesh_id`; the colour word goes into the vertex stream unchanged.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct VegetationEntry {
+    pub flags: u16,
+    /// Index into the area's brush mesh table (`BrushMesh::mesh_id`).
+    pub mesh_id: u16,
+    /// Position in cm, relative to the owning entity.
+    pub position: [f32; 3],
+    /// Rotation quaternion (x, y, z, w).
+    pub rotation: [f32; 4],
+    /// Scale (x, y, x again for the third axis in the engine: `scale_y` is the height scale).
+    pub scale: [f32; 2],
+    /// Packed vertex colour (shade / tint of the instance).
+    pub color: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VegetationGrid {
+    /// Edge length of a grid node in cm.
+    pub node_size: f32,
+    pub entries: Vec<VegetationEntry>,
+    pub nodes: usize,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -197,6 +229,7 @@ fn brush_mesh(bytes: &[u8], strings: &Strings, o: &ParsedObject) -> Result<Brush
         mesh: basename(&path).to_string(),
         min_spacing: prop_f32(o, "MinSpacing").unwrap_or(100.0),
         wind_strength: prop_f32(o, "WindStrength").unwrap_or(0.0),
+        mesh_id: u16::from_le_bytes([header[2], header[3]]),
         double_sided: prop_bool(o, "DoubleSided").unwrap_or(false),
         shading: prop(o, "MeshShading")
             .filter(|p| p.len() == 6)
@@ -208,6 +241,47 @@ fn brush_mesh(bytes: &[u8], strings: &Strings, o: &ParsedObject) -> Result<Brush
         indices,
         header,
         pairs: f32s::<2>(pairs),
+    })
+}
+
+/// Port of `eCVegetation_Grid::Read` (Engine.dll:0x1027cc90) and `eCVegetation_GridNode::Read`
+/// (0x1027e350): `u16 version`, `f32` node size, a `bCRect` (4 x f32), `u32` node count, then per
+/// node `u32 index` + (`u16 version`, `bCBox` 6 x f32, `u32 n`, `n x 44` bytes of entries).
+fn read_grid(bytes: &[u8], start: usize, limit: usize) -> Result<VegetationGrid> {
+    let mut cur = Cursor::with_range(bytes, start, limit)?;
+    let _version = cur.u16()?;
+    let node_size = cur.f32()?;
+    let _rect: [f32; 4] = cur.floats()?;
+    let nodes = cur.u32()? as usize;
+    ensure!(nodes <= 1_000_000, "node count");
+    let mut entries = Vec::new();
+    for _ in 0..nodes {
+        let _index = cur.u32()?;
+        let _node_version = cur.u16()?;
+        let _bounds: [f32; 6] = cur.floats()?;
+        let n = cur.u32()? as usize;
+        ensure!(n <= cur.remaining() / 44, "entry count");
+        for _ in 0..n {
+            let flags = cur.u16()?;
+            let mesh_id = cur.u16()?;
+            let position: [f32; 3] = cur.floats()?;
+            let rotation: [f32; 4] = cur.floats()?;
+            let scale: [f32; 2] = cur.floats()?;
+            let color = cur.u32()?;
+            entries.push(VegetationEntry {
+                flags,
+                mesh_id,
+                position,
+                rotation,
+                scale,
+                color,
+            });
+        }
+    }
+    Ok(VegetationGrid {
+        node_size,
+        entries,
+        nodes,
     })
 }
 
@@ -255,7 +329,9 @@ pub fn extract(bytes: &[u8]) -> Result<WorldVegetation> {
                         fade_out_start: prop_f32(&o, "FadeOutStart").unwrap_or(2500.0),
                         grid_node_size: prop_f32(&o, "GridNodeSize").unwrap_or(1000.0),
                         meshes: Vec::new(),
+                        grid: None,
                     };
+                    let mut grid_start = None;
                     let Some(class_idx) = mesh_class else {
                         bail!("vegetation without mesh class string");
                     };
@@ -272,12 +348,16 @@ pub fn extract(bytes: &[u8]) -> Result<WorldVegetation> {
                                 Ok((end, mesh)) => {
                                     area.meshes.push(mesh);
                                     at = end - o.tail_start;
+                                    grid_start = Some(end);
                                     continue;
                                 }
                                 Err(_) => out.rejected_meshes += 1,
                             }
                         }
                         at += 1;
+                    }
+                    if let Some(start) = grid_start {
+                        area.grid = read_grid(bytes, start, o.end).ok();
                     }
                     out.areas.push(area);
                 }
@@ -286,4 +366,43 @@ pub fn extract(bytes: &[u8]) -> Result<WorldVegetation> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+
+    fn f(out: &mut Vec<u8>, v: f32) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    /// Synthetic grid: one node with two entries (layout of `eCVegetation_Grid::Read`).
+    #[test]
+    fn reads_grid_entries() {
+        let mut b = Vec::new();
+        b.extend_from_slice(&2u16.to_le_bytes());
+        f(&mut b, 1000.0);
+        (0..4).for_each(|_| f(&mut b, 0.0)); // rect
+        b.extend_from_slice(&1u32.to_le_bytes()); // nodes
+        b.extend_from_slice(&7u32.to_le_bytes()); // node index
+        b.extend_from_slice(&1u16.to_le_bytes()); // node version
+        (0..6).for_each(|_| f(&mut b, 0.0)); // bounds
+        b.extend_from_slice(&2u32.to_le_bytes());
+        for i in 0..2u16 {
+            b.extend_from_slice(&0u16.to_le_bytes());
+            b.extend_from_slice(&(10 + i).to_le_bytes());
+            for v in [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, 0.5, 0.75] {
+                f(&mut b, v);
+            }
+            b.extend_from_slice(&0xFF80_4020u32.to_le_bytes());
+        }
+        let g = read_grid(&b, 0, b.len()).unwrap();
+        assert_eq!(g.nodes, 1);
+        assert_eq!(g.entries.len(), 2);
+        assert_eq!(g.entries[1].mesh_id, 11);
+        assert_eq!(g.entries[0].position, [1.0, 2.0, 3.0]);
+        assert_eq!(g.entries[0].scale, [0.5, 0.75]);
+        assert_eq!(g.entries[0].color, 0xFF80_4020);
+        assert!(read_grid(&b[..b.len() - 3], 0, b.len() - 3).is_err());
+    }
 }
