@@ -44,8 +44,10 @@ Files are named after the string-table key (case-insensitive, all lowercase on d
   The info script command `SaySVM` stores only the event in `ID1` (`ThoughtSo`, `Teach_Axe_3_01`); the voice class comes from the speaking NPC's
   `Voice`. `SpeechIndex::svm(voice, event)` and `PlayVoice::svm` implement exact match, then same race prefix, then any voice.
 * `SaySound` (6 steps), `PlayMusic` (5 steps, argument = music trigger [I]) exist in info scripts; not wired yet.
-* `.xlip` (lip-sync, one per `.ogg`, same stem): `u16 version (1)`, `u32 n`, `n x (f32 seconds, u32 viseme id 0..12)`; total size matches
-  `6 + 8n` for the sample inspected (302 bytes, n = 37) [V frame, I meaning]. Not decoded further.
+* `.xlip` (lip-sync, one per `.ogg`, same stem) [V, all 48 561 files of both languages decode]: `u16 version (1)`, `u32 n`, `n x (f32 seconds, u32 viseme)`. German files
+  are bare, English files are wrapped in a `GENOMFLE` container (14-byte header, the same `u16 1, u32 n` + pairs, `DEADBEEF` trailer). Visemes reach **13** (14 values,
+  `gothic_audio::lipsync`); across the installation: 1 439 172 entries, longest line 18.5 s, entry gaps 1 ms to 4.4 s, 19 % of the entries are the rest viseme 1,
+  23 % viseme 7 (n/d/t/DH/TH), 20 % viseme 11 (AH/EH/AY). The viseme is the key index into the head's `_LipSync` motion (see ENGINE_MAP B14, `gothic_animation::face`).
 
 ### Coverage (string keys that have text in the language and a voice file)
 
@@ -81,15 +83,20 @@ Misses are real data gaps, not lookup errors: e.g. no file at all contains `2006
 * **Every fragment begins with 10.0 s of digital silence** (1.1 s for `myrtana_title`, 10 to 13.8 s elsewhere); the runtime skips it by default
   (`AudioSettings::skip_lead_silence`). Whether the original engine plays through it is [U].
 * `gCMusicTransition`: stingers in `transitions/` with `ConnectIn/ConnectOut` ids (0..30; the pairing to fragments is [U]), `FadeOutBegin/End`,
-  `FadeInBegin/End`, `Offset`, `Timing` (enum, always 3), `Duration`. Not used by the runtime yet (plain equal-power cross-fade instead).
+  `FadeInBegin/End`, `Offset`, `Timing` (enum, always 3), `Duration`, `Volume`. 42 rows; `transition_00` is the any-to-any stinger (`666/666`), `transition_30` is `0 -> 30`, the rest
+  pair equal connector ids (several variants per id). Played by the sequencer (E35/E36).
 * `gCMusicTrigger`: `Loc_Arena`, `Loc_Braga`, `Loc_Myrtana`, `Loc_Myrtana_Now`, `Loc_Varant` (location `faring`!), `Sit_Explore`, `Sit_Fight`, `Stop`
-  with `Exit`/`Entrance` enums (`gEMusicTriggerTime`, `gEMusicFragmentPosition`, values unnamed) and `IsStopTrigger`. World data has music zone
+  with `Exit`/`Entrance` enums (`gEMusicTriggerTime`: 0 Immediately, 1 NextExit, 2 NextPriorityExit, 3 EndOfFragment; `gEMusicFragmentPosition`: 0 Begin, 1 Current,
+  2 RandomEntrance; names from the DLL string table), `TransitionMode` (1 = matching connector for all rows) and `IsStopTrigger`. World data has music zone
   geometry (`Projects_compiled.pak/.../g3_myrtana_01_landscape_musiczones_01`, one sector) and templates carry `MusicLocation`/`MusicPlayed`
   properties (editor test templates, `Music_Reddock_Dungeon`); the zone-to-trigger mapping is [U], so locations are driven by name today.
 
-Runtime state machine (`MusicState`, `MusicCommand`): location + situation + night; resolution falls back requested daytime -> day, requested
-situation -> `explore`, then the default region (`myrtana`). A change cross-fades (3 s equal-power); single fragments loop, variation chains and
-`-1` cues play once and then continue/return to exploring.
+Runtime (E35/E36, `gothic_audio::sequencer`, `music_play`): a port of `gCMusicSequencer`. Logical state (location, situation, daytime), partial triggers
+(`MusicCommand` -> `gCMusicTrigger` rows with their `Exit`/`Entrance`/`TransitionMode` values), the fallback chain (variation, daytime, location, situation),
+round-robin choice inside a group, two fragment channels that swap plus a stinger channel, due-time events in ms on the primary channel, stinger selection (any-to-any
+`ConnectIn = ConnectOut = 666` = `transition_00`; modes by connector, by name), linear stinger envelopes (`FadeOut/FadeIn Begin/End`), follow triggers from
+`NextVariation` (loop itself; `-1` cue hands over to `explore`). The shipped Ogg files carry no sync points, so exit and entrance links are synthesised
+(`LinkModel`: exits every 4 s, priority exits every 16 s, random entrances on that grid after the silent lead-in) [I].
 
 ## 4. Sound effects and ambience [V]
 
@@ -114,9 +121,9 @@ Spatial attenuation: see section 7 (FMOD inverse rolloff in centimetres); templa
 
 ## 6. Open items
 
-1. Zone to music-trigger mapping from world data, and `PlayMusic` argument semantics.
-2. Transition stinger selection (`ConnectIn/ConnectOut`), `Entrance`/`Exit` enum meanings, whether the 10 s silent lead-in is played.
-3. `.xlip` viseme table and how it maps to head morph targets.
+1. Zone to music-trigger mapping from world data (`eCWeatherZone_PS.MusicLocation` is empty around Ardea), and `PlayMusic` argument semantics.
+2. (E35/E36) Stinger selection and enum meanings are ported; open: the exit / entrance links (sync points of the authoring `.wav`, lost in the Ogg files) and where the original enters the follow fragment of a looping cue.
+3. (done, E38) `.xlip` visemes index the 14 keys of the head's `_LipSync` motion, which drives face bones of the animated head actor.
 4. Emitter attenuation curves and `SpawningMode` values; `eECollisionSound`/`eESpawningSound` tables (code).
 5. Text for `svm_*` recordings of voice classes without a string key (fall back to a sibling class's text).
 
@@ -195,3 +202,20 @@ Offline render of `GR_AUDIO_TAP` (`examples/tap_mix.rs`, also `.local/audio-tap.
 Remaining gaps (not wired in play mode, so nothing can spam or be wrong yet): NPC footsteps and combat hits/whooshes (the original plays ~755 FX/min in the
 brawl), ambient emitters (birds, water, fire), SVM barks from the script layer (limits are ready: 1 per speaker, 9 total), music transition stingers, night
 music, and the speaking cooldown inside the script runtime (not ported; the bark limit is the audio-side guard).
+
+### 8.4 Sequencers against the capture (E35-E38, 2026-10-21)
+
+Tools: `examples/music_walk.rs` (offline music walk), `examples/ambient_walk.rs` (offline ambient run with the real sample lengths), `GR_AUDIO_TAP` of `--play --smoke` (`.local/research/audio/our-tap2.tsv`, rendered `.local/audio-tap2.mp3`), `examples/xlip_audit.rs`.
+
+| Measure | Original (FMOD capture) | Ours |
+| --- | --- | --- |
+| Story-cue loop (`myrtana_revolution_day_01`, 79.4 s, stinger `transition_00` 6.9 s) | stinger starts 72.1 s after the fragment, the new fragment 29 ms later, old fragment and stinger stop together 6.97 s later | stinger and new fragment at 72.5 s (`Duration - stinger length`), old fragment and stinger stop 7.0 s later |
+| Stinger used for the loop | `transition_00` (any-to-any, `666/666`) | `transition_00` |
+| Explicit stinger (script trigger with connectors 0 -> 30) | `transition_30` | mode 2 / 3 select by connector or by name |
+| Fade shape | linear amplitude over `FadeOut/FadeIn Begin/End` of the stinger | same (`Transition::src_volume`, `dst_volume`) |
+| Ambient one-shots, Ardea start (climate 0, environment 0, day) | 84 bird plays in the 173 s world window = 29.1 per minute; seven samples (`bird_01` 22, `bird13_01` 18, `bird16_01` 13, `sparrow_01` 12, `woodpecker_01` 9, `bird12_04` 7, `bird2_01` 3); gaps from 0.0 s to 3.8 s | offline 32.6 per minute (977 in 1800 s) from the same seven samples (`bird_01` 23 %, `bird13_01` 17 %, `bird16_01` 15 %, `sparrow_01` 16 %, `woodpecker_01` 9 %, `bird12_04` 10 %, `bird2_01` 9 %); mean gap 1.84 s, longest gap 3.79 s |
+| Same, environment Plain (default when no volume dominates) | not seen | 8.1 per minute: `crow2`, `peacock`, `sfx_env_wind_high` (row 2 of the table: delay 8 to 6 s, at most 3) |
+| Ambient volume | birds 0.2-0.3 (table `Volume`), min 500 cm, max 1e6 cm | from the table |
+| Lip-sync data | `.xlip` next to every recording | 48 561 of 48 561 installed files decode; 1 439 172 entries; visemes 0-13 |
+
+The captured ambient birds are exactly the sound set of environment 0 (forest) of climate 0, so the Ardea start sits in a forest ambient volume; the rate comes out of the `MinNumSounds = 1` rule (a new bird starts as soon as none plays) together with the 12 to 10 s delay, not from the delay alone. Remaining gaps: ambient volumes are not read from the world (the host feeds a forest count), no placed emitters exist around Ardea to anchor the one-shots (they appear 8-40 m from the listener), the original's second loop of a story cue starts part-way into the fragment, music links are synthetic.

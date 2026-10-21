@@ -51,25 +51,74 @@ pub struct Transition {
     pub fade_in_end_ms: i32,
     pub offset_ms: i32,
     pub duration_ms: i32,
+    pub volume: f32,
 }
 
 impl Transition {
+    /// Any-to-any connector pair (`0x29a`): the stinger used when nothing more specific
+    /// matches.
+    pub const ANY_TO_ANY: i32 = 666;
+
+    /// Port of gCMusicTransition::CalcSrcVolume (Game:0x100f7c30): volume factor of the
+    /// outgoing fragment at `pos_ms` on the stinger's own clock: 1 until `FadeOutBegin`, then
+    /// linear down to 0 at `FadeOutEnd`.
+    pub fn src_volume(&self, pos_ms: f64) -> f32 {
+        if self.fade_out_begin_ms >= self.fade_out_end_ms {
+            return 1.0;
+        }
+        ramp_down(pos_ms, self.fade_out_begin_ms, self.fade_out_end_ms)
+    }
+
+    /// Port of gCMusicTransition::CalcDstVolume (Game:0x100f7cb0): 0 until `FadeInBegin`, then
+    /// linear up to 1 at `FadeInEnd`.
+    pub fn dst_volume(&self, pos_ms: f64) -> f32 {
+        if self.fade_in_begin_ms >= self.fade_in_end_ms {
+            return 1.0;
+        }
+        1.0 - ramp_down(pos_ms, self.fade_in_begin_ms, self.fade_in_end_ms)
+    }
+
     pub fn vfs_path(&self) -> String {
         format!("transitions/{}.ogg", stem(&self.sample))
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Trigger {
     pub id: String,
     pub location: String,
     pub situation: String,
+    pub day_time: String,
+    pub variation: String,
+    /// `gEMusicTransition`: 0 default stinger, 1 matching connectors, 2 given connectors,
+    /// 3 by name.
+    pub transition_mode: i32,
+    /// `gEMusicTriggerTime`: 0 immediately, 1 next exit, 2 next priority exit, 3 end of fragment.
+    pub exit: i32,
+    /// `gEMusicFragmentPosition`: 0 begin, 1 current, 2 random entrance.
+    pub entrance: i32,
+    pub connect_in: i32,
+    pub connect_out: i32,
+    /// Stinger sample name for transition mode 3.
+    pub transition: String,
     pub is_stop: bool,
+    pub disable_triggers: bool,
 }
 
 fn stem(sample: &str) -> String {
     let s = sample.to_ascii_lowercase();
     s.strip_suffix(".wav").unwrap_or(&s).to_owned()
+}
+
+fn ramp_down(pos_ms: f64, begin: i32, end: i32) -> f32 {
+    let (b, e) = (f64::from(begin), f64::from(end));
+    if pos_ms <= b {
+        1.0
+    } else if pos_ms >= e {
+        0.0
+    } else {
+        (1.0 - (pos_ms - b) / (e - b)) as f32
+    }
 }
 
 pub const EXPLORE: &str = "explore";
@@ -116,7 +165,16 @@ impl MusicLibrary {
                     id: s(o, "ID"),
                     location: s(o, "Location"),
                     situation: s(o, "Situation"),
+                    day_time: s(o, "DayTime"),
+                    variation: s(o, "Variation"),
+                    transition_mode: o.int("TransitionMode").unwrap_or(0),
+                    exit: o.int("Exit").unwrap_or(0),
+                    entrance: o.int("Entrance").unwrap_or(0),
+                    connect_in: o.int("ConnectIn").unwrap_or(0),
+                    connect_out: o.int("ConnectOut").unwrap_or(0),
+                    transition: s(o, "Transition"),
                     is_stop: o.boolean("IsStopTrigger").unwrap_or(false),
+                    disable_triggers: o.boolean("DisableTriggers").unwrap_or(false),
                 }),
                 _ => {}
             }
@@ -242,6 +300,7 @@ fn transition(o: &PropertySet) -> Transition {
         fade_in_end_ms: i("FadeInEnd"),
         offset_ms: i("Offset"),
         duration_ms: i("Duration"),
+        volume: o.float("Volume").unwrap_or(1.0),
     }
 }
 
@@ -274,8 +333,7 @@ pub(crate) fn test_library() -> MusicLibrary {
         triggers: vec![Trigger {
             id: "Loc_Myrtana".into(),
             location: "Myrtana".into(),
-            situation: String::new(),
-            is_stop: false,
+            ..Trigger::default()
         }],
     }
 }
@@ -332,6 +390,29 @@ mod tests {
             l.next_after(l.group("myrtana", "innos", "day")[0]),
             NextFragment::EndOfCue
         );
+    }
+
+    #[test]
+    fn stinger_envelopes_are_linear_in_amplitude() {
+        let t = Transition {
+            sample: "t.wav".into(),
+            connect_in: 666,
+            connect_out: 666,
+            fade_out_begin_ms: 825,
+            fade_out_end_ms: 3622,
+            fade_in_begin_ms: 8,
+            fade_in_end_ms: 801,
+            offset_ms: 812,
+            duration_ms: 6919,
+            volume: 1.0,
+        };
+        assert_eq!(t.src_volume(0.0), 1.0);
+        assert_eq!(t.src_volume(825.0), 1.0);
+        assert!((t.src_volume(2223.5) - 0.5).abs() < 1e-4);
+        assert_eq!(t.src_volume(4000.0), 0.0);
+        assert_eq!(t.dst_volume(0.0), 0.0);
+        assert!((t.dst_volume(404.5) - 0.5).abs() < 1e-4);
+        assert_eq!(t.dst_volume(801.0), 1.0);
     }
 
     #[test]

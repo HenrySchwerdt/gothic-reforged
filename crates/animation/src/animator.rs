@@ -401,6 +401,11 @@ impl Animator {
         self.joints_dirty = true;
     }
 
+    /// Local pose of every rig slot after the last evaluation.
+    pub fn local_pose(&self) -> &[Trs] {
+        &self.pose
+    }
+
     /// Model-space matrix of a node of the rig (valid for planned nodes only).
     pub fn node_model(&self, node: u16) -> Affine3A {
         self.model[node as usize]

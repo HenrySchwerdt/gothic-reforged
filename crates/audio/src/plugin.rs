@@ -3,15 +3,23 @@
 //! Input is message based (`MessageWriter<PlayVoice>` etc.), output messages report subtitles
 //! and finished lines. Audio bytes come from the VFS and are handed to Bevy's rodio backend as
 //! `AudioSource`s (Ogg Vorbis / WAV decode happens in rodio).
+use crate::ambient::AmbientSequencer;
+use crate::ambient_play::{
+    AmbientControl, AmbientSeq, AmbientStats, PlayEffectSound, ambient_update, effect_sounds,
+    emitter_update, water_beds,
+};
 use crate::library::AudioLibrary;
 use crate::mix::{self, Category, Tap};
-use crate::music::{EXPLORE, NextFragment};
+use crate::music::EXPLORE;
+use crate::music_play::MusicTrack;
+use crate::music_play::{MusicSeq, music_fade, music_update};
 use crate::pcm;
+use crate::sequencer::Sequencer;
 use bevy::app::{App, Plugin, Update};
 use bevy::asset::{Assets, Handle};
 use bevy::audio::{
-    AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackMode, PlaybackSettings,
-    SpatialAudioSink, SpatialListener, SpatialScale, Volume,
+    AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, SpatialAudioSink,
+    SpatialListener, SpatialScale, Volume,
 };
 use bevy::ecs::hierarchy::ChildOf;
 use bevy::ecs::prelude::*;
@@ -83,6 +91,9 @@ pub struct PlaySfx {
     pub volume: f32,
     /// `Fx` (footsteps, hits; priority 3) or `Ambient` (birds, water; priority 4).
     pub category: Category,
+    /// `(min, max)` distance in centimetres from the effect command; overrides the template
+    /// and the footstep default.
+    pub distances_cm: Option<(f32, f32)>,
 }
 
 impl PlaySfx {
@@ -92,6 +103,7 @@ impl PlaySfx {
             position,
             volume: 1.0,
             category: Category::Fx,
+            distances_cm: None,
         }
     }
     pub fn ambient(mut self) -> Self {
@@ -195,8 +207,6 @@ pub struct MusicState {
     pub night: bool,
     pub stopped: bool,
     pub now_playing: Option<String>,
-    dirty: bool,
-    current: Option<usize>,
 }
 
 impl Default for MusicState {
@@ -207,8 +217,6 @@ impl Default for MusicState {
             night: false,
             stopped: true,
             now_playing: None,
-            dirty: false,
-            current: None,
         }
     }
 }
@@ -241,7 +249,6 @@ impl MusicState {
             MusicCommand::SetNight(n) => self.night = *n,
             MusicCommand::Stop => self.stopped = true,
         }
-        self.dirty = true;
         true
     }
 }
@@ -277,7 +284,7 @@ pub struct Emitter3d {
 }
 
 #[derive(Resource, Default)]
-struct TapRes(Option<Tap>);
+pub(crate) struct TapRes(pub(crate) Option<Tap>);
 
 /// World units per rodio spatial unit. rodio attenuates by 1/d^2 beyond one unit (and its ear
 /// formula assumes unit-scale worlds); making one unit 1000 m keeps that term clamped at 1 so
@@ -285,11 +292,11 @@ struct TapRes(Option<Tap>);
 /// `rolloff_3d`).
 const SPATIAL_UNIT_M: f32 = 1000.0;
 
-fn spatial_scale(settings: &AudioSettings) -> SpatialScale {
+pub(crate) fn spatial_scale(settings: &AudioSettings) -> SpatialScale {
     SpatialScale::new(1.0 / (settings.units_per_meter * SPATIAL_UNIT_M))
 }
 
-fn group_gain(s: &AudioSettings, c: Category) -> f32 {
+pub(crate) fn group_gain(s: &AudioSettings, c: Category) -> f32 {
     s.master
         * match c {
             Category::Voice => s.voice,
@@ -299,22 +306,11 @@ fn group_gain(s: &AudioSettings, c: Category) -> f32 {
         }
 }
 
-#[derive(Component, Debug)]
-pub struct MusicTrack {
-    /// Index into `MusicLibrary::fragments`.
-    pub fragment: usize,
-    pub gain: f32,
-    pub target: f32,
-    pub fade_secs: f32,
-    /// Plays once (variation chain / story cue) instead of looping.
-    pub one_shot: bool,
-}
-
 #[derive(Resource)]
-struct AudioRng(u64);
+pub(crate) struct AudioRng(pub(crate) u64);
 
 impl AudioRng {
-    fn next(&mut self) -> usize {
+    pub(crate) fn next(&mut self) -> usize {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
@@ -323,7 +319,7 @@ impl AudioRng {
 }
 
 #[derive(Resource, Default)]
-struct SfxCache(HashMap<String, Handle<AudioSource>>);
+pub(crate) struct SfxCache(pub(crate) HashMap<String, Handle<AudioSource>>);
 
 /// Registers messages, resources and systems. Add Bevy's `AudioPlugin` (part of
 /// `DefaultPlugins`) yourself; headless tools also need `AssetPlugin` and `TimePlugin`.
@@ -355,7 +351,15 @@ impl Plugin for GothicAudioPlugin {
             .add_message::<VoiceMissing>()
             .insert_resource(AudioAssets(self.library.clone()))
             .insert_resource(self.settings.clone())
+            .add_message::<PlayEffectSound>()
             .insert_resource(AudioRng(0x9E37_79B9_7F4A_7C15))
+            .insert_resource(MusicSeq(Sequencer::new(
+                &self.library.music,
+                0x4D55_5349_4353_4551,
+            )))
+            .insert_resource(AmbientSeq(AmbientSequencer::new(0xA3B1_E27C_5D09_4F11)))
+            .init_resource::<AmbientControl>()
+            .init_resource::<AmbientStats>()
             .insert_resource(TapRes(Tap::from_env()))
             .init_resource::<SfxCache>()
             .init_resource::<MusicState>()
@@ -365,10 +369,13 @@ impl Plugin for GothicAudioPlugin {
                     fix_listener_ears,
                     play_voices,
                     track_voices,
+                    effect_sounds,
                     play_sfx,
-                    music_commands,
                     music_update,
                     music_fade,
+                    ambient_update,
+                    water_beds,
+                    emitter_update,
                     rolloff_3d,
                     limit_channels,
                     tap_system,
@@ -378,7 +385,7 @@ impl Plugin for GothicAudioPlugin {
     }
 }
 
-fn volume(v: f32) -> Volume {
+pub(crate) fn volume(v: f32) -> Volume {
     Volume::Linear(v.max(0.0))
 }
 
@@ -563,6 +570,7 @@ fn play_sfx(
             // Template distances are centimetres; fall back to the captured footstep / ambient
             // defaults (min 150 cm resp. 500 cm, effectively unbounded max).
             let (dmin, dmax) = match def {
+                _ if req.distances_cm.is_some() => req.distances_cm.unwrap_or_default(),
                 Some(d) if d.min_distance > 0.0 => {
                     (d.min_distance, d.max_distance.max(d.min_distance))
                 }
@@ -734,12 +742,20 @@ fn tap_system(
     let mut mseen = Vec::new();
     for (e, tr) in &tracks {
         mseen.push(e);
-        let f = &lib.music.fragments[tr.fragment];
-        let g = tr.gain.sqrt() * f.volume * group_gain(&settings, Category::Music);
+        let path = if tr.stinger {
+            lib.music.transitions[tr.fragment].vfs_path()
+        } else {
+            lib.music.fragments[tr.fragment].vfs_path()
+        };
+        let g = tr.amplitude() * group_gain(&settings, Category::Music);
         let last = st.music.get(&e).copied();
         if last.is_none_or(|l| (l - g).abs() > 0.01) {
-            let ex = if last.is_none() { "start" } else { "gain" };
-            tap.log(t, "music", e.to_bits(), &f.vfs_path(), g, 0.0, ex);
+            let ex = if last.is_none() {
+                format!("start skip={:.3}", tr.start_secs)
+            } else {
+                "gain".to_owned()
+            };
+            tap.log(t, "music", e.to_bits(), &path, g, 0.0, &ex);
             st.music.insert(e, g);
         }
     }
@@ -768,194 +784,6 @@ fn tap_system(
             nv as f32,
             "channels,voices",
         );
-    }
-}
-
-fn music_commands(
-    mut reader: MessageReader<MusicCommand>,
-    assets: Res<AudioAssets>,
-    mut state: ResMut<MusicState>,
-) {
-    for cmd in reader.read() {
-        state.apply(&assets.0, cmd);
-    }
-}
-
-fn start_track(
-    commands: &mut Commands,
-    sources: &mut Assets<AudioSource>,
-    lib: &AudioLibrary,
-    fragment: usize,
-    fade_secs: f32,
-    skip_lead_silence: bool,
-) -> bool {
-    let f = &lib.music.fragments[fragment];
-    let Ok(bytes) = lib.read(&f.vfs_path()) else {
-        bevy::log::warn!("music fragment {} missing", f.vfs_path());
-        return false;
-    };
-    let one_shot = !matches!(lib.music.next_after(f), NextFragment::Repeat);
-    let skip = if skip_lead_silence {
-        pcm::leading_silence_secs(&bytes, 60, 30.0)
-            .ok()
-            .filter(|&s| s > 0.5)
-            .map(|s| std::time::Duration::from_secs_f64((s - 0.05).max(0.0)))
-    } else {
-        None
-    };
-    let handle = sources.add(AudioSource { bytes });
-    let mode = if one_shot {
-        PlaybackMode::Once
-    } else {
-        PlaybackMode::Loop
-    };
-    commands.spawn((
-        MusicTrack {
-            fragment,
-            gain: 0.0,
-            target: 1.0,
-            fade_secs,
-            one_shot,
-        },
-        AudioPlayer::new(handle),
-        PlaybackSettings {
-            mode,
-            volume: Volume::Linear(0.0),
-            start_position: skip,
-            ..PlaybackSettings::ONCE
-        },
-    ));
-    true
-}
-
-fn music_update(
-    assets: Res<AudioAssets>,
-    settings: Res<AudioSettings>,
-    mut state: ResMut<MusicState>,
-    mut sources: ResMut<Assets<AudioSource>>,
-    mut tracks: Query<(&mut MusicTrack, Option<&AudioSink>)>,
-    mut commands: Commands,
-) {
-    let lib = &assets.0;
-    // A finished one-shot (variation chain or story cue) advances the chain or ends the cue.
-    let mut next: Option<Option<usize>> = None; // Some(Some(i)) = play i, Some(None) = cue over
-    for (mut t, sink) in &mut tracks {
-        if t.one_shot && t.target > 0.0 && sink.is_some_and(|s| s.empty()) {
-            t.target = 0.0;
-            t.gain = 0.0;
-            let f = &lib.music.fragments[t.fragment];
-            next = Some(match lib.music.next_after(f) {
-                NextFragment::Play(n) => {
-                    lib.music.fragments.iter().position(|x| std::ptr::eq(x, n))
-                }
-                _ => None,
-            });
-        }
-    }
-    match next {
-        Some(Some(i)) => {
-            if start_track(
-                &mut commands,
-                &mut sources,
-                lib,
-                i,
-                0.05,
-                settings.skip_lead_silence,
-            ) {
-                state.current = Some(i);
-                state.now_playing = Some(stem_of(&lib.music.fragments[i].sample));
-            }
-        }
-        Some(None) => {
-            // Story cue finished: return to exploring.
-            state.situation = EXPLORE.into();
-            state.current = None;
-            state.dirty = true;
-        }
-        None => {}
-    }
-    if !state.dirty {
-        return;
-    }
-    state.dirty = false;
-    let want = if state.stopped {
-        None
-    } else {
-        lib.music
-            .resolve(
-                &state.location,
-                &state.situation,
-                state.night,
-                &settings.default_region,
-            )
-            .and_then(|f| lib.music.fragments.iter().position(|x| std::ptr::eq(x, f)))
-    };
-    // An alternate variation of the playing group counts as the same music.
-    let same = match (want, state.current) {
-        (Some(w), Some(c)) => {
-            let (a, b) = (&lib.music.fragments[w], &lib.music.fragments[c]);
-            a.location == b.location && a.situation == b.situation && a.day_time == b.day_time
-        }
-        (None, None) => true,
-        _ => false,
-    };
-    if same {
-        return;
-    }
-    for (mut t, _) in &mut tracks {
-        t.target = 0.0;
-        t.fade_secs = settings.crossfade_secs;
-    }
-    state.current = None;
-    state.now_playing = None;
-    if let Some(i) = want
-        && start_track(
-            &mut commands,
-            &mut sources,
-            lib,
-            i,
-            settings.crossfade_secs,
-            settings.skip_lead_silence,
-        )
-    {
-        state.current = Some(i);
-        state.now_playing = Some(stem_of(&lib.music.fragments[i].sample));
-    }
-}
-
-fn stem_of(sample: &str) -> String {
-    sample
-        .strip_suffix(".wav")
-        .unwrap_or(sample)
-        .to_ascii_lowercase()
-}
-
-fn music_fade(
-    time: Res<Time>,
-    assets: Res<AudioAssets>,
-    settings: Res<AudioSettings>,
-    mut tracks: Query<(Entity, &mut MusicTrack, Option<&mut AudioSink>)>,
-    mut commands: Commands,
-) {
-    let dt = time.delta_secs();
-    for (entity, mut t, sink) in &mut tracks {
-        let step = dt / t.fade_secs.max(0.01);
-        t.gain = if t.gain < t.target {
-            (t.gain + step).min(t.target)
-        } else {
-            (t.gain - step).max(t.target)
-        };
-        if t.target <= 0.0 && t.gain <= 0.0 {
-            commands.entity(entity).despawn();
-            continue;
-        }
-        if let Some(mut sink) = sink {
-            // Equal-power curve so the cross-fade keeps constant loudness.
-            let base = assets.0.music.fragments[t.fragment].volume;
-            sink.set_volume(volume(
-                t.gain.sqrt() * base * settings.master * settings.music,
-            ));
-        }
     }
 }
 
@@ -1001,7 +829,7 @@ mod tests {
         let mut s = MusicState::default();
         assert!(s.stopped);
         assert!(s.apply(&l, &MusicCommand::Trigger("loc_myrtana".into())));
-        assert!(!s.stopped && s.location == "myrtana" && s.dirty);
+        assert!(!s.stopped && s.location == "myrtana");
         assert!(!s.apply(&l, &MusicCommand::Trigger("Loc_Nowhere".into())));
         s.apply(&l, &MusicCommand::SetSituation("FIGHT".into()));
         assert_eq!(s.situation, "fight");

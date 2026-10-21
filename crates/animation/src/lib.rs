@@ -25,6 +25,7 @@ pub mod attach;
 pub mod blend;
 pub mod body_parts;
 pub mod clip;
+pub mod face;
 pub mod library;
 pub mod locomotion;
 pub mod lookat;
@@ -35,6 +36,7 @@ pub mod rig;
 pub mod runtime;
 pub mod visual;
 
+pub use face::{FaceRig, LipSyncStart};
 pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
 pub use library::{ActorLibrary, AssetStores, Composition};
 pub use locomotion::{Locomotion, LocomotionInput, Stance};
@@ -50,13 +52,18 @@ fn has_library(library: Option<Res<ActorLibrary>>) -> bool {
 impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AnimationStats>()
-            .add_systems(Update, runtime::locomotion_system.run_if(has_library))
+            .add_message::<face::LipSyncStart>()
+            .add_systems(
+                Update,
+                (runtime::locomotion_system, face::face_start_system).run_if(has_library),
+            )
             .add_systems(
                 PostUpdate,
                 (
                     runtime::animate_system,
                     (
                         runtime::write_joints_system,
+                        face::face_update_system,
                         runtime::weapon_mount_system,
                         runtime::attachment_system,
                         runtime::clear_dirty_system,

@@ -10,9 +10,7 @@ use bevy::prelude::*;
 use gothic_animation::LipSyncStart;
 use gothic_audio::ambient::DayTime;
 use gothic_audio::lipsync::LipSync;
-use gothic_audio::{
-    AmbientControl, AudioAssets, MusicCommand, PlaySfx, VoiceStarted,
-};
+use gothic_audio::{AmbientControl, AudioAssets, MusicCommand, PlaySfx, VoiceStarted};
 use gothic_runtime::{CoreEvent, CoreRes, Event};
 use gothic_sim::sim::EventKind;
 use std::collections::HashMap;
@@ -56,6 +54,11 @@ fn day_night(
 ) {
     let day_time = DayTime::from_hour(core.0.sim.clock.hour_of_day());
     control.day_time = day_time;
+    // The original counts the ambient volumes (trees carry an `AmbientEnvironment`) around the
+    // camera and picks the dominant type. The capture of the Ardea start plays exactly the
+    // climate 0 / environment 0 (forest) sound set, so that is the count fed until the world
+    // streaming reports the volumes.
+    control.counters = [5, 0, 0, 0, 0, 0];
     let night = day_time == DayTime::Night;
     if *last != Some(night) {
         // The very first call only records the state (the location trigger starts the music).
@@ -257,7 +260,7 @@ fn lipsync_for_voices(
         // `G3_LIPSHOTS=1`: screenshots of the first speaking character at three different
         // mouth shapes (`.local/lipsync-N.png`).
         if shots.is_none() && std::env::var_os("G3_LIPSHOTS").is_some() {
-            let times = distinct_mouth_times(&lip);
+            let times = lip.distinct_mouth_times(3);
             if times.len() == 3 {
                 commands.insert_resource(LipShots { times, taken: 0 });
             }
@@ -272,23 +275,6 @@ struct LipShots {
     taken: usize,
 }
 
-/// Three moments (seconds into the line) with different visemes, at least 0.3 s apart.
-fn distinct_mouth_times(lip: &LipSync) -> Vec<f32> {
-    let mut chosen: Vec<(f32, u32)> = Vec::new();
-    for f in &lip.frames {
-        if f.time < 0.4 || chosen.iter().any(|c| c.1 == f.viseme) {
-            continue;
-        }
-        if chosen.last().is_none_or(|c| f.time - c.0 >= 0.3) {
-            chosen.push((f.time, f.viseme));
-        }
-        if chosen.len() == 3 {
-            break;
-        }
-    }
-    chosen.iter().map(|c| c.0 + 0.02).collect()
-}
-
 fn lip_shots(
     shots: Option<ResMut<LipShots>>,
     faces: Query<&gothic_animation::FaceRig>,
@@ -297,7 +283,9 @@ fn lip_shots(
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
     let Some(mut shots) = shots else { return };
     // Only while a character is speaking with a facial rig.
-    let Some(face) = faces.iter().next() else { return };
+    let Some(face) = faces.iter().next() else {
+        return;
+    };
     if shots.taken >= shots.times.len() {
         return;
     }

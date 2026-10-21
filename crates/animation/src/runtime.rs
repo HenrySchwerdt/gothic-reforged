@@ -46,6 +46,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The mesh entities of every part of a character, by part name (the facial layer hides the
+/// static head while the animated one speaks).
+#[derive(Component, Default)]
+pub struct PartMeshes(pub Vec<(String, Vec<Entity>)>);
+
 /// Marks a skeleton joint entity (carries only a `GlobalTransform`, written by the systems).
 #[derive(Component)]
 pub struct SkeletonJoint;
@@ -256,11 +261,13 @@ impl ActorSpawner<'_, '_> {
                     .id()
             })
             .collect();
+        let mut part_meshes = PartMeshes::default();
         for (part, part_joints) in composition.parts.iter().zip(&composition.part_joints) {
             let skin_joints: Vec<Entity> =
                 part_joints.iter().map(|&j| joints[j as usize]).collect();
+            let mut mesh_entities = Vec::new();
             for m in &part.meshes {
-                commands.spawn((
+                mesh_entities.push(commands.spawn((
                     Mesh3d(m.mesh.clone()),
                     MeshMaterial3d(m.material.clone()),
                     SkinnedMesh {
@@ -271,9 +278,11 @@ impl ActorSpawner<'_, '_> {
                     Transform::default(),
                     Visibility::default(),
                     ChildOf(root),
-                ));
+                )).id());
             }
+            part_meshes.0.push((part.name.clone(), mesh_entities));
         }
+        commands.entity(root).insert(part_meshes);
         for weapon in &spec.weapons {
             let asset = library.static_mesh(&weapon.mesh, &mut stores)?;
             let joint_of = |slot: &str| -> Result<u16> {
@@ -365,6 +374,77 @@ impl ActorSpawner<'_, '_> {
             ));
         }
         Ok(root)
+    }
+
+    /// Loads the first installed animated head of `candidates` together with its `_LipSync`
+    /// source motion (see [`crate::face`]).
+    pub fn load_face(&mut self, candidates: &[String]) -> Option<crate::face::FaceAssets> {
+        let Self {
+            library,
+            meshes,
+            materials,
+            images,
+            bindposes,
+            ..
+        } = self;
+        let mut stores = AssetStores {
+            meshes,
+            materials,
+            images,
+            bindposes,
+        };
+        for name in candidates {
+            let actor = name.split('@').next().unwrap_or(name);
+            if !library.has_actor(actor) {
+                continue;
+            }
+            let Ok(source) = library.clip(&crate::face::lipsync_source_name(actor)) else {
+                continue;
+            };
+            if let Ok(part) = library.part(name, &mut stores) {
+                return Some(crate::face::FaceAssets { part, source });
+            }
+        }
+        None
+    }
+
+    /// Spawns the joint and mesh entities of an animated head as children of `root`; the
+    /// caller drives the joints (see [`crate::face::FaceRig`]).
+    pub fn spawn_face_parts(
+        &mut self,
+        root: Entity,
+        part: &crate::library::PartAsset,
+    ) -> (Vec<Entity>, Vec<Entity>) {
+        let joints: Vec<Entity> = part
+            .joint_nodes
+            .iter()
+            .map(|_| {
+                self.commands
+                    .spawn((SkeletonJoint, GlobalTransform::default(), ChildOf(root)))
+                    .id()
+            })
+            .collect();
+        let meshes = part
+            .meshes
+            .iter()
+            .map(|m| {
+                self.commands
+                    .spawn((
+                        Mesh3d(m.mesh.clone()),
+                        MeshMaterial3d(m.material.clone()),
+                        SkinnedMesh {
+                            inverse_bindposes: part.inverse_bindposes.clone(),
+                            joints: joints.clone(),
+                        },
+                        part.aabb,
+                        Transform::default(),
+                        Visibility::default(),
+                        ChildOf(root),
+                    ))
+                    .id()
+            })
+            .collect();
+        (joints, meshes)
     }
 
     /// Starts an upper-body overlay motion (blended through the rig's upper-body mask).

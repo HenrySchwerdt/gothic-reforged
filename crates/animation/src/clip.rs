@@ -22,7 +22,7 @@ pub struct Track<T> {
 }
 
 impl<T: Copy> Track<T> {
-    fn new(keys: Vec<(f32, T)>) -> Self {
+    pub(crate) fn new(keys: Vec<(f32, T)>) -> Self {
         let times: Vec<f32> = keys.iter().map(|k| k.0).collect();
         let values: Vec<T> = keys.iter().map(|k| k.1).collect();
         let t0 = times.first().copied().unwrap_or(0.0);
@@ -48,6 +48,11 @@ impl<T: Copy> Track<T> {
 
     pub fn len(&self) -> usize {
         self.times.len()
+    }
+
+    /// Key values in time order.
+    pub fn values(&self) -> &[T] {
+        &self.values
     }
 
     pub fn is_empty(&self) -> bool {

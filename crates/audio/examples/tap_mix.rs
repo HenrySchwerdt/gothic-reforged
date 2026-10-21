@@ -58,7 +58,13 @@ fn main() -> Result<()> {
                             p.samples.iter().map(|&s| f32::from(s) / 32768.0).collect();
                         (v, p.sample_rate, ch)
                     });
-                let skip = if kind == "music" {
+                let logged = f[6]
+                    .split("skip=")
+                    .nth(1)
+                    .and_then(|x| x.parse::<f32>().ok());
+                let skip = if let Some(s) = logged {
+                    s
+                } else if kind == "music" {
                     lib.read(f[3])
                         .ok()
                         .and_then(|b| pcm::leading_silence_secs(&b, 60, 30.0).ok())

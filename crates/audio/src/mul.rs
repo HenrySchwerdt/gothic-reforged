@@ -44,8 +44,15 @@ pub fn parse(bytes: &[u8]) -> Result<MulDocument> {
     let _version = cur.u16()?;
     while cur.remaining() > 0 {
         let group_flag = cur.u16()?;
-        ensure!(group_flag == 1, "unexpected group flag {group_flag}");
-        let count = cur.u32()? as usize;
+        // `g3.ams` (ambient table): the last object of a group has already swallowed the
+        // group's `u16 1` as its tail, so the count follows directly.
+        let count = if group_flag == 1 {
+            cur.u32()? as usize
+        } else {
+            let hi = cur.u16()?;
+            ensure!(hi == 0, "unexpected group flag {group_flag}");
+            usize::from(group_flag)
+        };
         ensure!(doc.objects.len() + count <= MAX_OBJECTS, "too many objects");
         for _ in 0..count {
             if !bytes[cur.pos..].starts_with(&CLASS_ACCESSOR) {

@@ -100,14 +100,18 @@ fn main() -> Result<()> {
         let (frate, fch) = probe(&f)?;
         let ff32 = ffmpeg(&f, "f32le")?;
         let ff: Vec<f32> = ff32
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect();
         let ours = pcm::decode(&bytes)?;
         let ff16 = ffmpeg(&f, "s16le")?;
         let ff16: Vec<i16> = ff16
-            .chunks_exact(2)
-            .map(|c| i16::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| i16::from_le_bytes(*c))
             .collect();
         let src = AudioSource {
             bytes: bytes.clone(),

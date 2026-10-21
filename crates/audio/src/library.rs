@@ -1,4 +1,5 @@
 //! `AudioLibrary`: the VFS plus every audio index, loaded once from a game `Data` directory.
+use crate::ambient::AmbientLibrary;
 use crate::music::MusicLibrary;
 use crate::sfx::{SfxLibrary, SoundIndex};
 use crate::speech::{SpeechIndex, SpeechLanguage};
@@ -14,6 +15,8 @@ pub struct AudioLibrary {
     pub language: String,
     pub speech: SpeechIndex,
     pub music: MusicLibrary,
+    /// `g3.ams`: ambient one-shots and environments.
+    pub ambient: AmbientLibrary,
     pub sfx: SfxLibrary,
     pub sounds: SoundIndex,
     strings: Option<StringTable>,
@@ -42,6 +45,10 @@ impl AudioLibrary {
             None => MusicLibrary::default(),
         };
         music.retain_available(|p| vfs.resolve(p).is_some());
+        let ambient = match vfs.resolve_name("g3.ams") {
+            Some(slot) => AmbientLibrary::parse(&vfs.read(slot)?).unwrap_or_default(),
+            None => AmbientLibrary::default(),
+        };
 
         let mut sfx = SfxLibrary::default();
         let tples: Vec<_> = vfs
@@ -65,6 +72,7 @@ impl AudioLibrary {
             language: language.to_owned(),
             speech,
             music,
+            ambient,
             sfx,
             sounds,
             strings,
@@ -108,6 +116,7 @@ impl AudioLibrary {
             language: "German".into(),
             speech: SpeechIndex::default(),
             music,
+            ambient: AmbientLibrary::default(),
             sfx: SfxLibrary::default(),
             sounds: SoundIndex::default(),
             strings: None,
