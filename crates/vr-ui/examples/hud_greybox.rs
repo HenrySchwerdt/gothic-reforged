@@ -6,6 +6,8 @@
 //! cargo run -p gothic-vr-ui --example hud_greybox                         # window, gizmo HUD
 //! cargo run -p gothic-vr-ui --example hud_greybox -- --headless           # CI: exit code
 //! cargo run -p gothic-vr-ui --example hud_greybox -- --screenshot hud.png [--screenshot-frame 90]
+//! cargo run -p gothic-vr-ui --example hud_greybox -- --dump-panels .local/panels  # each panel's texture
+//! cargo run -p gothic-vr-ui --example hud_greybox -- --font /path/to/font.ttf    # HUD font
 //! ```
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
@@ -50,9 +52,11 @@ fn main() -> AppExit {
                 backend: XrBackendKind::External,
             },
             VrRenderPlugin,
-            VrUiPlugin::default(),
+            VrUiPlugin { gizmos: false },
+            VrUiRenderPlugin,
         ))
-        .add_systems(Startup, spawn_scene);
+        .add_systems(Startup, (spawn_scene, load_font))
+        .add_systems(Update, draw_laser);
     }
     if let Some(i) = args.iter().position(|a| a == "--screenshot")
         && let Some(path) = args.get(i + 1)
@@ -64,6 +68,12 @@ fn main() -> AppExit {
             .unwrap_or(90);
         app.insert_resource(gothic_vr::render::CaptureAndExit::new(path.clone(), frame));
     }
+    if let Some(i) = args.iter().position(|a| a == "--dump-panels")
+        && let Some(dir) = args.get(i + 1)
+    {
+        app.insert_resource(DumpPanels(dir.into()))
+            .add_systems(Last, dump_panels);
+    }
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
         1.0 / 72.0,
     )))
@@ -74,6 +84,50 @@ fn main() -> AppExit {
     app.run()
 }
 
+/// Made-up inventory (template-style names, not game data).
+const ITEMS: [(&str, i32); 22] = [
+    ("ItMw_Kurzschwert", 1),
+    ("ItMw_Streitaxt", 1),
+    ("ItRw_Jagdbogen", 1),
+    ("ItRw_Pfeil", 48),
+    ("ItPo_Heiltrank", 3),
+    ("ItPo_Manatrank", 2),
+    ("ItFo_Apfel", 6),
+    ("ItFo_Brot", 2),
+    ("ItFo_Braten", 4),
+    ("ItFo_Käse", 1),
+    ("ItMi_Fackel", 5),
+    ("ItMi_Dietrich", 7),
+    ("ItMi_Erzbrocken", 12),
+    ("ItMi_Wolfsfell", 3),
+    ("ItSc_Feuerball", 2),
+    ("ItSc_Heilung", 1),
+    ("ItAr_Lederrüstung", 1),
+    ("ItAm_Schutzamulett", 1),
+    ("ItRi_Kraftring", 1),
+    ("ItWr_Brief", 1),
+    ("ItWr_Karte", 1),
+    ("ItKe_Truhenschlüssel", 1),
+];
+
+/// Made-up journal entries.
+const QUESTS: [&str; 14] = [
+    "Bring dem Schmied drei Erzbrocken aus der alten Mine.",
+    "Finde heraus, wer die Schafe des Bauern stiehlt.",
+    "Sprich mit dem Wirt über das Gerücht am Turm.",
+    "Besorge zehn Wolfsfelle für den Händler.",
+    "Begleite den Pilger sicher bis zur Mühle.",
+    "Der Jäger sucht jemanden, der Bogenschießen lernen will.",
+    "Hol die gestohlene Truhe aus dem Banditenlager zurück.",
+    "Überbringe den versiegelten Brief an den Hauptmann.",
+    "Lerne bei der Kräuterfrau, wie man Heiltränke braut.",
+    "Räume die Höhle hinter dem Wasserfall von Ratten frei.",
+    "Finde den verschwundenen Sohn des Fischers.",
+    "Kauf dem Schmied ein besseres Schwert ab.",
+    "Erkunde die Ruinen nördlich des Dorfes.",
+    "Gewinne das Wetttrinken in der Taverne.",
+];
+
 fn fake_data() -> HudData {
     HudData {
         vitals: Vitals {
@@ -81,43 +135,60 @@ fn fake_data() -> HudData {
             mana: (35.0, 50.0),
             stamina: (80.0, 100.0),
         },
-        quick_slots: (0..10)
-            .map(|i| {
-                (i % 3 == 0).then(|| QuickSlot {
-                    item: format!("ItFake_{i}"),
-                    count: 1,
-                })
+        quick_slots: [
+            Some("ItMw_Kurzschwert"),
+            Some("ItRw_Jagdbogen"),
+            None,
+            Some("ItPo_Heiltrank"),
+            Some("ItFo_Braten"),
+            None,
+            Some("ItMi_Fackel"),
+            None,
+            None,
+            Some("ItSc_Feuerball"),
+        ]
+        .into_iter()
+        .map(|s| {
+            s.map(|item| QuickSlot {
+                item: item.into(),
+                count: 1,
             })
-            .collect(),
+        })
+        .collect(),
         inventory: PlayerPanel {
             title: "Inventar".into(),
-            rows: (0..27)
-                .map(|i| PageRow {
-                    item: format!("ItFake_{i}"),
-                    count: 1 + i as i32 % 4,
+            rows: ITEMS
+                .iter()
+                .enumerate()
+                .map(|(i, (item, count))| PageRow {
+                    item: (*item).into(),
+                    count: *count,
                     key: i,
                     ..Default::default()
                 })
                 .collect(),
             gold: 250,
         },
-        quests: (0..30)
-            .map(|i| QuestRow {
+        quests: QUESTS
+            .iter()
+            .enumerate()
+            .map(|(i, title)| QuestRow {
                 name: format!("q{i}"),
-                title: format!("Fake quest number {i} with a longer title"),
+                title: (*title).into(),
                 updated: 0,
             })
             .collect(),
         map: Some((
             MapSheet {
                 bitmap: "fake.tga".into(),
-                name: "Greybox".into(),
+                name: "Graukasten".into(),
                 top_left: Vec2::new(-2000.0, 2000.0),
                 bottom_right: Vec2::new(2000.0, -2000.0),
             },
             vec![
-                MapMarker::from_entity("MAP_X_Village", 800.0, 600.0),
-                MapMarker::from_entity("MAP_X_Tower", -1200.0, -300.0),
+                MapMarker::from_entity("MAP_X_Dorf", 800.0, 600.0),
+                MapMarker::from_entity("MAP_X_Turm", -1200.0, -300.0),
+                MapMarker::from_entity("MAP_X_Mühle", -500.0, 1300.0),
             ],
             Vec2::ZERO,
         )),
@@ -274,7 +345,7 @@ fn check(
             && has(HudAction::UseQuickSlot(3))
             && has(HudAction::Page(Some(PageId::Quests)))
             && s.book_turned
-            && hud.0.map_label.as_deref() == Some("Village");
+            && hud.0.map_label.as_deref() == Some("Dorf");
         println!("hud greybox: {}", if ok { "OK" } else { "FAILED" });
         exit.write(if ok {
             AppExit::Success
@@ -282,6 +353,72 @@ fn check(
             AppExit::from_code(1)
         });
     }
+}
+
+#[derive(Resource)]
+struct DumpPanels(std::path::PathBuf);
+
+/// Save every visible panel texture at a few frames of the script (one per part).
+fn dump_panels(
+    mut commands: Commands,
+    dir: Res<DumpPanels>,
+    script: Res<Script>,
+    surfaces: Query<(&gothic_vr_ui::render::Surface, &Visibility)>,
+) {
+    if ![30, 90, 145, 190, 245, 285].contains(&script.frame) {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir.0);
+    for (s, vis) in &surfaces {
+        if *vis == Visibility::Visible {
+            let path = dir.0.join(format!("{:?}_{}.png", s.kind, script.frame));
+            commands
+                .spawn(bevy::render::view::screenshot::Screenshot::image(
+                    s.image().clone(),
+                ))
+                .observe(bevy::render::view::screenshot::save_to_disk(path));
+        }
+    }
+}
+
+/// The main hand's pointer ray (the HUD itself is drawn by `VrUiRenderPlugin`).
+fn draw_laser(input: Res<gothic_vr::VrInputRes>, mut gizmos: Gizmos) {
+    if let Some(p) = input.0.hand_pose(Hand::Right) {
+        gizmos.line(
+            p.position,
+            p.position + p.forward() * 2.5,
+            Color::srgba(1.0, 0.85, 0.4, 0.6),
+        );
+    }
+}
+
+/// A system font with umlauts for the HUD (`--font <file>` or a common system path); the
+/// game host passes its own `HudFont` instead.
+fn load_font(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+    let args: Vec<String> = std::env::args().collect();
+    let given = args
+        .iter()
+        .position(|a| a == "--font")
+        .and_then(|i| args.get(i + 1).cloned());
+    let candidates = given.into_iter().chain(
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ]
+        .map(String::from),
+    );
+    for path in candidates {
+        if let Ok(bytes) = std::fs::read(&path) {
+            info!("HUD font: {path}");
+            commands.insert_resource(HudFont(fonts.add(Font::from_bytes(bytes))));
+            return;
+        }
+    }
+    warn!("no system font found; umlauts will show as boxes (pass --font <file>)");
 }
 
 fn spawn_scene(

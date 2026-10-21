@@ -15,7 +15,7 @@ local maintainer step; the hooks for it are listed below.
 | `crates/vr-physics` (`gothic-vr-physics`) | VR-03 | avian3d 0.8, physics hands (strength-limited PD force/torque), grip points, two-handed grabs, throwing, procedural props, headless test rig |
 | `crates/vr-melee` (`gothic-vr-melee`) | VR-04 | swept blade/blunt/pierce contact model, stabs (stick/pull-out), block/parry, `HitEvent`, hitzones, training dummy |
 | `crates/vr-npc` (`gothic-vr-npc`) | VR-05 | active ragdoll (balance, stagger, fall, get-up), combat AI (telegraphs, attack slots, blocking, recoil), Bevy plugin |
-| `crates/vr-ui` (`gothic-vr-ui`) | VR-10 | world-space HUD over `gothic-ui`'s page state: wrist vitals, quick-slot wheel, backpack inventory, dialog options beside the NPC, journal book, held map, world-locked subtitles; comfort rules; gizmo greybox view |
+| `crates/vr-ui` (`gothic-vr-ui`) | VR-10 | world-space HUD over `gothic-ui`'s page state: wrist vitals, quick-slot wheel, backpack inventory, dialog options beside the NPC, journal book, held map, world-locked subtitles; comfort rules; drawn panels (UI to texture) and a gizmo greybox view |
 | `crates/vr-archery` (`gothic-vr-archery`) | VR-06 | quiver/nock/draw/release, ballistic arrows that stick, aim assist, damage hook |
 | `apps/vr-sandbox` (`gothic-vr-sandbox`) | all | greybox level with everything above |
 
@@ -132,5 +132,14 @@ except the off-view subtitle fallback.
 Integration hooks: add `VrUiPlugin` after `VrPlugin`; the host fills `HudDataRes` from the
 same sources the flat UI reads, mirrors `HudAction::Page` into the flat UI / core GUI state
 and executes the other actions (use item, choose option). `VrUiPlugin { gizmos: false }`
-keeps only the logic. Not done: rendering text and icons on the panels (the gizmo view
-shows layout and state only), haptics, and the trade / crafting pages.
+keeps only the logic.
+
+Drawn panels: `VrUiRenderPlugin` (with `VrUiPlugin { gizmos: false }`) renders each part
+as a Bevy UI tree into its own texture (offscreen camera, rebuilt only when its content
+changes) on an unlit, alpha-blended quad at the part's panel pose. The look is synthetic:
+dark leather panels with brass borders, parchment for the book and the map, coloured
+vitals bars. Insert `HudFont(handle)` for text with umlauts (Bevy's built-in font has
+none); the demo loads a system font (`--font <file>` to choose). `--dump-panels <dir>`
+saves each panel's texture, `--screenshot` the whole view. Not done: the game's own UI
+atlas, fonts and item icons (names stand in for icons), haptics, the trade / crafting
+pages, and a check on a headset (texture resolution, legibility, comfort).

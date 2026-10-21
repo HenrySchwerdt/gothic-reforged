@@ -13,6 +13,7 @@
 //! * [`subtitles`]: world-locked subtitles near the speaker.
 //! * [`hud`]: the whole HUD ([`VrHud`]) following `GuiManager`.
 //! * [`plugin`]: Bevy integration and the greybox gizmo view.
+//! * [`render`]: the drawn HUD (UI rendered to textures on world-space quads).
 //!
 //! All layout and selection logic is Bevy-free and tested without a window.
 pub mod backpack;
@@ -22,6 +23,7 @@ pub mod handheld;
 pub mod hud;
 pub mod panel;
 pub mod plugin;
+pub mod render;
 pub mod subtitles;
 pub mod wheel;
 pub mod wrist;
@@ -29,4 +31,5 @@ pub mod wrist;
 pub use hud::{DialogData, HudAction, HudData, Tracked, VrHud};
 pub use panel::Panel;
 pub use plugin::{HudActionMsg, HudDataRes, VrHudRes, VrUiPlugin};
+pub use render::{HudFont, VrUiRenderPlugin};
 pub use wrist::Vitals;
