@@ -214,6 +214,35 @@ fn dump(db: &GameDatabase, name: &str) {
         }
         return;
     }
+    if name == "--ws" {
+        // Names with leading / trailing whitespace in quest / info data.
+        for q in &db.quests {
+            for e in q.delivery_entities.iter().chain([&q.destination_entity]) {
+                if e.trim() != e {
+                    println!("quest {} entity {e:?}", q.name);
+                }
+            }
+        }
+        for i in &db.infos {
+            for e in [&i.owner, &i.quest, &i.parent]
+                .into_iter()
+                .chain(i.cond_player_knows.iter())
+                .chain(i.cond_secondary_npc.iter())
+            {
+                if e.trim() != e {
+                    println!("info {} name {e:?}", i.name);
+                }
+            }
+            for s in &i.script {
+                for e in [&s.entity1, &s.id1] {
+                    if e.trim() != e {
+                        println!("info {} script {} {e:?}", i.name, s.command);
+                    }
+                }
+            }
+        }
+        return;
+    }
     if name == "--owners" {
         println!("owners: {}, infos: {}", db.owners().count(), db.infos.len());
         println!("PC_Hero infos: {}", db.infos_of("PC_Hero").len());

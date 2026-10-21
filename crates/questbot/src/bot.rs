@@ -559,19 +559,36 @@ impl<'a> QuestBot<'a> {
             let own = match self.cache.scores.get(npc) {
                 Some(&v) => v,
                 None => {
-                    let v = self
-                        .engine
-                        .own_root_available(&self.state, npc)
-                        .into_iter()
-                        .chain(
-                            hero_dependent
-                                .iter()
-                                .copied()
-                                .filter(|&i| self.engine.is_available(&self.state, i, npc)),
-                        )
-                        .map(|id| self.score(id))
-                        .max()
-                        .unwrap_or(0);
+                    let own_infos = self.engine.own_root_available(&self.state, npc);
+                    // Approaching an NPC runs its `Important` / `News` / `QuestRunning` /
+                    // `Refuse` line by itself: one that closes a quest of the route keeps the
+                    // bot away (until nothing else is left).
+                    let autorun_spoils = !self.allow_spoilers
+                        && own_infos.iter().any(|&i| {
+                            let info = self.db.info(i);
+                            matches!(
+                                gothic_gameplay::model::InfoType::from_raw(info.info_type),
+                                gothic_gameplay::model::InfoType::Important
+                                    | gothic_gameplay::model::InfoType::News
+                                    | gothic_gameplay::model::InfoType::QuestRunning
+                                    | gothic_gameplay::model::InfoType::Refuse
+                            ) && self.planner.spoils(&self.state, info)
+                        });
+                    let v = if autorun_spoils {
+                        0
+                    } else {
+                        own_infos
+                            .into_iter()
+                            .chain(
+                                hero_dependent
+                                    .iter()
+                                    .copied()
+                                    .filter(|&i| self.engine.is_available(&self.state, i, npc)),
+                            )
+                            .map(|id| self.score(id))
+                            .max()
+                            .unwrap_or(0)
+                    };
                     self.cache.scores.insert(npc.clone(), v);
                     v
                 }

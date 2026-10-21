@@ -135,7 +135,14 @@ impl Planner {
     }
 
     /// Does running `info` close or fail a quest of the route that is still going?
-    fn spoils(&self, st: &GameState, info: &gothic_formats::info::Info) -> bool {
+    pub fn spoils(&self, st: &GameState, info: &gothic_formats::info::Info) -> bool {
+        // A `DoCancel` line cancels its own quest.
+        if InfoCond::from_raw(info.condition_type) == InfoCond::DoCancel
+            && self.is_relevant(&info.quest)
+            && !st.quest_status(&info.quest).is_finished()
+        {
+            return true;
+        }
         info.script.iter().any(|s| {
             matches!(
                 Cmd::parse(&s.command),
