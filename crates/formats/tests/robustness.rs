@@ -129,3 +129,29 @@ fn zlib_member_cannot_claim_a_huge_size() {
         assert!(b - a < 64 * 1024, "peak grew by {} MiB", (b - a) >> 10);
     }
 }
+
+#[test]
+fn structured_generators_produce_valid_files() {
+    // The weather and igl generators build complete files; if they stopped parsing, the
+    // fuzzer would only ever test the envelope checks.
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    for len in 0..512usize {
+        let data: Vec<u8> = (0..len % 257)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        let w = structured(Target::Weather, &data);
+        if let Err(e) = gothic_formats::weather::parse(&w) {
+            panic!("weather {data:?}: {e:#}");
+        }
+        let i = structured(Target::Igl, &data);
+        assert!(gothic_formats::igl::Igl::parse(&i).is_ok(), "igl {data:?}");
+    }
+    let name = structured(Target::TerrainName, &[0, b'4', b'2']);
+    let parsed = gothic_formats::terrain::parse_cell_name(&String::from_utf8_lossy(&name));
+    assert_eq!(parsed, Some(("Myrtana".into(), 42, "xcmsh".into())));
+}
