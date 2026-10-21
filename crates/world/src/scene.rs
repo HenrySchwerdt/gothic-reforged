@@ -50,6 +50,8 @@ pub struct SceneAdmin {
     by_name: BTreeMap<String, Vec<EntityId>>,
     info: BTreeMap<EntityId, Info>,
     templates: BTreeMap<String, u64>,
+    /// Entity id (GUID) index behind `eCEntityProxy::ResolveEntity`.
+    guids: BTreeMap<String, EntityId>,
     spatial_contexts: usize,
     editor_mode: bool,
 }
@@ -77,6 +79,7 @@ impl SceneAdmin {
         let Some(info) = self.info.remove(&id) else {
             return false;
         };
+        self.guids.retain(|_, e| *e != id);
         if let Some(v) = self.by_name.get_mut(&info.name) {
             v.retain(|e| *e != id);
             if v.is_empty() {
@@ -84,6 +87,17 @@ impl SceneAdmin {
             }
         }
         true
+    }
+
+    /// Index an entity under its GUID (the entity-id lookup that `eCEntityProxy` resolves
+    /// through). A GUID names one entity; the newest registration wins.
+    pub fn register_guid(&mut self, id: EntityId, guid: &str) {
+        self.guids.insert(guid.to_ascii_lowercase(), id);
+    }
+
+    /// The entity registered under a GUID.
+    pub fn entity_by_guid(&self, guid: &str) -> Option<EntityId> {
+        self.guids.get(&guid.to_ascii_lowercase()).copied()
     }
 
     pub fn is_registered(&self, id: EntityId) -> bool {
@@ -287,6 +301,8 @@ pub struct Scene {
     pub prefetch: PvsPrefetcher,
     pub admin: EntityAdmin,
     pub registry: SceneAdmin,
+    /// Sectors and their enable flags; a switch forces the next prefetch evaluation.
+    pub sectors: crate::sector::SectorAdmin,
     db: u8,
     /// Far clip plane of the observing camera; it is the PVS sphere radius.
     pub far_clip: f32,
@@ -306,6 +322,7 @@ impl Scene {
             prefetch,
             admin,
             registry: SceneAdmin::new(),
+            sectors: crate::sector::SectorAdmin::new(),
             db,
             far_clip,
             special_camera: false,
@@ -379,6 +396,11 @@ impl Scene {
         source: &dyn CellSource,
     ) -> Result<SceneUpdate, PvsError> {
         let mut out = SceneUpdate::default();
+        // `eCContextBase::Enable` ends in `ForcePrefetch`.
+        if self.sectors.take_force_prefetch() {
+            self.prefetch.force(self.db);
+            self.admin.force_full_update();
+        }
         let sphere = PvsSphere::from_camera(camera.to_array(), self.far_clip, self.special_camera);
         if let Some(grid) = self
             .prefetch

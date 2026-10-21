@@ -129,6 +129,23 @@ impl ProcessingRange {
         (events, inside)
     }
 
+    pub fn scene(&self) -> &Scene {
+        &self.scene
+    }
+
+    /// The mirrored scene (sectors, tree) for the world-level rules that act on entities.
+    pub fn scene_mut(&mut self) -> &mut Scene {
+        &mut self.scene
+    }
+
+    /// Switch the mirrored entity of an actor on or off (`eCEntity::Enable`): the actors of a
+    /// disabled sector layer stay out of the processing list.
+    pub fn set_actor_enabled(&mut self, actor: ActorId, on: bool) {
+        if let Some(e) = self.entities.get(&actor) {
+            self.scene.tree.enable(*e, on);
+        }
+    }
+
     /// Is the actor currently inside?
     pub fn contains(&self, actor: ActorId) -> bool {
         self.entities

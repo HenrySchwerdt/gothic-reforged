@@ -592,6 +592,84 @@ impl EntityTree {
         }
     }
 
+    /// Port of `eCNode::ContainsParent` (Engine:0x1020da60): is `ancestor` on the parent chain
+    /// of `id`?
+    pub fn contains_parent(&self, id: EntityId, ancestor: EntityId) -> bool {
+        let mut cur = self.entities.get(&id).and_then(Entity::parent);
+        while let Some(p) = cur {
+            if p == ancestor {
+                return true;
+            }
+            cur = self.entities.get(&p).and_then(Entity::parent);
+        }
+        false
+    }
+
+    /// Port of `eCNode::MoveToNode` (Engine:0x1020dd00): leave the current parent and attach to
+    /// `parent`, keeping the local matrix like `AttachChild`. A missing target is a no-op, as in
+    /// the original.
+    pub fn move_to_node(
+        &mut self,
+        id: EntityId,
+        parent: Option<EntityId>,
+    ) -> Result<(), EntityError> {
+        match parent {
+            Some(_) => self.link(id, parent),
+            None => Ok(()),
+        }
+    }
+
+    /// Port of `eCNode::Clone` (Engine:0x1020d960): a copy of the entity (flags, matrices,
+    /// boxes, template) without children, attached next to the original. Residency bits are not
+    /// copied: the clone is neither cached in, in range nor killed.
+    pub fn clone_entity(&mut self, id: EntityId) -> Result<EntityId, EntityError> {
+        let src = self
+            .entities
+            .get(&id)
+            .ok_or(EntityError::Unknown(id))?
+            .clone();
+        let new = EntityId(self.next);
+        self.next += 1;
+        let mut e = src.clone();
+        e.id = new;
+        e.children = Vec::new();
+        e.parent = None;
+        e.flags &= !(flags::CACHED_IN | flags::IN_RANGE | flags::KILLED | flags::UPDATE_PENDING);
+        self.entities.insert(new, e);
+        if let Some(p) = src.parent {
+            self.link(new, Some(p))?;
+        }
+        Ok(new)
+    }
+
+    /// Port of `eCNode::CloneSubgraph` (Engine:0x1020d9c0): clone an entity and, recursively,
+    /// its descendants; the descendants hang under the clones. Returns the clone of `id`.
+    pub fn clone_subgraph(&mut self, id: EntityId) -> Result<EntityId, EntityError> {
+        let root = self.clone_entity(id)?;
+        let kids: Vec<EntityId> = self
+            .entities
+            .get(&id)
+            .map(|e| e.children.clone())
+            .unwrap_or_default();
+        for k in kids {
+            let c = self.clone_subgraph(k)?;
+            self.link(c, Some(root))?;
+        }
+        Ok(root)
+    }
+
+    /// Port of `eCEntity::SetTemporary`: the entity is not saved with the world.
+    pub fn set_temporary(&mut self, id: EntityId) {
+        self.set_flags(id, flags::TEMPORARY, true);
+    }
+
+    /// Remember the template an entity was created from (`GetTemplateID`).
+    pub fn set_template(&mut self, id: EntityId, template: Option<&str>) {
+        if let Some(e) = self.entities.get_mut(&id) {
+            e.template = template.map(str::to_owned);
+        }
+    }
+
     /// Every dynamic entity (`eCEntityDynamicContext` members).
     pub fn dynamic_entities(&self) -> impl Iterator<Item = &Entity> {
         self.entities.values().filter(|e| e.is_dynamic())
@@ -770,5 +848,30 @@ mod tests {
             ev,
             TreeEvent::Moved { id, new, .. } if *id == e && new.x == 10_000.0
         )));
+    }
+
+    #[test]
+    fn node_ops_contains_parent_move_and_clone_subgraph() {
+        let mut t = EntityTree::new();
+        let root = t.create("root", false);
+        let a = t.create("a", false);
+        let b = t.create("b", true);
+        t.link(a, Some(root)).unwrap();
+        t.link(b, Some(a)).unwrap();
+        assert!(t.contains_parent(b, root) && t.contains_parent(b, a));
+        assert!(!t.contains_parent(root, b) && !t.contains_parent(a, a));
+        t.cache_in(b);
+        let copy = t.clone_subgraph(a).unwrap();
+        // The clone sits next to the original; its child hangs under the clone.
+        assert_eq!(t.get(copy).unwrap().parent(), Some(root));
+        let kid = t.get(copy).unwrap().children()[0];
+        assert_ne!(kid, b);
+        assert_eq!(t.get(kid).unwrap().name, "b");
+        assert!(t.get(kid).unwrap().is_dynamic() && !t.get(kid).unwrap().is_cached_in());
+        assert_eq!(t.subtree(root).len(), 5);
+        t.move_to_node(kid, Some(root)).unwrap();
+        assert_eq!(t.get(kid).unwrap().parent(), Some(root));
+        t.move_to_node(kid, None).unwrap();
+        assert_eq!(t.get(kid).unwrap().parent(), Some(root));
     }
 }

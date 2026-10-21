@@ -27,6 +27,8 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+/// Host-map key that carries the persisted trigger state (`eCTrigger_PS` counters).
+pub const TRIGGER_KEY: &str = "world.triggers";
 /// File magic.
 pub const MAGIC: &[u8; 4] = b"G3RS";
 /// Schema written by this build.
@@ -277,9 +279,18 @@ impl Core {
     /// Port of `gCWorld::SaveGameWorld` / `gCSession` save: capture the persistent state.
     pub fn capture(&mut self) -> SaveBody {
         self.sync_inventory();
+        // The trigger counters ride in the opaque host map: no schema change.
+        let mut host = self.host.clone();
+        host.remove(TRIGGER_KEY);
+        let snap = self.triggers.snapshot(self.clock);
+        if !snap.triggers.is_empty()
+            && let Ok(json) = serde_json::to_string(&snap)
+        {
+            host.insert(TRIGGER_KEY.to_owned(), json);
+        }
         SaveBody {
             sim: self.sim.snapshot(),
-            host: self.host.clone(),
+            host,
         }
     }
 
@@ -293,6 +304,11 @@ impl Core {
     pub fn restore(&mut self, body: &SaveBody) -> RestoreReport {
         let rep = self.sim.apply_snapshot(&body.sim);
         self.host = body.host.clone();
+        if let Some(json) = self.host.remove(TRIGGER_KEY)
+            && let Ok(snap) = serde_json::from_str(&json)
+        {
+            self.triggers.restore(&snap, self.clock);
+        }
         self.after_restore();
         rep
     }

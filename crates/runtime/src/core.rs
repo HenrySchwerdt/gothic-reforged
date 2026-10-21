@@ -15,6 +15,7 @@ use gothic_sim::sim::{EventKind, Sim};
 use gothic_sim::types::{Action, ActorId, AiMode};
 use gothic_sim::world::{Pos, WorldQuery};
 use gothic_sim::{Actor, SimConfig, brain::Task};
+use gothic_world::trigger::TriggerRuntime;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -244,6 +245,13 @@ pub enum Command {
         key: String,
         value: String,
     },
+    /// The world has a sector `name` with its initial flag (`gCSector`, from the sector list of
+    /// the world file and the `Enabled` flag of the layer roots). Sectors that scripts switch
+    /// without a registration are registered on the first switch.
+    RegisterSector {
+        name: String,
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +261,13 @@ pub enum Event {
     ProcessingRange {
         actor: ActorId,
         entered: bool,
+    },
+    /// A sector was switched (`SetSectorStatus`, a load): its layers exist (`enabled`) or are
+    /// gone. The host spawns or hides the entities of its documents; see
+    /// [`Core::sector_of_document`].
+    SectorSwitched {
+        sector: String,
+        enabled: bool,
     },
     ActorSpawned {
         actor: ActorId,
@@ -392,6 +407,16 @@ pub struct Core {
     pub range: ProcessingRange,
     /// Host presentation state stored in save games (see [`Command::SetHost`]).
     pub host: std::collections::BTreeMap<String, String>,
+    /// Trigger runtime (`eCTrigger_PS` family). The host registers the triggers of the world
+    /// documents and feeds contacts; the state persists with the save (`world.triggers`).
+    pub triggers: TriggerRuntime,
+    /// Seconds of simulated time since the core was created: the clock triggers run on.
+    pub clock: f64,
+    /// Sector group each document-placed actor belongs to.
+    actor_sector: std::collections::BTreeMap<ActorId, String>,
+    /// Initial flag of each registered sector (the layer roots' `Enabled`); a save without an
+    /// entry for a sector means "as authored".
+    sector_defaults: std::collections::BTreeMap<String, bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -442,6 +467,10 @@ impl Core {
             guess_weapons: true,
             range: ProcessingRange::new(),
             host: Default::default(),
+            triggers: TriggerRuntime::new(),
+            clock: 0.0,
+            actor_sector: Default::default(),
+            sector_defaults: Default::default(),
         };
         // The new game's start kit lives in the quest/dialog state; the hero actor carries it.
         core.sync_inventory();
@@ -504,6 +533,8 @@ impl Core {
         for c in commands {
             self.command(c, &mut out);
         }
+        self.clock += f64::from(dt);
+        self.sync_sectors(&mut out);
         self.update_processing_range(&mut out);
         self.acc += dt;
         let step = 1.0 / TICK_HZ;
@@ -565,11 +596,84 @@ impl Core {
         out
     }
 
+    /// The sector (layer group) a world document belongs to, if the world registered one.
+    pub fn sector_of_document(&self, document: &str) -> Option<String> {
+        self.range
+            .scene()
+            .sectors
+            .sector_of_document(document)
+            .map(|s| s.name.clone())
+    }
+
+    /// Is the sector of a document enabled (unknown sectors always are)?
+    pub fn document_enabled(&self, document: &str) -> bool {
+        self.range.scene().sectors.document_enabled(document)
+    }
+
+    /// Apply the sector flags `SetSectorStatus` wrote into the game state
+    /// (`gCSector::Enable` through `gCSectorPersistence_PS::UpdateSector`): the layers' roots
+    /// are switched, the actors placed by their documents follow, and the host hears about each
+    /// change. This is also how a loaded save restores the sectors
+    /// (`gCSectorPersistence_PS::UpdateSectors`).
+    fn sync_sectors(&mut self, out: &mut Vec<Event>) {
+        let mut wanted: std::collections::BTreeMap<String, bool> = self.sector_defaults.clone();
+        wanted.extend(
+            self.sim
+                .state
+                .sectors
+                .iter()
+                .map(|(n, on)| (n.clone(), *on)),
+        );
+        let scene = self.range.scene_mut();
+        let mut changed = false;
+        for (name, on) in wanted {
+            let known = scene.sectors.sector(&name).map(|s| s.enabled);
+            if known == Some(on) {
+                continue;
+            }
+            if known.is_none() {
+                scene.sectors.register(&name, on);
+            }
+            scene.sectors.enable(&mut scene.tree, &name, on);
+            out.push(Event::SectorSwitched {
+                sector: name,
+                enabled: on,
+            });
+            changed = true;
+        }
+        if changed {
+            let scene = self.range.scene();
+            let actors: Vec<(ActorId, bool)> = self
+                .actor_sector
+                .iter()
+                .map(|(a, s)| (*a, scene.sectors.is_enabled(s)))
+                .collect();
+            for (a, on) in actors {
+                self.range.set_actor_enabled(a, on);
+            }
+        }
+    }
+
     /// Port of the range part of `eCEntityAdmin::Process`: the hero (the camera stand-in) centres
     /// the region of interest; actors outside it are not thought for.
     fn update_processing_range(&mut self, out: &mut Vec<Event>) {
         if !self.range.enabled {
-            self.sim.processing = None;
+            // Everything is processed except the actors of switched-off sector layers.
+            let sectors = &self.range.scene().sectors;
+            let off: Vec<ActorId> = self
+                .actor_sector
+                .iter()
+                .filter(|(_, s)| !sectors.is_enabled(s))
+                .map(|(a, _)| *a)
+                .collect();
+            self.sim.processing = (!off.is_empty()).then(|| {
+                self.sim
+                    .actors
+                    .iter()
+                    .map(|a| a.id)
+                    .filter(|a| !off.contains(a))
+                    .collect()
+            });
             return;
         }
         let centre = self
@@ -591,7 +695,14 @@ impl Core {
                 a.ai_mode == AiMode::Dead,
             ))
         });
-        let (events, inside) = self.range.update(centre, view);
+        let (events, mut inside) = self.range.update(centre, view);
+        // Actors of a switched-off sector layer are not part of the world: never processed.
+        let sectors = &self.range.scene().sectors;
+        inside.retain(|a| {
+            self.actor_sector
+                .get(a)
+                .is_none_or(|s| sectors.is_enabled(s))
+        });
         for e in events {
             out.push(Event::ProcessingRange {
                 actor: e.actor,
@@ -603,8 +714,16 @@ impl Core {
 
     fn command(&mut self, c: &Command, out: &mut Vec<Event>) {
         match c {
+            Command::RegisterSector { name, enabled } => {
+                self.range.scene_mut().sectors.register(name, *enabled);
+                self.sector_defaults.insert(name.clone(), *enabled);
+            }
             Command::SpawnNpc { record, at, yaw } => {
                 let id = self.sim.spawn_record(record, *at);
+                let sector = self.sector_of_document(&record.document);
+                if let Some(s) = sector {
+                    self.actor_sector.insert(id, s);
+                }
                 if let Some(w) = self.sim.world.actors.get_mut(&id) {
                     w.1 = *yaw;
                 }
@@ -1033,7 +1152,13 @@ impl Core {
 
     /// The event that tells the host where the hero stands after a load.
     pub fn loaded_event(&self) -> Event {
-        let hero = self.sim.world.actors.get(&self.hero).copied().unwrap_or_default();
+        let hero = self
+            .sim
+            .world
+            .actors
+            .get(&self.hero)
+            .copied()
+            .unwrap_or_default();
         Event::Loaded {
             hero: hero.0,
             yaw: hero.1,
