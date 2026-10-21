@@ -1,0 +1,21 @@
+[package]
+name = "gothic-mods"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Data overlay mods: manifests, load order and typed TOML/RON patches over the game database"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml = "0.8"
+ron = "0.8"
+semver = "1"
+gothic-formats = { path = "../formats" }
+gothic-gameplay = { path = "../gameplay" }
+gothic-sim = { path = "../sim" }
+
+[lints]
+workspace = true
