@@ -3979,6 +3979,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-vr-ui"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "glam",
+ "gothic-ui",
+ "gothic-vr",
+ "serde",
+]
+
+[[package]]
 name = "gothic-world"
 version = "0.1.0"
 dependencies = [
