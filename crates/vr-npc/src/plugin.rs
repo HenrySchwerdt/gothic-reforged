@@ -54,6 +54,8 @@ const HIT_IMPULSE: f32 = 0.9;
 /// Fastest an NPC moves its weapon grip (m/s) and turns it (rad/s).
 const MAX_WEAPON_SPEED: f32 = 12.0;
 const MAX_WEAPON_SPIN: f32 = 25.0;
+/// Radius of the NPC's body against level geometry, m.
+const NPC_RADIUS: f32 = 0.3;
 /// How close (m) a closing hand must be to a joint to hold it.
 const GRAB_REACH: f32 = 0.12;
 
@@ -140,6 +142,16 @@ fn bone_transform(a: Vec3, b: Vec3) -> Transform {
     Transform::from_translation((a + b) / 2.0).with_rotation(rot)
 }
 
+/// Is a standing NPC capsule at `feet` (metres) inside level geometry?
+fn blocked(world: &gothic_vr::gothic_physics::CollisionWorld, feet: Vec3) -> bool {
+    let cm = gothic_vr::CM_PER_M;
+    world.capsule_blocked(
+        (feet + Vec3::Y * 0.6) * cm,
+        (feet + Vec3::Y * 1.5) * cm,
+        NPC_RADIUS * cm,
+    )
+}
+
 fn ground_fn(world: Option<&VrWorld>, near_y: f32) -> impl Fn(f32, f32) -> f32 + '_ {
     move |x, z| {
         world
@@ -151,7 +163,7 @@ fn ground_fn(world: Option<&VrWorld>, near_y: f32) -> impl Fn(f32, f32) -> f32 +
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn think(
     time: Res<Time>,
     mut slots: ResMut<NpcSlots>,
@@ -159,6 +171,7 @@ fn think(
     avatar: Query<&HitzoneSet, With<PlayerAvatar>>,
     weapons: Query<(&Transform, &MeleeWeapon, Option<&LinearVelocity>)>,
     avatars: Query<Entity, With<PlayerAvatar>>,
+    world: Option<Res<VrWorld>>,
     mut npcs: Query<(Entity, &mut VrNpc)>,
 ) {
     let dt = time.delta_secs();
@@ -198,7 +211,17 @@ fn think(
             threat,
             can_act,
         };
-        let intent = npc.ai.update(e.to_bits(), &per, &mut slots.0, dt);
+        let before = npc.ai.root;
+        let mut intent = npc.ai.update(e.to_bits(), &per, &mut slots.0, dt);
+        // Footwork respects the level: a step into a wall or furniture is not taken.
+        if let Some(w) = world.as_deref()
+            && blocked(&w.0, intent.root)
+            && !blocked(&w.0, before)
+        {
+            intent.weapon.position += before - intent.root;
+            npc.ai.root = before;
+            intent.root = before;
+        }
         npc.intent = Some(intent);
     }
 }

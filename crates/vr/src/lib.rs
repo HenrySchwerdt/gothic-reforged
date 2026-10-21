@@ -22,6 +22,7 @@ pub mod plugin;
 pub mod render;
 pub mod rig;
 
+pub use gothic_physics;
 pub use input::{ControllerState, Hand, Pose, VrButton, VrInput, XrFrame};
 pub use plugin::{
     DesktopXr, PendingXrFrame, VrBody, VrCommands, VrDisplay, VrInputRes, VrPlayer, VrPlugin,

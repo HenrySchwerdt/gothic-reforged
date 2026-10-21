@@ -3614,6 +3614,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-vr-sandbox"
+version = "0.1.0"
+dependencies = [
+ "avian3d",
+ "bevy",
+ "gothic-vr",
+ "gothic-vr-archery",
+ "gothic-vr-melee",
+ "gothic-vr-npc",
+ "gothic-vr-physics",
+]
+
+[[package]]
 name = "gothic-world"
 version = "0.1.0"
 dependencies = [

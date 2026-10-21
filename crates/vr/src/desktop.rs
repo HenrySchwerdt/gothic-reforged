@@ -77,9 +77,10 @@ impl Default for DesktopSettings {
     }
 }
 
-/// Reach box of an emulated hand relative to the head, in the head-yaw frame.
-const HAND_MIN: Vec3 = Vec3::new(-0.75, -0.9, -0.85);
-const HAND_MAX: Vec3 = Vec3::new(0.75, 0.45, -0.15);
+/// Reach box of an emulated hand relative to the head, in the head-yaw frame (reaches back
+/// over the shoulder for a quiver).
+pub const HAND_MIN: Vec3 = Vec3::new(-0.75, -0.9, -0.85);
+pub const HAND_MAX: Vec3 = Vec3::new(0.75, 0.45, 0.3);
 
 /// Emulated headset and controllers.
 #[derive(Debug, Clone, PartialEq)]
