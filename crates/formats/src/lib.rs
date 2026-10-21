@@ -9,6 +9,8 @@ pub mod props;
 pub mod quest;
 pub mod remaster;
 pub mod stringtable;
+#[doc(hidden)]
+pub mod synth;
 pub mod template;
 pub mod theme;
 pub mod terrain;
@@ -36,6 +38,8 @@ const MAX_ENTRIES: usize = 1_000_000;
 const MAX_STRING: usize = 16_384;
 const MAX_DEPTH: usize = 64;
 pub const MAX_PAYLOAD: u64 = 256 * 1024 * 1024;
+/// Upper bound of zlib/deflate expansion (decoded bytes per stored byte).
+const MAX_DEFLATE_RATIO: u64 = 1032;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PakHeader {
@@ -176,7 +180,14 @@ impl<R: Read + Seek> PakArchive<R> {
             0 => stored,
             2 => {
                 let mut decoder = Decompress::new(true);
-                let mut result = Vec::with_capacity(usize::try_from(e.size + 1)?);
+                // Deflate expands at most ~1032:1, so a header claiming more than that cannot
+                // be honest: never reserve more than the stored bytes can decode to (the size
+                // check below then rejects the member).
+                let most = e
+                    .stored_size
+                    .saturating_mul(MAX_DEFLATE_RATIO)
+                    .saturating_add(64);
+                let mut result = Vec::with_capacity(usize::try_from(e.size.min(most) + 1)?);
                 let status =
                     decoder.decompress_vec(&stored, &mut result, FlushDecompress::Finish)?;
                 ensure!(

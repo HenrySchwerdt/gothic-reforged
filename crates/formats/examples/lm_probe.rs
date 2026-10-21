@@ -20,7 +20,7 @@ fn main() {
         }
         println!(
             "sub{i} v={} idx={} uv2={} lo={lo:?} hi={hi:?} mat={} uv0={:?}",
-            s.positions.len(), s.indices.len(), s.uv2.len(), s.material, s.uvs.get(0)
+            s.positions.len(), s.indices.len(), s.uv2.len(), s.material, s.uvs.first()
         );
         println!("  uv2[0..6]={:?}", &s.uv2[..s.uv2.len().min(6)]); println!("  c5={:?}", s.colors5.iter().take(12).collect::<Vec<_>>()); println!("  c4={:?}", s.colors4.iter().take(6).collect::<Vec<_>>());
     }

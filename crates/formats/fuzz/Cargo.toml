@@ -1,0 +1,201 @@
+[package]
+name = "gothic-formats-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+gothic-formats = { path = ".." }
+
+# Own workspace: needs nightly (`cargo +nightly fuzz run <target>`), not part of the main build.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "pak"
+path = "fuzz_targets/pak.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "genome"
+path = "fuzz_targets/genome.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ximg"
+path = "fuzz_targets/ximg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xcmsh"
+path = "fuzz_targets/xcmsh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xlmsh"
+path = "fuzz_targets/xlmsh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xact"
+path = "fuzz_targets/xact.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xmot"
+path = "fuzz_targets/xmot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xnvmsh"
+path = "fuzz_targets/xnvmsh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xshmat"
+path = "fuzz_targets/xshmat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xlmp"
+path = "fuzz_targets/xlmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "template_summary"
+path = "fuzz_targets/template_summary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "template_document"
+path = "fuzz_targets/template_document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_node"
+path = "fuzz_targets/world_node.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_props"
+path = "fuzz_targets/world_props.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vegetation"
+path = "fuzz_targets/vegetation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "spt"
+path = "fuzz_targets/spt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "igl"
+path = "fuzz_targets/igl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "theme"
+path = "fuzz_targets/theme.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stringtable"
+path = "fuzz_targets/stringtable.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "quest"
+path = "fuzz_targets/quest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "info"
+path = "fuzz_targets/info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gdini"
+path = "fuzz_targets/gdini.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remaster_mesh"
+path = "fuzz_targets/remaster_mesh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dds"
+path = "fuzz_targets/dds.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "propstream"
+path = "fuzz_targets/propstream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "emfx"
+path = "fuzz_targets/emfx.rs"
+test = false
+doc = false
+bench = false
