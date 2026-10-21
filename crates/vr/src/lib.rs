@@ -7,6 +7,7 @@
 //! * [`locomotion`]: comfort locomotion driving `gothic_physics::CharacterController`.
 //! * [`body`]: full-body IK from head + hands on a generic humanoid skeleton.
 //! * [`greybox`]: synthetic test level (no game content).
+//! * [`openxr`]: OpenXR tracking / controller input (cargo feature `openxr`).
 //! * [`plugin`] / [`render`]: Bevy systems, resources and the debug presentation.
 //!
 //! The backend seam is [`plugin::PendingXrFrame`]: anything that writes an [`input::XrFrame`]
@@ -18,6 +19,7 @@ pub mod desktop;
 pub mod greybox;
 pub mod input;
 pub mod locomotion;
+pub mod openxr;
 pub mod plugin;
 pub mod render;
 pub mod rig;
