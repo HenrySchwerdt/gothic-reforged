@@ -11,8 +11,10 @@ default = []
 render = ["bevy/3d_bevy_render"]
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 bevy = { workspace = true, features = ["std", "bevy_log"] }
 gothic-formats = { path = "../formats" }
+gothic-environment = { path = "../environment" }
 anyhow.workspace = true
 
 [lints]

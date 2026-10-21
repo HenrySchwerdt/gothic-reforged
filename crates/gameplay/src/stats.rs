@@ -36,6 +36,7 @@ pub struct Stat {
 impl Stat {
     /// Port of gCAttribute::ApplyDefaults (Game:0x183850): base 100, no modifier.
     pub fn attribute(base: i32) -> Self {
+        gothic_portcov::hit!("attribute");
         Self {
             base,
             ..Self::default()
@@ -44,6 +45,7 @@ impl Stat {
 
     /// Port of gCStat::ApplyDefaults (Game:0x1845f0): value and maximum 100.
     pub fn pool(value: i32, max: i32) -> Self {
+        gothic_portcov::hit!("pool");
         Self {
             base: value,
             pool: true,
@@ -54,11 +56,13 @@ impl Stat {
 
     /// Port of gCAttribute::GetValue (Game:0x183880): base plus modifier.
     pub fn value(&self) -> i32 {
+        gothic_portcov::hit!("value");
         self.base + self.modifier
     }
 
     /// Port of gCAttribute::GetMaximum / gCStat::GetMaximum (Game:0x183890 / 0x184630).
     pub fn maximum(&self) -> i32 {
+        gothic_portcov::hit!("maximum");
         if self.pool {
             self.max_modifier + self.base_max
         } else {
@@ -69,12 +73,14 @@ impl Stat {
     /// Port of gCAttribute::SetValue (Game:0x1838a0): the base follows so that the value
     /// is as asked, then the stat is capped.
     pub fn set_value(&mut self, v: i32) {
+        gothic_portcov::hit!("set_value");
         self.base = v - self.modifier;
         self.cap();
     }
 
     /// Port of gCStat::SetMaximum (Game:0x184640).
     pub fn set_maximum(&mut self, m: i32) {
+        gothic_portcov::hit!("set_maximum");
         if self.pool {
             self.base_max = m - self.max_modifier;
             self.cap();
@@ -84,6 +90,7 @@ impl Stat {
     /// Port of gCAttribute::Cap / gCStat::Cap (Game:0x183a10 / 0x184970): a pool's maximum
     /// is at least 0; the value stays within `0..=maximum`.
     pub fn cap(&mut self) {
+        gothic_portcov::hit!("cap");
         if self.pool && self.maximum() < 0 {
             self.set_maximum(0);
         }
@@ -99,6 +106,7 @@ impl Stat {
     /// permanent change of a consumed item. Only the add (0) and set (4) operations report
     /// success, as in the original.
     pub fn apply_perm(&mut self, op: i32, p: i32) -> bool {
+        gothic_portcov::hit!("apply_perm");
         if !self.pool {
             return match op {
                 0 => {
@@ -170,6 +178,7 @@ impl Stat {
     /// worn equipment does: operation 0 raises the value modifier, operation 1 (pools only) the
     /// maximum modifier.
     pub fn apply_temp(&mut self, op: i32, p: i32) -> bool {
+        gothic_portcov::hit!("apply_temp");
         match op {
             0 => {
                 self.modifier += p;
@@ -187,6 +196,7 @@ impl Stat {
 
     /// Port of gCAttribute::UnapplyTemp / gCStat::UnapplyTemp (Game:0x1839f0 / 0x1848d0).
     pub fn unapply_temp(&mut self, op: i32, p: i32) -> bool {
+        gothic_portcov::hit!("unapply_temp");
         match op {
             0 => {
                 self.modifier -= p;
@@ -205,6 +215,7 @@ impl Stat {
     /// Port of gCAttrib::CanConsume (Game:0x186ea0): would the permanent change leave the
     /// value non-negative (checked before the cap)?
     pub fn can_consume(&self, op: i32, p: i32) -> bool {
+        gothic_portcov::hit!("can_consume");
         match op {
             0 => self.value() + p >= 0,
             4 => p >= 0,
@@ -217,6 +228,7 @@ impl Stat {
 /// modifier. A raised maximum of `HP` / `MP` takes the current value along in proportion
 /// (`value + value * p / max`, rounded).
 pub fn apply_mod(stat: &mut Stat, tag: &str, p: i32, op: i32) -> bool {
+    gothic_portcov::hit!("apply_mod");
     let tag = tag.to_ascii_uppercase();
     if (tag == "HP" || tag == "MP") && op == 1 && stat.pool {
         let (v, m) = (f64::from(stat.value()), f64::from(stat.maximum()));
@@ -231,6 +243,7 @@ pub fn apply_mod(stat: &mut Stat, tag: &str, p: i32, op: i32) -> bool {
 /// Port of gCPlayerMemory_PS::UnapplyMod (Game:0x14f0a0): the opposite; the value shrinks
 /// with the maximum (`value * (max - p) / max`, rounded).
 pub fn unapply_mod(stat: &mut Stat, tag: &str, p: i32, op: i32) -> bool {
+    gothic_portcov::hit!("unapply_mod");
     let tag = tag.to_ascii_uppercase();
     if (tag == "HP" || tag == "MP") && op == 1 && stat.pool {
         let (v, m) = (f64::from(stat.value()), f64::from(stat.maximum()));
@@ -242,6 +255,7 @@ pub fn unapply_mod(stat: &mut Stat, tag: &str, p: i32, op: i32) -> bool {
 
 /// Port of gCPlayerMemory_PS::Consume (Game:0x14ed60): the permanent change.
 pub fn consume(stat: &mut Stat, p: i32, op: i32) -> bool {
+    gothic_portcov::hit!("consume");
     stat.apply_perm(op, p)
 }
 

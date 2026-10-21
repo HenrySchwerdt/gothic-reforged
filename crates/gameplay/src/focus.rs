@@ -132,6 +132,7 @@ impl FocusConfig {
     /// Port of gCFocus_PS::GetCurrentMaxRange (Game:0x1006c1d0): the largest scan range of
     /// the mode (or the override).
     pub fn max_range(&self, mode: CombatMode) -> f32 {
+        gothic_portcov::hit!("max_range");
         if self.override_range != 0.0 {
             return self.override_range;
         }
@@ -144,6 +145,7 @@ impl FocusConfig {
     /// Port of gCFocus_PS::GetCurrentMaxAngles (Game:0x1006c3e0): the character zone's
     /// window `(azimuth, elevation up, elevation down)`.
     pub fn max_angles(&self, mode: CombatMode) -> (f32, f32, f32) {
+        gothic_portcov::hit!("max_angles");
         let z = self.zone(mode, Class::Character);
         (z.azi, z.elev_up, z.elev_down)
     }
@@ -159,6 +161,7 @@ impl FocusConfig {
     /// Port of gCFocus_PS::GetCurrentPriority's class-level part and of the test in
     /// IsValidEntity (Game:0x1006d3f0): an override wins over the zone's priority.
     pub fn class_priority(&self, mode: CombatMode, class: Class) -> f32 {
+        gothic_portcov::hit!("class_priority");
         let o = self.override_priority[class.index()];
         if o != 0.0 {
             o
@@ -170,12 +173,14 @@ impl FocusConfig {
     /// Port of gCFocus_PS::IsValidEntity (Game:0x1006d3f0): classes with a negative priority
     /// cannot be focused in this mode.
     pub fn is_valid(&self, mode: CombatMode, class: Class) -> bool {
+        gothic_portcov::hit!("is_valid");
         self.class_priority(mode, class) >= 0.0
     }
 
     /// Port of gCFocus_PS::IsEntityInRange2 (Game:0x1006d000): is the squared distance
     /// (already reduced by the entity's size) within the class's scan range?
     pub fn in_range2(&self, mode: CombatMode, class: Class, d2: f32) -> bool {
+        gothic_portcov::hit!("in_range2");
         let r = self.class_range(mode, class);
         r * r >= d2
     }
@@ -183,6 +188,7 @@ impl FocusConfig {
     /// Port of gCFocus_PS::IsEntityInAngles (Game:0x1006ccd0): azimuth within +-azi,
     /// elevation within the zone's window.
     pub fn in_angles(&self, mode: CombatMode, class: Class, az: f32, elev: f32) -> bool {
+        gothic_portcov::hit!("in_angles");
         let z = self.zone(mode, class);
         az.abs() <= z.azi && elev <= z.elev_up && z.elev_down <= elev
     }
@@ -192,6 +198,7 @@ impl FocusConfig {
     /// bonus, the zone priority. (The branch returning 0.0001 for entities without an item
     /// property set is not understood and left out.)
     pub fn priority(&self, mode: CombatMode, c: &Candidate) -> f32 {
+        gothic_portcov::hit!("priority");
         let o = self.override_priority[c.class.index()];
         if o != 0.0 {
             return o;
@@ -239,6 +246,7 @@ const RAD_TO_DEG: f32 = 180.0 / std::f32::consts::PI;
 /// Port of gCFocus_PS::GetAngles (Game:0x1006c530), the owner-relative case: azimuth and
 /// elevation (degrees) of `p` seen from the viewer, azimuth wrapped to `-180..=180`.
 pub fn angles(v: &Viewer, p: [f32; 3]) -> (f32, f32) {
+    gothic_portcov::hit!("angles");
     let d = [p[0] - v.pos[0], p[1] - v.pos[1], p[2] - v.pos[2]];
     let azi = d[0].atan2(d[2]) - v.yaw;
     let mut az = azi * RAD_TO_DEG;
@@ -270,6 +278,7 @@ fn has_lower_priority(
     a: &Candidate,
     b: Option<&Candidate>,
 ) -> bool {
+    gothic_portcov::hit!("has_lower_priority");
     let pa = cfg.priority(mode, a);
     let pb = b.map_or(0.0, |b| cfg.priority(mode, b));
     if let Some(b) = b
@@ -293,6 +302,7 @@ fn focus_check(
     best: Option<&Candidate>,
     best_az: f32,
 ) -> Option<f32> {
+    gothic_portcov::hit!("focus_check");
     let d2 = (dist2(c.pos, v.pos) - c.radius * c.radius).max(0.0);
     if !cfg.in_range2(mode, c.class, d2) {
         return None;
@@ -319,6 +329,7 @@ pub fn find_focus(
     v: &Viewer,
     candidates: &[Candidate],
 ) -> Option<usize> {
+    gothic_portcov::hit!("find_focus");
     let max_range = cfg.max_range(mode);
     let mut best: Option<&Candidate> = None;
     let mut best_az = NO_ANGLE;
@@ -367,6 +378,7 @@ pub fn find_focus(
 /// Port of the lock test at the top of FindFocusEntity: a locked focus is kept while the
 /// entity lives and stays within `FocusLockMaxDistance`.
 pub fn lock_holds(cfg: &FocusConfig, v: &Viewer, target: [f32; 3], alive: bool) -> bool {
+    gothic_portcov::hit!("lock_holds");
     alive && dist2(target, v.pos) <= cfg.lock_max_distance * cfg.lock_max_distance
 }
 

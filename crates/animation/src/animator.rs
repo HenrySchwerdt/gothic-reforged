@@ -135,6 +135,7 @@ impl Animator {
     /// slot without a fade, then starts the motion. The new instance sorts by priority (0), so
     /// it goes above equal-priority instances and below fading ones.
     pub fn play_slot(&mut self, slot: u8, motion: Motion, desc: &PlayDesc, start_time: f32) {
+        gothic_portcov::hit!("play_slot");
         self.layers.retain(|l| l.slot != Some(slot));
         let inst = Instance::new(motion.clip.duration, desc, start_time);
         let at = blend::insertion_index(&self.layers, inst.priority, |l| l.inst.priority);
@@ -160,6 +161,7 @@ impl Animator {
     /// Port of eCWrapper_emfx2Actor::SwitchFadeOut (Engine:0x10049dd0). The instance leaves its
     /// slot (so a new clip can start there at once) and fades out over `seconds`.
     pub fn switch_fade_out(&mut self, slot: u8, seconds: f32) {
+        gothic_portcov::hit!("switch_fade_out");
         let Some(i) = self.layers.iter().position(|l| l.slot == Some(slot)) else {
             return;
         };
@@ -172,6 +174,7 @@ impl Animator {
     /// Port of eCWrapper_emfx2Actor::StopMotion (Engine:0x10047910). Zero fade removes the
     /// instance, otherwise it fades out like `SwitchFadeOut`.
     pub fn stop_slot(&mut self, slot: u8, fade: f32) {
+        gothic_portcov::hit!("stop_slot");
         if fade <= 0.0 {
             self.layers.retain(|l| l.slot != Some(slot));
         } else {
@@ -181,6 +184,7 @@ impl Animator {
 
     /// Port of eCWrapper_emfx2Actor::StopAtLoopEnd (Engine:0x100479c0).
     pub fn stop_at_loop_end(&mut self, slot: u8) {
+        gothic_portcov::hit!("stop_at_loop_end");
         if let Some(l) = self.slot_layer_mut(slot) {
             l.inst.stop_at_loop_end();
         }
@@ -188,6 +192,7 @@ impl Animator {
 
     /// Port of eCWrapper_emfx2Actor::SetTargetWeight (Engine:0x10049ca0).
     pub fn set_target_weight(&mut self, slot: u8, weight: f32) {
+        gothic_portcov::hit!("set_target_weight");
         if let Some(l) = self.slot_layer_mut(slot) {
             l.inst.set_target_weight(weight);
         }
@@ -195,6 +200,7 @@ impl Animator {
 
     /// Port of eCWrapper_emfx2Actor::SetBlendMode (Engine:0x10049d10).
     pub fn set_blend_mode(&mut self, slot: u8, mode: i32) {
+        gothic_portcov::hit!("set_blend_mode");
         if let Some(l) = self.slot_layer_mut(slot) {
             l.inst.set_blend_mode(mode);
         }
@@ -218,6 +224,7 @@ impl Animator {
 
     /// Port of eCWrapper_emfx2Actor::IsActorPlaying (Engine:0x1004a040).
     pub fn is_slot_playing(&self, slot: u8) -> bool {
+        gothic_portcov::hit!("is_slot_playing");
         self.slot_instance(slot).is_some_and(Instance::is_playing)
     }
 

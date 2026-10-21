@@ -97,6 +97,7 @@ impl Slot {
 /// Port of gCInventory_PS::IsDisplaySlot (Game:0x100b34e0): slots whose item is shown
 /// on the character (carry slots, armor, jewellery and the body parts below Helmet).
 pub fn is_display_slot(slot: Slot) -> bool {
+    gothic_portcov::hit!("is_display_slot");
     (5..=0x11).contains(&(slot as u8))
 }
 
@@ -139,6 +140,7 @@ pub mod use_type {
 /// Port of gCInventorySlot::GetEquipSlots (static; Game:0x100bd2a0). Returns the primary and
 /// the alternative carry slot of an item with this use type; `Slot::None` when it has none.
 pub fn equip_slots(use_type: u32) -> (Slot, Slot) {
+    gothic_portcov::hit!("equip_slots");
     use use_type::*;
     match use_type {
         ONE_H => (Slot::BackRight, Slot::BackLeft),
@@ -174,6 +176,7 @@ pub enum LinkKind {
 /// Reconstruction note: for the back slots the decompiler shows an inner switch whose
 /// `Fist`/`Torch`/`ITEM_H` cases fall out of the switch; they are treated as "no bone".
 pub fn bone(slot: Slot, use_type: u32) -> (&'static str, LinkKind) {
+    gothic_portcov::hit!("bone");
     use use_type::*;
     const NONE_: (&str, LinkKind) = ("", LinkKind::None);
     let att = |n| (n, LinkKind::Attachment);
@@ -212,6 +215,7 @@ pub fn bone(slot: Slot, use_type: u32) -> (&'static str, LinkKind) {
 
 /// Port of gCInventory_PS::IsSkinnedSlot (Game:0x100b50b0): the item in this slot replaces a skinned body part.
 pub fn is_skinned_slot(slot: Slot, use_type: u32) -> bool {
+    gothic_portcov::hit!("is_skinned_slot");
     bone(slot, use_type).1 == LinkKind::BodyPart
 }
 

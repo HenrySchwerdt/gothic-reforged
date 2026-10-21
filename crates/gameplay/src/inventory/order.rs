@@ -77,6 +77,7 @@ fn sign(o: Ordering) -> i32 {
 /// Port of gCInventoryStack::CompareType (Game:0x100c3050): ascending rank of the use type;
 /// out-of-range use types count as `None`, negative ranks as "last".
 pub fn compare_type(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_type");
     let clamp = |u: u32| if u > use_type::MAX { 0 } else { u };
     let rank = |s: &Stack| {
         let r = use_type_rank(clamp(s.use_type()));
@@ -87,11 +88,13 @@ pub fn compare_type(a: &Stack, b: &Stack) -> i32 {
 
 /// Port of gCInventoryStack::CompareDamage (Game:0x100c2df0): higher damage first.
 pub fn compare_damage(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_damage");
     sign(b.item().damage_amount.cmp(&a.item().damage_amount))
 }
 
 /// Port of gCInventoryStack::CompareProtection (Game:0x100c2f10): higher `PROT_BLADE` first.
 pub fn compare_protection(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_protection");
     let (x, y) = (
         a.item().mod_value("PROT_BLADE"),
         b.item().mod_value("PROT_BLADE"),
@@ -101,6 +104,7 @@ pub fn compare_protection(a: &Stack, b: &Stack) -> i32 {
 
 /// Port of gCInventoryStack::CompareTemplate (Game:0x100c2a10): case-insensitive name.
 pub fn compare_template(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_template");
     sign(
         a.template
             .to_ascii_lowercase()
@@ -110,12 +114,14 @@ pub fn compare_template(a: &Stack, b: &Stack) -> i32 {
 
 /// Port of gCInventoryStack::CompareValue (Game:0x100c2b00): more valuable first.
 pub fn compare_value(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_value");
     sign(b.item().gold_value.cmp(&a.item().gold_value))
 }
 
 /// Port of gCInventoryStack::CompareQuality (Game:0x100c28d0): compare the quality bits
 /// without the damaged flag; at equal bits an undamaged item sorts before a damaged one.
 pub fn compare_quality(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_quality");
     let key = |s: &Stack| {
         let q = s.combined_quality();
         (q & !super::stack::QUALITY_DAMAGED).wrapping_mul(4)
@@ -131,6 +137,7 @@ pub fn compare_quality(a: &Stack, b: &Stack) -> i32 {
 /// Port of gCInventoryStack::CompareQuickSlot (Game:0x100c2980): assigned quick slots first,
 /// slot 0 counts as 10, unassigned last.
 pub fn compare_quick_slot(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_quick_slot");
     let key = |q: i32| match q {
         q if q < 0 => i32::MAX,
         0 => 10,
@@ -142,6 +149,7 @@ pub fn compare_quick_slot(a: &Stack, b: &Stack) -> i32 {
 /// Port of gCInventoryStack::CompareSlot (Game:0x100c29d0): linked slot order, unlinked
 /// stacks after slot 18.
 pub fn compare_slot(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_slot");
     let key = |s: &Stack| {
         if s.slot == Slot::None {
             0x13
@@ -155,6 +163,7 @@ pub fn compare_slot(a: &Stack, b: &Stack) -> i32 {
 /// Port of gCInventoryStack::CompareFocusName (Game:0x100c2c00): localised focus name, then
 /// the localised description.
 pub fn compare_focus_name(a: &Stack, b: &Stack, cx: &dyn OrderContext) -> i32 {
+    gothic_portcov::hit!("compare_focus_name");
     let o = cx.focus_name(&a.template).cmp(&cx.focus_name(&b.template));
     if o != Ordering::Equal {
         return sign(o);
@@ -164,11 +173,13 @@ pub fn compare_focus_name(a: &Stack, b: &Stack, cx: &dyn OrderContext) -> i32 {
 
 /// Port of gCInventoryStack::CompareName (Game:0x100c2b70): plain template name.
 pub fn compare_name(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_name");
     sign(a.template.cmp(&b.template))
 }
 
 /// Port of gCInventoryStack::CompareWeapon (Game:0x100c25c0).
 fn compare_weapon(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_weapon");
     first_nonzero([
         compare_type(a, b),
         compare_damage(a, b),
@@ -180,6 +191,7 @@ fn compare_weapon(a: &Stack, b: &Stack) -> i32 {
 
 /// Port of gCInventoryStack::CompareArmor (Game:0x100c2610).
 fn compare_armor(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_armor");
     first_nonzero([
         compare_type(a, b),
         compare_protection(a, b),
@@ -191,6 +203,7 @@ fn compare_armor(a: &Stack, b: &Stack) -> i32 {
 
 /// Port of gCInventoryStack::CompareDefault (Game:0x100c2880).
 fn compare_default(a: &Stack, b: &Stack) -> i32 {
+    gothic_portcov::hit!("compare_default");
     first_nonzero([
         compare_template(a, b),
         compare_slot(a, b),
@@ -200,6 +213,7 @@ fn compare_default(a: &Stack, b: &Stack) -> i32 {
 
 /// Port of gCInventoryStack::CompareSpell (Game:0x100c2780): by the spell template, then name.
 fn compare_spell(a: &Stack, b: &Stack, cx: &dyn OrderContext) -> i32 {
+    gothic_portcov::hit!("compare_spell");
     let (sa, sb) = (&a.item().spell, &b.item().spell);
     match (sa, sb) {
         (None, None) => 0,
@@ -214,6 +228,7 @@ fn compare_spell(a: &Stack, b: &Stack, cx: &dyn OrderContext) -> i32 {
 
 /// Port of gCInventoryStack::CompareRecipe (Game:0x100c26f0): recipe order, then name.
 fn compare_recipe(a: &Stack, b: &Stack, cx: &dyn OrderContext) -> i32 {
+    gothic_portcov::hit!("compare_recipe");
     match cx.recipe_cmp(&a.template, &b.template) {
         0 => compare_focus_name(a, b, cx),
         v => v,
@@ -228,6 +243,7 @@ fn first_nonzero<const N: usize>(v: [i32; N]) -> i32 {
 /// category the category-specific chain (weapons, armor, artefacts, alchemy, documents,
 /// spells); everything else by localised name.
 pub fn compare(a: &Stack, b: &Stack, cx: &dyn OrderContext) -> i32 {
+    gothic_portcov::hit!("compare");
     let (ca, cb) = (a.category(), b.category());
     if ca != cb {
         return sign((ca as u8).cmp(&(cb as u8)));

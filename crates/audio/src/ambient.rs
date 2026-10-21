@@ -133,6 +133,7 @@ impl AmbientLibrary {
 
     /// Port of gCAmbientLibrary::GetEnvironment (Game:0x101b9af0).
     pub fn environment(&self, climate: u8, environment: u8) -> Option<&AmbientEnvironment> {
+        gothic_portcov::hit!("environment");
         if climate >= 4 || environment >= 6 {
             return self.environments.first();
         }
@@ -143,6 +144,7 @@ impl AmbientLibrary {
     /// Port of gCAmbientSoundList::FindSounds (Game:0x101bea20): sound indices matching the
     /// triple exactly, each repeated `Weight` times.
     pub fn find_sounds(&self, climate: u8, environment: u8, day_time: u8) -> Vec<usize> {
+        gothic_portcov::hit!("find_sounds");
         let mut list = Vec::new();
         for (i, s) in self.sounds.iter().enumerate() {
             if s.climate == climate && s.environment == environment && s.day_time == day_time {
@@ -154,6 +156,7 @@ impl AmbientLibrary {
 
     /// Port of gCAmbientSoundList::SelectSound (Game:0x101bead0): uniform over the draw list.
     pub fn select_sound(&self, list: &[usize], rng: &mut Rng) -> Option<usize> {
+        gothic_portcov::hit!("select_sound");
         match list.len() {
             0 => None,
             1 => Some(list[0]),
@@ -165,6 +168,7 @@ impl AmbientLibrary {
 /// Port of gCAmbientModule::UpdateEnvironment (Game:0x101b7c00): the environment type whose
 /// volume counter is the largest, but only above 4; otherwise [`DEFAULT_ENVIRONMENT`].
 pub fn dominant_environment(counters: &[u32; 6]) -> u8 {
+    gothic_portcov::hit!("dominant_environment");
     let (best, count) =
         counters.iter().enumerate().fold(
             (0usize, 0u32),
@@ -220,6 +224,7 @@ impl AmbientSequencer {
     /// expires and fewer than `MaxNumSounds` play, `SpawnProbability` decides; the delay is
     /// re-armed with a random value of the environment's range.
     pub fn process(&mut self, lib: &AmbientLibrary, dt: f32, playing: usize) -> Option<Spawn> {
+        gothic_portcov::hit!("process");
         let env = *lib.environment(self.climate, self.environment)?;
         let playing = playing as i32;
         let mut spawn = false;

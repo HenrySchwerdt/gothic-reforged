@@ -278,6 +278,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 impl Core {
     /// Port of `gCWorld::SaveGameWorld` / `gCSession` save: capture the persistent state.
     pub fn capture(&mut self) -> SaveBody {
+        gothic_portcov::hit!("capture");
         self.sync_inventory();
         // The trigger counters ride in the opaque host map: no schema change.
         let mut host = self.host.clone();
@@ -302,6 +303,7 @@ impl Core {
 
     /// Port of `gCWorld::LoadGameWorld`: put a save over the registered world.
     pub fn restore(&mut self, body: &SaveBody) -> RestoreReport {
+        gothic_portcov::hit!("restore");
         let rep = self.sim.apply_snapshot(&body.sim);
         self.host = body.host.clone();
         if let Some(json) = self.host.remove(TRIGGER_KEY)

@@ -166,6 +166,7 @@ pub const PHONEMES: [(&str, u32); 40] = [
 /// Port of eCVisualAnimationLipSync::FindePhoneByLabelString (Engine:0x10027650):
 /// case-insensitive lookup; unknown labels give the rest viseme.
 pub fn viseme_for_label(label: &str) -> u32 {
+    gothic_portcov::hit!("viseme_for_label");
     PHONEMES
         .iter()
         .find(|(l, _)| l.eq_ignore_ascii_case(label))

@@ -187,6 +187,7 @@ impl ItemInfo {
     /// Port of gCItem_PS::GetModValue (Game:0x100b9d20): value of the first modifier whose
     /// tag equals `tag`, 0 when there is none.
     pub fn mod_value(&self, tag: &str) -> i32 {
+        gothic_portcov::hit!("mod_value");
         self.mods
             .iter()
             .find(|m| m.tag == tag)

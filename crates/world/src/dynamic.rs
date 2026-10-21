@@ -28,6 +28,7 @@ pub enum DecayOutcome {
 /// entity's property sets after asking each to decay. An entity without property sets is done
 /// at once.
 pub fn decay(tree: &mut EntityTree, id: EntityId, states: &[DecayState]) -> DecayOutcome {
+    gothic_portcov::hit!("decay");
     if states.iter().all(|s| *s >= DECAY_DONE) {
         tree.kill(id);
         return DecayOutcome::Killed;
@@ -45,6 +46,7 @@ pub fn decay(tree: &mut EntityTree, id: EntityId, states: &[DecayState]) -> Deca
 /// Port of the end of `eCDynamicEntity::OnProcess` (Engine:0x1022a980): when every property set
 /// reports a finished decay state the entity kills itself. Entities without sets never do.
 pub fn process_decay(tree: &mut EntityTree, id: EntityId, states: &[DecayState]) -> bool {
+    gothic_portcov::hit!("process_decay");
     if !states.is_empty() && states.iter().all(|s| *s >= DECAY_DONE) {
         tree.kill(id);
         true
@@ -55,6 +57,7 @@ pub fn process_decay(tree: &mut EntityTree, id: EntityId, states: &[DecayState])
 
 /// Port of `eCDynamicEntity::IsAutoKillEnabled` (Engine:0x1022a140): any set asks for it.
 pub fn is_auto_kill_enabled(set_requests: &[bool]) -> bool {
+    gothic_portcov::hit!("is_auto_kill_enabled");
     set_requests.iter().any(|r| *r)
 }
 

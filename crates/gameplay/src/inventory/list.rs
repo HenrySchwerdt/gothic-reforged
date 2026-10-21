@@ -446,6 +446,7 @@ impl Inventory {
         quality: u32,
         kind: StackType,
     ) -> i32 {
+        gothic_portcov::hit!("add_items");
         if template.is_empty() || amount <= 0 {
             return -1;
         }
@@ -478,6 +479,7 @@ impl Inventory {
         quality: u32,
         amount: i32,
     ) -> i32 {
+        gothic_portcov::hit!("create_items");
         self.add_items(
             template,
             cat.item(template),
@@ -496,6 +498,7 @@ impl Inventory {
         amount: i32,
         quality: u32,
     ) -> i32 {
+        gothic_portcov::hit!("pick_up");
         self.add_items(
             template,
             cat.item(template),
@@ -516,6 +519,7 @@ impl Inventory {
         quality: u32,
         count: i32,
     ) -> i32 {
+        gothic_portcov::hit!("assure_items");
         if template.is_empty() {
             return -1;
         }
@@ -548,6 +552,7 @@ impl Inventory {
         quality: u32,
         after: i32,
     ) -> i32 {
+        gothic_portcov::hit!("find_stack_index");
         self.find_by(|s| eq(&s.template, template), mode, quality, after)
     }
 
@@ -559,6 +564,7 @@ impl Inventory {
         quality: u32,
         after: i32,
     ) -> i32 {
+        gothic_portcov::hit!("find_stack_index_by_use_type");
         self.find_by(|s| s.use_type() == use_type, mode, quality, after)
     }
 
@@ -607,6 +613,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::FindStackIndex(gESlot): index of the stack linked in `slot`.
     pub fn find_stack_index_by_slot(&self, slot: Slot) -> Option<usize> {
+        gothic_portcov::hit!("find_stack_index_by_slot");
         if slot == Slot::None {
             return None;
         }
@@ -615,11 +622,13 @@ impl Inventory {
 
     /// Port of gCInventory_PS::FindStack(gESlot).
     pub fn find_stack(&self, slot: Slot) -> Option<&Stack> {
+        gothic_portcov::hit!("find_stack");
         self.find_stack_index_by_slot(slot).map(|i| &self.stacks[i])
     }
 
     /// Port of gCInventory_PS::FindStackIndexByHotKey (Game:0x100b5900): quick slot lookup.
     pub fn find_stack_index_by_hot_key(&self, key: i32) -> Option<usize> {
+        gothic_portcov::hit!("find_stack_index_by_hot_key");
         if key < 0 {
             return None;
         }
@@ -628,11 +637,13 @@ impl Inventory {
 
     /// Port of gCInventory_PS::GetStackUseType (Game:0x100b5a90), 0 for an invalid index.
     pub fn stack_use_type(&self, idx: usize) -> u32 {
+        gothic_portcov::hit!("stack_use_type");
         self.stacks.get(idx).map_or(0, Stack::use_type)
     }
 
     /// Port of gCInventory_PS::GetStackCategory (Game:0x100b5a70).
     pub fn stack_category(&self, idx: usize) -> super::item::Category {
+        gothic_portcov::hit!("stack_category");
         self.stacks
             .get(idx)
             .map_or(Default::default(), Stack::category)
@@ -641,6 +652,7 @@ impl Inventory {
     /// Port of gCInventory_PS::SetStackAmount (Game:0x100b5b40). Amount 0 disposes the stack
     /// (only if it is unlinked).
     pub fn set_stack_amount(&mut self, idx: usize, amount: i32) -> bool {
+        gothic_portcov::hit!("set_stack_amount");
         if amount == 0 {
             return self.dispose_stack(idx);
         }
@@ -654,6 +666,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::SetStackQuality (Game:0x100b5ab0).
     pub fn set_stack_quality(&mut self, idx: usize, quality: u32) -> bool {
+        gothic_portcov::hit!("set_stack_quality");
         if idx >= self.stacks.len() {
             return false;
         }
@@ -674,6 +687,7 @@ impl Inventory {
 
     /// Port of the stack list's DisposeStack (Game:0x100c3c20): delete only unlinked stacks.
     pub fn dispose_stack(&mut self, idx: usize) -> bool {
+        gothic_portcov::hit!("dispose_stack");
         match self.stacks.get(idx) {
             Some(s) if s.is_disposable() => {
                 self.delete_stack(idx);
@@ -686,6 +700,7 @@ impl Inventory {
     /// Port of the stack list's DeleteStack (Game:0x100c3dd0): remove the stack, shifting the
     /// following indices down.
     pub fn delete_stack(&mut self, idx: usize) -> bool {
+        gothic_portcov::hit!("delete_stack");
         if idx >= self.stacks.len() {
             return false;
         }
@@ -700,6 +715,7 @@ impl Inventory {
     /// items (skills, spells) are never reduced but the call succeeds; removing the whole
     /// stack needs it to be unlinked.
     pub fn remove_items(&mut self, idx: usize, n: i32) -> bool {
+        gothic_portcov::hit!("remove_items");
         let Some(s) = self.stacks.get(idx) else {
             return false;
         };
@@ -719,6 +735,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::MergeStacks: merge stack `from` into `into`.
     pub fn merge_stacks(&mut self, into: usize, from: usize) -> bool {
+        gothic_portcov::hit!("merge_stacks");
         if into == from || into >= self.stacks.len() || from >= self.stacks.len() {
             return false;
         }
@@ -733,6 +750,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::SplitStack: cut `n` items into a new stack.
     pub fn split_stack(&mut self, idx: usize, n: i32) -> Option<usize> {
+        gothic_portcov::hit!("split_stack");
         let new = self.stacks.get_mut(idx)?.split(n)?;
         self.changed(idx);
         self.stacks.push(new);
@@ -754,6 +772,7 @@ impl Inventory {
     /// Port of gCInventory_PS::SetDefaultItem (Game:0x100b5480): declare the default item of
     /// a slot (template inventories only).
     pub fn set_default_item(&mut self, slot: Slot, template: &str, info: Option<Arc<ItemInfo>>) {
+        gothic_portcov::hit!("set_default_item");
         if slot == Slot::None {
             return;
         }
@@ -770,6 +789,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::GetDefaultItem (Game:0x100b5420): template name or empty.
     pub fn default_item(&self, slot: Slot) -> &str {
+        gothic_portcov::hit!("default_item");
         self.defaults[slot.index()]
             .as_ref()
             .map_or("", |d| d.template.as_str())
@@ -796,6 +816,7 @@ impl Inventory {
     /// Port of gCInventory_PS::LinkDefaultItemToSlot (Game:0x100b5620): spawn the
     /// slot's default item when no stack occupies the slot.
     pub fn link_default_item_to_slot(&mut self, slot: Slot) -> bool {
+        gothic_portcov::hit!("link_default_item_to_slot");
         if self.find_stack_index_by_slot(slot).is_some() {
             return false;
         }
@@ -805,6 +826,7 @@ impl Inventory {
     /// Port of gCInventory_PS::UnlinkDefaultItemFromSlot (Game:0x100b5660): remove the slot's
     /// default item unless a stack occupies the slot. True when there was nothing to do.
     pub fn unlink_default_item_from_slot(&mut self, slot: Slot) -> bool {
+        gothic_portcov::hit!("unlink_default_item_from_slot");
         if self.find_stack_index_by_slot(slot).is_some() {
             return false;
         }
@@ -823,6 +845,7 @@ impl Inventory {
     /// Port of gCInventory_PS::LinkDefaultItems (Game:0x100b5530): for slots 1..=18 without a
     /// stack, spawn the default item.
     pub fn link_default_items(&mut self) {
+        gothic_portcov::hit!("link_default_items");
         for i in 1..SLOT_COUNT {
             let slot = Slot::ALL[i];
             if self.find_stack_index_by_slot(slot).is_none() {
@@ -833,6 +856,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::UnlinkDefaultItems (Game:0x100b55e0).
     pub fn unlink_default_items(&mut self) {
+        gothic_portcov::hit!("unlink_default_items");
         for i in 1..SLOT_COUNT {
             let slot = Slot::ALL[i];
             if let Some(Some(d)) = self.defaults.get_mut(i)
@@ -850,6 +874,7 @@ impl Inventory {
     /// 0x100b7700) as run by `OnChildrenAvailable` for an entity instance: take the default
     /// items and treasure sets of the creating template, then link the defaults.
     pub fn patch_from_template(&mut self, template: &Inventory) {
+        gothic_portcov::hit!("patch_from_template");
         self.unlink_default_items();
         for (i, d) in template.defaults.iter().enumerate() {
             self.defaults[i] = d.as_ref().map(|d| DefaultItem {
@@ -873,6 +898,7 @@ impl Inventory {
 
     /// Port of gCInventorySlot::UnLinkFromSlot (Game:0x100bd570) on stack `idx`.
     fn unlink_stack_at(&mut self, idx: usize) {
+        gothic_portcov::hit!("unlink_stack_at");
         let slot = self.stacks[idx].slot;
         if self.stacks[idx].stats_applied {
             self.unapply_stats(idx);
@@ -888,6 +914,7 @@ impl Inventory {
     /// Port of gCInventory_PS::UnlinkStackFromSlot (Game:0x100b51f0): detach whatever stack
     /// sits in `slot`, then give the slot its default item back. Slot `None` does nothing.
     pub fn unlink_stack_from_slot(&mut self, slot: Slot) -> bool {
+        gothic_portcov::hit!("unlink_stack_from_slot");
         if slot == Slot::None {
             return false;
         }
@@ -904,6 +931,7 @@ impl Inventory {
     /// A stack that already sits in another slot moves; an occupied target slot refuses.
     /// `apply_stats` runs `OnApplyStats` for newly linked equipment.
     pub fn link_stack_to_slot(&mut self, idx: usize, slot: Slot, apply_stats: bool) -> bool {
+        gothic_portcov::hit!("link_stack_to_slot");
         self.unlink_default_item_from_slot(slot);
         let ok = self.link_stack(idx, slot, apply_stats);
         if !ok && self.find_stack_index_by_slot(slot).is_none() {
@@ -947,6 +975,7 @@ impl Inventory {
     /// Port of gCInventory_PS::EquipStackToSlot (Game:0x100b80e0): put the stack into a
     /// specific slot, freeing the slot and the stack's old slot first.
     pub fn equip_stack_to_slot(&mut self, idx: usize, slot: Slot) -> bool {
+        gothic_portcov::hit!("equip_stack_to_slot");
         let Some(s) = self.stacks.get(idx) else {
             return false;
         };
@@ -967,6 +996,7 @@ impl Inventory {
     /// one-hander) takes the alternative slot; a left-side item also frees the left slots
     /// and, if the right hand holds a two-hander, the right hand.
     pub fn equip_stack(&mut self, idx: usize) -> bool {
+        gothic_portcov::hit!("equip_stack");
         let Some(st) = self.stacks.get(idx) else {
             return false;
         };
@@ -1008,6 +1038,7 @@ impl Inventory {
     /// Port of gCInventory_PS::UnEquipStack (Game:0x100b8310): only stacks in their carry
     /// slot can be unequipped.
     pub fn unequip_stack(&mut self, idx: usize) -> bool {
+        gothic_portcov::hit!("unequip_stack");
         let Some(s) = self.stacks.get(idx) else {
             return false;
         };
@@ -1022,6 +1053,7 @@ impl Inventory {
     /// Port of gCInventory_PS::GetRightEquipSlot (Game:0x100b85d0): where the right-hand
     /// weapon returns to.
     pub fn right_equip_slot(&self, idx: usize) -> Slot {
+        gothic_portcov::hit!("right_equip_slot");
         match self.stack_use_type(idx) {
             use_type::ONE_H
             | use_type::TWO_H
@@ -1037,6 +1069,7 @@ impl Inventory {
     /// returns to. A one-hander returns to `BackLeft` only if the right hand or the back
     /// right slot holds a one-hander too.
     pub fn left_equip_slot(&self, idx: usize) -> Slot {
+        gothic_portcov::hit!("left_equip_slot");
         match self.stack_use_type(idx) {
             use_type::ONE_H => {
                 let r = self.find_stack(Slot::RightHand).map(Stack::use_type);
@@ -1057,6 +1090,7 @@ impl Inventory {
     /// right-hand item to its carry slot, then draw stack `idx` (-1: draw nothing, the slot
     /// falls back to its default item).
     pub fn hold_stack_right_hand(&mut self, idx: i32) -> bool {
+        gothic_portcov::hit!("hold_stack_right_hand");
         if let Some(cur) = self.find_stack_index_by_slot(Slot::RightHand) {
             let back = self.right_equip_slot(cur);
             self.equip_stack_to_slot(cur, back);
@@ -1072,6 +1106,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::HoldStackLeftHand (Game:0x100b8390).
     pub fn hold_stack_left_hand(&mut self, idx: i32) -> bool {
+        gothic_portcov::hit!("hold_stack_left_hand");
         let cur = self.find_stack_index_by_slot(Slot::LeftHand);
         if cur.map(|c| c as i32) != Some(idx) {
             if let Some(cur) = cur {
@@ -1092,6 +1127,7 @@ impl Inventory {
     /// right hand first. The original function declares its parameters as (left, right);
     /// the script layer calls this with the order of `AiCommand::HoldInventoryStacks`.
     pub fn hold_stacks(&mut self, right: i32, left: i32) -> bool {
+        gothic_portcov::hit!("hold_stacks");
         self.hold_stack_right_hand(right);
         self.hold_stack_left_hand(left);
         true
@@ -1107,6 +1143,7 @@ impl Inventory {
     /// Port of gCInventoryStack::Drop (Game:0x100c06a0) plus gCInventory_PS::DropStack (Game:0x100b4460): unlink the
     /// stack and delete it, reporting what to spawn in the world.
     pub fn drop_stack(&mut self, idx: usize) -> Option<InventoryEvent> {
+        gothic_portcov::hit!("drop_stack");
         let s = self.stacks.get(idx)?;
         let (template, amount, quality, from_slot) =
             (s.template.clone(), s.amount, s.quality, s.slot);
@@ -1131,6 +1168,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::DropSlot (Game:0x100b4530).
     pub fn drop_slot(&mut self, slot: Slot) -> Option<InventoryEvent> {
+        gothic_portcov::hit!("drop_slot");
         let idx = self.find_stack_index_by_slot(slot)?;
         self.drop_stack(idx)
     }
@@ -1138,6 +1176,7 @@ impl Inventory {
     /// Port of gCInventory_PS::DropItemsFromStack (Game:0x100b4580): drop `n` items of a
     /// stack (the stack is unlinked from its slot).
     pub fn drop_items_from_stack(&mut self, idx: usize, n: i32) -> Option<InventoryEvent> {
+        gothic_portcov::hit!("drop_items_from_stack");
         let s = self.stacks.get(idx)?;
         if n < 1 || s.amount < n {
             return None;
@@ -1162,6 +1201,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::DropItemsFromSlot (Game:0x100b4630).
     pub fn drop_items_from_slot(&mut self, slot: Slot, n: i32) -> Option<InventoryEvent> {
+        gothic_portcov::hit!("drop_items_from_slot");
         let idx = self.find_stack_index_by_slot(slot)?;
         self.drop_items_from_stack(idx, n)
     }
@@ -1179,6 +1219,7 @@ impl Inventory {
         kind: StackType,
         ctx: &TransferContext,
     ) -> Option<Transfer> {
+        gothic_portcov::hit!("transfer_items_to");
         if n < 1 {
             return None;
         }
@@ -1231,6 +1272,7 @@ impl Inventory {
         kind: StackType,
         ctx: &TransferContext,
     ) -> Option<Transfer> {
+        gothic_portcov::hit!("transfer_stack_to");
         let n = self.stacks.get(idx)?.amount;
         self.transfer_items_to(dst, idx, n, kind, ctx)
     }
@@ -1243,6 +1285,7 @@ impl Inventory {
         kind: StackType,
         ctx: &TransferContext,
     ) -> bool {
+        gothic_portcov::hit!("transfer_all_to");
         let mut ok = true;
         let mut i = 0;
         while i < self.stacks.len() {
@@ -1258,6 +1301,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::SetTransactionAmount (Game:0x100b70c0).
     pub fn set_transaction_amount(&mut self, idx: usize, n: i32) -> bool {
+        gothic_portcov::hit!("set_transaction_amount");
         if idx >= self.stacks.len() {
             return false;
         }
@@ -1268,6 +1312,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::GetTransactionAmount (Game:0x100b70a0).
     pub fn transaction_amount(&self, idx: usize) -> i32 {
+        gothic_portcov::hit!("transaction_amount");
         self.stacks.get(idx).map_or(0, |s| s.transaction)
     }
 
@@ -1280,6 +1325,7 @@ impl Inventory {
         kind: StackType,
         ctx: &TransferContext,
     ) -> Vec<Transfer> {
+        gothic_portcov::hit!("transfer_transaction_items_to");
         let mut out = Vec::new();
         let mut i = 0;
         while i < self.stacks.len() {
@@ -1312,6 +1358,7 @@ impl Inventory {
         ctx_other: &TransferContext,
         ctx_self: &TransferContext,
     ) -> bool {
+        gothic_portcov::hit!("perform_transaction");
         self.transfer_transaction_items_to(other, other_gets, ctx_other);
         other.transfer_transaction_items_to(self, self_gets, ctx_self);
         true
@@ -1348,6 +1395,7 @@ impl Inventory {
     /// Port of gCInventory_PS::IsEquipped(gCArmorSet_PS) (Game:0x100b7ca0): all six pieces
     /// of the set sit in slots.
     pub fn is_armor_set_equipped(&self, set: &super::item::ArmorSet) -> bool {
+        gothic_portcov::hit!("is_armor_set_equipped");
         set.pieces
             .iter()
             .all(|p| !p.is_empty() && self.is_armor_piece_equipped(p))
@@ -1355,6 +1403,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::IsArmorPieceEquipped (Game:0x100b7d40).
     pub fn is_armor_piece_equipped(&self, template: &str) -> bool {
+        gothic_portcov::hit!("is_armor_piece_equipped");
         self.stacks
             .iter()
             .any(|s| s.is_linked() && eq(&s.template, template))
@@ -1364,6 +1413,7 @@ impl Inventory {
     /// its bonus and skills; the item's own modifiers are halved while the stack is damaged;
     /// an undamaged item also activates its skills.
     fn apply_stats(&mut self, idx: usize) {
+        gothic_portcov::hit!("apply_stats");
         let info = self.stacks[idx].info.clone();
         let Some(info) = info else {
             return;
@@ -1388,6 +1438,7 @@ impl Inventory {
 
     /// Port of gCInventorySlot::OnUnApplyStats (Game:0x100be920).
     fn unapply_stats(&mut self, idx: usize) {
+        gothic_portcov::hit!("unapply_stats");
         let info = self.stacks[idx].info.clone();
         self.stacks[idx].stats_applied = false;
         let Some(info) = info else {
@@ -1413,6 +1464,7 @@ impl Inventory {
     /// Port of gCInventory_PS::FindSkillStackIndex (Game:0x100b6870): the permanent stack
     /// whose item teaches `skill`.
     pub fn find_skill_stack_index(&self, skill: &str) -> Option<usize> {
+        gothic_portcov::hit!("find_skill_stack_index");
         if skill.is_empty() {
             return None;
         }
@@ -1423,6 +1475,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::FindSpellStackIndex (Game:0x100b6940).
     pub fn find_spell_stack_index(&self, spell: &str) -> Option<usize> {
+        gothic_portcov::hit!("find_spell_stack_index");
         if spell.is_empty() {
             return None;
         }
@@ -1433,6 +1486,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::ActivateSkill (Game:0x100b67b0).
     pub fn activate_skill(&mut self, skill: &str) -> bool {
+        gothic_portcov::hit!("activate_skill");
         match self.find_skill_stack_index(skill) {
             Some(i) => {
                 self.stacks[i].activation_count += 1;
@@ -1445,6 +1499,7 @@ impl Inventory {
 
     /// Port of gCInventory_PS::DeactivateSkill (Game:0x100b6810).
     pub fn deactivate_skill(&mut self, skill: &str) -> bool {
+        gothic_portcov::hit!("deactivate_skill");
         match self.find_skill_stack_index(skill) {
             Some(i) => {
                 self.stacks[i].activation_count -= 1;
@@ -1458,6 +1513,7 @@ impl Inventory {
     /// Port of gCInventory_PS::IsSkillActive (Game:0x100b5f80): learned or kept active by
     /// equipment.
     pub fn is_skill_active(&self, skill: &str) -> bool {
+        gothic_portcov::hit!("is_skill_active");
         self.find_skill_stack_index(skill)
             .map(|i| &self.stacks[i])
             .is_some_and(|s| s.learned || s.activation_count > 0)
@@ -1465,24 +1521,28 @@ impl Inventory {
 
     /// Port of gCInventory_PS::GetSkillActivationCount (Game:0x100b6760).
     pub fn skill_activation_count(&self, skill: &str) -> i32 {
+        gothic_portcov::hit!("skill_activation_count");
         self.find_skill_stack_index(skill)
             .map_or(0, |i| self.stacks[i].activation_count)
     }
 
     /// Port of gCInventory_PS::HasLearnedSkill (Game:0x100b5fc0).
     pub fn has_learned_skill(&self, skill: &str) -> bool {
+        gothic_portcov::hit!("has_learned_skill");
         self.find_skill_stack_index(skill)
             .is_some_and(|i| self.stacks[i].learned)
     }
 
     /// Port of gCInventory_PS::HasLearnedSpell (Game:0x100b68f0).
     pub fn has_learned_spell(&self, spell: &str) -> bool {
+        gothic_portcov::hit!("has_learned_spell");
         self.find_spell_stack_index(spell)
             .is_some_and(|i| self.stacks[i].learned)
     }
 
     /// Port of gCInventory_PS::LearnStack (Game:0x100b5ef0): mark a skill/spell stack learned.
     pub fn learn_stack(&mut self, idx: usize) -> bool {
+        gothic_portcov::hit!("learn_stack");
         let Some(s) = self.stacks.get_mut(idx) else {
             return false;
         };
@@ -1495,12 +1555,14 @@ impl Inventory {
 
     /// Port of gCInventory_PS::LearnSkill (Game:0x100b6790).
     pub fn learn_skill(&mut self, skill: &str) -> bool {
+        gothic_portcov::hit!("learn_skill");
         self.find_skill_stack_index(skill)
             .is_some_and(|i| self.learn_stack(i))
     }
 
     /// Port of gCInventory_PS::LearnSpell (Game:0x100b6920).
     pub fn learn_spell(&mut self, spell: &str) -> bool {
+        gothic_portcov::hit!("learn_spell");
         self.find_spell_stack_index(spell)
             .is_some_and(|i| self.learn_stack(i))
     }
@@ -1515,6 +1577,7 @@ impl Inventory {
         spell: Option<&LearnReq>,
         attribute: impl Fn(&str) -> Option<i32>,
     ) -> LearnCheck {
+        gothic_portcov::hit!("can_learn_skill");
         let mut out = LearnCheck {
             ok: true,
             ..Default::default()
@@ -1569,6 +1632,7 @@ impl Inventory {
         equip_bonus: i32,
         missing_value: Option<MissingValueFn<'_>>,
     ) -> EquipCheck {
+        gothic_portcov::hit!("can_equip");
         let Some(s) = self.stacks.get(idx) else {
             return EquipCheck::default();
         };
@@ -1590,6 +1654,7 @@ impl Inventory {
     /// one-off consumption (`Consume`) and activate its skills permanently. The caller
     /// removes the item afterwards with [`Inventory::remove_items`].
     pub fn consume_items(&mut self, idx: usize, n: i32) -> Consumed {
+        gothic_portcov::hit!("consume_items");
         let Some(s) = self.stacks.get(idx) else {
             return Consumed::default();
         };
