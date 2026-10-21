@@ -32,7 +32,7 @@ fn rec(sc: &mut Sc, on: bool) {
 /// Visual watcher: every frame the shots drawn are projected through the game camera; frames in
 /// which a spell missile / an arrow is inside the screen are counted, and so are the frames in
 /// which the bow actor exists and is inside the screen.
-fn visual_watch(sc: &mut Sc) {
+pub(super) fn visual_watch(sc: &mut Sc) {
     sc.watch(|cx| {
         use crate::walk::play::ranged::BowVisual;
         let (cam, gt) = {

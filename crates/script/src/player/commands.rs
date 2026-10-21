@@ -203,32 +203,23 @@ pub fn ready_ranged(host: &mut dyn ScriptHost, player: EntityId) -> bool {
     true
 }
 
-/// Aim (the right mouse button): zoom in and, with a bow, start drawing; lowering it goes back to
-/// walking with the weapon.
+/// Aim (true) or give up the draw (false): the ranged loops read the same queue entries the key
+/// handlers of `OnPlayerAction` push (`gEAction` 40 `Aim`, 39 `AbortAttack`); this entry point
+/// is for callers that have no key (the VR controllers).
 pub fn aim_ranged(host: &mut dyn ScriptHost, player: EntityId, aim: bool) {
     if npc_weapon_mode(host, player) != WeaponMode::Ranged {
         return;
     }
-    host.set_state(
-        player,
-        if aim {
-            State::PsRangedAim
-        } else {
-            State::PsRangedWalk
-        },
-    );
+    host.action_queue_push(if aim { 40 } else { 39 }, EntityId::NONE);
 }
 
-/// Release the string or pull the trigger at the focus `target`.
+/// Release the string or pull the trigger at the focus `target` (`gEAction` 41 `Shoot`).
 pub fn release_ranged(host: &mut dyn ScriptHost, player: EntityId, target: EntityId) -> bool {
-    if !matches!(
-        host.current_state(player),
-        Some(State::PsRangedPowerAim | State::PsRangedAimLoop | State::PsRangedAim)
-    ) {
+    if npc_weapon_mode(host, player) != WeaponMode::Ranged {
         return false;
     }
     host.set_current_target(player, target);
-    host.set_state(player, State::PsRangedShoot);
+    host.action_queue_push(41, target);
     true
 }
 

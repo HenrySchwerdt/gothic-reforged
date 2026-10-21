@@ -43,7 +43,7 @@ pub struct RangedView {
     pub draw: f32,
     pitch: AimPitch,
     /// The clips currently set on the animator, to skip reloading them every frame.
-    clips: [Option<String>; 2],
+    pub clips: [Option<String>; 2],
     /// Seconds since an aim state was last left (the crosshair fades after the shot).
     since_aim: f32,
     /// The raise glow (`eff_ani_fight_bow_raise_01`) runs.
@@ -216,6 +216,18 @@ struct CrosshairTick {
     dy: f32,
 }
 
+/// The clip of `Aim_Reload` at `t` seconds into the state.
+fn reload_phase(t: f32) -> Phase {
+    use gothic_projectile::aim::clips::bow::{RELOAD_BEGIN, RELOAD_RAISE};
+    if t < RELOAD_BEGIN {
+        Phase::ReloadBegin
+    } else if t < RELOAD_BEGIN + RELOAD_RAISE {
+        Phase::ReloadRaise
+    } else {
+        Phase::ReloadEnd
+    }
+}
+
 /// The hero's aim state from the script state machine.
 fn hero_state(core: &CoreRes) -> Option<State> {
     core.0.sim.script.npc(core.0.hero).state
@@ -287,9 +299,22 @@ fn aim_frame(
     let phase = match s {
         Some(State::PsRangedAim) => Some(Phase::Raise),
         Some(State::PsRangedPowerAim) => Some(Phase::PowerRaise),
+        // The bow keeps the last frame of the `PowerRaise` clip while the full draw is held
+        // (the aim command of `PS_Ranged_PowerAim` ended, nothing replaces the pose); a crossbow
+        // holds the `Aim` pose.
+        Some(State::PsRangedAimLoop) if !view.crossbow => Some(Phase::PowerRaise),
         Some(State::PsRangedAimLoop) => Some(Phase::Aim),
+        // `PS_Ranged_Aim_Reload`: the next arrow is nocked with the `Reload` clips one after
+        // the other (`Begin`, `Raise`, `End`; their lengths are the clips' own).
+        Some(State::PsRangedAimReload) if !view.crossbow => {
+            let t = core.0.sim.script.npc(core.0.hero).state_time;
+            Some(reload_phase(t))
+        }
         _ => None,
     };
+    let reloading = matches!(s, Some(State::PsRangedAimReload))
+        && core.0.sim.actor(core.0.hero).drawn
+        && !view.crossbow;
     if in_aim {
         view.since_aim = 0.0;
     } else {
@@ -412,7 +437,7 @@ fn aim_frame(
     }
 
     // ---- aim clips -----------------------------------------------------------------------------
-    let Some(phase) = phase.filter(|_| in_aim) else {
+    let Some(phase) = phase.filter(|_| in_aim || reloading) else {
         if view.clips.iter().any(Option::is_some) {
             animator.aim = [None, None];
             view.clips = [None, None];
@@ -434,7 +459,17 @@ fn aim_frame(
         phase
     };
     let family = animator.rig.family.clone();
-    let t = core.0.sim.script.npc(core.0.hero).state_time;
+    // Each clip of the reload starts at its own phase.
+    let held_bow = matches!(s, Some(State::PsRangedAimLoop)) && !view.crossbow;
+    let t = if held_bow {
+        aim::clips::bow::POWER_RAISE
+    } else {
+        core.0.sim.script.npc(core.0.hero).state_time
+    } - match phase {
+        Phase::ReloadRaise => aim::clips::bow::RELOAD_BEGIN,
+        Phase::ReloadEnd => aim::clips::bow::RELOAD_BEGIN + aim::clips::bow::RELOAD_RAISE,
+        _ => 0.0,
+    };
     let variants = [
         (Pitch::Fwd, 1.0f32),
         (
@@ -562,6 +597,9 @@ pub struct BowVisual {
     clip: String,
 }
 
+/// Half turn of a drawn bow about the Z axis of `Slot_LeftHand_Weapon` [I], see `bow_sync`.
+const BOW_IN_HAND_TURN: Quat = Quat::from_xyzw(0.0, 0.0, 1.0, 0.0);
+
 /// Candidate actor names of an item template (`It_Bow_Hunting` -> `Bow_Hunting_01`).
 fn actor_candidates(template: &str) -> Vec<String> {
     let rest = template.strip_prefix("It_").unwrap_or(template);
@@ -662,30 +700,29 @@ pub(super) fn bow_sync(
         .and_then(|&j| hero_anim.joints.get(j as usize))
     {
         let m = root.affine() * *j;
-        // Experiment aid: GR_BOW_ROT="rx,ry,rz" (degrees) turns the actor in the slot frame.
-        let rot = std::env::var("GR_BOW_ROT")
-            .ok()
-            .and_then(|v| {
-                let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-                (n.len() == 3).then(|| {
-                    Quat::from_euler(
-                        EulerRot::XYZ,
-                        n[0].to_radians(),
-                        n[1].to_radians(),
-                        n[2].to_radians(),
-                    )
-                })
-            })
-            // No eyeballed offset: the engine links the item entity to the slot bone with the
-            // identity (`AttachItemToSekelton` 0x100bdb70 passes no offset; the bone comes from
-            // `GetBone`), the same composition the static weapons use (`root * bone`).
-            .unwrap_or(Quat::IDENTITY);
+        // The engine links the item to the slot bone without an offset (`GetBone` of
+        // `gCInventorySlot`, 0x100bd8d0; `AttachItemToSekelton`, 0x100bdb70 passes none). With
+        // that identity the drawn string lies between the right hand and the shooter, which no
+        // drawn bow does: the arrow line (string hand -> chord of the limb tips) points 171 degrees
+        // away from the view in the `bow_faithful` check. A half turn about the slot's Z axis
+        // gives 9 degrees, the hand at the middle of the string. [I] The offset is inferred from
+        // that geometry (probe `bow_orient`); the item entity's own link transform in the
+        // original is not recovered yet. The hanging bow on the back keeps the identity.
+        let rot = if state.drawn {
+            BOW_IN_HAND_TURN
+        } else {
+            Quat::IDENTITY
+        };
         *tf = Transform::from_matrix(Mat4::from(m) * Mat4::from_quat(rot));
     }
     vis.set_if_neq(Visibility::Inherited);
     // The string: relaxed, or drawn while the power aim runs (`Cock` played with the draw time).
     let st = core.0.sim.script.npc(core.0.hero);
-    let drawing = state.drawn && st.state == Some(State::PsRangedPowerAim);
+    // The string is pulled by the draw (`PS_Ranged_PowerAim`) and stays pulled while the full
+    // draw is held (`PS_Ranged_Aim_Loop` of a bow); the shot lets it go.
+    let drawing = state.drawn
+        && (st.state == Some(State::PsRangedPowerAim)
+            || (st.state == Some(State::PsRangedAimLoop) && kind == Use::Bow));
     let base = b.actor.clone();
     let want_clip = format!("{base}_{}", if drawing { "Cock" } else { "Relax" });
     if b.clip != want_clip && spawner.library.has_motion(&want_clip) {
@@ -696,7 +733,15 @@ pub(super) fn bow_sync(
         }
     }
     if drawing {
-        anim.seek(st.state_time);
+        // `PS_Ranged_PowerAim` pulls the string for the length of the clip; in the aim loop it
+        // stays at the end of it.
+        let held = if st.state == Some(State::PsRangedAimLoop) {
+            gothic_projectile::aim::clips::bow::POWER_RAISE
+        } else {
+            st.state_time
+                .min(gothic_projectile::aim::clips::bow::POWER_RAISE)
+        };
+        anim.seek(held);
     }
     let _ = time;
 }

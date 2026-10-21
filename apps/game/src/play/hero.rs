@@ -134,6 +134,10 @@ fn spawn_hero(mut spawner: ActorSpawner, mut state: ResMut<PlayState>, kit: Res<
 /// movement constraint of 360: `PS_Melee_*`, `gCCharacterMovement_PS::
 /// ProcessControledRotationToTarget`, G:0x100e3fb0), or the aim direction while a ranged weapon
 /// or a spell is drawn.
+/// The camera direction is a unit vector; `face` ignores vectors shorter than a centimetre (a target
+/// standing on the hero), so it is given a length in the same unit.
+const CAMERA_ALIGN_LENGTH: f32 = 100.0;
+
 fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<CoreRes>) {
     let pos = player.ctrl.position;
     let toward = |id: ActorId| {
@@ -152,13 +156,19 @@ fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<Core
         && constraint >= gothic_sim::script::player::melee::CONSTRAINT_DEGREES
     {
         face = toward(t);
-    } else if state.drawn
+    } else if constraint == gothic_sim::script::player::ranged::FOLLOW_CAMERA_CONSTRAINT
         && matches!(
-            core.0.sim.actor(core.0.hero).equipment.weapon_mode(),
-            WeaponMode::Ranged | WeaponMode::Magic
+            core.0.sim.hero_script_state().0,
+            Some(ScriptState::PsRanged)
         )
     {
-        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()));
+        // `ProcessMovements` (G:0xddd40): with the constraint at 0 the body is aligned to the
+        // camera direction every frame (`SetAlignmentLookAt`), whatever the wish direction.
+        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
+    } else if state.drawn
+        && core.0.sim.actor(core.0.hero).equipment.weapon_mode() == WeaponMode::Magic
+    {
+        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
     }
     player.face = face.filter(|f| f.length_squared() > 1.0);
 }
@@ -242,7 +252,7 @@ fn potion_of(core: &CoreRes, n: u32) -> Option<String> {
 /// The weapon key: out of `PS_Melee_Loop` it is an action in the player's queue (`Hold`, 68), out
 /// of `PS_Normal_Loop` the script's `OnPlayerSelectWeapon` runs at once.
 fn weapon_key(task: PlayerTask, focus: Option<ActorId>, commands: &mut MessageWriter<CoreCommand>) {
-    if task == PlayerTask::Melee {
+    if matches!(task, PlayerTask::Melee | PlayerTask::Ranged) {
         commands.write(CoreCommand(Command::PlayerAction {
             id: msg::HOLD,
             focus,
@@ -452,24 +462,23 @@ pub(super) fn input(
                     focus: queue_focus,
                 }));
             }
+            // In `PS_Ranged` the aim, shoot, reload and abort keys, the weapon key, the quick
+            // slots and the potions are read from the queue by the loop states
+            // (`PS_Ranged_Walk_Loop`, `PS_Ranged_Aim_Loop`, `OnPowerAim_Loop`). Jump and sneak
+            // also move the body, which the host does at once.
+            Order::Message(id)
+                if task == PlayerTask::Ranged && !matches!(id, msg::JUMP | msg::SNEAK) =>
+            {
+                commands.write(CoreCommand(Command::PlayerAction {
+                    id,
+                    focus: queue_focus,
+                }));
+            }
             Order::Message(id) => match id {
                 msg::JUMP => jump = true,
                 msg::SNEAK => sneak_toggle = true,
                 msg::HOLD => draw = true,
                 msg::USE => use_pressed = true,
-                msg::AIM => {
-                    commands.write(CoreCommand(Command::AimRanged { aim: true }));
-                }
-                msg::SHOOT => {
-                    // A crossbow shoots from the walk state: take aim first.
-                    if left == Hand::CrossBow {
-                        commands.write(CoreCommand(Command::AimRanged { aim: true }));
-                    }
-                    commands.write(CoreCommand(Command::ReleaseRanged { target }));
-                }
-                msg::ABORT_ATTACK => {
-                    commands.write(CoreCommand(Command::AimRanged { aim: false }));
-                }
                 msg::CAST | msg::POWER_CAST | msg::QUICK_CAST | msg::SUMMON => {
                     commands.write(CoreCommand(Command::CastSpell {
                         target,
@@ -535,8 +544,8 @@ pub(super) fn input(
 
     // ---- weapons -------------------------------------------------------------------------------------
     if draw {
-        if mode == WeaponMode::Melee || task == PlayerTask::Melee {
-            // The melee weapon: `OnPlayerSelectWeapon`; the draw is `PS_Melee`'s `_AI_Hold...`.
+        if mode == WeaponMode::Melee || matches!(task, PlayerTask::Melee | PlayerTask::Ranged) {
+            // The weapon key: `OnPlayerSelectWeapon`; the draw is the task's `_AI_Hold...`.
             weapon_key(task, queue_focus, &mut commands);
         } else {
             // Bow and spells keep the host-side draw until their states are ported.
@@ -549,7 +558,7 @@ pub(super) fn input(
         }
     }
     if let Some(d) = script.draw.take() {
-        if mode == WeaponMode::Melee || task == PlayerTask::Melee {
+        if mode == WeaponMode::Melee || matches!(task, PlayerTask::Melee | PlayerTask::Ranged) {
             if d != (core.0.sim.actor(core.0.hero).drawn) {
                 weapon_key(task, queue_focus, &mut commands);
             }
@@ -821,8 +830,6 @@ pub(super) fn sync(
     parts: Query<&gothic_animation::runtime::PartMeshes, With<HeroActor>>,
     mut part_vis: Query<&mut Visibility, (Without<HeroActor>, Without<PlayerBody>)>,
     mut body_hidden: Local<bool>,
-    mut aim_blend: Local<f32>,
-    ranged: Res<super::ranged::RangedView>,
 ) {
     if let Ok(mut v) = body.single_mut() {
         *v = Visibility::Hidden;
@@ -845,7 +852,6 @@ pub(super) fn sync(
             }
         }
     }
-    let dt = time.delta_secs().clamp(1.0e-3, 0.1);
     let pos = player.ctrl.position;
     // The weapon is drawn when the script's hold put it in the hand (`PSInventory::HoldStacks`).
     state.drawn = core.0.sim.actor(core.0.hero).drawn;
@@ -896,12 +902,9 @@ pub(super) fn sync(
     state.hero_yaw = player.ctrl.heading;
     let turn_error = target.map_or(0.0, |t| angle_delta(state.hero_yaw, t));
     tf.translation = pos * CM;
-    // The aim clips leave the body side-on with the left arm along the entity's -X: while a ranged
-    // weapon aims the model turns a quarter so that arm points at the target (the original's
-    // aim pose, checked against the user's screenshot); eased in and out.
-    let aim_target_blend = if ranged.aiming { 1.0 } else { 0.0 };
-    *aim_blend += (aim_target_blend - *aim_blend) * (dt * 10.0).min(1.0);
-    tf.rotation = Quat::from_rotation_y(state.hero_yaw + std::f32::consts::FRAC_PI_2 * *aim_blend);
+    // The body keeps the heading: with a ranged weapon up `ProcessMovements` aligns it to the
+    // camera (`face_target`), the aim clips are played as they are.
+    tf.rotation = Quat::from_rotation_y(state.hero_yaw);
     tf.scale = Vec3::splat(CM);
     let equipped = stance_of(&core.0.sim.actor(core.0.hero).equipment);
     cstance.0 = if equipped == Stance::Unarmed || equipped == Stance::Torch {
