@@ -3551,6 +3551,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "gothic-formats",
+ "serde_json",
 ]
 
 [[package]]
