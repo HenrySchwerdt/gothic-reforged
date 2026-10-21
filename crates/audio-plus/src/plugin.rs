@@ -209,8 +209,14 @@ pub struct EnhancedAudioPlugin;
 
 impl Plugin for EnhancedAudioPlugin {
     fn build(&self, app: &mut App) {
-        app.add_audio_source::<EnhancedSound>()
-            .init_resource::<EnhancedAudio>()
+        // Without bevy's `AudioPlugin` (headless hosts, tests) the voices are still tracked,
+        // only nothing plays them.
+        if app.is_plugin_added::<bevy::audio::AudioPlugin>() {
+            app.add_audio_source::<EnhancedSound>();
+        } else {
+            app.init_asset::<EnhancedSound>();
+        }
+        app.init_resource::<EnhancedAudio>()
             .add_systems(PostUpdate, update_voices);
     }
 }

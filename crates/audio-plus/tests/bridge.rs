@@ -39,7 +39,8 @@ fn wav() -> Vec<u8> {
 fn make_app(enabled: bool) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default(), TransformPlugin))
-        .add_plugins(bevy::audio::AudioPlugin::default())
+        // No `AudioPlugin`: it opens the output device, which CI runners (Windows) may lack.
+        .init_asset::<AudioSource>()
         .add_plugins((EnhancedAudioPlugin, GothicAudioBridgePlugin))
         .insert_resource(AudioSettings::default())
         .insert_resource(EnhancedAudio {
