@@ -9,8 +9,8 @@
 use super::{
     FogEnd, PlayerCamera, SkyHandle, SunDir,
     gmat::{
-        CHAR_LIGHTS, CharMaterial, GothicMaterial, SkyMaterial, push_char_lights, push_light_env,
-        set_light_env,
+        CHAR_LIGHTS, CharMaterial, GothicMaterial, SkyMaterial, WindEnv, push_char_lights,
+        push_light_env, set_light_env, set_wind_env,
     },
 };
 use crate::world_loader::{Request, WeatherPayload, ZoneInstance};
@@ -18,7 +18,10 @@ use bevy::{
     pbr::{DistanceFog, FogFalloff},
     prelude::*,
 };
-use gothic_environment::{DEFAULT_DAY_TIME, EnvPacket, WeatherAdmin, packet};
+use gothic_environment::{
+    DEFAULT_DAY_TIME, EnvPacket, WeatherAdmin, packet, precip::PrecipParams, sky::SkydomeParams,
+    wind::SpeedTreeWind,
+};
 use gothic_render_rules::lights::{self, StaticLight};
 use std::collections::HashMap;
 
@@ -53,6 +56,14 @@ pub struct OrigEnv {
     light_grid: HashMap<(i32, i32), Vec<StaticLight>>,
     since_lights: f32,
     char_lights: Vec<StaticLight>,
+    /// The world's wind entity, waiting to be written into the materials.
+    pending_wind: Option<SpeedTreeWind>,
+    /// The world's precipitation entity and the emitter the weather currently asks for at the
+    /// camera (`eCWeatherAdmin::Process` -> `eCPrecipitation_PS`).
+    precip_base: PrecipParams,
+    pub precip: PrecipParams,
+    /// The world's skydome entity (sun / moon / star sizes).
+    pub skydome: SkydomeParams,
 }
 
 impl OrigEnv {
@@ -85,6 +96,10 @@ impl OrigEnv {
             light_grid: HashMap::new(),
             since_lights: LIGHT_INTERVAL,
             char_lights: Vec::new(),
+            pending_wind: None,
+            precip_base: PrecipParams::default(),
+            precip: PrecipParams::default(),
+            skydome: SkydomeParams::default(),
         }
     }
 
@@ -126,6 +141,13 @@ impl OrigEnv {
                 });
         }
         eprintln!("environment: {} static point lights", payload.lights.len());
+        self.pending_wind = payload.wind;
+        if let Some(p) = payload.precipitation {
+            self.precip_base = p;
+        }
+        if let Some(s) = payload.skydome {
+            self.skydome = s;
+        }
         self.zones = payload.zones;
         self.admin = Some(admin);
     }
@@ -217,17 +239,29 @@ fn env_update(
     };
     let probe = env.gothic(cam.translation);
     let t = env.day_time;
-    let rec = {
+    let (rec, precip) = {
         let env = &mut *env;
         let admin = env.admin.as_mut().expect("checked above");
         if advance > 0.0 {
             admin.step(advance);
         }
         let zones = &env.zones;
-        admin.evaluate(t, |i, _| {
+        let mut local = |i: usize, _: &gothic_environment::Zone| {
             Some(zones[i].world_to_local.transform_point3(probe).to_array())
-        })
+        };
+        (
+            admin.evaluate(t, &mut local),
+            admin.evaluate_precipitation(&env.precip_base, &mut local),
+        )
     };
+    env.precip = precip;
+    if let Some(w) = env.pending_wind.take() {
+        eprintln!(
+            "environment: SpeedTree wind strength {:.2}, gusts {:?}",
+            w.strength, w.gust_strength
+        );
+        set_wind_env(WindEnv::new(&w), &mut gothic);
+    }
     let p = packet(&rec, t, SUN_AZIMUTH, FAR_CM);
     if std::env::var_os("GR_ENV_LOG").is_some()
         && (time.elapsed_secs() as u32) % 5 == 0
@@ -284,6 +318,14 @@ fn env_update(
         m.params.ground = v(p.fog_color, m.params.ground.w);
         m.params.sun_color = v(p.sky_sun_color, 0.0);
         m.params.cloud = v(p.cloud_color, 0.0);
+        m.params.moon = Vec4::new(
+            p.moon_dir[0],
+            p.moon_dir[1],
+            p.moon_dir[2],
+            env.skydome.moon_size,
+        );
+        m.params.moon_color = v(env.skydome.moon_color, p.star_visibility);
+        m.params.sun_misc.x = env.skydome.sun_size;
     }
     // Light set for the materials (sun colour x intensity, SH, shadow density).
     let sun = Vec4::new(p.sun_color[0], p.sun_color[1], p.sun_color[2], 4.0);

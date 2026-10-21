@@ -742,7 +742,11 @@ fn run_effects(
         if fx.player.has_finished() || stop {
             // Auto-kill emitters stop emitting (their particles run out); the rest live on.
             for (e, auto) in &fx.spawned {
-                if *auto && let Ok((mut em, _)) = emitters.get_mut(*e) {
+                // An explicit stop (`StopEffects`: the spell in the hand is put away) ends
+                // every emitter of the effect, looping glow included.
+                if (*auto || stop)
+                    && let Ok((mut em, _)) = emitters.get_mut(*e)
+                {
                     em.emitter.stop();
                 }
             }
@@ -981,7 +985,7 @@ fn batch_transform(centroid: Vec3) -> Transform {
     Transform::from_translation(centroid * CM)
 }
 
-fn empty_mesh() -> Mesh {
+pub fn empty_mesh() -> Mesh {
     let mut m = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -996,7 +1000,7 @@ fn empty_mesh() -> Mesh {
 }
 
 /// Rewrite the batch mesh in place: four vertices per quad, reusing the attribute buffers.
-fn fill_mesh(mesh: &mut Mesh, quads: &[Quad], centroid: Vec3) {
+pub fn fill_mesh(mesh: &mut Mesh, quads: &[Quad], centroid: Vec3) {
     let n = quads.len() * 4;
     let corner_uv = |r: [f32; 4], i: usize| match i {
         0 => [r[0], r[1]],

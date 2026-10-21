@@ -48,6 +48,21 @@ pub mod lod {
         stages - 1
     }
 
+    /// Camera depths (same unit as `radius`) at which the mesh stage changes, for a visual with
+    /// `levels` LoD meshes: entry `k` is the depth where [`lod_stage`] switches from level `k`
+    /// to `k + 1`. Inverts `lod_input = global * area_factor * entity_scale` with
+    /// `area_factor = pi (r / z)^2` (the factor clamps at 1, i.e. no switch closer than
+    /// `r sqrt(pi)`). At most four boundaries exist (the table has four lower bounds).
+    pub fn stage_distances(radius: f32, levels: usize, global: f32, entity_scale: f32) -> Vec<f32> {
+        let k = (global * entity_scale).max(1e-6);
+        (0..levels.saturating_sub(1).min(LOWER.len()))
+            .map(|i| {
+                let area = (LOWER[i] / k).clamp(1e-9, 1.0);
+                radius * (std::f32::consts::PI / area).sqrt()
+            })
+            .collect()
+    }
+
     /// `fGlobalVisualLoDFactor` of the quality presets of `ge3.INI` (0 VeryHigh .. 3 Low) [I].
     pub fn global_factor(quality: u8) -> f32 {
         if quality == 0 { 1.0 } else { 0.01 }
@@ -143,14 +158,37 @@ pub mod lights {
         pub count: usize,
     }
 
-    /// Weight used to rank candidates: brighter and nearer lights first [I: the base class
-    /// returns 0, the subclass weight is not decoded].
-    pub fn weight(light: &StaticLight, centre: [f32; 3]) -> f32 {
+    /// Port of `eCStaticPointLight_PS::GetWight(bCSphere)` (Engine.dll:0x100f4120): the luminance
+    /// of the light colour (`0.3 r + 0.59 g + 0.11 b`) times `1 - (d / range)^2`, with `d` the
+    /// distance from the light to the surface of the object's bounding sphere (0 inside); lights
+    /// beyond their range weigh 0.
+    pub fn weight_sphere(light: &StaticLight, centre: [f32; 3], radius: f32) -> f32 {
         let d2: f32 = (0..3)
             .map(|i| (light.position[i] - centre[i]).powi(2))
             .sum();
-        let lum = 0.3 * light.color[0] + 0.6 * light.color[1] + 0.1 * light.color[2];
-        lum * light.range * light.range / (d2 + 1.0)
+        let d = (d2.sqrt() - radius).max(0.0);
+        let falloff = 1.0 - (d / light.range).powi(2);
+        if falloff < 0.0 {
+            return 0.0;
+        }
+        let lum = 0.3 * light.color[0] + 0.59 * light.color[1] + 0.11 * light.color[2];
+        lum * falloff
+    }
+
+    /// Point variant (`GetWight(bCVector)`, 0x100f41f0): a sphere of radius 0.
+    pub fn weight(light: &StaticLight, centre: [f32; 3]) -> f32 {
+        weight_sphere(light, centre, 0.0)
+    }
+
+    /// Port of `eCStaticPointLight_PS::GetIntensity` (0x100f42e0): with `t = d / range` the
+    /// smooth fall-off `2 (1 - 3 t^2 + 2 t^3)` times the cosine of the incidence angle
+    /// (`param_2 = d cos`). 0 beyond the range.
+    pub fn intensity(distance: f32, range: f32, cosine: f32) -> f32 {
+        if distance > range || distance <= 0.0 {
+            return 0.0;
+        }
+        let t = distance / range;
+        2.0 * (1.0 - 3.0 * t * t + 2.0 * t * t * t) * cosine
     }
 
     /// Port of `eCIlluminationAdmin::GetDynamicStaticLightData` (0x100e5620): collect lights whose
@@ -162,6 +200,11 @@ pub mod lights {
         lights: impl IntoIterator<Item = StaticLight>,
     ) -> Packet {
         let centre: [f32; 3] = std::array::from_fn(|i| 0.5 * (box_min[i] + box_max[i]));
+        let radius = 0.5
+            * (0..3)
+                .map(|i| (box_max[i] - box_min[i]).powi(2))
+                .sum::<f32>()
+                .sqrt();
         let mut cand: Vec<(f32, StaticLight)> = Vec::new();
         for l in lights {
             if cand.len() >= MAX_CANDIDATES {
@@ -171,7 +214,7 @@ pub mod lights {
                 l.position[i] + l.range >= box_min[i] && l.position[i] - l.range <= box_max[i]
             });
             if touches && l.range > 0.0 {
-                cand.push((weight(&l, centre), l));
+                cand.push((weight_sphere(&l, centre, radius), l));
             }
         }
         cand.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -213,8 +256,8 @@ pub mod lights {
         cand.into_iter().map(|(_, l)| l).collect()
     }
 
-    /// Light contribution at squared distance `d2` from a packet entry: `saturate(1 - d2 * inv)`
-    /// [I: the attenuation curve of the pixel shader is not decoded].
+    /// Light contribution at squared distance `d2` from a packet entry: the vertex shader of
+    /// `ge_default.fx` (instance static lights) uses `max(1 - d2 / range^2, 0) * max(N.L, 0)`.
     pub fn attenuation(d2: f32, inv_range2: f32) -> f32 {
         (1.0 - d2 * inv_range2).clamp(0.0, 1.0)
     }
@@ -290,6 +333,104 @@ pub mod shadows {
     /// dark the shadowed term gets (1 = full) [I].
     pub fn shadow_strength(visibility: f32, density: f32) -> f32 {
         1.0 - (1.0 - visibility.clamp(0.0, 1.0)) * density.clamp(0.0, 1.0)
+    }
+}
+
+pub mod decal {
+    //! Decal geometry (`eCDecal::ClipPolygonAgainstPlane` 0x1006d600, `ClipPolygon` 0x1006db90,
+    //! `ClipMesh` 0x1006ddc0): triangles facing the decal are clipped against the six planes of
+    //! the decal box (Sutherland-Hodgman). The shipped game has no content for it: the world holds
+    //! no `eCDecal_PS` entity and `g3.efm` no `CreateDecal` command, so nothing is wired.
+
+    /// Plane `n . p = d`; points with `n . p <= d` are inside.
+    #[derive(Clone, Copy, Debug)]
+    pub struct Plane {
+        pub n: [f32; 3],
+        pub d: f32,
+    }
+
+    fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+
+    /// Clip a convex polygon against one plane.
+    pub fn clip_polygon_against_plane(poly: &[[f32; 3]], plane: Plane) -> Vec<[f32; 3]> {
+        let mut out = Vec::with_capacity(poly.len() + 1);
+        for i in 0..poly.len() {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            let (da, db) = (dot(plane.n, a) - plane.d, dot(plane.n, b) - plane.d);
+            if da <= 0.0 {
+                out.push(a);
+            }
+            if (da < 0.0 && db > 0.0) || (da > 0.0 && db < 0.0) {
+                let t = da / (da - db);
+                out.push(std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t));
+            }
+        }
+        out
+    }
+
+    /// The six planes of an axis aligned decal box (`centre`, half extents).
+    pub fn box_planes(centre: [f32; 3], half: [f32; 3]) -> [Plane; 6] {
+        std::array::from_fn(|i| {
+            let axis = i / 2;
+            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+            let mut n = [0.0; 3];
+            n[axis] = sign;
+            Plane {
+                n,
+                d: sign * centre[axis] + half[axis],
+            }
+        })
+    }
+
+    /// Clip a triangle that faces `direction` (the projection direction) against the box; returns
+    /// the clipped polygon (empty when culled).
+    pub fn clip_triangle(
+        tri: [[f32; 3]; 3],
+        direction: [f32; 3],
+        planes: &[Plane; 6],
+    ) -> Vec<[f32; 3]> {
+        let e1: [f32; 3] = std::array::from_fn(|k| tri[1][k] - tri[0][k]);
+        let e2: [f32; 3] = std::array::from_fn(|k| tri[2][k] - tri[0][k]);
+        let n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        if dot(direction, n) >= 0.0 {
+            return Vec::new();
+        }
+        let mut poly = tri.to_vec();
+        for p in planes {
+            poly = clip_polygon_against_plane(&poly, *p);
+            if poly.is_empty() {
+                break;
+            }
+        }
+        poly
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn clips_a_large_floor_triangle_to_the_box() {
+            let planes = box_planes([0.0; 3], [1.0; 3]);
+            // Counter-clockwise seen from above: normal +Y, so a decal projecting down (-Y) keeps it.
+            let tri = [[-10.0, 0.0, -10.0], [-10.0, 0.0, 30.0], [30.0, 0.0, -10.0]];
+            let poly = clip_triangle(tri, [0.0, -1.0, 0.0], &planes);
+            assert!(poly.len() >= 3);
+            for p in &poly {
+                assert!(p.iter().all(|c| c.abs() <= 1.0 + 1e-5), "{p:?}");
+            }
+            // A back facing triangle is dropped.
+            assert!(clip_triangle(tri, [0.0, 1.0, 0.0], &planes).is_empty());
+            // A triangle outside the box is clipped away.
+            let far = [[50.0, 0.0, 50.0], [50.0, 0.0, 60.0], [60.0, 0.0, 50.0]];
+            assert!(clip_triangle(far, [0.0, -1.0, 0.0], &planes).is_empty());
+        }
     }
 }
 
@@ -391,6 +532,47 @@ mod tests {
         assert_eq!(p.r[0], 2.0, "colour doubled");
         assert!((p.inv_range2[0] - 1.0 / 250_000.0).abs() < 1e-12);
         assert_eq!(lights::packet([0.0; 3], [1.0; 3], []).count, 0);
+    }
+
+    #[test]
+    fn static_light_weight_and_intensity() {
+        let l = lights::StaticLight {
+            position: [0.0, 0.0, 0.0],
+            color: [1.0, 1.0, 1.0],
+            range: 100.0,
+        };
+        // Luminance weights sum to 1; the weight is the luminance at the light and 0 at the range.
+        assert!((lights::weight(&l, [0.0; 3]) - 1.0).abs() < 1e-6);
+        assert_eq!(lights::weight(&l, [100.0, 0.0, 0.0]), 0.0);
+        assert!((lights::weight(&l, [50.0, 0.0, 0.0]) - 0.75).abs() < 1e-6);
+        // A bounding sphere reduces the distance by its radius.
+        assert!((lights::weight_sphere(&l, [60.0, 0.0, 0.0], 10.0) - 0.75).abs() < 1e-6);
+        let green = lights::StaticLight {
+            color: [0.0, 1.0, 0.0],
+            ..l
+        };
+        assert!((lights::weight(&green, [0.0; 3]) - 0.59).abs() < 1e-6);
+        // 2 (1 - 3 t^2 + 2 t^3): 0 at the range, 1 at half the range, 2 close by.
+        assert_eq!(lights::intensity(100.0, 100.0, 1.0), 0.0);
+        assert!((lights::intensity(50.0, 100.0, 1.0) - 1.0).abs() < 1e-6);
+        assert!((lights::intensity(1.0, 100.0, 1.0) - 2.0).abs() < 0.01);
+        assert_eq!(lights::intensity(150.0, 100.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn stage_distances_invert_the_stage_rule() {
+        let r = 2.0;
+        let d = lod::stage_distances(r, 4, 1.0, 1.0);
+        assert_eq!(d.len(), 3);
+        assert!(d.windows(2).all(|w| w[0] < w[1]));
+        for (i, z) in d.iter().enumerate() {
+            let at = |z: f32| lod::lod_input(1.0, lod::area_factor(r, z), 1.0, 1.0);
+            assert_eq!(lod::lod_stage(at(z * 0.98), 4), i);
+            assert_eq!(lod::lod_stage(at(z * 1.02), 4), i + 1);
+        }
+        assert!(lod::stage_distances(r, 1, 1.0, 1.0).is_empty());
+        // More LoD meshes than table bounds still yield four switches at most.
+        assert_eq!(lod::stage_distances(r, 9, 1.0, 1.0).len(), 4);
     }
 
     #[test]
