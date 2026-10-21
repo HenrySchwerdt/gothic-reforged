@@ -115,6 +115,39 @@ pub fn split_list(value: &str) -> Vec<&str> {
     parts
 }
 
+/// Deserialize an anomaly kind back to a `&'static str` (kinds are a tiny closed set; each
+/// distinct string is leaked once).
+/// Deserialize an anomaly: the kind is a `&'static str` from a tiny closed set; each distinct
+/// string is leaked once.
+impl<'de> serde::Deserialize<'de> for Anomaly {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use std::sync::{Mutex, OnceLock};
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            kind: String,
+            detail: String,
+        }
+        static KINDS: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();
+        let raw = Raw::deserialize(d)?;
+        let mut kinds = KINDS
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(serde::de::Error::custom)?;
+        let kind = match kinds.iter().find(|k| **k == raw.kind) {
+            Some(k) => *k,
+            None => {
+                let leaked: &'static str = Box::leak(raw.kind.into_boxed_str());
+                kinds.push(leaked);
+                leaked
+            }
+        };
+        Ok(Anomaly {
+            kind,
+            detail: raw.detail,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,38 +180,5 @@ mod tests {
         for n in 0..=255u8 {
             let _ = parse_record(&[b'[', n, b']', b'\r', b'\n', n, b'='], "Info");
         }
-    }
-}
-
-/// Deserialize an anomaly kind back to a `&'static str` (kinds are a tiny closed set; each
-/// distinct string is leaked once).
-/// Deserialize an anomaly: the kind is a `&'static str` from a tiny closed set; each distinct
-/// string is leaked once.
-impl<'de> serde::Deserialize<'de> for Anomaly {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        use std::sync::{Mutex, OnceLock};
-        #[derive(serde::Deserialize)]
-        struct Raw {
-            kind: String,
-            detail: String,
-        }
-        static KINDS: OnceLock<Mutex<Vec<&'static str>>> = OnceLock::new();
-        let raw = Raw::deserialize(d)?;
-        let mut kinds = KINDS
-            .get_or_init(Default::default)
-            .lock()
-            .map_err(serde::de::Error::custom)?;
-        let kind = match kinds.iter().find(|k| **k == raw.kind) {
-            Some(k) => *k,
-            None => {
-                let leaked: &'static str = Box::leak(raw.kind.into_boxed_str());
-                kinds.push(leaked);
-                leaked
-            }
-        };
-        Ok(Anomaly {
-            kind,
-            detail: raw.detail,
-        })
     }
 }

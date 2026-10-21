@@ -365,7 +365,14 @@ pub struct Profile {
 pub fn key_of(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let stem = match base.rsplit_once('.') {
-        Some((s, ext)) if matches!(ext.to_ascii_lowercase().as_str(), "xcmsh" | "xlmsh" | "xact" | "ximg" | "fxa") => s,
+        Some((s, ext))
+            if matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "xcmsh" | "xlmsh" | "xact" | "ximg" | "fxa"
+            ) =>
+        {
+            s
+        }
         _ => base,
     };
     stem.to_ascii_lowercase()
@@ -436,7 +443,9 @@ impl Profile {
         self.entries.is_empty()
     }
     pub fn path(&self, kind: OverrideKind, name: &str) -> Option<&Path> {
-        self.entries.get(&(kind, key_of(name))).map(PathBuf::as_path)
+        self.entries
+            .get(&(kind, key_of(name)))
+            .map(PathBuf::as_path)
     }
 
     fn read(&self, kind: OverrideKind, name: &str) -> Option<Vec<u8>> {
@@ -488,7 +497,11 @@ mod tests {
                 normals: vec![[0.0, 0.0, 1.0]; 3],
                 uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
                 tangents: vec![[1.0, 0.0, 0.0, 1.0]; 3],
-                joints: if skinned { vec![[0, 1, 0, 0]; 3] } else { vec![] },
+                joints: if skinned {
+                    vec![[0, 1, 0, 0]; 3]
+                } else {
+                    vec![]
+                },
                 weights: if skinned {
                     vec![[0.5, 0.5, 0.0, 0.0]; 3]
                 } else {
@@ -543,7 +556,10 @@ mod tests {
             "# synthetic\nmesh Synthetic_Barrel.xcmsh barrel.grmo\ntexture Syn_D syn_d.dds\n",
         )?;
         let p = Profile::open(&dir)?;
-        assert!(p.path(OverrideKind::Mesh, "dir/SYNTHETIC_barrel.XCMSH").is_some());
+        assert!(
+            p.path(OverrideKind::Mesh, "dir/SYNTHETIC_barrel.XCMSH")
+                .is_some()
+        );
         assert!(p.path(OverrideKind::Texture, "syn_d.ximg").is_some());
         assert!(p.path(OverrideKind::Actor, "Synthetic_Barrel").is_none());
         std::fs::write(dir.join("manifest.txt"), "mesh a ../escape.grmo\n")?;

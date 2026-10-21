@@ -136,7 +136,9 @@ impl StringTable {
         self.index_lower.clear();
         for (i, e) in self.entries.iter().enumerate() {
             self.index.entry(e.key.clone()).or_insert(i);
-            self.index_lower.entry(e.key.to_ascii_lowercase()).or_insert(i);
+            self.index_lower
+                .entry(e.key.to_ascii_lowercase())
+                .or_insert(i);
         }
     }
 

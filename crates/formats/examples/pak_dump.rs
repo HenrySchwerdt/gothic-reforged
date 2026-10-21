@@ -12,7 +12,11 @@ fn main() {
         let step: usize = a[4].parse().unwrap();
         for i in (0..p.entries.len()).step_by(step) {
             let n = p.entries[i].path.clone();
-            std::fs::write(format!("{}/{}", a[3], n.replace(['{','}'], "")), p.read_payload(i).unwrap()).unwrap();
+            std::fs::write(
+                format!("{}/{}", a[3], n.replace(['{', '}'], "")),
+                p.read_payload(i).unwrap(),
+            )
+            .unwrap();
         }
     } else {
         let i = p.entries.iter().position(|e| e.path == a[3]).expect("nf");
