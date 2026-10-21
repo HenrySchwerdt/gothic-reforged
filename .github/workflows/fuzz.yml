@@ -1,0 +1,90 @@
+name: fuzz
+
+# Parser fuzzing (crates/formats/fuzz, libFuzzer via cargo-fuzz). Short mode (60 s per target)
+# on PRs touching the parsers; 10 minutes per target nightly or on demand.
+on:
+  pull_request:
+    paths:
+      - "crates/formats/**"
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        default: "600"
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [pak, genome, ximg, xcmsh, xlmsh, xact, xmot, xnvmsh, xshmat, xlmp,
+                 template_summary, template_document, world_node, world_props, vegetation,
+                 spt, igl, theme, stringtable, quest, info, gdini, remaster_mesh, dds,
+                 propstream, emfx, weather, terrain_name]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/formats/fuzz -> target
+          shared-key: fuzz
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # The corpus grows run over run: restore the newest one for this target, save the result.
+      - uses: actions/cache/restore@v4
+        with:
+          path: crates/formats/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Seed corpus
+        run: cargo run -q -p gothic-formats --example fuzz_seeds -- crates/formats/fuzz/corpus
+      - name: Fuzz
+        working-directory: crates/formats/fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
+        run: >
+          cargo fuzz run -O --target x86_64-unknown-linux-gnu ${{ matrix.target }} corpus/${{ matrix.target }} --
+          -max_total_time=$SECONDS_PER_TARGET -dict=dict.txt
+          -rss_limit_mb=2048 -malloc_limit_mb=512 -timeout=10 -print_final_stats=1
+      - name: Minimise corpus
+        if: success() && github.event_name != 'pull_request'
+        working-directory: crates/formats/fuzz
+        run: cargo fuzz cmin -O --target x86_64-unknown-linux-gnu ${{ matrix.target }} corpus/${{ matrix.target }}
+      - uses: actions/cache/save@v4
+        if: always() && github.event_name != 'pull_request'
+        with:
+          path: crates/formats/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: crates/formats/fuzz/artifacts/${{ matrix.target }}
+
+  # Nightly findings go into one tracking issue (opened on the first failure, commented on
+  # later), so they are not lost in the Actions log.
+  findings:
+    needs: fuzz
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Fuzzing: nightly findings"
+          body="Fuzz run $RUN failed; crash inputs are attached to the run as fuzz-<target> artifacts (reproduce: cargo fuzz run <target> <file>, see docs/FUZZING.md)."
+          n=$(gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$body"; else gh issue create --title "$title" --body "$body"; fi

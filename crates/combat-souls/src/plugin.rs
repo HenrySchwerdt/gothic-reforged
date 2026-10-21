@@ -13,7 +13,7 @@ use crate::events::Event;
 use crate::hero::{Button, Input};
 use crate::lockcam::LockCam;
 use crate::sink::{HitSink, SimpleSink};
-use crate::tuning::{DT, Tuning};
+use crate::tuning::{DT, Shake, Tuning};
 use crate::world::{Env, OpenField, SoulsWorld};
 use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton};
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseButton};
@@ -140,7 +140,9 @@ impl Plugin for SoulsPlugin {
             .init_resource::<SoulsView>()
             .init_resource::<InputLatch>()
             .add_message::<SoulsEvent>()
-            .add_systems(PreUpdate, gather_input.after(bevy::input::InputSystems));
+            .init_resource::<CameraShake>()
+            .add_systems(PreUpdate, gather_input.after(bevy::input::InputSystems))
+            .add_systems(PostUpdate, camera_shake_system);
         if !self.manual {
             app.init_resource::<SoulsBackend>()
                 .add_systems(Update, standalone_tick);
@@ -229,6 +231,55 @@ fn standalone_tick(
     for e in events {
         out.write(SoulsEvent(e));
     }
+}
+
+/// Camera shake from [`Event::Feedback`]: hosts add [`CameraShake::offset`] (cm, world
+/// space) to the camera position after their camera solver ran.
+#[derive(Resource, Default)]
+pub struct CameraShake {
+    active: Vec<(Shake, f32, f32)>,
+    /// Current offset in centimetres.
+    pub offset: GVec3,
+    /// Scale (0 turns shakes off, e.g. an accessibility option).
+    pub strength: Option<f32>,
+}
+
+impl CameraShake {
+    pub fn add(&mut self, shake: Shake) {
+        // Each shake gets its own direction so overlapping ones do not cancel.
+        let phase = self.active.len() as f32 * 2.4 + shake.frequency;
+        self.active.push((shake, 0.0, phase));
+    }
+
+    /// Advance by `dt` and recompute [`CameraShake::offset`].
+    pub fn advance(&mut self, dt: f32) {
+        let scale = self.strength.unwrap_or(1.0);
+        let mut off = GVec3::ZERO;
+        for (s, age, phase) in &mut self.active {
+            *age += dt;
+            let k = s.at(*age) * s.amplitude * scale;
+            off += GVec3::new(phase.cos(), 0.6, phase.sin()) * k;
+        }
+        self.active.retain(|(s, age, _)| *age < s.duration);
+        self.offset = off;
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.active.is_empty()
+    }
+}
+
+fn camera_shake_system(
+    time: Res<Time>,
+    mut shake: ResMut<CameraShake>,
+    mut events: MessageReader<SoulsEvent>,
+) {
+    for SoulsEvent(e) in events.read() {
+        if let Event::Feedback { shake: s, .. } = e {
+            shake.add(*s);
+        }
+    }
+    shake.advance(time.delta_secs());
 }
 
 /// Converts between glam versions of Bevy and this crate (both are glam 0.33 today; kept as a

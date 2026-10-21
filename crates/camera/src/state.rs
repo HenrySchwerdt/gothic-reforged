@@ -727,7 +727,8 @@ impl CameraState {
         }
         if self.special_bow {
             // `OnProcess`: the body fades with the ease curve over `SPECIAL_BOW_FADE_SECS`.
-            self.special_bow_time = (self.special_bow_time + dt).min(crate::aim::SPECIAL_BOW_FADE_SECS);
+            self.special_bow_time =
+                (self.special_bow_time + dt).min(crate::aim::SPECIAL_BOW_FADE_SECS);
             alpha = crate::aim::special_bow_alpha(self.special_bow_time);
         }
         CameraOutput {

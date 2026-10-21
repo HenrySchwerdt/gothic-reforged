@@ -11,5 +11,8 @@ bevy = { workspace = true, features = ["std", "async_executor", "3d_bevy_render"
 gothic-formats = { path = "../formats" }
 anyhow.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

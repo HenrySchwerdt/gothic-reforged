@@ -9,6 +9,88 @@ pub const DT: f32 = 1.0 / TICK_HZ;
 pub const ANIM_FPS: f32 = 30.0;
 pub const DF: f32 = ANIM_FPS * DT;
 
+/// A camera shake: presentation only.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Shake {
+    /// Peak offset of the camera (cm).
+    pub amplitude: f32,
+    /// Seconds until it has died out.
+    pub duration: f32,
+    /// Oscillations per second.
+    pub frequency: f32,
+}
+
+impl Shake {
+    pub const fn new(amplitude: f32, duration: f32, frequency: f32) -> Self {
+        Self {
+            amplitude,
+            duration,
+            frequency,
+        }
+    }
+
+    /// Offset factor at `t` seconds (decaying sine, deterministic): multiply with
+    /// `amplitude` and a direction.
+    pub fn at(&self, t: f32) -> f32 {
+        if t < 0.0 || t >= self.duration || self.duration <= 0.0 {
+            return 0.0;
+        }
+        let decay = 1.0 - t / self.duration;
+        (t * self.frequency * std::f32::consts::TAU).sin() * decay * decay
+    }
+}
+
+/// Hit-stop (seconds the hero freezes) and camera shake per kind of impact.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Impact {
+    pub hit_stop: f32,
+    pub shake: Shake,
+}
+
+/// Feedback of the defensive moments and big hits.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FeedbackTuning {
+    pub parry: Impact,
+    pub block: Impact,
+    pub guard_break: Impact,
+    /// The hero takes a heavy (knock-down level) hit.
+    pub hurt_heavy: Impact,
+    /// The hero breaks a foe's poise.
+    pub stagger: Impact,
+    pub riposte: Impact,
+}
+
+impl Default for FeedbackTuning {
+    fn default() -> Self {
+        Self {
+            parry: Impact {
+                hit_stop: 0.12,
+                shake: Shake::new(3.0, 0.18, 26.0),
+            },
+            block: Impact {
+                hit_stop: 0.05,
+                shake: Shake::new(1.5, 0.12, 30.0),
+            },
+            guard_break: Impact {
+                hit_stop: 0.15,
+                shake: Shake::new(9.0, 0.4, 16.0),
+            },
+            hurt_heavy: Impact {
+                hit_stop: 0.08,
+                shake: Shake::new(7.0, 0.35, 18.0),
+            },
+            stagger: Impact {
+                hit_stop: 0.0,
+                shake: Shake::new(2.5, 0.2, 22.0),
+            },
+            riposte: Impact {
+                hit_stop: 0.1,
+                shake: Shake::new(5.0, 0.3, 20.0),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tuning {
     pub max_stamina: f32,
@@ -60,6 +142,23 @@ pub struct Tuning {
     pub hero_radius: f32,
     /// Distance within which a riposte can be started on a staggered enemy.
     pub riposte_reach: f32,
+    /// Seconds the lock survives without line of sight (a pillar between hero and target).
+    pub lock_los_grace: f32,
+    /// When the locked foe dies, lock onto the next one in view instead of dropping the lock.
+    pub lock_retarget_on_kill: bool,
+    /// Largest angle (from the current target, as seen by the hero) a lock switch may jump.
+    pub lock_switch_max_deg: f32,
+    /// Seconds a buffered roll stays valid (attacks use `buffer_secs`): shorter, so a late
+    /// press does not roll you out of a fight after the moment has passed.
+    pub buffer_dodge_secs: f32,
+    /// Regen starts at this share of `stamina_regen` and reaches full rate after
+    /// `stamina_ramp` seconds.
+    pub stamina_regen_start: f32,
+    pub stamina_ramp: f32,
+    /// Extra seconds before regen when the bar was emptied.
+    pub exhausted_delay: f32,
+    /// Hit-stop and camera shake per impact kind.
+    pub feedback: FeedbackTuning,
 }
 
 impl Default for Tuning {
@@ -97,6 +196,14 @@ impl Default for Tuning {
             weapon_reach: 190.0,
             hero_radius: 35.0,
             riposte_reach: 230.0,
+            lock_los_grace: 1.0,
+            lock_retarget_on_kill: true,
+            lock_switch_max_deg: 100.0,
+            buffer_dodge_secs: 0.25,
+            stamina_regen_start: 0.35,
+            stamina_ramp: 0.5,
+            exhausted_delay: 0.9,
+            feedback: FeedbackTuning::default(),
         }
     }
 }

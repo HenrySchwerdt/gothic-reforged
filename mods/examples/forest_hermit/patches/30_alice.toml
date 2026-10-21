@@ -1,0 +1,19 @@
+# A new dialog line for an existing NPC: Alice now mentions the hermit.
+[[infos.add]]
+name = "A_Hermit"
+owner = "Alice"
+condition_type = 3            # General
+info_type = 3
+sort_id = 50
+script = [
+  { command = "Say", entity1 = "player", entity2 = "", id1 = "", id2 = "", text = "MOD_ALICE_ASK" },
+  { command = "Say", entity1 = "npc", entity2 = "", id1 = "", id2 = "", text = "MOD_ALICE_HERMIT" },
+]
+
+[[strings.set]]
+key = "MOD_ALICE_ASK"
+texts = { English = "Who lives in the forest?", German = "Wer lebt im Wald?" }
+
+[[strings.set]]
+key = "MOD_ALICE_HERMIT"
+texts = { English = "An old hermit. He brews tea.", German = "Ein alter Einsiedler. Er braut Tee." }

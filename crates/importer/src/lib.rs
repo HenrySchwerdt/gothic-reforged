@@ -205,7 +205,9 @@ fn ini_evidence(root: &Path, path: &Path) -> Result<Vec<IniEvidence>> {
     let text = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         let little = bytes[0] == 0xff;
         let words: Vec<u16> = bytes[2..]
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|chunk| {
                 if little {
                     u16::from_le_bytes([chunk[0], chunk[1]])

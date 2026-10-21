@@ -13,14 +13,14 @@
 //! (see [`math`]).
 pub mod actions;
 pub mod animmap;
-#[cfg(feature = "pack")]
-pub mod pack;
 pub mod events;
 pub mod foe;
 pub mod hero;
 pub mod lockcam;
 pub mod lockon;
 pub mod math;
+#[cfg(feature = "pack")]
+pub mod pack;
 pub mod sink;
 pub mod tuning;
 pub mod world;
@@ -32,9 +32,9 @@ pub mod plugin;
 mod tests;
 
 pub use actions::{ActionId, Dir, Hurt, StrikeKind};
-pub use events::{Event, HitResult};
+pub use events::{Event, FeedbackCause, HitResult};
 pub use foe::{Foe, FoeProfile, FoeState};
 pub use hero::{Hero, Input};
 pub use sink::{HitSink, SimSink, SimpleSink};
-pub use tuning::Tuning;
+pub use tuning::{FeedbackTuning, Impact, Shake, Tuning};
 pub use world::{Env, OpenField, SoulsWorld};

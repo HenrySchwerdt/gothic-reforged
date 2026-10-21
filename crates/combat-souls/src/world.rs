@@ -1,6 +1,7 @@
 //! The Souls combat world: the hero, the foes, the lock-on and the hit resolution between them.
 //! One [`SoulsWorld::step`] is one 60 Hz tick.
-use crate::events::{Event, HitResult};
+use crate::actions::{Hurt, StrikeKind};
+use crate::events::{Event, FeedbackCause, HitResult};
 use crate::foe::{Foe, FoeProfile};
 use crate::hero::{Hero, HeroCtx, Incoming, Input, Motion, State, kinematic_move};
 use crate::lockon::{Candidate, LockChange, LockOn};
@@ -133,7 +134,8 @@ impl SoulsWorld {
             self.lock
                 .switch(inp.switch, self.hero.pos, &cands, &t, &los);
         }
-        self.lock.validate(self.hero.pos, &cands, &t, &los);
+        self.lock
+            .update(self.hero.pos, inp.cam_yaw, &cands, &t, &los);
         if self.lock.target != before {
             self.events.push(Event::LockChanged {
                 target: self.lock.target,
@@ -246,6 +248,21 @@ impl SoulsWorld {
             killed: report.killed,
             poise_broken: broken,
         });
+        let impact = if hit.kind == StrikeKind::Riposte {
+            Some((FeedbackCause::Riposte, t.feedback.riposte))
+        } else if broken {
+            Some((FeedbackCause::Stagger, t.feedback.stagger))
+        } else {
+            None
+        };
+        if let Some((cause, imp)) = impact {
+            self.hero.hit_stop = self.hero.hit_stop.max(imp.hit_stop);
+            self.events.push(Event::Feedback {
+                cause,
+                hit_stop: imp.hit_stop,
+                shake: imp.shake,
+            });
+        }
     }
 
     fn foe_attacks(&mut self, sink: &mut dyn HitSink) {
@@ -282,8 +299,24 @@ impl SoulsWorld {
                     level: swing.attack.level,
                 });
             }
-            if matches!(rec.result, HitResult::Blocked | HitResult::GuardBroken) {
-                self.hero.hit_stop = 0.05;
+            let impact = match rec.result {
+                HitResult::Parried => Some((FeedbackCause::Parry, t.feedback.parry)),
+                HitResult::Blocked => Some((FeedbackCause::Block, t.feedback.block)),
+                HitResult::GuardBroken => Some((FeedbackCause::GuardBreak, t.feedback.guard_break)),
+                HitResult::Hit | HitResult::Killed
+                    if matches!(swing.attack.level, Hurt::Large | Hurt::Knockdown) =>
+                {
+                    Some((FeedbackCause::HurtHeavy, t.feedback.hurt_heavy))
+                }
+                _ => None,
+            };
+            if let Some((cause, imp)) = impact {
+                self.hero.hit_stop = self.hero.hit_stop.max(imp.hit_stop);
+                self.events.push(Event::Feedback {
+                    cause,
+                    hit_stop: imp.hit_stop,
+                    shake: imp.shake,
+                });
             }
             self.foes[i].swing_result(rec.result);
         }

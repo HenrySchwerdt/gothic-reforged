@@ -1,6 +1,7 @@
 //! Everything the core tells the outside world: presentation (animation, audio, HUD) and the
 //! script layer subscribe to these; nothing in here changes game state by itself.
 use crate::actions::{ActionId, Hurt, StrikeKind};
+use crate::tuning::Shake;
 
 /// What happened to a swing that reached its victim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,4 +64,35 @@ pub enum Event {
     },
     /// Stamina hit zero while acting.
     Exhausted,
+    /// A foe starts an attack: `lead` seconds until the swing, `track` seconds until it stops
+    /// turning toward the hero (the moment to roll). Sent with `FoeWindup`.
+    FoeTelegraph {
+        foe: u32,
+        attack: u8,
+        lead: f32,
+        track: f32,
+        parryable: bool,
+    },
+    /// The foe stopped tracking: the swing direction is fixed now.
+    FoeCommit {
+        foe: u32,
+        attack: u8,
+    },
+    /// Presentation feedback of an impact: shake the camera, the hero is frozen for
+    /// `hit_stop` seconds.
+    Feedback {
+        cause: FeedbackCause,
+        hit_stop: f32,
+        shake: Shake,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeedbackCause {
+    Parry,
+    Block,
+    GuardBreak,
+    HurtHeavy,
+    Stagger,
+    Riposte,
 }

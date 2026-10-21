@@ -33,7 +33,8 @@ fn main() -> Result<()> {
         }
         "world-survey" | "mesh-survey" | "world-query" => {
             ensure!(args.len() >= 2, "{command} requires DATA_DIR");
-            let mut vfs = gothic_formats::vfs::VirtualFileSystem::open_data_dir(Path::new(&args[1]))?;
+            let mut vfs =
+                gothic_formats::vfs::VirtualFileSystem::open_data_dir(Path::new(&args[1]))?;
             eprintln!(
                 "mounted {} archives, {} visible entries, {} overridden, {} payloadless ignored, {} skipped",
                 vfs.archive_names().len(),
@@ -43,13 +44,26 @@ fn main() -> Result<()> {
                 vfs.skipped.len()
             );
             let json = match command {
-                "world-survey" => serde_json::to_value(gothic_importer::survey::world_survey(&mut vfs)?)?,
-                "mesh-survey" => serde_json::to_value(gothic_importer::survey::mesh_survey(&mut vfs)?)?,
+                "world-survey" => {
+                    serde_json::to_value(gothic_importer::survey::world_survey(&mut vfs)?)?
+                }
+                "mesh-survey" => {
+                    serde_json::to_value(gothic_importer::survey::mesh_survey(&mut vfs)?)?
+                }
                 _ => {
-                    ensure!(args.len() == 6, "world-query requires DATA_DIR X Y Z RADIUS");
-                    let num = |i: usize| -> Result<f32> { Ok(args[i].to_str().context("number")?.parse()?) };
+                    ensure!(
+                        args.len() == 6,
+                        "world-query requires DATA_DIR X Y Z RADIUS"
+                    );
+                    let num = |i: usize| -> Result<f32> {
+                        Ok(args[i].to_str().context("number")?.parse()?)
+                    };
                     let index = gothic_importer::world_index::WorldIndex::build(&mut vfs)?;
-                    eprintln!("indexed {} placements from {} documents", index.len(), index.documents);
+                    eprintln!(
+                        "indexed {} placements from {} documents",
+                        index.len(),
+                        index.documents
+                    );
                     serde_json::to_value(index.query([num(2)?, num(3)?, num(4)?], num(5)?))?
                 }
             };

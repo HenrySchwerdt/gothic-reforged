@@ -191,8 +191,29 @@ pub struct Hero {
     dodge_armed: bool,
     sprint_spent: bool,
     stamina_wait: f32,
+    /// Seconds of uninterrupted regen (drives the regen ramp).
+    regen_t: f32,
     poise_wait: f32,
     exhausted_reported: bool,
+}
+
+/// Seconds a buffered request stays valid.
+pub fn buffer_window(req: Req, t: &Tuning) -> f32 {
+    match req {
+        Req::Dodge => t.buffer_dodge_secs,
+        Req::Light | Req::Heavy => t.buffer_secs,
+    }
+}
+
+/// Stamina per second after `regen_t` seconds of regen: starts at `stamina_regen_start` of
+/// the full rate and ramps up linearly over `stamina_ramp`.
+pub fn regen_rate(regen_t: f32, t: &Tuning) -> f32 {
+    let ramp = if t.stamina_ramp > 0.0 {
+        (regen_t / t.stamina_ramp).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    t.stamina_regen * (t.stamina_regen_start + (1.0 - t.stamina_regen_start) * ramp)
 }
 
 impl Hero {
@@ -219,6 +240,7 @@ impl Hero {
             dodge_armed: false,
             sprint_spent: false,
             stamina_wait: 0.0,
+            regen_t: 0.0,
             poise_wait: 0.0,
             exhausted_reported: false,
         }
@@ -325,7 +347,10 @@ impl Hero {
         if let Some((_, age)) = &mut self.buffer {
             *age += DT;
         }
-        if self.buffer.is_some_and(|(_, age)| age > t.buffer_secs) {
+        if self
+            .buffer
+            .is_some_and(|(req, age)| age > buffer_window(req, t))
+        {
             self.buffer = None;
         }
         self.stamina_wait = (self.stamina_wait - DT).max(0.0);
@@ -343,6 +368,8 @@ impl Hero {
         if self.stamina <= 0.0 && !self.exhausted_reported {
             self.exhausted_reported = true;
             self.events.push(Event::Exhausted);
+            // An emptied bar takes a breath longer before it refills.
+            self.stamina_wait = self.stamina_wait.max(t.stamina_delay + t.exhausted_delay);
         }
         if self.stamina > 0.0 {
             self.exhausted_reported = false;
@@ -353,9 +380,18 @@ impl Hero {
             } else {
                 1.0
             };
-            self.stamina = (self.stamina + t.stamina_regen * mult * DT).min(t.max_stamina);
+            self.stamina =
+                (self.stamina + regen_rate(self.regen_t, t) * mult * DT).min(t.max_stamina);
+            self.regen_t += DT;
+        } else {
+            self.regen_t = 0.0;
         }
         motion
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spend_for_test(&mut self, amount: f32, t: &Tuning) {
+        self.spend(amount, t);
     }
 
     fn spend(&mut self, amount: f32, t: &Tuning) {

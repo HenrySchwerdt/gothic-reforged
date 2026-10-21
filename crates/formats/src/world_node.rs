@@ -380,10 +380,7 @@ impl<'a> Reader<'a> {
 
     /// Context (lrentdat), entity count, entities and the parent/child graph, shared by every
     /// layout. The caller has consumed the envelope and the document version.
-    fn document(
-        &mut self,
-        kind: WorldKind,
-    ) -> Result<(WorldDocument, Vec<Vec<PropertySetSpan>>)> {
+    fn document(&mut self, kind: WorldKind) -> Result<(WorldDocument, Vec<Vec<PropertySetSpan>>)> {
         if kind == WorldKind::Lrentdat {
             let context = self.class(false, true)?;
             ensure!(

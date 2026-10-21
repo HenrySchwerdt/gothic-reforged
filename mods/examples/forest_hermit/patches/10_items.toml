@@ -1,0 +1,6 @@
+# A new potion (item template).
+[[items.add]]
+name = "It_HermitTea"
+category = "Potion"
+use_type = "Potion"
+value = 25
