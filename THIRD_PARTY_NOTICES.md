@@ -54,7 +54,7 @@ Rust dependencies retain their respective licenses. No original Gothic 3 data is
 
 # Physics dependency (VR)
 
-`crates/vr-physics`, `crates/vr-melee`, `crates/vr-npc`, `crates/vr-archery` and `apps/vr-sandbox` use [avian3d](https://github.com/avianphysics/avian) 0.8.0 (MIT OR Apache-2.0) and, transitively, parry3d (Apache-2.0). Used as a library only; no source is vendored.
+`crates/vr-physics`, `crates/vr-melee`, `crates/vr-npc`, `crates/vr-archery`, `crates/vr-bridge` and `apps/vr-sandbox` use [avian3d](https://github.com/avianphysics/avian) 0.8.0 (MIT OR Apache-2.0) and, transitively, parry3d (Apache-2.0). Used as a library only; no source is vendored.
 
 # Added crate dependencies and external tools (cloud integration)
 
