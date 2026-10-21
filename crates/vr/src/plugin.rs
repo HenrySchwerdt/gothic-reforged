@@ -36,6 +36,8 @@ pub enum XrBackendKind {
     /// An OpenXR runtime (SteamVR, Quest Link, ...). Not available in this build; requesting
     /// it falls back to [`XrBackendKind::Desktop`] with a warning.
     OpenXr,
+    /// Another plugin, a test or a recording writes [`PendingXrFrame`] itself.
+    External,
 }
 
 impl XrBackendKind {
@@ -300,7 +302,10 @@ fn desktop_backend(
     mut desktop: ResMut<DesktopXr>,
     mut pending: ResMut<PendingXrFrame>,
 ) {
-    if backend.kind == XrBackendKind::OpenXr {
+    if !matches!(
+        backend.kind,
+        XrBackendKind::Desktop | XrBackendKind::Scripted
+    ) {
         return;
     }
     let input = if let Some(script) = desktop.script.as_mut() {

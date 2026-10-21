@@ -3570,7 +3570,9 @@ version = "0.1.0"
 dependencies = [
  "avian3d",
  "bevy",
+ "glam",
  "gothic-vr",
+ "serde",
 ]
 
 [[package]]
