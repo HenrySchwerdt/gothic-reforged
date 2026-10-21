@@ -187,6 +187,21 @@ fn dump(db: &GameDatabase, name: &str) {
             cmds.join(" ")
         );
     };
+    if let Some(ev) = name.strip_prefix("event:") {
+        // Infos that set / clear / require the game event.
+        for (n, i) in db.infos.iter().enumerate() {
+            let touches = i.script.iter().any(|s| {
+                matches!(s.command.as_str(), "SetGameEvent" | "ClearGameEvent")
+                    && s.id1.eq_ignore_ascii_case(ev)
+            });
+            let needs = i.cond_player_knows.iter().any(|e| e.eq_ignore_ascii_case(ev))
+                || i.cond_player_knows_not.iter().any(|e| e.eq_ignore_ascii_case(ev));
+            if touches || needs {
+                line(gothic_gameplay::InfoId(n as u32));
+            }
+        }
+        return;
+    }
     if name == "--owners" {
         println!("owners: {}, infos: {}", db.owners().count(), db.infos.len());
         println!("PC_Hero infos: {}", db.infos_of("PC_Hero").len());

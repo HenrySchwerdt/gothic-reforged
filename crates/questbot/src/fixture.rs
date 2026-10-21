@@ -573,3 +573,96 @@ pub fn gated() -> GameDatabase {
     ));
     GameDatabase::from_parts(quests, infos, texts(), "English").expect("gated fixture")
 }
+
+/// The fixture plus quests that exercise what the real data needs from the bot:
+///
+/// * `Q_Gem` / `Q_Beast`: no starter at all, the world objective alone finishes them
+///   (`OnReceiveItem` / `OnNPCKilled` act on `Open` quests);
+/// * `Q_Child`: its activator is a child of a plain `Info` (not `Parent`) line, itself only
+///   reachable through that line;
+/// * `Q_Paid`: the activator costs gold, the engine refuses without it;
+/// * `Q_Cheated`: only the developer menu `sh` offers it.
+pub fn world_driven() -> GameDatabase {
+    use cond::*;
+    use quest_type::*;
+    use ty::*;
+    let (mut quests, mut infos) = records();
+    quests.push(quest("Q_Gem", HAS_ITEMS, "", "It_Gem", "2", "PC_Hero"));
+    quests.push(quest("Q_Beast", KILL, "", "Troll", "1", ""));
+    quests.push(quest("Q_Child", REPORT, "", "Dora", "1", ""));
+    quests.push(quest("Q_Paid", REPORT, "", "Pam", "1", ""));
+    quests.push(quest("Q_Cheated", REPORT, "", "Cid", "1", ""));
+    infos.push(info(
+        "D_Intro",
+        "Dora",
+        "",
+        "",
+        GENERAL,
+        INFO,
+        "",
+        &[ask("T_HELLO"), say("T_TROUBLE")],
+    ));
+    infos.push(info(
+        "D_Start",
+        "Dora",
+        "D_Intro",
+        "Q_Child",
+        ACTIVATOR,
+        INFO,
+        "",
+        &[ask("T_WORK")],
+    ));
+    infos.push(info(
+        "D_Done",
+        "Dora",
+        "",
+        "Q_Child",
+        DELIVERY,
+        INFO,
+        "",
+        &[say("T_THANKS")],
+    ));
+    let mut buy = info(
+        "P_Buy",
+        "Pam",
+        "",
+        "Q_Paid",
+        ACTIVATOR,
+        INFO,
+        "",
+        &[ask("T_WORK")],
+    );
+    buy.gold_cost = 300;
+    infos.push(buy);
+    infos.push(info(
+        "P_Done",
+        "Pam",
+        "",
+        "Q_Paid",
+        DELIVERY,
+        INFO,
+        "",
+        &[say("T_THANKS")],
+    ));
+    infos.push(info(
+        "SH_Give",
+        "sh",
+        "",
+        "Q_Cheated",
+        ACTIVATOR,
+        INFO,
+        "",
+        &[ask("T_WORK")],
+    ));
+    infos.push(info(
+        "SH_Done",
+        "sh",
+        "",
+        "Q_Cheated",
+        DELIVERY,
+        INFO,
+        "",
+        &[say("T_THANKS")],
+    ));
+    GameDatabase::from_parts(quests, infos, texts(), "English").expect("world-driven fixture")
+}

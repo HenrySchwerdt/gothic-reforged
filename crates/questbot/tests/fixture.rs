@@ -175,3 +175,66 @@ fn stuck_report_explains_why_an_event_setter_did_not_run() {
     assert!(hint.contains("X_Gate @Xan"), "{hint}");
     assert!(hint.contains("Never_Set"), "{hint}");
 }
+
+#[test]
+fn starterless_quests_finish_through_their_world_hooks() {
+    let report = play(&fixture::world_driven(), BotOptions::default());
+    for q in ["Q_Gem", "Q_Beast"] {
+        assert!(
+            report.completed.iter().any(|c| c == q),
+            "{q}: {}",
+            report.to_text(false)
+        );
+    }
+    let cheats: Vec<&Cheat> = report
+        .trace
+        .iter()
+        .filter_map(|s| match &s.action {
+            Action::Cheat(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        cheats
+            .iter()
+            .any(|c| matches!(c, Cheat::Pickup { item, amount: 2, .. } if item == "It_Gem"))
+    );
+    assert!(
+        cheats
+            .iter()
+            .any(|c| matches!(c, Cheat::Kill { npc, .. } if npc == "Troll"))
+    );
+}
+
+#[test]
+fn children_of_plain_info_lines_are_planned() {
+    let report = play(&fixture::world_driven(), BotOptions::default());
+    assert!(
+        report.completed.iter().any(|c| c == "Q_Child"),
+        "{}",
+        report.to_text(true)
+    );
+}
+
+#[test]
+fn refusals_for_gold_are_answered_by_earning_it() {
+    let report = play(&fixture::world_driven(), BotOptions::default());
+    assert!(report.completed.iter().any(|c| c == "Q_Paid"));
+    assert!(report.trace.iter().any(|s| matches!(
+        &s.action,
+        Action::Cheat(Cheat::Earn { what, amount: 300, info }) if what == "gold" && info == "P_Buy"
+    )));
+}
+
+#[test]
+fn developer_menus_are_not_dialog_partners() {
+    let report = play(&fixture::world_driven(), BotOptions::default());
+    assert!(!report.completed.iter().any(|c| c == "Q_Cheated"));
+    assert!(
+        !report
+            .trace
+            .iter()
+            .any(|s| matches!(&s.action, Action::Talk { npc, .. } if npc.eq_ignore_ascii_case("sh")))
+    );
+    assert!(report.stuck.iter().any(|s| s.quest == "Q_Cheated"));
+}

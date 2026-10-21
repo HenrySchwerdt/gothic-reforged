@@ -18,7 +18,7 @@
 //! none is left the clock jumps a day ahead (time-gated infos) and the sweep repeats once. Only
 //! then is the bot stuck, and the unfinished targets are analysed for their blockers
 //! ([`crate::report`]).
-use crate::plan::Planner;
+use crate::plan::{self as planner, Planner};
 use crate::report::{Action, BotReport, Cheat, QuestChange, TraceStep, analyse_stuck};
 use gothic_gameplay::conditions::is_item_name;
 use gothic_gameplay::dialog::PLAYER_OWNER;
@@ -153,11 +153,26 @@ impl<'a> QuestBot<'a> {
                 break;
             }
             rounds += 1;
-            if self.options.cheats {
-                self.world_cheats();
-                self.obtain_required_items();
+            let mut pick = None;
+            if !self.all_finished() {
+                if self.options.cheats {
+                    self.obtain_required_items();
+                }
+                pick = self.pick_npc();
+                // The world objectives (kills, pickups, ...) come once the dialogs on the
+                // route are exhausted: killing an NPC earlier would take away the lines that
+                // need it alive (`Falk_HuntSnapper`), finishing a quest earlier those that need
+                // it Open or Running (`Hassan_Murder`).
+                if self.options.cheats && pick.as_ref().is_none_or(|(s, _)| *s <= planner::EXPLORE)
+                {
+                    self.world_cheats();
+                    pick = self.pick_npc();
+                }
             }
-            let talked = !self.all_finished() && self.talk_round();
+            let talked = pick.is_some();
+            if let Some((_, npc)) = pick {
+                self.talk_to(&npc);
+            }
             if seen.insert(fingerprint(&self.state)) {
                 self.futile.clear();
                 self.visited.clear();
@@ -440,9 +455,8 @@ impl<'a> QuestBot<'a> {
         self.planner.score(self.db, &self.state, id)
     }
 
-    /// Talk to the not yet visited NPC with the most useful offer. Returns whether there was
-    /// one.
-    fn talk_round(&mut self) -> bool {
+    /// The not yet visited NPC with the most useful offer, with its score.
+    fn pick_npc(&mut self) -> Option<(i32, String)> {
         let mut npcs: Vec<String> = self
             .db
             .owners()
@@ -499,12 +513,13 @@ impl<'a> QuestBot<'a> {
                 best = Some((score, npc.clone()));
             }
         }
-        let Some((_, npc)) = best else {
-            return false;
-        };
-        self.visited.insert(norm(&npc));
-        self.converse(&npc);
-        true
+        best
+    }
+
+    /// Talk to `npc` (the pick of [`Self::pick_npc`]).
+    fn talk_to(&mut self, npc: &str) {
+        self.visited.insert(norm(npc));
+        self.converse(npc);
     }
 
     /// Give the player what a refused info lacks (`IS_Running_NotEnoughGold` /
