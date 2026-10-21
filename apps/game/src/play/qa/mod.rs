@@ -29,6 +29,7 @@ mod more;
 mod more2;
 mod more3;
 mod scenarios;
+mod world;
 
 pub const CM: f32 = 0.01;
 
@@ -339,12 +340,12 @@ fn run(world: &mut World) {
                 let stream = world.resource::<Stream>();
                 let roster = world.resource::<Roster>();
                 eprintln!(
-                    "qa: waiting at {now:.0}s: stream.ready={} in_flight={} pending={} placed={} roster pending={} (in ring {}) binds={} spawned={}/{} hamlar={}",
+                    "qa: waiting at {now:.0}s: stream.ready={} in_flight={} pending={} placed={} roster queue={} (in ring {}) binds={} spawned={}/{} hamlar={}",
                     stream.ready,
                     stream.in_flight.len(),
                     stream.pending.len(),
                     world.resource::<Player>().placed,
-                    roster.pending.len(),
+                    roster.queue.len(),
                     super::npcs::pending_in_ring(roster, stream),
                     roster.binds.len(),
                     roster.spawned,
@@ -357,7 +358,7 @@ fn run(world: &mut World) {
                 let roster = world.resource::<Roster>();
                 let coll = world.resource::<crate::walk::Collision>();
                 let hero = world.resource::<Player>().ctrl.position;
-                for p in roster.pending.iter().take(6) {
+                for p in roster.queue.iter().take(6).map(|i| &roster.cands[*i as usize]) {
                     let c = stream.settings.cell_at(p.pos_cm);
                     eprintln!(
                         "qa: pending {} cell=({},{}) wanted={} resident={} chunk={} dist={:.0}m ground={:?}",

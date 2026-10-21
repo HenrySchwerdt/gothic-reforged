@@ -19,6 +19,10 @@ pub(crate) struct Cx<'a> {
     pub vitals: PlayerVitals,
     pub cost: &'a TeachCost,
     pub applied: &'a VideoOptions,
+    pub equipped: &'a crate::stats::EquippedItems,
+    pub map: &'a crate::map::MapData,
+    pub locations: &'a crate::map::WorldLocations,
+    pub heading: f32,
 }
 
 impl Cx<'_> {
@@ -52,6 +56,10 @@ pub(crate) fn rebuild(
     vitals: Res<PlayerVitals>,
     cost: Res<TeachCost>,
     applied: Res<VideoOptions>,
+    equipped: Res<crate::stats::EquippedItems>,
+    map: Res<crate::map::MapData>,
+    locations: Res<crate::map::WorldLocations>,
+    heading: Res<PlayerHeading>,
     roots: Query<Entity, With<ScreenRoot>>,
     scrolls: Query<(&ScrollArea, &ScrollPosition)>,
 ) {
@@ -76,6 +84,10 @@ pub(crate) fn rebuild(
         vitals: *vitals,
         cost: &cost,
         applied: &applied,
+        equipped: &equipped,
+        map: &map,
+        locations: &locations,
+        heading: heading.0,
     };
     if ui.screen == Screen::None && ui.modal.is_none() {
         return;
@@ -112,8 +124,14 @@ pub(crate) fn rebuild(
                 Screen::Loot => loot_page(p, &cx),
                 Screen::Files => crate::screens_menu::files_page(p, &cx),
                 Screen::Video => crate::screens_menu::video_page(p, &cx),
+                Screen::Options => crate::screens_options::hub_page(p, &cx),
+                Screen::Audio => crate::screens_options::audio_page(p, &cx),
+                Screen::Controls => crate::screens_options::controls_page(p, &cx),
+                Screen::ControlsCustom => crate::screens_options::controls_custom_page(p, &cx),
+                Screen::Difficulty => crate::screens_options::difficulty_page(p, &cx),
                 Screen::Recipe => crate::screens_read::recipe_page(p, &cx),
                 Screen::Document => crate::screens_read::document_page(p, &cx),
+                Screen::Map => crate::screens_world::map_page(p, &cx),
             });
             if let Some(m) = ui.modal.clone() {
                 root.spawn((
@@ -490,42 +508,68 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
             None,
         );
     }
-    let mut y = 112.0;
-    let mut row = |p: &mut P, k: String, v: String, c: Color| {
-        body(p, cx, k, (ox + 18.0, oy + y, 170.0, 20.0), Al::Left, TEXT);
-        body(p, cx, v, (ox + 160.0, oy + y, 108.0, 20.0), Al::Right, c);
-        y += 22.0;
+    let text = |k: &str| db.text(k);
+    let name = |t: &str| attrib_name(db, t);
+    let attr = |t: &str| cx.s.state.attributes.get(t).copied().unwrap_or(0);
+    let sctx = crate::stats::StatContext {
+        text: &text,
+        attribute_name: &name,
+        attribute: &attr,
+        damage: None,
+        price: None,
     };
-    if let Some((amount, ty)) = &info.damage {
-        let ty = match ty.as_str() {
-            "Blade" => "Klinge",
-            "Impact" => "Zerschmettern",
-            "Missile" => "Geschoss",
-            "Fire" => "Feuer",
-            "Ice" => "Eis",
-            "Lightning" => "Energie",
-            other => other,
+    let worn = matches!(info.category, 1 | 2)
+        .then(|| cx.equipped.for_category(info.category))
+        .flatten()
+        .filter(|w| !w.eq_ignore_ascii_case(key))
+        .and_then(|w| cx.s.items.get(w));
+    let in_inv = cx.s.state.inventory.count(key);
+    let mut y = 112.0;
+    for r in crate::stats::item_rows(
+        &sctx,
+        info,
+        worn,
+        (matches!(cx.ui.screen, Screen::Trade | Screen::Loot) && in_inv > 0).then_some(in_inv),
+    ) {
+        let c = match r.tone {
+            crate::stats::Tone::Normal => TEXT,
+            crate::stats::Tone::Bad => TEXT_BAD,
+            crate::stats::Tone::Dim => TEXT_DIM,
         };
-        row(p, "Schaden".into(), format!("{amount} ({ty})"), TEXT);
-    }
-    for (tag, v) in info.modifiers.iter().take(4) {
-        row(p, attrib_name(db, tag), format!("{v:+}"), TEXT);
-    }
-    for (tag, need) in info.requirements.iter().take(3) {
-        let have =
-            cx.s.state
-                .attributes
-                .get(&tag.to_ascii_lowercase())
-                .copied()
-                .unwrap_or(0);
-        row(
+        body(
             p,
-            format!("Benötigt {}", attrib_name(db, tag)),
-            need.to_string(),
-            if have >= *need { TEXT } else { TEXT_BAD },
+            cx,
+            r.label,
+            (ox + 18.0, oy + y, 130.0, 20.0),
+            Al::Left,
+            TEXT,
         );
+        body(
+            p,
+            cx,
+            r.value,
+            (ox + 140.0, oy + y, 72.0, 20.0),
+            Al::Right,
+            c,
+        );
+        let delta = crate::stats::delta_text(r.delta);
+        if !delta.is_empty() {
+            let good = r.delta.is_some_and(|d| d > 0);
+            body(
+                p,
+                cx,
+                delta,
+                (ox + 214.0, oy + y, 54.0, 20.0),
+                Al::Right,
+                if good {
+                    Color::srgb(0.55, 0.85, 0.45)
+                } else {
+                    TEXT_BAD
+                },
+            );
+        }
+        y += 22.0;
     }
-    row(p, "Wert".into(), info.value.to_string(), TEXT);
     for (i, (name, a)) in actions.into_iter().enumerate() {
         let mut n = abs(ox + 70.0 + 0.0 * i as f32, oy + 308.0, 148.0, 30.0);
         n.border = UiRect::all(px(2));
@@ -714,9 +758,7 @@ fn journal(p: &mut P, cx: &Cx) {
     spawn_pic(p, cx.a, QUESTS, ox, oy, None);
     heading(p, cx, "Alle Missionen", (ox + 32.0, oy + 8.0, 872.0, 30.0));
     // world map (cropped to the 442x392 view)
-    let mut map = WORLD_MAP;
-    map.h = 514.0;
-    spawn_pic(p, cx.a, map, ox + 40.0, oy + 48.0, Some((438.0, 388.0)));
+    crate::screens_world::world_view(p, cx);
     // quest tabs
     let names = [
         cx.t("HUD_Quest_Running", "Aktuell"),

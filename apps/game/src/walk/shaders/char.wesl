@@ -17,6 +17,9 @@ struct CharParams {
     misc: vec4<f32>,
     sun: vec4<f32>,
     sh: array<vec4<f32>, 4>,
+    // static point lights: xyz position, w = 1 / range^2; colour x2 in light_cols
+    lights: array<vec4<f32>, 6>,
+    light_cols: array<vec4<f32>, 6>,
 };
 @group(3) @binding(0) var<uniform> params: CharParams;
 @group(3) @binding(1) var tex: texture_2d<f32>;
@@ -67,7 +70,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             view.view_from_world[2].z, view.view_from_world[3].z), in.world_position);
         shadow = shadows::fetch_directional_shadow(0u, in.world_position, n, view_z, in.position.xy);
     }
+    // vecShadowDensity: the weather ShadowDensity scales how dark shadows get (sh[0].w).
+    shadow = 1.0 - (1.0 - shadow) * params.sh[0].w;
     light = light + params.sun.rgb * max(dot(n, sun_l), 0.0) * shadow;
+
+    // Static point lights (the original's per-object packet: position, colour x 2, 1 / range^2).
+    for (var i = 0u; i < 6u; i = i + 1u) {
+        let lc = params.light_cols[i].rgb;
+        if lc.r + lc.g + lc.b > 0.0 {
+            let d = params.lights[i].xyz - in.world_position.xyz;
+            let att = saturate(1.0 - dot(d, d) * params.lights[i].w);
+            light = light + lc * att * att * max(dot(n, normalize(d)), 0.0);
+        }
+    }
 
     // Rim light (non-skin permutation): smoothstep on (1 - N.V) between start and end.
     let rt = clamp((1.0 - ndv - params.misc.y) / (params.misc.z - params.misc.y), 0.0, 1.0);

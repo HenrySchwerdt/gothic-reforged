@@ -211,6 +211,26 @@ impl ControlOptions {
         }
         o
     }
+
+    /// The keys of `[Options.Controls]` in the file's order and number format (the `Controls`
+    /// line included; the custom key pairs are separate, see `custom_bindings_to_ini`).
+    pub fn to_pairs(&self) -> Vec<(&'static str, String)> {
+        let flag = |b: bool| b.to_string();
+        vec![
+            ("MouseSensitivityX", format!("{:.6}", self.sensitivity[0])),
+            ("MouseSensitivityY", format!("{:.6}", self.sensitivity[1])),
+            ("MouseInvertX", flag(self.invert[0])),
+            ("MouseInvertY", flag(self.invert[1])),
+            ("MouseSmoothingX", format!("{:.6}", self.smoothing[0])),
+            ("MouseSmoothingY", format!("{:.6}", self.smoothing[1])),
+            ("AltCamera", flag(self.alt_camera)),
+            ("CamLookaroundInverse", flag(self.lookaround_inverse)),
+            (
+                "Controls",
+                if self.custom { "Custom" } else { "Standard" }.to_string(),
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +338,21 @@ mod tests {
         assert_eq!(o.invert, [false, true]);
         assert!(o.lookaround_inverse && !o.alt_camera && !o.custom);
         assert_eq!(ControlOptions::default().smoothing, [0.5, 0.5]);
+    }
+
+    #[test]
+    fn control_options_write_what_they_read() {
+        let o = ControlOptions {
+            sensitivity: [0.25, 0.75],
+            smoothing: [0.0, 1.0],
+            invert: [true, false],
+            alt_camera: true,
+            lookaround_inverse: false,
+            custom: true,
+        };
+        let pairs = o.to_pairs();
+        let back = ControlOptions::from_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
+        assert_eq!(back, o);
+        assert_eq!(pairs[0], ("MouseSensitivityX", "0.250000".to_string()));
     }
 }

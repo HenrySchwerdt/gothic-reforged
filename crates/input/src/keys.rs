@@ -581,6 +581,51 @@ pub fn parse_custom_bindings<'a>(
         .collect()
 }
 
+/// The `SessionKey.<Name>.Key<n>.Type` / `.Offset` pairs of `UserOptions.ini` for a binding
+/// table: the inverse of [`parse_custom_bindings`]. Unbound slots write nothing, so a rebound
+/// key never keeps a stale second entry. Type uses the numeric spelling (`0` keyboard,
+/// `1` mouse) [I: the shipped INI has no custom keys to copy the spelling from].
+pub fn custom_bindings_to_ini(bindings: &[Binding]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for b in bindings {
+        let Some(name) = b.key.ini_name() else {
+            continue;
+        };
+        for (i, p) in b.physical.iter().enumerate() {
+            let Some(p) = p else { continue };
+            let base = format!("SessionKey.{name}.Key{}", i + 1);
+            out.push((format!("{base}.Type"), (p.device as u8).to_string()));
+            out.push((format!("{base}.Offset"), p.code.to_string()));
+        }
+    }
+    out
+}
+
+/// A name for the options page: the `controls.ini` key name for the keyboard, German words
+/// for the mouse pseudo keys.
+pub fn physical_name(p: PhysicalKey) -> String {
+    match p.device {
+        Device::Keyboard => u8::try_from(p.code)
+            .ok()
+            .and_then(dik::name)
+            .map_or_else(|| format!("Taste {}", p.code), str::to_string),
+        Device::Mouse => match p.code {
+            mouse::LEFT => "Maus links",
+            mouse::RIGHT => "Maus rechts",
+            mouse::MIDDLE => "Maus Mitte",
+            mouse::BUTTON4 => "Maus Taste 4",
+            mouse::X_POS => "Maus rechts (Achse)",
+            mouse::X_NEG => "Maus links (Achse)",
+            mouse::Y_POS => "Maus runter",
+            mouse::Y_NEG => "Maus hoch",
+            mouse::WHEEL_UP => "Mausrad hoch",
+            mouse::WHEEL_DOWN => "Mausrad runter",
+            _ => "Maus",
+        }
+        .to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,5 +747,45 @@ mod tests {
             .find(|b| b.key == SessionKey::Backward)
             .expect("backward");
         assert_eq!(back.physical, [None, None]);
+    }
+
+    #[test]
+    fn custom_bindings_round_trip_through_the_ini_pairs() {
+        let table = vec![
+            Binding {
+                key: SessionKey::Forward,
+                label: "",
+                physical: [
+                    Some(PhysicalKey::key(dik::T)),
+                    Some(PhysicalKey::mouse(mouse::LEFT)),
+                ],
+            },
+            Binding {
+                key: SessionKey::Jump,
+                label: "",
+                physical: [Some(PhysicalKey::key(dik::SPACE)), None],
+            },
+        ];
+        let pairs = custom_bindings_to_ini(&table);
+        assert!(pairs.contains(&("SessionKey.Forward.Key2.Type".into(), "1".into())));
+        assert!(
+            pairs
+                .iter()
+                .all(|(k, _)| !k.starts_with("SessionKey.Up.Key2"))
+        );
+        let back = parse_custom_bindings(pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        let find = |k| back.iter().find(|b| b.key == k).unwrap().physical;
+        assert_eq!(find(SessionKey::Forward), table[0].physical);
+        assert_eq!(find(SessionKey::Jump), table[1].physical);
+        assert_eq!(find(SessionKey::Duck), [None, None]);
+    }
+
+    #[test]
+    fn physical_keys_have_readable_names() {
+        assert_eq!(
+            physical_name(PhysicalKey::mouse(mouse::WHEEL_UP)),
+            "Mausrad hoch"
+        );
+        assert!(!physical_name(PhysicalKey::key(dik::W)).is_empty());
     }
 }

@@ -1,0 +1,27 @@
+[package]
+name = "gothic-assets"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+description = "Remaster asset pipeline: fits generated GLB models onto original Gothic 3 assets and writes a local override profile"
+
+# Own workspace: the tool pulls glTF/image/BC-encoder crates the game does not need.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+meshopt = "0.4"
+texpresso = "2"
+texture2ddecoder = "0.1"
+gothic-formats = { path = "../../crates/formats" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+opt-level = 2

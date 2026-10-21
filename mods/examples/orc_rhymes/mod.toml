@@ -1,0 +1,10 @@
+[mod]
+id = "orc_rhymes"
+name = "Orcish Poetry"
+version = "1.0.0"
+description = "All orcs speak in rhymes (subtitle rewrite hook)."
+authors = ["Gothic Reforged"]
+
+[script]
+entry = "scripts/main.rhai"
+capabilities = ["subtitles"]

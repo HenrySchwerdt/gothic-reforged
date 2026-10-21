@@ -12,6 +12,6 @@ pub mod mapper;
 pub mod player;
 
 pub use control::{CharacterControl, ControlOptions, Look, MoveKeys};
-pub use keys::{Binding, Device, PhysicalKey, SessionKey};
+pub use keys::{Binding, Device, PhysicalKey, SessionKey, custom_bindings_to_ini, physical_name};
 pub use mapper::{ActionMapper, GameKeyMessage, RawInput};
 pub use player::{Context, Order, PlayerInput};

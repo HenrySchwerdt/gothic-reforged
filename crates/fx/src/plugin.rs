@@ -455,6 +455,13 @@ fn poll_library(
             Name::new(e.name.clone()),
         ));
         sites += 1;
+        if std::env::var_os("GR_FX_DEBUG").is_some() {
+            info!(
+                "fx site emitter {} at {:?} m",
+                e.name,
+                m.w_axis.truncate() * CM
+            );
+        }
     }
     for e in &lib.world.effects {
         if e.probability < 1.0
@@ -474,6 +481,14 @@ fn poll_library(
             Name::new(e.name.clone()),
         ));
         sites += 1;
+        if std::env::var_os("GR_FX_DEBUG").is_some() {
+            info!(
+                "fx site effect {} {} at {:?} m",
+                e.name,
+                e.effect,
+                m.w_axis.truncate() * CM
+            );
+        }
     }
     stats.sites = sites;
     commands.insert_resource(Ready(Arc::new(lib)));
@@ -805,6 +820,7 @@ fn build_batches(
     mut scratch: Local<HashMap<BatchKey, Vec<Quad>>>,
     mut visibilities: Query<&mut Visibility>,
     mut log: Local<(u32, f32, f32)>,
+    mut frames: Query<(&mut Transform, &mut GlobalTransform), (With<Mesh3d>, Without<Camera3d>)>,
 ) {
     let t0 = Instant::now();
     let Some((cam, tan_half)) = frustum_tangents(&cams) else {
@@ -893,15 +909,36 @@ fn build_batches(
             centroid += (q.corners[0] + q.corners[2]) * 0.5;
         }
         centroid /= quads.len() as f32;
+        if std::env::var_os("GR_FX_LAG").is_some()
+            && let Ok((_, g)) = frames.get(entity)
+        {
+            // Rendered frame uses the propagated (previous) transform.
+            info!(
+                "fxlag {} quads {} new centroid {:?} rendered {:?} error {:.4} m",
+                key.texture,
+                quads.len(),
+                centroid * CM,
+                g.translation(),
+                (centroid * CM - g.translation()).length()
+            );
+        }
         if let Some(mut mesh) = meshes.get_mut(&handle) {
             fill_mesh(&mut mesh, quads, centroid);
         }
         if let Ok(mut v) = visibilities.get_mut(entity) {
             *v = Visibility::Visible;
         }
-        commands
-            .entity(entity)
-            .insert(Transform::from_translation(centroid * CM));
+        // The vertices are relative to this frame's centroid, so the transform that places them
+        // must be this frame's too. This system runs after transform propagation: writing only
+        // `Transform` (as a deferred insert) rendered every batch with the previous frame's
+        // centroid, which swings all flames of the batch by the centroid's per-frame change.
+        let at = batch_transform(centroid);
+        if let Ok((mut t, mut g)) = frames.get_mut(entity) {
+            *t = at;
+            *g = GlobalTransform::from(at);
+        } else {
+            commands.entity(entity).insert(at);
+        }
     }
     stats.emitters = n_emitters;
     stats.particles = n_particles;
@@ -937,6 +974,11 @@ fn build_batches(
         }
         *log = (0, 0.0, 0.0);
     }
+}
+
+/// Transform of a batch whose vertices are relative to `centroid` (cm).
+fn batch_transform(centroid: Vec3) -> Transform {
+    Transform::from_translation(centroid * CM)
 }
 
 fn empty_mesh() -> Mesh {
@@ -1012,5 +1054,40 @@ fn fill_mesh(mesh: &mut Mesh, quads: &[Quad], centroid: Vec3) {
             let b = k * 4;
             idx.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn site_transform_is_the_mirrored_engine_frame_in_metres() {
+        // Engine entity at (1000, 200, -300) cm yawed 90 degrees about +y; origin shifts x/z.
+        let engine = Mat4::from_translation(Vec3::new(1000.0, 200.0, -300.0))
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let origin = Vec3::new(400.0, 50.0, -100.0);
+        let tf = site_transform(&to_view(&engine, origin));
+        // Position: (origin.x - x, y - origin.y, z - origin.z) in metres.
+        assert!((tf.translation - Vec3::new(-6.0, 1.5, -2.0)).length() < 1e-4);
+        // The entity's engine +x axis (a point 100 cm along it) lands where the loader's point
+        // map puts the engine-space point, so a torch's flame offset stays on the torch.
+        let engine_pt = engine.transform_point3(Vec3::new(100.0, 0.0, 0.0));
+        let want = crate::space::point_to_view(engine_pt, origin) * CM;
+        let got = tf.transform_point(Vec3::new(-1.0, 0.0, 0.0));
+        assert!((got - want).length() < 1e-4, "{got:?} vs {want:?}");
+    }
+
+    #[test]
+    fn batch_transform_places_centroid_relative_vertices() {
+        // A vertex stored as (corner - centroid) * CM lands on corner * CM under the transform:
+        // the transform and the vertices must come from the same centroid.
+        let centroid = Vec3::new(5120.0, 340.0, -870.0);
+        let corner = Vec3::new(5150.0, 360.0, -860.0);
+        let local = (corner - centroid) * CM;
+        let world = batch_transform(centroid).transform_point(local);
+        assert!((world - corner * CM).length() < 1e-5);
+        let moved = batch_transform(centroid + Vec3::new(30.0, 0.0, 0.0)).translation;
+        assert!(((moved - batch_transform(centroid).translation).x - 0.3).abs() < 1e-4);
     }
 }

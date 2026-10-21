@@ -611,7 +611,7 @@ mod tests {
         let mut bytes = b"GENOMFLE     ".to_vec();
         bytes.extend(b"GENOMEDL");
         bytes.extend(83u16.to_le_bytes());
-        bytes.extend([0; 64]);
+        bytes.extend([0; 400]);
         let error = WorldDocument::parse(&bytes).unwrap_err();
         assert!(format!("{error:#}").contains("no string table"));
         // A context-only layer of the same shape (124 bytes in the shipped data) is empty.

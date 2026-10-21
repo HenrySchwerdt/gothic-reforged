@@ -358,8 +358,56 @@ static KNOCKDOWN: ActionDef = ActionDef {
     ..BASE
 };
 
+/// Timing read from a locally generated clip pack (frames at 30 fps; see
+/// [`install_timing`]). Every field is optional: what is `None` keeps the built-in value.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Timing {
+    pub total: f32,
+    pub input_from: Option<f32>,
+    pub cancel_light: Option<f32>,
+    pub cancel_heavy: Option<f32>,
+    pub cancel_dodge: Option<f32>,
+    pub cancel_guard: Option<f32>,
+    pub cancel_move: Option<f32>,
+    pub iframes: Option<(f32, f32)>,
+    /// First hit window `(from, to)`; keeps the built-in poise, hit-stop and arc.
+    pub hit: Option<(f32, f32)>,
+    pub travel: Option<(f32, f32, f32)>,
+    /// Frame the heavy attack waits at while the button is held.
+    pub hold: Option<f32>,
+}
+
+/// Number of distinct timing slots (see [`ActionId::slot`]).
+const SLOTS: usize = 16;
+
+static OVERRIDES: std::sync::RwLock<[Option<&'static ActionDef>; SLOTS]> =
+    std::sync::RwLock::new([None; SLOTS]);
+
 impl ActionId {
-    pub fn def(self) -> &'static ActionDef {
+    /// Index of the action's built-in timing entry; actions sharing one definition (all four
+    /// rolls, the later chain links) share the slot.
+    pub fn slot(self) -> usize {
+        match self {
+            Self::Roll(_) => 0,
+            Self::Backstep => 1,
+            Self::Light(1) => 2,
+            Self::Light(2) => 3,
+            Self::Light(_) => 4,
+            Self::Heavy => 5,
+            Self::RunLight => 6,
+            Self::RollLight => 7,
+            Self::GuardCounter => 8,
+            Self::Riposte => 9,
+            Self::GuardHit => 10,
+            Self::GuardBreak => 11,
+            Self::Stagger => 12,
+            Self::Hurt(Hurt::Small) => 13,
+            Self::Hurt(Hurt::Middle) => 14,
+            Self::Hurt(Hurt::Large) | Self::Hurt(Hurt::Knockdown) => 15,
+        }
+    }
+
+    fn builtin(self) -> &'static ActionDef {
         match self {
             Self::Roll(_) => &ROLL,
             Self::Backstep => &BACKSTEP,
@@ -381,6 +429,16 @@ impl ActionId {
         }
     }
 
+    /// The action's timing: the installed override when there is one, else the built-in table.
+    pub fn def(self) -> &'static ActionDef {
+        if let Ok(o) = OVERRIDES.read()
+            && let Some(d) = o[self.slot()]
+        {
+            return d;
+        }
+        self.builtin()
+    }
+
     /// Stamina the action costs to start.
     pub fn cost(self, t: &crate::tuning::Tuning) -> f32 {
         match self {
@@ -395,6 +453,83 @@ impl ActionId {
             Self::GuardCounter => 18.0,
             _ => 0.0,
         }
+    }
+}
+
+/// Replaces the timing of the action's slot (for example with windows read from a clip pack).
+/// Idempotent; the previous override of the slot is leaked (a handful of small records per
+/// process, installs happen once at startup).
+pub fn install_timing(id: ActionId, t: &Timing) {
+    let leaked: &'static ActionDef = Box::leak(Box::new(apply_timing(id.builtin(), t)));
+    if let Ok(mut o) = OVERRIDES.write() {
+        o[id.slot()] = Some(leaked);
+    }
+}
+
+/// `base` with the pack timing applied and every window clamped into the new length.
+pub fn apply_timing(base: &ActionDef, t: &Timing) -> ActionDef {
+    let mut d = *base;
+    d.total = t.total.max(1.0);
+    macro_rules! set {
+        ($f:ident) => {
+            if let Some(v) = t.$f {
+                d.$f = v;
+            }
+        };
+    }
+    set!(input_from);
+    set!(cancel_light);
+    set!(cancel_heavy);
+    set!(cancel_dodge);
+    set!(cancel_guard);
+    set!(cancel_move);
+    set!(iframes);
+    if let Some((from, to)) = t.hit
+        && let Some(h) = d.hit.as_mut()
+    {
+        h.from = from;
+        h.to = to.max(from + 1.0);
+    }
+    if let Some((from, to, dist)) = t.travel {
+        d.travel = Some(Travel { from, to, dist });
+    }
+    if let Some(h) = t.hold {
+        d.hold = Some(h);
+    }
+    // Windows that were authored for another length must still lie inside the action.
+    let total = d.total;
+    let clamp = |v: &mut f32| {
+        if *v != NEVER && *v > total {
+            *v = total;
+        }
+    };
+    for v in [
+        &mut d.cancel_light,
+        &mut d.cancel_heavy,
+        &mut d.cancel_dodge,
+        &mut d.cancel_guard,
+        &mut d.cancel_move,
+        &mut d.input_from,
+    ] {
+        clamp(v);
+    }
+    d.iframes.1 = d.iframes.1.min(total);
+    d.iframes.0 = d.iframes.0.min(d.iframes.1);
+    if let Some(h) = d.hit.as_mut() {
+        h.to = h.to.min(total);
+        h.from = h.from.min(h.to - 1.0).max(0.0);
+    }
+    if let Some(tr) = d.travel.as_mut() {
+        tr.to = tr.to.min(total);
+        tr.from = tr.from.min(tr.to - 1.0).max(0.0);
+    }
+    d
+}
+
+/// Removes every installed timing override (back to the built-in table).
+pub fn clear_timing() {
+    if let Ok(mut o) = OVERRIDES.write() {
+        *o = [None; SLOTS];
     }
 }
 
@@ -413,6 +548,26 @@ impl ActionDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn applied_timing_replaces_and_clamps() {
+        let d = apply_timing(
+            ActionId::Light(1).def(),
+            &Timing {
+                total: 33.0,
+                cancel_move: Some(50.0),
+                hit: Some((10.0, 12.0)),
+                iframes: Some((2.0, 40.0)),
+                ..Default::default()
+            },
+        );
+        assert_eq!(d.total, 33.0);
+        assert_eq!(d.cancel_move, 33.0, "clamped into the action");
+        assert_eq!(d.iframes, (2.0, 33.0));
+        let h = d.hit.unwrap();
+        assert_eq!((h.from, h.to), (10.0, 12.0));
+        assert!(h.poise > 0.0, "built-in poise kept");
+    }
 
     #[test]
     fn every_window_lies_inside_the_animation() {
