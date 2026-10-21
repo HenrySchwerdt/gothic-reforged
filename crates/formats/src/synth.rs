@@ -35,10 +35,12 @@ pub enum Target {
     Dds,
     PropStream,
     Emfx,
+    Weather,
+    TerrainName,
 }
 
 impl Target {
-    pub const ALL: [Target; 26] = [
+    pub const ALL: [Target; 28] = [
         Target::Pak,
         Target::Genome,
         Target::Ximg,
@@ -65,6 +67,8 @@ impl Target {
         Target::Dds,
         Target::PropStream,
         Target::Emfx,
+        Target::Weather,
+        Target::TerrainName,
     ];
 
     /// Fuzz target name (`fuzz/fuzz_targets/<name>.rs`).
@@ -96,6 +100,8 @@ impl Target {
             Target::Dds => "dds",
             Target::PropStream => "propstream",
             Target::Emfx => "emfx",
+            Target::Weather => "weather",
+            Target::TerrainName => "terrain_name",
         }
     }
 
@@ -233,7 +239,162 @@ pub fn run(target: Target, data: &[u8]) {
             let _ = emfx::read_container(data, b"FXA ", 2, true);
             let _ = emfx::read_container(data, b"LMA ", 3, false);
         }
+        Target::Weather => {
+            if let Ok(w) = weather::parse(data) {
+                for st in &w.states {
+                    for t in [-1.0, 0.0, 0.37, 1.0, 2.0, f32::NAN] {
+                        let _ = st.scales.sun_diffuse.at(t);
+                        let _ = st.scales.fog_end.at(t);
+                    }
+                }
+                for e in &w.environments {
+                    let _ = e.entries.first().and_then(|x| w.state(&x.state));
+                }
+            }
+        }
+        Target::TerrainName => {
+            let _ = terrain::parse_cell_name(&String::from_utf8_lossy(data));
+        }
     }
+}
+
+/// Fuzzer bytes as a stream of small numbers (wraps around; zeros when empty).
+struct Bytes<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl Bytes<'_> {
+    fn u8(&mut self) -> u8 {
+        if self.data.is_empty() {
+            return 0;
+        }
+        let b = self.data[self.pos % self.data.len()];
+        self.pos += 1;
+        b
+    }
+    fn below(&mut self, n: u8) -> u8 {
+        self.u8() % n.max(1)
+    }
+    fn f32(&mut self) -> f32 {
+        f32::from(self.u8()) / 64.0 - 1.0
+    }
+}
+
+/// A `WeatherStates.g3ws` file whose counts, property picks and key values come from `data`
+/// (valid layout throughout, so the fuzzer explores the decoding, not the magics).
+fn weather_file(data: &[u8]) -> Vec<u8> {
+    const PROPS: [&[u8]; 6] = [
+        b"ParticlesPerSecond",
+        b"SpeedMinMax",
+        b"LoopSample",
+        b"SplashSizeScale",
+        b"LoopVolume",
+        b"Unknown",
+    ];
+    // Strings: properties, then state and climate names.
+    let mut strings: Vec<&[u8]> = PROPS.to_vec();
+    strings.extend([&b"Clear"[..], b"Rain\0junk", b"Forest", b"Myrtana"]);
+    let nstr = strings.len() as u16;
+    let mut b = Bytes { data, pos: 0 };
+    let mut body = b"GEWS".to_vec();
+    body.extend(2u16.to_le_bytes());
+    let states = b.below(4);
+    body.extend(u32::from(states).to_le_bytes());
+    // Scale kinds in file order (true = colour).
+    const COLOUR: [bool; 16] = [
+        true, true, false, true, true, false, true, false, true, true, false, false, true, false,
+        false, false,
+    ];
+    for _ in 0..states {
+        body.extend([1, 0, 1, 1, 0, 1]);
+        body.extend(7u16.to_le_bytes());
+        body.extend([1, 0, 0, 1, 0]);
+        body.extend(0x53u16.to_le_bytes());
+        let mut obj = 30u16.to_le_bytes().to_vec();
+        let props = b.below(5);
+        obj.extend(u32::from(props).to_le_bytes());
+        for _ in 0..props {
+            let prop = b.below(PROPS.len() as u8);
+            obj.extend(u16::from(prop).to_le_bytes());
+            obj.extend(0u16.to_le_bytes());
+            obj.extend(30u16.to_le_bytes());
+            if PROPS[usize::from(prop)] == b"LoopSample" {
+                // A two-byte string index.
+                obj.extend(2u32.to_le_bytes());
+                obj.extend(u16::from(b.below(nstr as u8)).to_le_bytes());
+                continue;
+            }
+            let len = [0usize, 2, 4, 8][usize::from(b.below(4))];
+            obj.extend((len as u32).to_le_bytes());
+            for _ in 0..len {
+                obj.push(b.u8());
+            }
+        }
+        obj.extend(7u16.to_le_bytes());
+        obj.extend((PROPS.len() as u16 + u16::from(b.below(2))).to_le_bytes());
+        for colour in COLOUR {
+            obj.extend(1u32.to_le_bytes());
+            let keys = u32::from(b.below(4));
+            let entry = if colour { 20 } else { 8 };
+            obj.extend((keys * entry).to_le_bytes());
+            if keys > 0 {
+                obj.extend(keys.to_le_bytes());
+                for _ in 0..keys * entry / 4 {
+                    obj.extend(b.f32().to_le_bytes());
+                }
+            }
+        }
+        body.extend((obj.len() as u32).to_le_bytes());
+        body.extend(obj);
+    }
+    let envs = b.below(3);
+    body.extend(u32::from(envs).to_le_bytes());
+    for _ in 0..envs {
+        body.extend(3u16.to_le_bytes());
+        body.extend((nstr - 2).to_le_bytes());
+        body.push(1);
+        let k = b.below(4);
+        body.extend(u32::from(k).to_le_bytes());
+        for _ in 0..k {
+            body.extend((PROPS.len() as u16 + u16::from(b.below(3))).to_le_bytes());
+            for _ in 0..3 {
+                body.extend(b.f32().to_le_bytes());
+            }
+        }
+        body.extend((nstr - 1).to_le_bytes());
+        body.extend(i32::from(b.u8()).to_le_bytes());
+    }
+    genome(&body, &strings)
+}
+
+/// An `.igl` image list: groups of tiles with string-table paths, counts and rectangles from
+/// `data`.
+fn igl_file(data: &[u8], strings: &[&[u8]]) -> Vec<u8> {
+    let mut b = Bytes { data, pos: 0 };
+    let nstr = strings.len().max(1) as u8;
+    let groups = 1 + b.below(3);
+    let mut body = u32::from(groups).to_le_bytes().to_vec();
+    body.extend([0u8; 26]); // header up to the first group at 0x2c
+    for _ in 0..groups {
+        body.extend(2u32.to_le_bytes());
+        for _ in 0..4 {
+            body.extend(u16::from(b.below(nstr)).to_le_bytes());
+        }
+        body.extend(u32::from(b.u8()).to_le_bytes());
+        body.extend(u32::from(b.u8()).to_le_bytes());
+        body.extend([0u8; 36]);
+        let tiles = b.below(4);
+        body.extend(u32::from(tiles).to_le_bytes());
+        for _ in 0..tiles {
+            body.extend(u16::from(b.below(nstr)).to_le_bytes());
+            body.extend(u16::from(b.below(nstr)).to_le_bytes());
+            for _ in 0..4 {
+                body.extend(u32::from(b.u8()).to_le_bytes());
+            }
+        }
+    }
+    genome(&body, strings)
 }
 
 /// A GENOMFLE v1 envelope: header, body, `0xDEADBEEF` table with `strings`.
@@ -277,6 +438,12 @@ fn dictionary(target: Target) -> &'static [&'static [u8]] {
         Target::TemplateSummary | Target::TemplateDocument => {
             &[b"eCTemplateEntity", b"gCInventory_PS", b"Name", b"bCString"]
         }
+        Target::Igl => &[
+            b"G3_HUD_Items",
+            b"Data\\gui\\icons\\compiled\\",
+            b"#G3:\\Data\\gui\\icons\\IT_Apple.tga",
+            b"Data\\gui\\icons\\compiled\\/g3_hud_it_00.dds",
+        ],
         _ => &[b"Name", b"int"],
     }
 }
@@ -398,8 +565,19 @@ pub fn structured(target: Target, data: &[u8]) -> Vec<u8> {
         | Target::Xnvmsh
         | Target::Xshmat
         | Target::Xlmp
-        | Target::Igl
         | Target::Theme => genome(body, &strings),
+        Target::Igl => igl_file(body, &strings),
+        Target::Weather => weather_file(data),
+        Target::TerrainName => {
+            let n = data.first().copied().unwrap_or(0);
+            let region = ["Myrtana", "Varant", "Nordmar", "", "A_B"][usize::from(n % 5)];
+            let ext = ["xcmsh", "XNVMSH", "xlmsh"][usize::from(n % 3)];
+            format!(
+                "Data\\G3_{region}_Landscape_Cell_{}.{ext}",
+                String::from_utf8_lossy(body)
+            )
+            .into_bytes()
+        }
         Target::StringTable => {
             let s = format!(
                 "[LocAdmin_Languages]\r\nLanguages=English;German\r\nCurrentLanguage=English\r\n[LocAdmin_Strings]\r\n{}\r\n",

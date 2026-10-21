@@ -199,3 +199,17 @@ path = "fuzz_targets/emfx.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "weather"
+path = "fuzz_targets/weather.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "terrain_name"
+path = "fuzz_targets/terrain_name.rs"
+test = false
+doc = false
+bench = false
