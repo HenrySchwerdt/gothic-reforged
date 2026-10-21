@@ -292,7 +292,10 @@ impl ActorLibrary {
         let pack = crate::clip_pack::ClipPack::load(path)
             .with_context(|| format!("clip pack {}", path.display()))?;
         for c in &pack.clips {
-            self.register_clip(c.clip.clone());
+            // Packs are generated against the authored (left-handed) skeleton.
+            let mut clip = c.clip.clone();
+            clip.mirror_x();
+            self.register_clip(clip);
         }
         Ok(pack)
     }
@@ -591,8 +594,9 @@ impl ActorLibrary {
         for mesh in &actor.meshes {
             for sub in &mesh.submeshes {
                 for p in &sub.positions {
-                    min = min.min(Vec3::from(*p));
-                    max = max.max(Vec3::from(*p));
+                    let p = Vec3::new(-p[0], p[1], p[2]);
+                    min = min.min(p);
+                    max = max.max(p);
                 }
                 let material = match sub_materials.get(&sub.material) {
                     Some(h) => h.clone(),
@@ -869,20 +873,23 @@ impl ActorLibrary {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for sub in &xcmsh.submeshes {
-            min = min.min(Vec3::from(sub.bounds_min));
-            max = max.max(Vec3::from(sub.bounds_max));
-            let mut indices = sub.indices.clone();
-            for tri in indices.as_chunks_mut::<3>().0 {
-                tri.swap(1, 2);
-            }
+            // Mirrored into engine space like the actors (x -> -x, winding reversed by the
+            // reflection, so no index swap).
+            let (bmin, bmax) = (sub.bounds_min, sub.bounds_max);
+            min = min.min(Vec3::new(-bmax[0], bmin[1], bmin[2]));
+            max = max.max(Vec3::new(-bmin[0], bmax[1], bmax[2]));
+            let indices = sub.indices.clone();
+            let mirror_v = |v: &[f32; 3]| [-v[0], v[1], v[2]];
+            let positions: Vec<[f32; 3]> = sub.positions.iter().map(mirror_v).collect();
+            let normals: Vec<[f32; 3]> = sub.normals.iter().map(mirror_v).collect();
             let mut mesh = Mesh::new(
                 PrimitiveTopology::TriangleList,
                 RenderAssetUsages::RENDER_WORLD,
             )
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, sub.positions.clone())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
             .with_inserted_indices(Indices::U32(indices));
             if sub.normals.len() == sub.positions.len() {
-                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, sub.normals.clone());
+                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
             } else {
                 mesh.compute_flat_normals();
             }
@@ -951,11 +958,12 @@ fn alpha_mode(blend: Option<(u32, u8)>) -> AlphaMode {
 }
 
 fn skinned_mesh(sub: &ActorSubmesh, remap: &[u16]) -> Mesh {
-    let mut indices = sub.indices.clone();
-    // Same winding convention as the static mesh viewer.
-    for triangle in indices.as_chunks_mut::<3>().0 {
-        triangle.swap(1, 2);
-    }
+    // Mirrored into engine space (x -> -x); the reflection also reverses the winding, which
+    // replaces the index swap the unmirrored data needed.
+    let indices = sub.indices.clone();
+    let mirror_v = |v: &[f32; 3]| [-v[0], v[1], v[2]];
+    let positions: Vec<[f32; 3]> = sub.positions.iter().map(mirror_v).collect();
+    let normals: Vec<[f32; 3]> = sub.normals.iter().map(mirror_v).collect();
     let joints: Vec<[u16; 4]> = sub
         .joints
         .iter()
@@ -972,8 +980,8 @@ fn skinned_mesh(sub: &ActorSubmesh, remap: &[u16]) -> Mesh {
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, sub.positions.clone())
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, sub.normals.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, sub.uvs.clone())
     .with_inserted_attribute(
         Mesh::ATTRIBUTE_JOINT_INDEX,
@@ -1048,10 +1056,22 @@ fn apply_remaster(actor: &mut Actor, ov: &gothic_formats::remaster::OverrideMesh
 fn texture_image(image: &Ximg) -> Option<Image> {
     let mips = image.mips();
     let data: Vec<u8> = mips.iter().flat_map(|m| m.iter().copied()).collect();
-    bc_image(image.width, image.height, &image.fourcc, data, mips.len() as u32)
+    bc_image(
+        image.width,
+        image.height,
+        &image.fourcc,
+        data,
+        mips.len() as u32,
+    )
 }
 
-fn bc_image(width: u32, height: u32, fourcc: &[u8; 4], data: Vec<u8>, mip_count: u32) -> Option<Image> {
+fn bc_image(
+    width: u32,
+    height: u32,
+    fourcc: &[u8; 4],
+    data: Vec<u8>,
+    mip_count: u32,
+) -> Option<Image> {
     let format = match fourcc {
         b"DXT1" => TextureFormat::Bc1RgbaUnormSrgb,
         b"DXT3" => TextureFormat::Bc2RgbaUnormSrgb,

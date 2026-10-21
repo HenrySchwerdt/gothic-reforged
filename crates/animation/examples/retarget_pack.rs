@@ -5,7 +5,7 @@
 //! contains the generic bone table of a humanoid source skeleton with Havok-style names.
 use bevy::math::{Mat3, Quat, Vec3};
 use gothic_animation::{
-    clip_pack::{ClipPack, ClipTiming, PackClip},
+    clip_pack::{ClipPack, PackClip},
     retarget::{Grip, Options, Pair, Retargeter, SrcAnims},
     rig::Rig,
 };
@@ -103,7 +103,10 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .position(|e| e.path.to_lowercase() == "g3_hero_body_player.xact")
         .unwrap();
-    let rig = Rig::from_actor("G3_Hero_Body_Player", &Actor::parse(&pak.read_payload(at)?)?);
+    let rig = Rig::from_actor_source(
+        "G3_Hero_Body_Player",
+        &Actor::parse(&pak.read_payload(at)?)?,
+    );
 
     // Scale: thigh-joint-to-ankle length ratio of the two skeletons.
     let sk = &src.skeleton;
@@ -153,12 +156,16 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .position(|a| a == "--timing")
         .and_then(|i| args.get(i + 1))
-        .map(|p| std::fs::read_to_string(p))
+        .map(std::fs::read_to_string)
         .transpose()?
         .map(|t| gothic_animation::clip_pack::parse_timing(&t))
         .unwrap_or_default();
 
-    if let Some(only) = args.iter().position(|a| a == "--errors").and_then(|i| args.get(i + 1)) {
+    if let Some(only) = args
+        .iter()
+        .position(|a| a == "--errors")
+        .and_then(|i| args.get(i + 1))
+    {
         for c in src.clips.iter().filter(|c| c.name == *only) {
             for (bone, mean, max) in rt.error_report(c) {
                 println!("{bone:34} mean {mean:6.1} max {max:6.1}");
@@ -167,7 +174,10 @@ fn main() -> anyhow::Result<()> {
         for c in src.clips.iter().filter(|c| c.name == *only) {
             let (_, stats) = rt.clip_with_stats(c);
             for (f, s) in stats.iter().enumerate().step_by(4) {
-                println!("frame {f:3} src toe {:6.1} tgt toe {:6.1} dy {:6.1}", s[0], s[1], s[2]);
+                println!(
+                    "frame {f:3} src toe {:6.1} tgt toe {:6.1} dy {:6.1}",
+                    s[0], s[1], s[2]
+                );
             }
         }
         return Ok(());

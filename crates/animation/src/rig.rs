@@ -50,7 +50,20 @@ pub fn is_helper(name: &str) -> bool {
 }
 
 impl Rig {
+    /// Skeleton of an actor mirrored into engine space: Gothic 3 data is left-handed and the
+    /// game converts the world to Bevy by mirroring X, so every bind transform is conjugated with
+    /// that reflection (matching [`crate::clip::Clip::mirror_x`] and the mirrored meshes).
     pub fn from_actor(name: &str, actor: &Actor) -> Self {
+        Self::from_actor_with(name, actor, true)
+    }
+
+    /// Skeleton in the authored (left-handed) convention, for offline tools whose data is not
+    /// mirrored.
+    pub fn from_actor_source(name: &str, actor: &Actor) -> Self {
+        Self::from_actor_with(name, actor, false)
+    }
+
+    fn from_actor_with(name: &str, actor: &Actor, mirror: bool) -> Self {
         let names: Vec<String> = actor.nodes.iter().map(|x| x.name.clone()).collect();
         let parent: Vec<u16> = actor
             .nodes
@@ -60,10 +73,13 @@ impl Rig {
         let bind_local: Vec<Trs> = actor
             .nodes
             .iter()
-            .map(|x| Trs {
-                t: Vec3::from(x.position),
-                r: quat_from_file(x.rotation),
-                s: Vec3::from(x.scale),
+            .map(|x| {
+                let trs = Trs {
+                    t: Vec3::from(x.position),
+                    r: quat_from_file(x.rotation),
+                    s: Vec3::from(x.scale),
+                };
+                if mirror { trs.mirror_x() } else { trs }
             })
             .collect();
         Self::from_parts(name, names, parent, bind_local)
