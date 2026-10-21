@@ -3,9 +3,9 @@
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 mod gmat;
-mod post;
 #[path = "play/mod.rs"]
 mod play;
+mod post;
 
 use crate::world_loader::{
     LoaderHandle, MatData, MatKind, Origin, Part, PartKind, Request, Response, TILE_CM, TexData,
@@ -378,27 +378,27 @@ fn setup(
     ));
     let cam = commands
         .spawn((
-        Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection {
-            fov: 70f32.to_radians(),
-            near: 0.05,
-            far: 4000.0,
-            ..default()
-        }),
-        Exposure::default(),
-        bevy::core_pipeline::tonemapping::Tonemapping::None,
-        Transform::from_xyz(0.0, 250.0, 0.0),
-        DistanceFog {
-            color: fog_color,
-            directional_light_color: Color::srgb(1.0, 0.9, 0.7),
-            directional_light_exponent: 30.0,
-            falloff: FogFalloff::Linear {
-                start: fog.0 * 0.55,
-                end: fog.0,
+            Camera3d::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: 70f32.to_radians(),
+                near: 0.05,
+                far: 4000.0,
+                ..default()
+            }),
+            Exposure::default(),
+            bevy::core_pipeline::tonemapping::Tonemapping::None,
+            Transform::from_xyz(0.0, 250.0, 0.0),
+            DistanceFog {
+                color: fog_color,
+                directional_light_color: Color::srgb(1.0, 0.9, 0.7),
+                directional_light_exponent: 30.0,
+                falloff: FogFalloff::Linear {
+                    start: fog.0 * 0.55,
+                    end: fog.0,
+                },
             },
-        },
-        PlayerCamera,
-    ))
+            PlayerCamera,
+        ))
         .id();
     if std::env::var_os("GR_NOBLOOM").is_none() {
         commands.entity(cam).insert(post::BloomPost::original());

@@ -36,8 +36,8 @@ pub mod rig;
 pub mod runtime;
 pub mod visual;
 
-pub use face::{FaceRig, LipSyncStart};
 pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
+pub use face::{FaceRig, LipSyncStart};
 pub use library::{ActorLibrary, AssetStores, Composition};
 pub use locomotion::{Locomotion, LocomotionInput, Stance};
 pub use runtime::{ActorSpawner, AnimationStats, AttachSpec, NpcSpec, WeaponSpec};
