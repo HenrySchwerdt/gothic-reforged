@@ -20,6 +20,8 @@ pub enum Page {
     Theme,
     /// `g3_hud_it_<group>_00.dds`, index into [`ITEM_GROUPS`] (item icon atlases).
     Item(u8),
+    /// `g3_hud_maps_NN.dds` (the world and cave map pictures, 512x512 tiles).
+    Map(u8),
 }
 
 /// Item icon groups of `g3.igl` (atlas file `g3_hud_it_<name>_00.dds`).
@@ -41,6 +43,9 @@ fn page_of_stem(stem: &str) -> Option<Page> {
     if let Some(n) = rest.strip_prefix("backgrounds_") {
         return n.parse().ok().map(Page::Bg);
     }
+    if let Some(n) = rest.strip_prefix("maps_") {
+        return n.parse().ok().map(Page::Map);
+    }
     if rest == "icons_00" {
         return Some(Page::Icons);
     }
@@ -56,6 +61,7 @@ impl Page {
         match self {
             Page::Bg(n) => format!("icons/compiled/g3_hud_backgrounds_{n:02}.dds"),
             Page::Icons => "icons/compiled/g3_hud_icons_00.dds".into(),
+            Page::Map(n) => format!("icons/compiled/g3_hud_maps_{n:02}.dds"),
             Page::Theme => "themes/g3/compiled/theme_g3_00.dds".into(),
             Page::Item(i) => format!(
                 "icons/compiled/g3_hud_it_{}_00.dds",
@@ -117,6 +123,9 @@ pub struct UiAssets {
     pub font: Handle<Font>,
     /// Heading font (Times New Roman Bold Italic, else the body font).
     pub heading: Handle<Font>,
+    /// Font of the floating focus names: Tahoma Bold, which the shipped game's names match
+    /// (the install's `Gothic3.ttf` is only the display face of the logo); else the body font.
+    pub name_font: Handle<Font>,
     pub pages: std::collections::HashMap<Page, Handle<Image>>,
     pub original_font: bool,
     /// `g3.igl` lookup (lower-cased bare image name -> page + rectangle), the
@@ -152,6 +161,15 @@ impl UiAssets {
             return Some(p);
         }
         hit(&key)
+    }
+
+    /// An `.igl` picture by file name (`g3_map_world.tga`, `g3_hud_arrow.tga`) when its atlas is
+    /// loaded.
+    pub fn named_pic(&self, name: &str) -> Option<Pic> {
+        self.igl
+            .get(&bare_key(name))
+            .filter(|p| self.pages.contains_key(&p.page))
+            .copied()
     }
 
     pub fn page(&self, p: Page) -> Option<&Handle<Image>> {
@@ -229,6 +247,10 @@ pub fn load_install_assets(
         }
         None => warn!("UI: no TrueType font available; using the built-in fallback"),
     }
+    out.name_font = load(win.join("tahomabd.ttf"))
+        .or_else(|| load(install.join("Gothic3.ttf")))
+        .map(|f| fonts.add(f))
+        .unwrap_or_else(|| out.font.clone());
     out.heading = load(win.join("timesbi.ttf"))
         .map(|f| fonts.add(f))
         .unwrap_or_else(|| out.font.clone());
@@ -241,8 +263,9 @@ pub fn load_install_assets(
                     Err(e) => warn!("UI: theme_g3.thm unreadable ({e:#})"),
                 }
             }
-            let mut pages = (1..=3).chain(8..=17).map(Page::Bg).collect::<Vec<_>>();
+            let mut pages = (1..=6).chain(8..=17).map(Page::Bg).collect::<Vec<_>>();
             pages.extend([Page::Icons, Page::Theme]);
+            pages.extend((0..4).map(Page::Map));
             pages.extend((0..ITEM_GROUPS.len() as u8).map(Page::Item));
             for p in pages {
                 match read_pak_member(&mut pak, &p.member()).and_then(|b| dds_image(&b)) {

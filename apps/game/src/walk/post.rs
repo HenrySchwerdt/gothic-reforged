@@ -26,6 +26,11 @@ impl Plugin for PostPlugin {
 #[extract_app(RenderApp)]
 pub struct BloomPost {
     pub bloom: Vec4,
+    /// x exposure (0 disables the HDR path), y gamma, z vignette, w blue-shift threshold
+    /// (`Render.HDRExposure / HDRGamma / HDRVignette / HDRBlueShiftThreshold`).
+    pub hdr: Vec4,
+    /// x blue-shift intensity (`Render.HDRBlueShiftIntensity`).
+    pub hdr2: Vec4,
 }
 
 impl BloomPost {
@@ -36,13 +41,28 @@ impl BloomPost {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(d)
         };
+        // The HDR exposure curve (Bloom=2) over-exposes the original light values in our scene (checked
+        // against the reference screenshot); the LDR bloom chain matches. `GR_HDR=1` enables it.
+        let hdr = std::env::var_os("GR_HDR").is_some();
+        // HDR mode (Bloom=2) uses the glow constants instead of the bloom ones.
+        let (t, i, a) = if hdr {
+            (0.69, 3.0, 2.75)
+        } else {
+            (0.59, 1.7, 2.75)
+        };
         Self {
             bloom: Vec4::new(
-                f("GR_BLOOM_T", 0.59),
-                f("GR_BLOOM_I", 1.7),
-                f("GR_BLOOM_A", 2.75),
+                f("GR_BLOOM_T", t),
+                f("GR_BLOOM_I", i),
+                f("GR_BLOOM_A", a),
                 f("GR_BLOOM_STEP", 2.5),
             ),
+            hdr: if hdr {
+                Vec4::new(f("GR_EXPOSURE", 2.85), 0.60, 0.30, 4.0)
+            } else {
+                Vec4::ZERO
+            },
+            hdr2: Vec4::new(1.0, 0.0, 0.0, 0.0),
         }
     }
 }

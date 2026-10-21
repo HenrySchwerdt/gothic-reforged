@@ -57,6 +57,11 @@ document.
 
 ### The 24 remaining failures (precise classes)
 
+Open-world pass (2026-10-21): **5 of the 24 now parse** (the five 124-byte table-less layers
+below are empty documents); 19 remain, with the structure findings added under each class.
+`ow_scan` / `ow_extract` / `ow_find` / `ow_props` (`crates/importer/examples/`) reproduce the
+numbers; extracted bytes stay under `.local/legacy/`.
+
 1. **Eight GUID `.lrentdat`, GENOMFLE header with table offset 0, no
    `0xDEADBEEF` table anywhere** (Montera dynamic objects 03, Nordmar
    outdoor NPC 01, Varant outdoor dynamic objects 02, Varant ruins dynamic
@@ -67,6 +72,20 @@ document.
    Not in the shared `stringtable.bin` (dialogue text) nor
    `compiledinfos_G3_World_01.bin` (info/dialog classes). Context-class size is 0.
    Unresolved: where the engine takes the table from. Not guessed.
+   Findings (2026-10-21): five of the eight are 124-byte layers that hold only the context
+   (`GENOMEDL`, u16 83, context class with string index 0, size 0, then u16 30 and two indexed
+   properties = the context box and `RootEntity`/path, no entity count): **parsed as empty
+   documents** (`WorldDocument::parse_tableless`). The other three carry content (Montera
+   dynamic objects 03 6.9 MB, Varant outdoor dynamic objects 02 3.1 MB, Morasul outdoor NPC 01
+   407 KB) in the normal v83 entity layout (`0x40`/`0x53`, 20-byte ids, `0xDEADC0DE`) with every
+   string a `u16` index; the indices are assigned in order of first use (context class 0, its
+   property names and types 1..4, ...), so the table is the file's own string sequence and
+   cannot be recovered without it (entity names, mesh and voice names, scripts are values).
+   Their sectors (`Montera_Dynamic_Objects_03`, ...) also have a named `*_SHyb.node` (22 KB) and
+   `.sec`/`.secdat` with normal tables that do not hold the strings; the Morasul NPC GUID layer
+   has no `.sec` at all (an orphan, probably never loaded). No archive holds a companion table
+   (searched every archive for the GUID). Unresolved, not guessed: the characters of that
+   layer are missing from `npcs.json`.
 2. **Eleven `*_SpG.node`** (Myrtana landscape 02/03/04, water depth/test,
    Faring dummy water, Vangard magic barrier, Nordmar and Varant location add-ons,
    Fireclan/Wolfclan city) **and two `*_Spat.node`** (Faring VFX, Morasul lights):
@@ -77,9 +96,20 @@ document.
    `u16 0x32, u32 size, inline name`). These contain level-mesh/water entities
    (`eCVisualMeshStatic_PS` appears inline). Unparsed; landscape geometry for
    Ardea comes from the CStat cells (`terrain.rs`), not these.
+   Findings (2026-10-21), `g3_test_faring_dummy_water_01_spg.node` (3 KB): `u16 30`, `u32 3`
+   entities, each `u16 0`, `u16 0x22`, `u16 0x38`, `u16 1`, 20-byte id, flag bytes, inline
+   `u16 len + name` (`Root`, ..., `G3_Dummy_Faring_Water_01`), two 4x4 matrices and boxes, then
+   a count and the property sets `u16 0x32, u32 size, u16 len + name` (`eCVisualMeshStatic_PS`).
+   The field-level layout between the matrices and the box tail is not decoded; the contents
+   (dummy water, level mesh remnants, a magic barrier, add-on locations) are not part of the
+   playable Ardea slice.
 3. **Three raw `GENOMEDL` v56 `.lrentdat`** (`G3_StartUp` SysDyn, Faring VFX,
    Morasul temple lights): same legacy generation as 2, plus an inline string
    table directly after the first accessor. Unparsed.
+   Findings: the raw `GENOMEDL` v56 layer is the same container with inline strings
+   (`u16 len + text`): `eCEntityDynamicContext` with `ContextBox bCBox`, `ID bCGuid`,
+   `RootEntity` ..., then `0x40` entities. Faring VFX (551 B) and the StartUp SysDyn (6 KB)
+   are near empty; the Morasul temple lights (43 KB) are lights only.
 
 The unresolved 11 mesh names (`G3_Armor_Shield_Tower_03..07`,
 `G3_Weapons_Melee_1H_Sword_Normal_01`, `..._2H_Axe_Double_02`,

@@ -148,8 +148,11 @@ pub enum Request {
     Vegetation(TileKey),
     /// A texture by stem (e.g. sky clouds).
     Texture(String),
+    /// The weather states and every weather zone of the world.
+    Weather,
 }
 pub enum Response {
+    Weather(Box<WeatherPayload>),
     Ready {
         records: usize,
         millis: u128,
@@ -221,6 +224,12 @@ pub fn spawn_loader(data_dir: std::path::PathBuf, origin: Origin) -> LoaderHandl
                                     break;
                                 }
                             }
+                            Request::Weather => {
+                                let p = loader.load_weather();
+                                if resp_tx.send(Response::Weather(Box::new(p))).is_err() {
+                                    break;
+                                }
+                            }
                             Request::Vegetation(key) => {
                                 let p = loader.load_vegetation(key);
                                 if resp_tx.send(Response::Vegetation(Box::new(p))).is_err() {
@@ -240,6 +249,34 @@ pub fn spawn_loader(data_dir: std::path::PathBuf, origin: Origin) -> LoaderHandl
         requests: req_tx,
         responses: resp_rx,
     }
+}
+
+/// A weather zone with the matrix that maps Gothic world cm into its local frame.
+pub struct ZoneInstance {
+    pub zone: gothic_environment::Zone,
+    pub world_to_local: Mat4,
+}
+
+pub struct WeatherPayload {
+    pub data: Option<gothic_formats::weather::WeatherData>,
+    pub zones: Vec<ZoneInstance>,
+    /// Every `eCStaticPointLight_PS`: world position, colour and range (Gothic cm).
+    pub lights: Vec<StaticLightRaw>,
+}
+
+pub struct StaticLightRaw {
+    pub position: Vec3,
+    pub color: [f32; 3],
+    pub range: f32,
+}
+
+/// One authored vegetation instance (Gothic space, cm).
+struct VegInstance {
+    mesh: String,
+    position: Vec3,
+    rotation: Quat,
+    scale: [f32; 2],
+    color: u32,
 }
 
 struct TerrainSub {
@@ -298,6 +335,8 @@ struct Loader {
     collision_meshes: HashMap<String, Option<Arc<Vec<[Vec3; 3]>>>>,
     /// Parsed vegetation documents (`CStat` sector -> trees), by document path.
     tree_docs: HashMap<String, Vec<vegetation::TreeEntity>>,
+    /// Painted vegetation grid instances (`eCVegetation_Grid`), by document path.
+    veg_docs: HashMap<String, Arc<Vec<VegInstance>>>,
     tree_kinds: HashMap<String, Option<Arc<TreeKind>>>,
     cstat_docs: Vec<(String, (f32, f32))>,
     next_id: u64,
@@ -394,6 +433,7 @@ impl Loader {
             textures: HashMap::new(),
             collision_meshes: HashMap::new(),
             tree_docs: HashMap::new(),
+            veg_docs: HashMap::new(),
             tree_kinds: HashMap::new(),
             cstat_docs,
             next_id: 1,
@@ -513,7 +553,10 @@ impl Loader {
         if let Some(t) = self.textures.get(&key) {
             return t.clone();
         }
-        let loaded = (|| {
+        let remastered = gothic_formats::remaster::Profile::global()
+            .and_then(|p| p.texture(stem))
+            .map(|t| (t.width, t.height, t.fourcc, t.mips));
+        let loaded = remastered.or_else(|| {
             let slot = self.vfs.resolve_name(&key)?;
             let bytes = self.vfs.read(slot).ok()?;
             let img = Ximg::parse(&bytes).ok()?;
@@ -523,7 +566,7 @@ impl Loader {
                 img.fourcc,
                 img.mips().iter().map(|m| m.to_vec()).collect::<Vec<_>>(),
             ))
-        })();
+        });
         let id = self.id();
         let tex = loaded.map(|(width, height, fourcc, mips)| {
             Arc::new(TexData {
@@ -579,7 +622,7 @@ impl Loader {
                     let mut scale = [[1.0f32; 2]; 2];
                     for (i, t) in l.textures.iter().take(2).enumerate() {
                         tex[i] = self.texture_path(&t.path);
-                        scale[i] = t.scale;
+                        scale[i] = remaster_scale(&t.path, t.scale);
                     }
                     layer_names.push(
                         l.textures
@@ -598,7 +641,7 @@ impl Loader {
                     if let Some(t) = n
                         && let Some(tex) = self.texture_path(&t.path)
                     {
-                        normals[i] = Some((tex, t.scale));
+                        normals[i] = Some((tex, remaster_scale(&t.path, t.scale)));
                     }
                 }
             } else if let Some(d) = x.texture(TextureRole::Diffuse) {
@@ -670,6 +713,9 @@ impl Loader {
     }
 
     fn mesh_uncached(&mut self, key: &str, depth: u8) -> Option<Arc<MeshEntry>> {
+        if let Some(entry) = self.remaster_mesh(key) {
+            return Some(entry);
+        }
         let slot = self.vfs.resolve_name(key)?;
         let bytes = self.vfs.read(slot).ok()?;
         if key.ends_with(".xlmsh") {
@@ -718,6 +764,73 @@ impl Loader {
         Some(Arc::new(MeshEntry {
             parts,
             sub_index,
+            stem,
+        }))
+    }
+
+    /// Replacement geometry from the local remaster profile (`GR_REMASTER`, see
+    /// `gothic_formats::remaster`), LOD 0, mirrored like original meshes. Submeshes with their
+    /// own textures get a plain one-layer material; the others inherit the named original one.
+    fn remaster_mesh(&mut self, key: &str) -> Option<Arc<MeshEntry>> {
+        use gothic_formats::remaster::{OverrideKind, Profile};
+        let ov = Profile::global()?.mesh(OverrideKind::Mesh, key)?;
+        let mut parts = Vec::new();
+        for sub in &ov.submeshes {
+            let n = sub.positions.len();
+            let Some(indices) = sub.lods.first().filter(|l| !l.is_empty()) else {
+                continue;
+            };
+            let geom = Arc::new(GeomData {
+                id: self.id(),
+                positions: sub.positions.iter().map(|p| [-p[0], p[1], p[2]]).collect(),
+                normals: sub.normals.iter().map(|v| [-v[0], v[1], v[2]]).collect(),
+                uvs: sub.uvs.clone(),
+                indices: indices.clone(),
+                colors: vec![[1.0; 4]; n],
+                tangents: sub
+                    .tangents
+                    .iter()
+                    .map(|t| [-t[0], t[1], t[2], -t[3]])
+                    .collect(),
+                light: vec![],
+            });
+            let material = if sub.diffuse.is_empty() {
+                self.material(&sub.material)
+            } else {
+                let diffuse = self.texture(&sub.diffuse);
+                let normal = (!sub.normal.is_empty())
+                    .then(|| self.texture(&sub.normal))
+                    .flatten();
+                let id = self.id();
+                diffuse.map(|d| {
+                    Arc::new(MatData {
+                        id,
+                        name: format!("remaster:{}", sub.diffuse),
+                        kind: MatKind::Surface,
+                        blend_mode: (sub.blend == 1).then_some(1),
+                        mask_reference: None,
+                        layers: vec![LayerData {
+                            tex: [Some(d), None],
+                            scale: [[1.0; 2]; 2],
+                            tint: [1.0; 3],
+                        }],
+                        vertex_blend: false,
+                        normals: [normal.map(|t| (t, [1.0, 1.0])), None],
+                        layer_names: vec![sub.diffuse.to_ascii_lowercase()],
+                        anim: Default::default(),
+                    })
+                })
+            };
+            parts.push((geom, material));
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        let stem = key.rsplit_once('.').map_or(key, |(s, _)| s).to_string();
+        Some(Arc::new(MeshEntry {
+            // No original lightmap block matches the new geometry.
+            sub_index: vec![usize::MAX; parts.len()],
+            parts,
             stem,
         }))
     }
@@ -780,6 +893,19 @@ impl Loader {
         let stem = stem.to_string();
         if let Some(c) = self.collision_meshes.get(&stem) {
             return c.clone();
+        }
+        if let Some(ov) = gothic_formats::remaster::Profile::global()
+            .and_then(|p| p.mesh(gothic_formats::remaster::OverrideKind::Mesh, &base))
+            .filter(|m| !m.collision.is_empty())
+        {
+            let tris: Vec<[Vec3; 3]> = ov
+                .collision
+                .iter()
+                .map(|t| t.map(|p| Vec3::new(-p[0], p[1], p[2])))
+                .collect();
+            let result = Some(Arc::new(tris));
+            self.collision_meshes.insert(stem, result.clone());
+            return result;
         }
         let mut result = None;
         let mut candidates = vec![format!("{stem}_col.xnvmsh")];
@@ -1173,8 +1299,239 @@ impl Loader {
         kind
     }
 
-    /// Procedurally scattered ground cover for a tile (see `veg_density`).
+    /// `WeatherStates.g3ws` and the `eCWeatherZone_PS` entities of every world document.
+    fn load_weather(&mut self) -> WeatherPayload {
+        let weather_slot = self
+            .vfs
+            .iter()
+            .find(|(p, _)| p.to_ascii_lowercase().ends_with("weatherstates.g3ws"))
+            .map(|(_, s)| s);
+        let data = weather_slot
+            .and_then(|slot| self.vfs.read(slot).ok())
+            .and_then(|b| gothic_formats::weather::parse(&b).ok());
+        let slots: Vec<_> = self
+            .vfs
+            .iter()
+            .filter(|(p, _)| {
+                let l = p.to_ascii_lowercase();
+                l.ends_with(".node") || l.ends_with(".lrentdat")
+            })
+            .map(|(_, s)| s)
+            .collect();
+        let mut zones = Vec::new();
+        let mut lights = Vec::new();
+        for slot in slots {
+            let Ok(bytes) = self.vfs.read(slot) else {
+                continue;
+            };
+            // Cheap reject: the class name is stored in the document's string table.
+            if !bytes
+                .windows(16)
+                .any(|w| w == b"eCWeatherZone_PS" || w == b"eCStaticPointLig")
+            {
+                continue;
+            }
+            let mut stats = gothic_formats::propstream::DecodeStats::default();
+            let Ok((doc, sets)) = gothic_formats::world_node::WorldDocument::parse_with_properties(
+                &bytes,
+                &|c| c == "eCWeatherZone_PS" || c == "eCStaticPointLight_PS",
+                &mut stats,
+            ) else {
+                continue;
+            };
+            for (e, s) in doc.entities.iter().zip(&sets) {
+                if let Some(l) = s.iter().find(|p| p.class == "eCStaticPointLight_PS") {
+                    let m = Mat4::from_cols_array_2d(&e.world_matrix);
+                    let off = match l.get("Offset") {
+                        Some(gothic_formats::propstream::PropValue::Vec3(v)) => Vec3::from(*v),
+                        _ => Vec3::ZERO,
+                    };
+                    let color = match l.get("Color") {
+                        Some(gothic_formats::propstream::PropValue::ColorRgb(c)) => *c,
+                        _ => [1.0; 3],
+                    };
+                    let range = l.float("Range").unwrap_or(0.0);
+                    if m.is_finite() && range > 0.0 {
+                        lights.push(StaticLightRaw {
+                            position: m.transform_point3(off),
+                            color,
+                            range,
+                        });
+                    }
+                }
+                let Some(set) = s.iter().find(|p| p.class == "eCWeatherZone_PS") else {
+                    continue;
+                };
+                let Some(zone) = gothic_environment::Zone::from_properties(set) else {
+                    continue;
+                };
+                let m = Mat4::from_cols_array_2d(&e.world_matrix);
+                if !m.is_finite() || m.determinant().abs() < 1e-12 {
+                    continue;
+                }
+                // The serialized matrix is row-vector: `local = world * M^-1` in row form, which is
+                // `M^-1` applied as a column matrix after transposition handled by from_cols.
+                zones.push(ZoneInstance {
+                    zone,
+                    world_to_local: m.inverse(),
+                });
+            }
+        }
+        WeatherPayload {
+            data,
+            zones,
+            lights,
+        }
+    }
+
+    /// Authored ground cover of a tile: the instances stored in the `eCVegetation_PS` grids of the
+    /// world documents (position, rotation, scale and colour per instance), instanced from the
+    /// brush meshes of the same area.
     fn load_vegetation(&mut self, key: TileKey) -> VegPayload {
+        if std::env::var_os("GR_VEG_SCATTER").is_some() {
+            return self.load_vegetation_scatter(key);
+        }
+        let center = self.tile_center_gothic(key);
+        let docs: Vec<String> = self
+            .cstat_docs
+            .iter()
+            .filter(|(_, s)| {
+                (s.0 - center.x).abs() <= 5000.0 + TILE_CM
+                    && (s.1 - center.z).abs() <= 5000.0 + TILE_CM
+            })
+            .map(|(p, _)| p.clone())
+            .collect();
+        let origin = self.origin;
+        let mut accum: HashMap<(String, usize), (Arc<MatData>, GeomData)> = HashMap::new();
+        let mut instances = 0usize;
+        for doc in docs {
+            if !self.veg_docs.contains_key(&doc) {
+                let list = self
+                    .vfs
+                    .resolve(&doc)
+                    .and_then(|slot| self.vfs.read(slot).ok())
+                    .and_then(|bytes| vegetation::extract(&bytes).ok())
+                    .map(|v| {
+                        let mut out = Vec::new();
+                        for area in &v.areas {
+                            let Some(grid) = &area.grid else { continue };
+                            let names: HashMap<u16, &str> = area
+                                .meshes
+                                .iter()
+                                .map(|m| (m.mesh_id, m.mesh.as_str()))
+                                .collect();
+                            for e in &grid.entries {
+                                let Some(name) = names.get(&e.mesh_id) else {
+                                    continue;
+                                };
+                                out.push(VegInstance {
+                                    mesh: (*name).to_string(),
+                                    position: Vec3::from(e.position),
+                                    rotation: Quat::from_xyzw(
+                                        e.rotation[0],
+                                        e.rotation[1],
+                                        e.rotation[2],
+                                        e.rotation[3],
+                                    ),
+                                    scale: e.scale,
+                                    color: e.color,
+                                });
+                            }
+                        }
+                        out
+                    })
+                    .unwrap_or_default();
+                self.veg_docs.insert(doc.clone(), Arc::new(list));
+            }
+            let list = self.veg_docs[&doc].clone();
+            for inst in list.iter() {
+                if tile_of(origin.point(inst.position)) != key {
+                    continue;
+                }
+                let Some(entry) = self.mesh(&inst.mesh, 0) else {
+                    continue;
+                };
+                // Mirror the left-handed placement into our space: a reflection of x flips the
+                // y and z components of the rotation quaternion.
+                let q = Quat::from_xyzw(
+                    inst.rotation.x,
+                    -inst.rotation.y,
+                    -inst.rotation.z,
+                    inst.rotation.w,
+                )
+                .normalize();
+                // The engine scales (x, y, x): `scale[1]` is the height.
+                let scale = Vec3::new(inst.scale[0], inst.scale[1], inst.scale[0]);
+                let xf =
+                    Mat4::from_scale_rotation_translation(scale, q, origin.point(inst.position));
+                let tint = [
+                    ((inst.color >> 16) & 255) as f32 / 255.0,
+                    ((inst.color >> 8) & 255) as f32 / 255.0,
+                    (inst.color & 255) as f32 / 255.0,
+                ];
+                instances += 1;
+                for (pi, (geom, material)) in entry.parts.iter().enumerate() {
+                    let Some(material) = material else { continue };
+                    let slot = accum.entry((material.name.clone(), pi)).or_insert_with(|| {
+                        (
+                            material.clone(),
+                            GeomData {
+                                id: 0,
+                                positions: vec![],
+                                normals: vec![],
+                                uvs: vec![],
+                                indices: vec![],
+                                colors: vec![],
+                                tangents: vec![],
+                                light: vec![],
+                            },
+                        )
+                    });
+                    let g = &mut slot.1;
+                    if g.positions.len() + geom.positions.len() > 3_000_000 {
+                        continue;
+                    }
+                    let base = g.positions.len() as u32;
+                    for k in 0..geom.positions.len() {
+                        let wp = xf.transform_point3(Vec3::from(geom.positions[k]));
+                        g.positions.push(wp.to_array());
+                        // Ground cover shades like the ground it stands on: blend toward up.
+                        let n = xf.transform_vector3(Vec3::from(geom.normals[k]));
+                        let n = (Vec3::Y + n.normalize_or_zero() * 0.1).normalize_or_zero();
+                        g.normals.push(n.to_array());
+                        g.uvs.push(geom.uvs[k]);
+                        let c = geom.colors[k];
+                        g.colors
+                            .push([c[0] * tint[0], c[1] * tint[1], c[2] * tint[2], 1.0]);
+                        g.tangents.push([1.0, 0.0, 0.0, 1.0]);
+                    }
+                    g.indices.extend(geom.indices.iter().map(|i| i + base));
+                }
+            }
+        }
+        let mut parts = Vec::new();
+        for (_, (material, mut geom)) in accum {
+            if geom.positions.is_empty() {
+                continue;
+            }
+            geom.id = self.id();
+            parts.push(Part {
+                geom: Arc::new(geom),
+                material: Some(material),
+                transform: Mat4::IDENTITY,
+                kind: PartKind::Foliage,
+            });
+        }
+        VegPayload {
+            key,
+            parts,
+            instances,
+        }
+    }
+
+    /// Guessed ground cover (`GR_VEG_SCATTER=1`): the old terrain-material driven scatter, kept
+    /// only to compare against the authored grid.
+    fn load_vegetation_scatter(&mut self, key: TileKey) -> VegPayload {
         let center = self.tile_center_gothic(key);
         self.ensure_cells_near(center);
         let mut accum: HashMap<(String, usize), (Arc<MatData>, GeomData)> = HashMap::new();
@@ -1322,9 +1679,9 @@ fn architectural(resource: &str) -> bool {
 
 /// Ground-cover brushes for a terrain material: (brush mesh, layer index, instances per m^2).
 ///
-/// The per-instance data of the engine's vegetation system is not recoverable from the data
-/// (every `eCVegetation_PS` entity stores the same template surface), so cover is driven by
-/// what the terrain material paints: grass layers grow grass, herbs and the odd stone; forest
+/// Fallback only (`GR_VEG_SCATTER=1`): the authored instances are stored in the vegetation grid of
+/// `eCVegetation_PS` (see `load_vegetation`); this guess is driven by what the terrain material
+/// paints: grass layers grow grass, herbs and the odd stone; forest
 /// floor grows ferns, underbrush, branches and mushrooms.
 fn ground_cover(mat: &MatData) -> Vec<(&'static str, usize, f32)> {
     let mut out = Vec::new();
@@ -1360,6 +1717,14 @@ fn ground_cover(mat: &MatData) -> Vec<(&'static str, usize, f32)> {
         }
     }
     out
+}
+
+/// UV scale of a material texture, times the remaster profile's factor for a replaced texture
+/// that covers a different real-world size.
+fn remaster_scale(path: &str, scale: [f32; 2]) -> [f32; 2] {
+    let f = gothic_formats::remaster::Profile::global()
+        .map_or(1.0, |p| p.texture_scale(&stem_of(path)));
+    [scale[0] * f, scale[1] * f]
 }
 
 /// Vertex colour of a mesh vertex: rgb = baked AO (stream 5 alpha), a = layer blend weight

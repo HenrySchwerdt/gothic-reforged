@@ -109,6 +109,8 @@ pub fn register(app: &mut App) {
                 .before(crate::walk::player_motion),
         );
     eprintln!("play: --combat souls (opt-in Souls-style combat flow)");
+    // A locally generated clip pack (if one exists) takes over the clips and action windows.
+    super::er_pack::install(app);
 }
 
 /// Swallows the original bindings the flow replaces, while it is active.
@@ -461,7 +463,9 @@ fn pick_steps(
     let (a, p) = steps.next()?;
     if start_overlay(lib, &mut animator, stance.0, &a, &p) {
         let want = id.def().total / gothic_combat_souls::tuning::ANIM_FPS;
-        if let Some(o) = animator.overlay.as_mut() {
+        if let Some(o) = animator.overlay.as_mut()
+            && !super::er_pack::is_pack(o)
+        {
             let secs = o.motion.clip.duration;
             let _ = want;
             o.rate = gothic_combat_souls::animmap::AnimMap::rate(id, secs);

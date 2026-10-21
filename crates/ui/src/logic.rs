@@ -100,7 +100,11 @@ pub(crate) fn hotkeys(
         }
         return;
     }
-    if matches!(ui.screen, Screen::MainMenu | Screen::Files | Screen::Video) {
+    if ui.screen == Screen::MainMenu || ui.screen.menu_page().is_some() {
+        // the key list swallows Esc while it waits for a key (see `capture_keys`)
+        if ui.opts.keymap.capturing {
+            return;
+        }
         if keys.just_pressed(KeyCode::Escape) {
             act.write(Act(Action::Escape));
         }
@@ -123,6 +127,7 @@ pub(crate) fn hotkeys(
         (KeyCode::KeyI, Screen::Inventory),
         (KeyCode::KeyC, Screen::Character),
         (KeyCode::KeyT, Screen::Trade),
+        (KeyCode::KeyM, Screen::Map),
     ];
     for (k, s) in toggles {
         if keys.just_pressed(k) {
@@ -138,6 +143,52 @@ pub(crate) fn hotkeys(
     }
 }
 
+/// The "press a key" prompt of the custom key list (`GetPressedKey`, Game:0x1017f2f0 is the
+/// raw-device twin in `gothic-input`): the first key, mouse button or wheel notch of the frame
+/// is taken for the selected cell, Esc cancels.
+pub(crate) fn capture_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    mut ui: ResMut<UiState>,
+) {
+    use gothic_input::{PhysicalKey, dik, keys::mouse as m};
+    let notch = wheel.read().map(|w| w.y).sum::<f32>();
+    if !ui.opts.keymap.capturing {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        ui.opts.keymap.cancel_capture();
+        ui.dirty = true;
+        return;
+    }
+    let from_key = keys
+        .get_just_pressed()
+        .find_map(|k| dik::from_key_code_name(&format!("{k:?}")))
+        .map(PhysicalKey::key);
+    let from_mouse = [
+        (MouseButton::Left, m::LEFT),
+        (MouseButton::Right, m::RIGHT),
+        (MouseButton::Middle, m::MIDDLE),
+        (MouseButton::Back, m::BUTTON4),
+        (MouseButton::Forward, m::BUTTON4),
+    ]
+    .into_iter()
+    .find(|(b, _)| mouse.just_pressed(*b))
+    .map(|(_, o)| PhysicalKey::mouse(o));
+    let from_wheel = (notch != 0.0).then(|| {
+        PhysicalKey::mouse(if notch > 0.0 {
+            m::WHEEL_UP
+        } else {
+            m::WHEEL_DOWN
+        })
+    });
+    if let Some(k) = from_key.or(from_mouse).or(from_wheel) {
+        ui.opts.captured(k);
+        ui.dirty = true;
+    }
+}
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Outbox<'w> {
     choose: MessageWriter<'w, ChooseOption>,
@@ -149,6 +200,20 @@ pub(crate) struct Outbox<'w> {
     answer: MessageWriter<'w, ModalAnswer>,
     files: MessageWriter<'w, FileCommand>,
     video: MessageWriter<'w, ApplyVideo>,
+    audio: MessageWriter<'w, ApplyAudio>,
+    difficulty: MessageWriter<'w, ApplyDifficulty>,
+    controls: MessageWriter<'w, ApplyControls>,
+    write: MessageWriter<'w, OptionsWrite>,
+}
+
+/// The live option resources the option pages open from and apply into.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Live<'w> {
+    video: ResMut<'w, VideoOptions>,
+    audio: ResMut<'w, AudioOptions>,
+    difficulty: ResMut<'w, DifficultyOptions>,
+    controls: ResMut<'w, ControlSettings>,
+    locations: ResMut<'w, map::WorldLocations>,
 }
 
 /// Close whatever is on show (page, dialog, screen).
@@ -175,9 +240,104 @@ fn open_files(ui: &mut UiState, out: &mut Outbox, save_mode: bool) {
     ui.set_screen(Screen::Files);
 }
 
-fn open_video(ui: &mut UiState, current: &VideoOptions) {
-    ui.video = current.clone();
-    ui.set_screen(Screen::Video);
+/// Show a menu page; the option pages start from a copy of the live settings.
+fn open_menu_screen(ui: &mut UiState, live: &Live, s: Screen) {
+    match s {
+        Screen::Video => ui.video = live.video.clone(),
+        Screen::Audio => ui.opts.open_audio(&live.audio),
+        Screen::Difficulty => ui.opts.open_difficulty(&live.difficulty),
+        Screen::Controls => ui.opts.open_controls(&live.controls),
+        Screen::ControlsCustom => {
+            ui.opts.commit_keymap();
+            ui.opts.controls.options.custom = true;
+            ui.opts.open_keymap();
+        }
+        _ => {}
+    }
+    ui.set_screen(s);
+}
+
+/// Tag of the "apply the changes?" box shown when an option page is left with a draft that
+/// differs from the running settings (`gCHUDMenuOptions2` asks before it drops changes).
+const CONFIRM_LEAVE: &str = "opt-leave";
+
+/// Whether the shown option page has changes that were not applied.
+fn page_pending(ui: &UiState, live: &Live) -> bool {
+    match ui.screen {
+        Screen::Audio => ui.opts.audio_changed(),
+        Screen::Difficulty => ui.opts.difficulty_changed(),
+        // the key list shares the controls draft; it is asked about when leaving that page
+        Screen::Controls => ui.opts.controls_changed(),
+        Screen::Video => ui.video != *live.video,
+        _ => false,
+    }
+}
+
+/// Ask what to do with pending changes before leaving; true if the box is up.
+fn ask_to_leave(ui: &mut UiState, live: &Live) -> bool {
+    if ui.modal.is_some() || !page_pending(ui, live) {
+        return false;
+    }
+    ui.modal = Some(Modal::Confirm {
+        tag: CONFIRM_LEAVE.into(),
+        text: "Die Änderungen übernehmen?".into(),
+        yes: "Ja".into(),
+        no: "Nein".into(),
+    });
+    ui.dirty = true;
+    true
+}
+
+fn apply_video(ui: &UiState, live: &mut Live, out: &mut Outbox) {
+    *live.video = ui.video.clone();
+    out.write.write(OptionsWrite {
+        section: options::SECTION,
+        pairs: ui
+            .video
+            .to_ini()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    });
+    out.video.write(ApplyVideo(ui.video.clone()));
+}
+
+/// Apply whatever the shown option page has pending.
+fn apply_page(ui: &mut UiState, live: &mut Live, out: &mut Outbox) {
+    let action = match ui.screen {
+        Screen::Audio => Some(OptAction::AudioApply),
+        Screen::Difficulty => Some(OptAction::DifficultyApply),
+        Screen::Controls | Screen::ControlsCustom => Some(OptAction::ControlsApply),
+        Screen::Video => {
+            apply_video(ui, live, out);
+            None
+        }
+        _ => None,
+    };
+    if let Some(applied) = action.and_then(|a| ui.opts.act(a)) {
+        apply_option(live, out, applied);
+    }
+}
+
+/// Hand an applied page to the host and make it the live setting.
+fn apply_option(live: &mut Live, out: &mut Outbox, a: optpages::Applied) {
+    match a {
+        optpages::Applied::Audio(v) => {
+            out.write.write(v.write());
+            *live.audio = v.clone();
+            out.audio.write(ApplyAudio(v));
+        }
+        optpages::Applied::Difficulty(v) => {
+            out.write.write(v.write());
+            *live.difficulty = v.clone();
+            out.difficulty.write(ApplyDifficulty(v));
+        }
+        optpages::Applied::Controls(v) => {
+            out.write.write(v.write());
+            *live.controls = v.clone();
+            out.controls.write(ApplyControls(v));
+        }
+    }
 }
 
 pub(crate) fn dispatch_actions(
@@ -185,7 +345,7 @@ pub(crate) fn dispatch_actions(
     mut ui: ResMut<UiState>,
     mut out: Outbox,
     gate: Res<HostGate>,
-    mut video: ResMut<VideoOptions>,
+    mut live: Live,
 ) {
     for Act(a) in acts.read() {
         match a.clone() {
@@ -194,19 +354,34 @@ pub(crate) fn dispatch_actions(
             }
             Action::Close => close_all(&mut ui, &mut out),
             Action::Escape => {
+                if ui.gui.is_menu_open() && ask_to_leave(&mut ui, &live) {
+                    continue;
+                }
                 let modal = ui.modal.is_some();
                 match ui.gui.escape(modal, gate.esc_blocked) {
                     EscOutcome::ClosedPage => close_all(&mut ui, &mut out),
-                    EscOutcome::OpenedMenu | EscOutcome::MenuBack(_) => {
-                        ui.set_screen(Screen::MainMenu);
+                    EscOutcome::OpenedMenu => ui.set_screen(Screen::MainMenu),
+                    EscOutcome::MenuBack(page) => {
+                        // the key list hands its edits to the controls draft
+                        if ui.screen == Screen::ControlsCustom {
+                            ui.opts.commit_keymap();
+                        }
+                        ui.set_screen(Screen::from_menu_page(page));
                     }
                     EscOutcome::ClosedMenu => ui.set_screen(Screen::None),
                     EscOutcome::Modal | EscOutcome::Ignored => {}
                 }
             }
             Action::MenuBack => {
-                if ui.gui.is_menu_open() {
-                    ui.set_screen(Screen::MainMenu);
+                if ask_to_leave(&mut ui, &live) {
+                    continue;
+                }
+                if ui.screen == Screen::ControlsCustom {
+                    ui.opts.commit_keymap();
+                }
+                if let Some(page) = ui.gui.menu() {
+                    let up = page.parent().unwrap_or(MenuPage::Main);
+                    ui.set_screen(Screen::from_menu_page(up));
                 }
             }
             Action::Open(s) => {
@@ -222,8 +397,13 @@ pub(crate) fn dispatch_actions(
                         open_files(&mut ui, &mut out, false);
                         continue;
                     }
-                    Screen::Video => {
-                        open_video(&mut ui, &video);
+                    Screen::Video
+                    | Screen::Options
+                    | Screen::Audio
+                    | Screen::Controls
+                    | Screen::ControlsCustom
+                    | Screen::Difficulty => {
+                        open_menu_screen(&mut ui, &live, s);
                         continue;
                     }
                     _ => true,
@@ -258,7 +438,7 @@ pub(crate) fn dispatch_actions(
                 match e {
                     MenuEntry::LoadGame => open_files(&mut ui, &mut out, false),
                     MenuEntry::SaveGame => open_files(&mut ui, &mut out, true),
-                    MenuEntry::Options => open_video(&mut ui, &video),
+                    MenuEntry::Options => ui.set_screen(Screen::Options),
                     _ => {}
                 }
             }
@@ -269,6 +449,18 @@ pub(crate) fn dispatch_actions(
             Action::Modal(yes) => {
                 if let Some(m) = ui.modal.take() {
                     match m {
+                        Modal::Confirm { tag, .. } if tag == CONFIRM_LEAVE => {
+                            if yes {
+                                apply_page(&mut ui, &mut live, &mut out);
+                            } else if ui.screen == Screen::Video {
+                                ui.video = live.video.clone();
+                            }
+                            // back one level either way
+                            if let Some(page) = ui.gui.menu() {
+                                let up = page.parent().unwrap_or(MenuPage::Main);
+                                ui.set_screen(Screen::from_menu_page(up));
+                            }
+                        }
                         Modal::Confirm { tag, .. } => {
                             if let Some(cmd) = files::confirm_command(&tag, yes) {
                                 let leave = matches!(cmd, FileCommand::Save { .. });
@@ -333,8 +525,22 @@ pub(crate) fn dispatch_actions(
                 ui.dirty = true;
             }
             Action::VideoApply => {
-                *video = ui.video.clone();
-                out.video.write(ApplyVideo(ui.video.clone()));
+                apply_video(&ui, &mut live, &mut out);
+            }
+            Action::MapZoom(d) => {
+                let z = ui.map_zoom.max(map::ZOOM_MIN) + d as f32 * map::ZOOM_STEP;
+                ui.map_zoom = z.clamp(map::ZOOM_MIN, map::ZOOM_MAX);
+                ui.dirty = true;
+            }
+            Action::WorldAll(all) => {
+                live.locations.all = all;
+                ui.dirty = true;
+            }
+            Action::Opt(a) => {
+                if let Some(applied) = ui.opts.act(a) {
+                    apply_option(&mut live, &mut out, applied);
+                }
+                ui.dirty = true;
             }
             Action::SelectRecipe(i) => {
                 ui.recipe_sel = i;

@@ -2,9 +2,9 @@
 
 ## Implemented foundation (2026-10-20)
 
-The initial workspace deliberately instantiates only four boundaries: `gothic-formats` (bounded lazy archive reader), `gothic-importer` (installation inventory and provenance evidence), `gothic-world` (Bevy residency planner), and the inspector/game executables. The larger tree below remains a proposal; absent gameplay crates are not stubs or completed features.
+The initial workspace deliberately instantiates only four boundaries: `gothic-formats` (bounded lazy archive reader), `gothic-importer` (installation inventory and provenance evidence), `gothic-world` (ported PVS prefetch grid, entity and scene admin, processing range; Bevy plugin for the tile residency), and the inspector/game executables. The larger tree below remains a proposal; absent gameplay crates are not stubs or completed features.
 
-`gothic-formats` uses buffered `Read + Seek`, indexes archive metadata, and fetches selected payloads on demand. It does not bulk-decompress the installation. `gothic-importer` depends on formats and contains no rendering. `gothic-world` contains no archive I/O or original game data. Its deterministic cell planner runs with a bounded number of residency changes and distinct load/retain radii. This is a synthetic residency laboratory; actual asynchronous loading, unloading, memory budgets, original world sectors, collision and navigation remain to be connected.
+`gothic-formats` uses buffered `Read + Seek`, indexes archive metadata, and fetches selected payloads on demand. It does not bulk-decompress the installation. `gothic-importer` depends on formats and contains no rendering. `gothic-world` contains no archive I/O or original game data. It holds the ported rules of `eCPVSPrefetcher3` (10 000-unit cells, rectangle = camera +- 0.4 x far + one cell, movement hysteresis), `eCEntityAdmin` (processing range 4000 + 250) and the `eCEntity` core; the game's tile loader follows the grid under a per-frame budget. Memory budgets of the resource caches, collision and navigation remain to be connected.
 
 The game defaults to a finite headless smoke run. The `viewer` Cargo feature enables the Bevy 3D renderer and window backend. No physics dependency is selected until original collision shapes, units and behavior can be tested. Current version/toolchain and completed validation are tracked in `HANDOFF_CLAUDE.md`.
 
@@ -68,6 +68,7 @@ L0 data                 gothic-formats (bounded parsers), gothic-importer (VFS, 
 
 `formats`, `importer`, `world`, `physics`, `animation`, `audio`, `ui`, `gameplay`, `sim`, `runtime`
 (L2 bridge: `Core` = sim + dialog + state at 30 Hz, `Command`/`Event` Bevy messages, JSON save/load);
+`environment` (original day-time environment: weather states, zones, sun, SH, fog; Bevy-free), `render-rules` (LoD / fade / static light / vegetation / shadow rules; Bevy-free);
 apps `game` (`--play`: `apps/game/src/play/`), `inspector`, `questlint`, `dialog-cli`. To add: `script`
 (ported Script_Game), cook step in `importer`, `mods`.
 
