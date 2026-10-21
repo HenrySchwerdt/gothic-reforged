@@ -14,6 +14,21 @@ gothic-sim = { path = "../sim" }
 glam = { version = "0.33", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
+# OpenXR backend (VR-07): raw bindings, loader opened at runtime (no link-time dependency).
+openxr = { version = "=0.22.0", default-features = false, features = ["loaded"], optional = true }
+libc = { version = "0.2", optional = true }
 
-[lints]
-workspace = true
+[features]
+openxr = ["dep:openxr", "dep:libc"]
+
+[lints.rust]
+# The only unsafe code is the OpenXR FFI in `openxr.rs` (feature `openxr`).
+unsafe_code = "deny"
+
+[[example]]
+name = "openxr_probe"
+required-features = ["openxr"]
+
+[[test]]
+name = "openxr"
+required-features = ["openxr"]

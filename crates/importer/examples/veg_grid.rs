@@ -20,7 +20,9 @@ fn main() -> Result<()> {
     let (mut areas, mut with_grid, mut total) = (0, 0, 0usize);
     for (path, slot) in slots {
         let Ok(bytes) = vfs.read(slot) else { continue };
-        let Ok(v) = vegetation::extract(&bytes) else { continue };
+        let Ok(v) = vegetation::extract(&bytes) else {
+            continue;
+        };
         for a in &v.areas {
             areas += 1;
             let Some(g) = &a.grid else { continue };
@@ -29,11 +31,23 @@ fn main() -> Result<()> {
             if with_grid <= 6 {
                 println!(
                     "{path} {} meshes={} nodes={} entries={} node={} view={} fade={} ent_pos=({:.0},{:.0},{:.0})",
-                    a.entity, a.meshes.len(), g.nodes, g.entries.len(), g.node_size, a.view_range,
-                    a.fade_out_start, a.matrix[3][0], a.matrix[3][1], a.matrix[3][2]
+                    a.entity,
+                    a.meshes.len(),
+                    g.nodes,
+                    g.entries.len(),
+                    g.node_size,
+                    a.view_range,
+                    a.fade_out_start,
+                    a.matrix[3][0],
+                    a.matrix[3][1],
+                    a.matrix[3][2]
                 );
-                for m in &a.meshes { println!("   mesh {} {} spacing {}", m.mesh_id, m.mesh, m.min_spacing); }
-                for e in g.entries.iter().take(4) { println!("   {e:?}"); }
+                for m in &a.meshes {
+                    println!("   mesh {} {} spacing {}", m.mesh_id, m.mesh, m.min_spacing);
+                }
+                for e in g.entries.iter().take(4) {
+                    println!("   {e:?}");
+                }
             }
         }
     }

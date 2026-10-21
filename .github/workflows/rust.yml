@@ -12,12 +12,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  # The VR crates, built by the `vr` job (nothing else depends on them).
+  VR: -p gothic-vr -p gothic-vr-physics -p gothic-vr-melee -p gothic-vr-npc -p gothic-vr-archery -p gothic-vr-sandbox
+  NO_VR: --exclude gothic-vr --exclude gothic-vr-physics --exclude gothic-vr-melee --exclude gothic-vr-npc --exclude gothic-vr-archery --exclude gothic-vr-sandbox
 
 jobs:
   fmt:
-    # Informational until the workspace is rustfmt-clean (the CI-01 PR's formatting churn was
-    # intentionally not merged to avoid conflicts with in-flight work).
-    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,8 @@ jobs:
 
   # Build, test and lint on Windows (MSVC) and Linux. Tests that need the installed game read
   # it from a local path or `.local/` and skip themselves when it is missing, so this runs
-  # without any game data.
+  # without any game data. Clippy runs first so lint failures show up in minutes, not after the
+  # test build. The VR crates have their own job below.
   check:
     name: check (${{ matrix.os }})
     strategy:
@@ -53,11 +54,88 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: check
-      - run: cargo test --workspace --locked
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      # VR (docs/vr/README.md): desktop-fallback demos in scripted headless mode, exit code = result.
+          # Save even when a step fails (otherwise a red branch never gets a cache), but only
+          # from the integration branch so PR runs restore it instead of filling the 10 GB quota.
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/dev/engine-continuation' }}
+      - run: cargo clippy --workspace --all-targets --all-features --locked ${{ env.NO_VR }} -- -D warnings
+      - run: cargo test --workspace --locked ${{ env.NO_VR }}
+
+  # VR crates (docs/vr/README.md): avian3d physics and the headless desktop-fallback demos are a
+  # large separate dependency tree, so they build in their own job (and cache) in parallel.
+  vr:
+    name: vr (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev \
+            libwayland-dev libxkbcommon-dev libx11-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: vr
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/dev/engine-continuation' }}
+      - run: cargo clippy --locked --all-targets --all-features ${{ env.VR }} -- -D warnings
+      - run: cargo test --locked ${{ env.VR }}
+      # Scripted headless runs of the desktop fallback; the exit code is the result.
       - run: cargo run -p gothic-vr --example greybox --locked -- --headless
       - run: cargo run -p gothic-vr-sandbox --locked -- --headless
+      - run: cargo run -p gothic-vr-interact --example interact_greybox --locked
+      - run: cargo run -p gothic-vr-ui --example hud_greybox --locked -- --headless
+
+  # OpenXR backend (docs/vr/OPENXR.md) against Monado's simulated HMD: no headset, no GPU
+  # (lavapipe for Monado's compositor), nothing installed is redistributed.
+  openxr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: System libraries and Monado
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev \
+            libwayland-dev libxkbcommon-dev libx11-dev xvfb xauth mesa-vulkan-drivers \
+            libopenxr-loader1 libopenxr1-monado monado-service
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: openxr
+      - name: Without a runtime the backend falls back to the desktop
+        run: cargo test -p gothic-vr --features openxr --test openxr --locked
+      - name: Start Monado (simulated HMD)
+        run: |
+          mkdir -p "$RUNNER_TEMP/xdg" && chmod 700 "$RUNNER_TEMP/xdg"
+          echo "XDG_RUNTIME_DIR=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
+          # monado-service polls stdin, so give it a pipe that stays open.
+          (sleep 3600 | XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg" \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+            xvfb-run -a monado-service > "$RUNNER_TEMP/monado.log" 2>&1 &)
+          for i in $(seq 30); do [ -S "$RUNNER_TEMP/xdg/monado_comp_ipc" ] && break; sleep 1; done
+          ls "$RUNNER_TEMP/xdg"
+      - name: Tracking from the runtime
+        env:
+          GOTHIC_VR_EXPECT_RUNTIME: "1"
+        run: |
+          cargo test -p gothic-vr --features openxr --test openxr --locked
+          cargo run -p gothic-vr --features openxr --example openxr_probe --locked -- 3
+      - name: Monado log
+        if: failure()
+        run: cat "$RUNNER_TEMP/monado.log"
 
   # Release build of the game executable; no game data is ever packaged.
   release:
@@ -86,6 +164,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/dev/engine-continuation' }}
       - run: cargo build --release --locked -p gothic-reforged --features viewer
       - uses: actions/upload-artifact@v4
         with:

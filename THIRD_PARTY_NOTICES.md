@@ -54,7 +54,7 @@ Rust dependencies retain their respective licenses. No original Gothic 3 data is
 
 # Physics dependency (VR)
 
-`crates/vr-physics`, `crates/vr-melee`, `crates/vr-npc`, `crates/vr-archery` and `apps/vr-sandbox` use [avian3d](https://github.com/avianphysics/avian) 0.8.0 (MIT OR Apache-2.0) and, transitively, parry3d (Apache-2.0). Used as a library only; no source is vendored.
+`crates/vr-physics`, `crates/vr-melee`, `crates/vr-npc`, `crates/vr-archery`, `crates/vr-bridge` and `apps/vr-sandbox` use [avian3d](https://github.com/avianphysics/avian) 0.8.0 (MIT OR Apache-2.0) and, transitively, parry3d (Apache-2.0). Used as a library only; no source is vendored.
 
 # Added crate dependencies and external tools (cloud integration)
 
@@ -69,3 +69,7 @@ Pulled in via Cargo, not vendored; listed here for licence tracking. Full licenc
 - `apps/modtool`: `toml` (MIT OR Apache-2.0), `semver` (MIT OR Apache-2.0), `zip` (MIT), `ed25519-dalek` (BSD-3-Clause), `getrandom` (MIT OR Apache-2.0).
 - `crates/formats` (dev-dependency only): `proptest` (MIT OR Apache-2.0).
 - `crates/formats/fuzz` (separate nightly workspace, not part of the default build): `libfuzzer-sys` (MIT OR Apache-2.0 OR NCSA).
+
+# OpenXR backend (VR-07, optional feature)
+
+`crates/vr` with the cargo feature `openxr` (off by default) uses [`openxr`](https://github.com/Ralith/openxrs) 0.22.0 and `openxr-sys` 0.14.0 (MIT OR Apache-2.0), `libloading` (ISC) and `libc` (MIT OR Apache-2.0). The Khronos OpenXR loader (`libopenxr_loader.so.1` / `openxr_loader.dll`, Apache-2.0) and the runtime (SteamVR, Meta, Monado, ...) are **not linked or bundled**: the loader is opened at run time from the system. CI installs Ubuntu's `libopenxr-loader1` and Monado (`monado-service`, `libopenxr1-monado`, Boost Software License 1.0) only to test against a simulated headset; nothing of them is redistributed.
