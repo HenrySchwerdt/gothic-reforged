@@ -97,9 +97,67 @@ pub fn set_uv_anim(params: &mut GothicParams, anim: &[gothic_formats::xshmat::gr
 }
 
 /// Original-game light set (gamma-space values, see `docs/research/ORIGINAL_SHADING.md`).
+///
+/// The environment system (`walk/env.rs`) replaces the value with the day-time dependent packet of
+/// the original weather data; materials created later pick up the current one. `sh[0].w` carries
+/// the shadow density (1 = full strength).
 pub fn light_env() -> (Vec4, [Vec4; 4]) {
-    static ENV: OnceLock<(Vec4, [Vec4; 4])> = OnceLock::new();
-    *ENV.get_or_init(light_env_raw)
+    *light_env_cell()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn light_env_cell() -> &'static std::sync::RwLock<(Vec4, [Vec4; 4])> {
+    static ENV: OnceLock<std::sync::RwLock<(Vec4, [Vec4; 4])>> = OnceLock::new();
+    ENV.get_or_init(|| std::sync::RwLock::new(light_env_raw()))
+}
+
+fn char_lights_cell() -> &'static std::sync::RwLock<([Vec4; CHAR_LIGHTS], [Vec4; CHAR_LIGHTS])> {
+    static L: OnceLock<std::sync::RwLock<([Vec4; CHAR_LIGHTS], [Vec4; CHAR_LIGHTS])>> =
+        OnceLock::new();
+    L.get_or_init(|| std::sync::RwLock::new(([Vec4::ZERO; CHAR_LIGHTS], [Vec4::ZERO; CHAR_LIGHTS])))
+}
+
+/// The static light set currently used for new character materials.
+pub fn char_lights() -> ([Vec4; CHAR_LIGHTS], [Vec4; CHAR_LIGHTS]) {
+    *char_lights_cell()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Write the static light set into every character material.
+pub fn push_char_lights(
+    chars: &mut Assets<CharMaterial>,
+    lights: [Vec4; CHAR_LIGHTS],
+    cols: [Vec4; CHAR_LIGHTS],
+) {
+    *char_lights_cell()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (lights, cols);
+    for (_, m) in chars.iter_mut() {
+        m.params.lights = lights;
+        m.params.light_cols = cols;
+    }
+}
+
+/// Install a new light set for future materials.
+pub fn set_light_env(sun: Vec4, sh: [Vec4; 4]) {
+    *light_env_cell()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (sun, sh);
+}
+
+/// Write the current light set into every existing material.
+pub fn push_light_env(gothic: &mut Assets<GothicMaterial>, chars: &mut Assets<CharMaterial>) {
+    let (sun, sh) = light_env();
+    for (_, m) in gothic.iter_mut() {
+        m.params.sun = sun;
+        m.params.sh = sh;
+    }
+    for (_, m) in chars.iter_mut() {
+        m.params.sun = sun;
+        m.params.sh = sh;
+    }
 }
 
 fn light_env_raw() -> (Vec4, [Vec4; 4]) {
@@ -124,7 +182,7 @@ fn light_env_raw() -> (Vec4, [Vec4; 4]) {
     (
         sun,
         [
-            sh0.extend(0.0),
+            sh0.extend(1.0),
             (sh_x - back * s.x).extend(0.0),
             (sh_y - back * s.y).extend(0.0),
             (-back * s.z).extend(0.0),
@@ -226,6 +284,7 @@ pub struct SkyParams {
     pub horizon: Vec4,
     pub ground: Vec4,
     pub sun_color: Vec4,
+    pub cloud: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
@@ -320,7 +379,14 @@ pub struct CharParams {
     pub misc: Vec4,
     pub sun: Vec4,
     pub sh: [Vec4; 4],
+    /// Static point lights near the camera (`eCStaticPointLight_PS`): xyz position in metres,
+    /// w = 1 / range^2. Colours (x2 like the original packet) in `light_cols`; zero = unused.
+    pub lights: [Vec4; CHAR_LIGHTS],
+    pub light_cols: [Vec4; CHAR_LIGHTS],
 }
+
+/// Static lights evaluated per character fragment.
+pub const CHAR_LIGHTS: usize = 6;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct CharMaterial {
@@ -389,6 +455,8 @@ fn convert_standard(
                         misc: Vec4::new(cutoff, 0.65, 2.2, 1.0),
                         sun,
                         sh,
+                        lights: char_lights().0,
+                        light_cols: char_lights().1,
                     },
                     tex: src.base_color_texture.clone(),
                     alpha_mode: src.alpha_mode,
