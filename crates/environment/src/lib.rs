@@ -729,7 +729,6 @@ fn pick_duration(
         })
 }
 
-
 impl Zone {
     /// Build a zone from the decoded `eCWeatherZone_PS` property set of a world entity.
     pub fn from_properties(set: &gothic_formats::propstream::PropertySet) -> Option<Self> {

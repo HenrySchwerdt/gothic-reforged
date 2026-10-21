@@ -34,7 +34,9 @@ fn main() -> Result<()> {
                 for _ in 0..n.min(4096) {
                     let Some(l) = bytes.get(i..i + 2) else { break };
                     let l = u16::from_le_bytes([l[0], l[1]]) as usize;
-                    let Some(name) = bytes.get(i + 2..i + 2 + l) else { break };
+                    let Some(name) = bytes.get(i + 2..i + 2 + l) else {
+                        break;
+                    };
                     named.insert(String::from_utf8_lossy(name).to_ascii_lowercase());
                     i += 2 + l;
                 }
@@ -58,7 +60,10 @@ fn main() -> Result<()> {
         let has_header = paths.contains(&header);
         if !referenced || !has_header {
             unref += 1;
-            println!("{} referenced={referenced} header={has_header} {p}", if referenced { "HDR?" } else { "ORPH" });
+            println!(
+                "{} referenced={referenced} header={has_header} {p}",
+                if referenced { "HDR?" } else { "ORPH" }
+            );
         }
     }
     println!("layers {total}, not referenced or no header {unref}");

@@ -8,6 +8,10 @@ fn main() -> Result<()> {
     let dir = std::env::args().nth(1).unwrap_or_default();
     let mut vfs = VirtualFileSystem::open_data_dir(Path::new(&dir))?;
     let index = WorldIndex::build(&mut vfs)?;
-    println!("records {} failed {}", index.len(), index.failed_documents.len());
+    println!(
+        "records {} failed {}",
+        index.len(),
+        index.failed_documents.len()
+    );
     Ok(())
 }

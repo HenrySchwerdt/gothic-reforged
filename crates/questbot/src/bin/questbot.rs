@@ -107,5 +107,9 @@ fn isolated(db: &GameDatabase, options: &BotOptions, json: Option<String>) -> Re
         std::fs::write(&out, serde_json::to_string_pretty(&doc)?)
             .with_context(|| format!("writing {out}"))?;
     }
-    Ok(if done == rows.len() { ExitCode::SUCCESS } else { ExitCode::from(2) })
+    Ok(if done == rows.len() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(2)
+    })
 }

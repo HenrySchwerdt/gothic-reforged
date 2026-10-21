@@ -10,7 +10,10 @@ fn main() -> Result<()> {
                 "OK   entities={} edges={} with_assets={} bytes={} {}",
                 d.entities.len(),
                 d.edges.len(),
-                d.entities.iter().filter(|e| !e.asset_references.is_empty()).count(),
+                d.entities
+                    .iter()
+                    .filter(|e| !e.asset_references.is_empty())
+                    .count(),
                 bytes.len(),
                 path
             ),

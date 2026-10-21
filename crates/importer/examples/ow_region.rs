@@ -19,7 +19,13 @@ fn main() -> Result<()> {
     for (path, slot) in slots {
         let bytes = vfs.read(slot)?;
         let parts: Vec<&str> = path.split('/').collect();
-        let region = parts.iter().skip(1).take(2).copied().collect::<Vec<_>>().join("/");
+        let region = parts
+            .iter()
+            .skip(1)
+            .take(2)
+            .copied()
+            .collect::<Vec<_>>()
+            .join("/");
         let r = regions.entry(region).or_default();
         match WorldDocument::parse(&bytes) {
             Ok(doc) => {
