@@ -1,0 +1,19 @@
+[package]
+name = "gothic-fx"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Bevy plugin: batched billboard rendering of the simulated particles.
+render = ["bevy/3d_bevy_render"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "bevy_log"] }
+gothic-formats = { path = "../formats" }
+anyhow.workspace = true
+
+[lints]
+workspace = true

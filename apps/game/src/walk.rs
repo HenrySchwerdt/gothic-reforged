@@ -210,7 +210,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let smoke = args.iter().any(|a| a == "--smoke");
     let prefix = arg("--screenshot").unwrap_or_else(|| ".local/ardea".into());
     let shots = arg("--shots").map(|s| parse_shots(&s)).unwrap_or_default();
-    let handle: LoaderHandle = spawn_loader(data_dir.into(), Origin(ORIGIN));
+    let handle: LoaderHandle = spawn_loader(data_dir.clone().into(), Origin(ORIGIN));
     // The grid keeps at least `radius` tiles resident in every direction (the prefetch
     // rectangle is 0.4 x far plus one 10 000-unit cell).
     let pvs_cell_size = gothic_world::pvs::MAIN_CELL_SIZE;
@@ -243,7 +243,12 @@ pub fn run(args: &[String]) -> Result<()> {
             ..default()
         }),
     )
-    .add_plugins((GothicMaterialsPlugin, post::PostPlugin));
+    .add_plugins((GothicMaterialsPlugin, post::PostPlugin))
+    .add_plugins(gothic_fx::plugin::FxPlugin {
+        data_dir: std::path::PathBuf::from(&data_dir),
+        origin: ORIGIN,
+        radius: 20_000.0,
+    });
     if std::env::var_os("GR_PROF").is_some() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
@@ -668,6 +673,7 @@ fn surface_material(
         scale_n.w = s[1];
     }
     params.scale_n = scale_n;
+    gmat::set_uv_anim(&mut params, &data.anim);
     let (alpha_mode, mut two_sided) = match data.blend_mode {
         Some(1) => {
             flags |= F_MASK;

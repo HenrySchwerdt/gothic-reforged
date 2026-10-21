@@ -41,6 +41,32 @@ pub enum Node {
     },
     Scale {
         scale: [f32; 2],
+        inputs: Vec<usize>,
+    },
+    /// `eCTexCoordSrcScroller`: the texture coordinate moves at `direction * rate` per second.
+    Scroller {
+        offset: [f32; 2],
+        direction: [f32; 2],
+        rate: f32,
+        inputs: Vec<usize>,
+    },
+    /// `eCTexCoordSrcOscillator`: `types` are `eETexCoordSrcOscillatorType` for U and V
+    /// (0 pan, 1 stretch, 2 stretch repeat, 3 jitter).
+    Oscillator {
+        types: [u32; 2],
+        amplitude: [f32; 2],
+        rate: [f32; 2],
+        phase: [f32; 2],
+        offset: [f32; 2],
+        inputs: Vec<usize>,
+    },
+    /// `eCTexCoordSrcRotator`: `kind` is `eETexCoordSrcRotatorType` (0 once, 1 constant,
+    /// 2 oscillate); the angle is the euler vector, only its roll turns a texture.
+    Rotator {
+        kind: u32,
+        angle: [f32; 3],
+        offset: [f32; 2],
+        inputs: Vec<usize>,
     },
     BumpOffset {
         inputs: Vec<usize>,
@@ -56,11 +82,52 @@ pub struct MaterialGraph {
     pub slots: Vec<usize>,
 }
 
+/// Texture-coordinate animation of a sampler (the scroller, oscillator and rotator nodes that
+/// feed it). Evaluated per frame by the material admin (`gothic_fx::matadmin`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct UvAnim {
+    pub scroll: Option<Scroll>,
+    pub oscillate: Option<Oscillate>,
+    pub rotate: Option<Rotate>,
+}
+
+impl UvAnim {
+    pub fn is_empty(&self) -> bool {
+        self.scroll.is_none() && self.oscillate.is_none() && self.rotate.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Scroll {
+    pub offset: [f32; 2],
+    pub direction: [f32; 2],
+    pub rate: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Oscillate {
+    pub types: [u32; 2],
+    pub amplitude: [f32; 2],
+    pub rate: [f32; 2],
+    pub phase: [f32; 2],
+    pub offset: [f32; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Rotate {
+    pub kind: u32,
+    pub angle: [f32; 3],
+    pub offset: [f32; 2],
+}
+
 /// A sampled texture together with the uv scale applied to it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TexUse {
     pub path: String,
     pub scale: [f32; 2],
+    /// Texture-coordinate animation (empty for static materials).
+    #[serde(skip_serializing_if = "UvAnim::is_empty")]
+    pub anim: UvAnim,
 }
 
 /// One blendable colour layer: `textures[0] * textures[1] * 2^(n-1) * tint`.
@@ -183,8 +250,33 @@ impl MaterialGraph {
                     let s = prop("Scale").filter(|p| p.len() == 8);
                     Node::Scale {
                         scale: s.map_or([1.0; 2], |p| [f32_le(&p[0..4]), f32_le(&p[4..8])]),
+                        inputs,
                     }
                 }
+                "eCTexCoordSrcScroller" => Node::Scroller {
+                    offset: vec2(prop("ScrollOffset")),
+                    direction: vec2(prop("Direction")),
+                    rate: prop("Rate").filter(|p| p.len() == 4).map_or(0.0, f32_le),
+                    inputs,
+                },
+                "eCTexCoordSrcOscillator" => Node::Oscillator {
+                    types: [enum_value("OscillatorTypeU"), enum_value("OscillatorTypeV")],
+                    amplitude: vec2(prop("Amplitude")),
+                    rate: vec2(prop("Rate")),
+                    phase: vec2(prop("Phase")),
+                    offset: vec2(prop("Offset")),
+                    inputs,
+                },
+                "eCTexCoordSrcRotator" => Node::Rotator {
+                    kind: enum_value("RotationType"),
+                    angle: prop("Angle")
+                        .filter(|p| p.len() == 12)
+                        .map_or([0.0; 3], |p| {
+                            [f32_le(&p[0..4]), f32_le(&p[4..8]), f32_le(&p[8..12])]
+                        }),
+                    offset: vec2(prop("Offset")),
+                    inputs,
+                },
                 "eCTexCoordSrcBumpOffset" => Node::BumpOffset { inputs },
                 other => Node::Other(other.to_owned()),
             };
@@ -213,6 +305,10 @@ impl MaterialGraph {
                 Node::Combiner { inputs, .. }
                 | Node::Blend { inputs }
                 | Node::Sampler { inputs, .. }
+                | Node::Scale { inputs, .. }
+                | Node::Scroller { inputs, .. }
+                | Node::Oscillator { inputs, .. }
+                | Node::Rotator { inputs, .. }
                 | Node::BumpOffset { inputs },
             ) => inputs,
             _ => &[],
@@ -232,9 +328,12 @@ impl MaterialGraph {
         }
         if let Some(Node::Sampler { path, inputs, .. }) = self.nodes.get(n) {
             let scale = self.uv_scale(inputs, 0).unwrap_or([1.0, 1.0]);
+            let mut anim = UvAnim::default();
+            self.uv_anim(inputs, 0, &mut anim);
             out.push(TexUse {
                 path: path.clone(),
                 scale,
+                anim,
             });
             return;
         }
@@ -249,10 +348,73 @@ impl MaterialGraph {
             return None;
         }
         inputs.iter().find_map(|i| match self.nodes.get(*i) {
-            Some(Node::Scale { scale }) => Some(*scale),
-            Some(Node::BumpOffset { inputs }) => self.uv_scale(inputs, depth + 1),
+            Some(Node::Scale { scale, .. }) => Some(*scale),
+            Some(
+                Node::BumpOffset { inputs }
+                | Node::Scroller { inputs, .. }
+                | Node::Oscillator { inputs, .. }
+                | Node::Rotator { inputs, .. },
+            ) => self.uv_scale(inputs, depth + 1),
             _ => None,
         })
+    }
+
+    /// The animation nodes of a coordinate chain (the first of each kind wins).
+    fn uv_anim(&self, inputs: &[usize], depth: u8, out: &mut UvAnim) {
+        if depth > 4 {
+            return;
+        }
+        for i in inputs {
+            match self.nodes.get(*i) {
+                Some(Node::Scroller {
+                    offset,
+                    direction,
+                    rate,
+                    inputs,
+                }) => {
+                    out.scroll.get_or_insert(Scroll {
+                        offset: *offset,
+                        direction: *direction,
+                        rate: *rate,
+                    });
+                    self.uv_anim(inputs, depth + 1, out);
+                }
+                Some(Node::Oscillator {
+                    types,
+                    amplitude,
+                    rate,
+                    phase,
+                    offset,
+                    inputs,
+                }) => {
+                    out.oscillate.get_or_insert(Oscillate {
+                        types: *types,
+                        amplitude: *amplitude,
+                        rate: *rate,
+                        phase: *phase,
+                        offset: *offset,
+                    });
+                    self.uv_anim(inputs, depth + 1, out);
+                }
+                Some(Node::Rotator {
+                    kind,
+                    angle,
+                    offset,
+                    inputs,
+                }) => {
+                    out.rotate.get_or_insert(Rotate {
+                        kind: *kind,
+                        angle: *angle,
+                        offset: *offset,
+                    });
+                    self.uv_anim(inputs, depth + 1, out);
+                }
+                Some(Node::Scale { inputs, .. } | Node::BumpOffset { inputs }) => {
+                    self.uv_anim(inputs, depth + 1, out);
+                }
+                _ => {}
+            }
+        }
     }
 
     fn is_normal_expr(&self, n: usize) -> bool {
@@ -331,6 +493,11 @@ impl MaterialGraph {
         }
         Some(recipe)
     }
+}
+
+fn vec2(p: Option<&[u8]>) -> [f32; 2] {
+    p.filter(|p| p.len() == 8)
+        .map_or([0.0; 2], |p| [f32_le(&p[0..4]), f32_le(&p[4..8])])
 }
 
 fn u32_le(b: &[u8]) -> u32 {

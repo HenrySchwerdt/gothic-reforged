@@ -5,7 +5,7 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_bindings::mesh,
-    mesh_view_bindings::{view, lights},
+    mesh_view_bindings::{view, lights, globals},
     mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
     shadows,
     mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
@@ -27,6 +27,12 @@ struct GothicParams {
     roughness: f32,
     sun: vec4<f32>,
     sh: array<vec4<f32>, 4>,
+    // Texture-coordinate animation (diffuse, normal): scroll = velocity xy + offset zw,
+    // rot = rate, base angle, centre xy.
+    uv_d_scroll: vec4<f32>,
+    uv_d_rot: vec4<f32>,
+    uv_n_scroll: vec4<f32>,
+    uv_n_rot: vec4<f32>,
 };
 
 @group(3) @binding(0) var<uniform> params: GothicParams;
@@ -64,6 +70,19 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(pow((x + 0.055) / 1.055, vec3<f32>(2.4)), x / 12.92, x <= vec3<f32>(0.04045));
 }
 
+// eCTexCoordSrcScroller / Rotator: rotation about the centre, then the scroll offset.
+fn animate_uv(p: vec2<f32>, scroll: vec4<f32>, rot: vec4<f32>) -> vec2<f32> {
+    var q = p;
+    let ang = rot.x * globals.time + rot.y;
+    if ang != 0.0 {
+        let c = cos(ang);
+        let s = sin(ang);
+        let d = q - rot.zw;
+        q = vec2<f32>(c * d.x - s * d.y, s * d.x + c * d.y) + rot.zw;
+    }
+    return q + scroll.zw + fract(scroll.xy * globals.time);
+}
+
 fn ign(p: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
@@ -73,11 +92,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let uv = in.uv;
     let flags = params.flags;
 
-    var ca = textureSample(tex_a0, samp, uv * params.scale_a.xy);
+    var ca = textureSample(tex_a0, samp, animate_uv(uv * params.scale_a.xy, params.uv_d_scroll, params.uv_d_rot));
     var color = ca.rgb;
     var alpha = ca.a;
     if (flags & F_A1) != 0u {
-        color = color * textureSample(tex_a1, samp, uv * params.scale_a.zw).rgb * 2.0;
+        color = color * textureSample(tex_a1, samp, animate_uv(uv * params.scale_a.zw, params.uv_d_scroll, params.uv_d_rot)).rgb * 2.0;
     }
     color = color * params.tint_a.rgb;
 
@@ -111,7 +130,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var n = n_geo;
     if (flags & F_NA) != 0u {
-        var nt = decode_normal(textureSample(tex_na, samp, uv * params.scale_n.xy));
+        var nt = decode_normal(textureSample(tex_na, samp, animate_uv(uv * params.scale_n.xy, params.uv_n_scroll, params.uv_n_rot)));
         if (flags & F_NB) != 0u && (flags & F_VBLEND) != 0u {
             let nt_b = decode_normal(textureSample(tex_nb, samp, uv * params.scale_n.zw));
             nt = normalize(mix(nt, nt_b, w));

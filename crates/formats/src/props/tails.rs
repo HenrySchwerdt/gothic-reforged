@@ -78,6 +78,74 @@ pub enum Tail {
     EntityList {
         members: Vec<Option<String>>,
     },
+    /// `eCParticle_PS`: the keyframed scale curves written after the class version
+    /// (`eCParticle_PS::Write`, Engine:0x1014e9d0). Keys are `[time, value...]`, time 0..1.
+    Particle(Box<ParticleCurves>),
+}
+
+/// The five curves of an `eCParticle_PS` tail plus the number of per-particle sound entries.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ParticleCurves {
+    /// `eCFloatScale`: sub-image frame over the particle life.
+    pub frame: Vec<[f32; 2]>,
+    /// `eCVectorScale`: revolution speed factor.
+    pub revolution: Vec<[f32; 4]>,
+    /// `eCVectorScale`: velocity factor.
+    pub velocity: Vec<[f32; 4]>,
+    /// `eCColorScale`: colour (rgba) over the life.
+    pub color: Vec<[f32; 5]>,
+    /// `eCVectorScale`: size factor.
+    pub size: Vec<[f32; 4]>,
+    /// `eCParticleSoundArray` entry count (the entries themselves are skipped).
+    pub sounds: u32,
+}
+
+/// One serialized scale block: `u32 version (1)`, `u32 payload bytes`, then `u32 count` and the
+/// keys when the payload is non-empty (`eCFloatScale::Write`, Engine:0x1015f910).
+fn scale_block<const N: usize>(body: &mut Cursor) -> Result<Vec<[f32; N]>> {
+    let version = body.u32()?;
+    ensure!(version == 1, "scale block version {version}");
+    let bytes = body.u32()? as usize;
+    if bytes == 0 {
+        return Ok(Vec::new());
+    }
+    let count = body.u32()? as usize;
+    ensure!(
+        bytes == count * N * 4,
+        "scale block size {bytes} for {count} keys"
+    );
+    ensure!(bytes <= body.remaining(), "scale block exceeds the tail");
+    let mut keys = Vec::with_capacity(count);
+    for _ in 0..count {
+        keys.push(body.floats::<N>()?);
+    }
+    Ok(keys)
+}
+
+fn particle(body: &mut Cursor) -> Result<Tail> {
+    let frame = scale_block::<2>(body)?;
+    let revolution = scale_block::<4>(body)?;
+    let velocity = scale_block::<4>(body)?;
+    let color = scale_block::<5>(body)?;
+    let size = scale_block::<4>(body)?;
+    // `eCParticleSoundArray`: version 2, payload bytes, count, entries (skipped).
+    let version = body.u32()?;
+    ensure!(version == 2, "sound array version {version}");
+    let bytes = body.u32()? as usize;
+    let sounds = if bytes == 0 { 0 } else { body.u32()? };
+    body.skip(bytes)?;
+    ensure!(
+        body.remaining() == 0,
+        "trailing bytes after the particle tail"
+    );
+    Ok(Tail::Particle(Box::new(ParticleCurves {
+        frame,
+        revolution,
+        velocity,
+        color,
+        size,
+        sounds,
+    })))
 }
 
 pub fn decode_tail(
@@ -102,6 +170,7 @@ pub fn decode_tail(
         "gCItem_PS" => Some(item(body, strings)),
         "eCVisualAnimation_PS" => Some(animation(body, strings)),
         "gCParty_PS" | "gCEnclave_PS" | "gCAnchor_PS" => Some(entity_list(body)),
+        "eCParticle_PS" => Some(particle(body)),
         _ => None,
     };
     match result {
@@ -305,6 +374,53 @@ fn animation(body: &mut Cursor, strings: &Strings) -> Result<Tail> {
 mod tests {
     use super::*;
     use crate::propstream::testutil::{object, prop, sub_class};
+
+    fn scale_bytes(keys: &[&[f32]]) -> Vec<u8> {
+        let mut b = 1u32.to_le_bytes().to_vec();
+        let size: usize = keys.iter().map(|k| k.len() * 4).sum();
+        b.extend((size as u32).to_le_bytes());
+        if size != 0 {
+            b.extend((keys.len() as u32).to_le_bytes());
+            for k in keys {
+                for f in *k {
+                    b.extend(f.to_le_bytes());
+                }
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn particle_tail_decodes_the_five_curves() {
+        let mut b = scale_bytes(&[&[0.0, 0.0], &[1.0, 11.0]]);
+        b.extend(scale_bytes(&[])); // revolution
+        b.extend(scale_bytes(&[&[0.0, 1.0, 1.0, 1.0]])); // velocity
+        b.extend(scale_bytes(&[
+            &[0.0, 1.0, 0.5, 0.0, 1.0],
+            &[1.0, 0.0, 0.0, 0.0, 0.0],
+        ]));
+        b.extend(scale_bytes(&[])); // size
+        b.extend(2u32.to_le_bytes()); // sound array version
+        b.extend(0u32.to_le_bytes());
+        let mut cur = Cursor::new(&b);
+        let Tail::Particle(c) = particle(&mut cur).expect("tail") else {
+            panic!("not a particle tail");
+        };
+        assert_eq!(c.frame, vec![[0.0, 0.0], [1.0, 11.0]]);
+        assert!(c.revolution.is_empty() && c.size.is_empty());
+        assert_eq!(c.velocity, vec![[0.0, 1.0, 1.0, 1.0]]);
+        assert_eq!(c.color.len(), 2);
+        assert_eq!(c.sounds, 0);
+    }
+
+    #[test]
+    fn particle_tail_rejects_inconsistent_sizes() {
+        let mut b = 1u32.to_le_bytes().to_vec();
+        b.extend(12u32.to_le_bytes()); // 12 bytes cannot hold 2 two-float keys
+        b.extend(2u32.to_le_bytes());
+        b.extend([0u8; 12]);
+        assert!(particle(&mut Cursor::new(&b)).is_err());
+    }
 
     fn proxy_bytes(guid: Option<u8>) -> Vec<u8> {
         let mut b = vec![1, 0];

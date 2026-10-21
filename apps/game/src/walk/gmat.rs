@@ -72,6 +72,28 @@ pub struct GothicParams {
     pub sun: Vec4,
     /// Linear spherical-harmonic ambient: sh[0] constant, sh[1..3] x/y/z coefficients (rgb).
     pub sh: [Vec4; 4],
+    /// Texture-coordinate animation of the diffuse (`d`) and normal (`n`) samplers, see
+    /// `gothic_fx::matadmin::ShaderAnim`: scroll = velocity xy + offset zw, rot = rate, base
+    /// angle, centre xy. All zero for static materials.
+    pub uv_d_scroll: Vec4,
+    pub uv_d_rot: Vec4,
+    pub uv_n_scroll: Vec4,
+    pub uv_n_rot: Vec4,
+}
+
+/// Material admin: copy the animated sampler parameters of a material graph into the uniforms
+/// (`eCShaderMaterialAdmin::Process` refreshes the same per-material transforms each frame; the
+/// shader evaluates them from the global time instead).
+pub fn set_uv_anim(params: &mut GothicParams, anim: &[gothic_formats::xshmat::graph::UvAnim; 2]) {
+    use gothic_fx::matadmin::shader_anim;
+    if let Some(a) = shader_anim(&anim[0]) {
+        params.uv_d_scroll = Vec4::from_array(a.scroll);
+        params.uv_d_rot = Vec4::from_array(a.rotate);
+    }
+    if let Some(a) = shader_anim(&anim[1]) {
+        params.uv_n_scroll = Vec4::from_array(a.scroll);
+        params.uv_n_rot = Vec4::from_array(a.rotate);
+    }
 }
 
 /// Original-game light set (gamma-space values, see `docs/research/ORIGINAL_SHADING.md`).
@@ -125,6 +147,10 @@ impl Default for GothicParams {
             roughness: 0.9,
             sun: light_env().0,
             sh: light_env().1,
+            uv_d_scroll: Vec4::ZERO,
+            uv_d_rot: Vec4::ZERO,
+            uv_n_scroll: Vec4::ZERO,
+            uv_n_rot: Vec4::ZERO,
         }
     }
 }

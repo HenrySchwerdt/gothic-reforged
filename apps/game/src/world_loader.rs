@@ -73,6 +73,9 @@ pub struct MatData {
     pub normals: [Option<(Arc<TexData>, [f32; 2])>; 2],
     /// Texture paths of the layers (lower case), used for vegetation placement.
     pub layer_names: Vec<String>,
+    /// Texture-coordinate animation of the first diffuse and the first normal sampler
+    /// (scroller / rotator nodes of the material graph, see `gothic_fx::matadmin`).
+    pub anim: [gothic_formats::xshmat::graph::UvAnim; 2],
 }
 
 /// GPU-ready geometry in local (mirrored) space; shared between instances.
@@ -556,8 +559,21 @@ impl Loader {
             let mut layer_names = Vec::new();
             let mut normals: [Option<(Arc<TexData>, [f32; 2])>; 2] = [None, None];
             let mut vertex_blend = false;
+            let mut anim: [gothic_formats::xshmat::graph::UvAnim; 2] = Default::default();
             if let Some(r) = &recipe {
                 vertex_blend = r.vertex_blend;
+                anim[0] = r
+                    .layers
+                    .first()
+                    .and_then(|l| l.textures.iter().find(|t| !t.anim.is_empty()))
+                    .map(|t| t.anim.clone())
+                    .unwrap_or_default();
+                anim[1] = r
+                    .normals
+                    .first()
+                    .and_then(|n| n.as_ref())
+                    .map(|t| t.anim.clone())
+                    .unwrap_or_default();
                 for l in &r.layers {
                     let mut tex: [Option<Arc<TexData>>; 2] = [None, None];
                     let mut scale = [[1.0f32; 2]; 2];
@@ -635,6 +651,7 @@ impl Loader {
                 vertex_blend,
                 normals,
                 layer_names,
+                anim,
             }))
         });
         self.materials.insert(key, mat.clone());
@@ -1124,6 +1141,7 @@ impl Loader {
                 vertex_blend: false,
                 normals: [None, None],
                 layer_names: vec![atlas_stem],
+                anim: Default::default(),
             });
             let id = self.id();
             let bark_mat = Arc::new(MatData {
@@ -1140,6 +1158,7 @@ impl Loader {
                 vertex_blend: false,
                 normals: [None, None],
                 layer_names: Vec::new(),
+                anim: Default::default(),
             });
             Some(Arc::new(TreeKind {
                 variants,
