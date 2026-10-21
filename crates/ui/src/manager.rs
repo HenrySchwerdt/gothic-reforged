@@ -102,10 +102,33 @@ pub fn page_flags(page: Option<PageId>) -> HudFlags {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuPage {
     Main,
+    /// The options hub (`gCHUDMenuOptions2`): buttons to the option pages.
+    Options,
     Video,
+    Audio,
+    Controls,
+    ControlsCustom,
+    Difficulty,
     Files,
     Credits,
     Confirm,
+}
+
+impl MenuPage {
+    /// The page Back / Esc returns to (`None` for the main page). The option pages hang below
+    /// the hub, the custom key list below the controls page, the rest below the main page.
+    pub fn parent(self) -> Option<MenuPage> {
+        match self {
+            MenuPage::Main => None,
+            MenuPage::Video | MenuPage::Audio | MenuPage::Controls | MenuPage::Difficulty => {
+                Some(MenuPage::Options)
+            }
+            MenuPage::ControlsCustom => Some(MenuPage::Controls),
+            MenuPage::Options | MenuPage::Files | MenuPage::Credits | MenuPage::Confirm => {
+                Some(MenuPage::Main)
+            }
+        }
+    }
 }
 
 /// What Esc did.
@@ -229,11 +252,11 @@ impl GuiManager {
                     self.close_menu();
                     EscOutcome::ClosedMenu
                 }
-                // Every sub page goes back to the main page (the options hub that sits between
-                // them in the original is batch E32).
-                _ => {
-                    self.menu = Some(MenuPage::Main);
-                    EscOutcome::MenuBack(MenuPage::Main)
+                // A sub page goes back one level (options pages to the hub, the hub to main).
+                sub => {
+                    let up = sub.parent().unwrap_or(MenuPage::Main);
+                    self.menu = Some(up);
+                    EscOutcome::MenuBack(up)
                 }
             };
         }
@@ -346,6 +369,20 @@ mod tests {
         g.menu_goto(MenuPage::Files);
         assert_eq!(g.escape(false, false), EscOutcome::MenuBack(MenuPage::Main));
         g.menu_goto(MenuPage::Video);
+        assert_eq!(
+            g.escape(false, false),
+            EscOutcome::MenuBack(MenuPage::Options)
+        );
+        assert_eq!(g.escape(false, false), EscOutcome::MenuBack(MenuPage::Main));
+        g.menu_goto(MenuPage::ControlsCustom);
+        assert_eq!(
+            g.escape(false, false),
+            EscOutcome::MenuBack(MenuPage::Controls)
+        );
+        assert_eq!(
+            g.escape(false, false),
+            EscOutcome::MenuBack(MenuPage::Options)
+        );
         assert_eq!(g.escape(false, false), EscOutcome::MenuBack(MenuPage::Main));
         assert_eq!(g.escape(false, false), EscOutcome::ClosedMenu);
         assert_eq!(g.input_focus(), InputFocus::GAME);

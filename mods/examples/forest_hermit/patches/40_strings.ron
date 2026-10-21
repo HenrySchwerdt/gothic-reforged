@@ -1,0 +1,12 @@
+// Patch files can also be RON.
+(
+    strings: (
+        set: [
+            (key: "MOD_HERMIT_NAME", texts: {"English": "Hermit", "German": "Einsiedler"}),
+            (key: "MOD_HERMIT_QUEST", texts: {"English": "Tea for the hermit", "German": "Tee fuer den Einsiedler"}),
+            (key: "MOD_HERMIT_ASK", texts: {"English": "Need anything?", "German": "Brauchst du etwas?"}),
+            (key: "MOD_HERMIT_HERBS", texts: {"English": "Two herbs for my tea.", "German": "Zwei Kraeuter fuer meinen Tee."}),
+            (key: "MOD_HERMIT_GIVE", texts: {"English": "Here are your herbs.", "German": "Hier sind deine Kraeuter."}),
+        ],
+    ),
+)

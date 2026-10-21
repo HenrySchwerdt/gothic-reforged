@@ -625,13 +625,7 @@ impl<W: WorldQuery> Sim<W> {
     /// A projectile touched a character: arrows and spell missiles go through the damage
     /// pipeline (`head` marks a head shot). Where the shot hits is decided by its flight, not by
     /// a dice roll.
-    pub(crate) fn land_projectile(
-        &mut self,
-        spec: ProjectileSpec,
-        att: ActorId,
-        vic: ActorId,
-        head: bool,
-    ) {
+    pub(crate) fn land_projectile(&mut self, spec: ProjectileSpec, att: ActorId, vic: ActorId, head: bool) {
         if self.actor(vic).ai_mode == crate::types::AiMode::Dead {
             return;
         }

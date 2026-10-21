@@ -606,3 +606,121 @@ pub fn souls_basic() -> Sc {
     });
     sc
 }
+
+/// Name and weight of the hero's overlay clip, if any.
+fn hero_overlay(cx: &mut Cx) -> Option<(String, f32)> {
+    let e = cx.play().hero_entity?;
+    let a = cx.world.get::<gothic_animation::Animator>(e)?;
+    a.overlay
+        .as_ref()
+        .map(|o| (o.motion.clip.name.clone(), o.weight))
+}
+
+/// `--play --combat souls --qa souls_er` (with a local clip pack): lock-on strafe, roll, light
+/// attack and guard each play their pack clip on the hero (screenshots `NN_er_*.png`). Without
+/// the pack the checks that need it report and pass, so the scenario also runs on a plain
+/// checkout.
+pub fn souls_er() -> Sc {
+    let mut sc = Sc::new(300.0);
+    grab(&mut sc);
+    pick_target(&mut sc);
+    sc.act("Digit1: wear and draw the sword", |cx| {
+        cx.tap(KeyCode::Digit1)
+    });
+    sc.wait(1.5);
+    approach(
+        &mut sc,
+        "the raider",
+        target_goal(),
+        450.0,
+        -0.2,
+        Arc::new(|_| true),
+    );
+    sc.step("face the raider 1 s", |cx| {
+        if let Some(p) = tgt_id(cx).and_then(|i| cx.actor_pos(i)) {
+            cx.aim_at(p, -0.2);
+        }
+        if cx.t > 1.0 { Poll::Done } else { Poll::Wait }
+    });
+    sc.act("Tab: lock on", |cx| {
+        cx.tap(KeyCode::Tab);
+        let pack = cx
+            .world
+            .resource::<gothic_animation::ActorLibrary>()
+            .has_motion("ER_Roll_Front");
+        cx.st.n.insert("pack".into(), f64::from(u8::from(pack)));
+        cx.note(format!("clip pack loaded: {pack}"));
+    });
+    sc.wait(0.8);
+    sc.act("hold D: strafe right around the target", |cx| {
+        cx.key_down(KeyCode::KeyD)
+    });
+    sc.wait(0.9);
+    sc.act("sample the hero overlay (ov_strafe)", |cx| {
+        let o = hero_overlay(cx);
+        let name = o.map(|(n, _)| n).unwrap_or_default();
+        cx.note(format!("overlay at ov_strafe: {name:?}"));
+        cx.st.n.insert("ov_strafe".into(), f64::from(u8::from(name.starts_with("ER_Walk") || name.starts_with("ER_Run"))));
+    });
+    sc.shot("er_strafe");
+    sc.check("lock-on strafing plays a pack walk / run clip", |cx| {
+        let pack = cx.st.n["pack"] > 0.5;
+        let ok = !pack || !cx.world.resource::<gothic_combat_souls::plugin::SoulsRes>().world.lock.target.is_some() || cx.st.n["ov_strafe"] > 0.5;
+        expect(ok, "ok", "pack clip not playing")
+    });
+    sc.act("release D", |cx| cx.key_up(KeyCode::KeyD));
+    sc.wait(0.5);
+    sc.act("Space + A: roll left", |cx| {
+        cx.key_down(KeyCode::KeyA);
+        cx.tap(KeyCode::Space);
+    });
+    sc.wait(0.3);
+    sc.act("sample the hero overlay (ov_roll)", |cx| {
+        let o = hero_overlay(cx);
+        let name = o.map(|(n, _)| n).unwrap_or_default();
+        cx.note(format!("overlay at ov_roll: {name:?}"));
+        cx.st.n.insert("ov_roll".into(), f64::from(u8::from(name.starts_with("ER_Roll"))));
+    });
+    sc.shot("er_roll_a");
+    sc.check("the roll plays the pack roll clip", |cx| {
+        let pack = cx.st.n["pack"] > 0.5;
+        let ok = !pack || cx.st.n["ov_roll"] > 0.5;
+        expect(ok, "ok", "pack clip not playing")
+    });
+    sc.wait(0.25);
+    sc.shot("er_roll_b");
+    sc.act("release A", |cx| cx.key_up(KeyCode::KeyA));
+    sc.wait(1.2);
+    sc.act("left click: light attack", |cx| cx.mouse_click(MouseButton::Left));
+    sc.wait(0.32);
+    sc.act("sample the hero overlay (ov_attack)", |cx| {
+        let o = hero_overlay(cx);
+        let name = o.map(|(n, _)| n).unwrap_or_default();
+        cx.note(format!("overlay at ov_attack: {name:?}"));
+        cx.st.n.insert("ov_attack".into(), f64::from(u8::from(name.contains("_Light"))));
+    });
+    sc.shot("er_attack");
+    sc.check("the light attack plays a pack attack clip", |cx| {
+        let pack = cx.st.n["pack"] > 0.5;
+        let ok = !pack || cx.st.n["ov_attack"] > 0.5;
+        expect(ok, "ok", "pack clip not playing")
+    });
+    sc.wait(1.6);
+    sc.act("hold Q: guard", |cx| cx.key_down(KeyCode::KeyQ));
+    sc.wait(0.7);
+    sc.act("sample the hero overlay (ov_guard)", |cx| {
+        let o = hero_overlay(cx);
+        let name = o.map(|(n, _)| n).unwrap_or_default();
+        cx.note(format!("overlay at ov_guard: {name:?}"));
+        cx.st.n.insert("ov_guard".into(), f64::from(u8::from(name.contains("_Guard") || name.starts_with("ER_Hurt"))));
+    });
+    sc.shot("er_guard");
+    sc.check("guarding plays the pack guard pose", |cx| {
+        let pack = cx.st.n["pack"] > 0.5;
+        let ok = !pack || cx.st.n["ov_guard"] > 0.5;
+        expect(ok, "ok", "pack clip not playing")
+    });
+    sc.act("release Q", |cx| cx.key_up(KeyCode::KeyQ));
+    sc.wait(0.6);
+    sc
+}

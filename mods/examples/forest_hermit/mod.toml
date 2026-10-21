@@ -1,0 +1,6 @@
+[mod]
+id = "forest_hermit"
+name = "The Forest Hermit"
+version = "1.0.0"
+description = "Example mod: a hermit NPC with a tea quest, a new potion and a new dialog line for Alice."
+authors = ["Gothic Reforged"]

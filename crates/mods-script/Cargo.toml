@@ -1,0 +1,26 @@
+[package]
+name = "gothic-mods-script"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Sandboxed Rhai script mods: subscribe to core events, issue commands through a capability-limited API"
+
+[features]
+# Adapters between `gothic_runtime::core::{Event, Command}` and the script vocabulary.
+runtime = ["dep:gothic-runtime", "dep:gothic-sim", "dep:gothic-gameplay"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml = "0.8"
+rhai = { version = "1", features = ["sync", "no_time", "no_custom_syntax"] }
+gothic-runtime = { path = "../runtime", optional = true }
+gothic-sim = { path = "../sim", optional = true }
+gothic-gameplay = { path = "../gameplay", optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -173,6 +173,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             view.view_from_world[2].z, view.view_from_world[3].z), in.world_position);
         shadow = shadows::fetch_directional_shadow(0u, in.world_position, n_geo, view_z, in.position.xy);
     }
+    // vecShadowDensity: the weather ShadowDensity scales how dark shadows get (sh[0].w).
+    shadow = 1.0 - (1.0 - shadow) * params.sh[0].w;
     light = light + params.sun.rgb * max(dot(n, sun_l), 0.0) * shadow;
 
     // Baked static lights (xlmp per-vertex colour, packed r/b in uv_b): lightmap * gain.

@@ -7,6 +7,10 @@ import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 struct PostParams {
     // x threshold, y intensity (multiplier), z aberration, w blur step in pixels
     bloom: vec4<f32>,
+    // x exposure (0 = HDR path off), y gamma, z vignette, w blue-shift threshold
+    hdr: vec4<f32>,
+    // x blue-shift intensity
+    hdr2: vec4<f32>,
 };
 @group(0) @binding(0) var scene: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
@@ -21,8 +25,32 @@ fn to_l(c: vec3<f32>) -> vec3<f32> {
     return select(pow((x + 0.055) / 1.055, vec3<f32>(2.4)), x / 12.92, x <= vec3<f32>(0.04045));
 }
 
+fn to_g_hdr(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3<f32>(0.0031308));
+}
+
+// IP_HDRI.fx PS_HDRIBloom: exposure curve, blue shift in the dark, vignette, display gamma.
+fn grade(c_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    var c = vec3<f32>(1.0) - exp(-params.hdr.x * c_in);
+    let lum = dot(c, vec3<f32>(0.212, 0.715, 0.072));
+    let amount = saturate(lum * params.hdr.w * lum * params.hdr.w);
+    c = mix(vec3<f32>(1.0, 1.0, 1.6) * (lum * params.hdr2.x), c, amount);
+    let d = uv - vec2<f32>(0.5);
+    c = c * pow(max(1.0 - dot(d, d), 0.00001), params.hdr.z);
+    return pow(max(c, vec3<f32>(0.00001)), vec3<f32>(params.hdr.y));
+}
+
+fn scene_c(uv: vec2<f32>) -> vec3<f32> {
+    let raw = textureSampleLevel(scene, samp, uv, 0.0).rgb;
+    if params.hdr.x > 0.0 {
+        return saturate(grade(to_g_hdr(raw), uv));
+    }
+    return to_g(raw);
+}
+
 fn mask(uv: vec2<f32>) -> vec3<f32> {
-    let c = to_g(textureSampleLevel(scene, samp, uv, 0.0).rgb);
+    let c = scene_c(uv);
     let l = dot(c, vec3<f32>(0.3, 0.59, 0.11));
     return saturate(c * max(l - params.bloom.x, 0.0) * params.bloom.y);
 }
@@ -61,7 +89,7 @@ fn blurred_small(uv: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    var c = to_g(textureSampleLevel(scene, samp, in.uv, 0.0).rgb);
+    var c = scene_c(in.uv);
     var b = blurred(in.uv);
     let lum = dot(b, vec3<f32>(0.3, 0.59, 0.11));
     let chroma = params.bloom.z * lum * (1.0 / vec2<f32>(textureDimensions(scene)));

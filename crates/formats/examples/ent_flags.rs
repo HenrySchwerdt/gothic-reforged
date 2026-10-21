@@ -17,29 +17,13 @@ fn main() {
         .collect();
     for (path, slot) in slots {
         let bytes = vfs.read(slot).unwrap();
-        let Ok(doc) = WorldDocument::parse(&bytes) else {
-            continue;
-        };
+        let Ok(doc) = WorldDocument::parse(&bytes) else { continue };
         let dis = doc.entities.iter().filter(|e| !e.enabled).count();
-        let pd = doc
-            .entities
-            .iter()
-            .filter(|e| e.processing_disabled)
-            .count();
-        println!(
-            "{path}: {} entities, {dis} disabled, {pd} processing-disabled",
-            doc.entities.len()
-        );
+        let pd = doc.entities.iter().filter(|e| e.processing_disabled).count();
+        println!("{path}: {} entities, {dis} disabled, {pd} processing-disabled", doc.entities.len());
         if let Some(n) = &n {
-            for e in doc
-                .entities
-                .iter()
-                .filter(|e| e.name.to_ascii_lowercase().contains(n))
-            {
-                println!(
-                    "  {} enabled={} procdis={}",
-                    e.name, e.enabled, e.processing_disabled
-                );
+            for e in doc.entities.iter().filter(|e| e.name.to_ascii_lowercase().contains(n)) {
+                println!("  {} enabled={} procdis={}", e.name, e.enabled, e.processing_disabled);
             }
         }
     }

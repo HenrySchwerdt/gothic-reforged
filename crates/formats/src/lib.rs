@@ -13,6 +13,7 @@ pub mod template;
 pub mod terrain;
 pub mod theme;
 pub mod vfs;
+pub mod weather;
 pub mod world_node;
 pub mod xact;
 pub mod xcmsh;

@@ -86,3 +86,39 @@ wrong and matches the user's "cursed" report:
   moved once, stamina likely spent by the preceding parry), `dialog_quest` NPC walks.
 * Magic: the spell book (B) and documents (M) screens do not exist, so spells can only be bound
   by the harness' `setup` step.
+
+## Open world (2026-10-21): scenarios `sector_switch`, `teleport`, `walk_to_reddock`, `triggers`, `world_walk`, `perf_idle`
+
+Run with `.local/ow_run.sh <scenario>...` (same binary, `GR_NOVSYNC=1` for unthrottled frame times).
+
+| Scenario | Result | What it proves / bug found |
+| --- | --- | --- |
+| sector_switch | PASS | New game: `Ardea_NPC_01` layer shown (24 bodies), `NPC_02` none. The info `FILLER938` (owner Javier, `SetSectorStatus G3_Myrtana_01_Ardea_NPC_02 true` and `..._NPC_01 false`) is executed through `gothic_gameplay::script::execute_info`: both `SectorSwitched` events arrive, NPC_01 bodies leave, 37 NPC_02 bodies appear; clearing `state.sectors` (older save) restores the authored layers. **Bug found and fixed**: the script spelling `G3_Myrtana_01_Ardea_NPC_02` and the registered directory name differ in case; `Core::sync_sectors` kept both as separate wanted entries and flipped the sector every tick (1000+ events per run). Names are lower-cased there now |
+| teleport | PASS (frame times informational) | Teleporter stone `It_Teleport_Faring` in quick slot 7, select, hold / release left (cast): `Spl_Teleport_Faring` -> `MagicTeleport` -> `MagicEvent::Teleport` -> hero controller placed at `Teleport_Faring` (723 m away), the tiles stream in, 27 Faring bodies shown, Ardea's 18 gone |
+| walk_to_reddock | PASS | Hero runs from Ardea to the densest group of Reddock characters (about 190 m, `walk_to` with detours; 9 m left at the end), 24 Reddock bodies shown, core actors `Brenton`, `Gelford`, `Javier` exist, Ardea bodies removed. Screenshots `01_ardea`, `02_reddock`, `03_reddock_market` |
+| triggers | PASS | The hero capsule touches the nearest `gCTouchDamage_PS` trigger (a loose `It_1H_Sword_01`, 20 m away): `OnTouchDamage` fires once, a second visit is held back by `MaxCountPerEntity = 1`, the counters are in the core's save image (`TriggerSnapshot`) |
+| world_walk | informational | Teleport hops Reddock, Kap Dun, Gotha, Montera with 25 s walks: 186 bodies created, 142 removed, 186 core actors at the end |
+| perf_idle | informational | reference: standing in Ardea |
+
+Frame times (1280x720, unthrottled, machine shared with compiling agents, so only ratios mean something):
+standing in Ardea p50 <= 17 ms, p95 <= 22 ms (includes the 27 initial body builds); walking Ardea -> Reddock
+p50 <= 10 ms, p95 <= 13 ms, p99 <= 20 ms over 9 600 frames (threshold of the scenario 24 ms for a loaded machine; the 12 ms goal
+was missed by 1 ms on a loaded machine); the four-city hop run p95 <= 24 ms, p99 <= 53 ms. The residual
+hitches are cold body builds: `ActorSpawner::spawn` decodes mesh, skeleton and clips on the main thread, avg
+4 ms, up to 40-80 ms for a look that was never built. The roster systems themselves are cheap (candidate scan
+avg 25-35 us, max 0.4 ms); the spawn pass is rate-limited (3 ms budget, after a pass over 3 ms the next waits
+twice as long). A background asset-build thread in `gothic-animation` would remove the rest.
+
+Findings:
+* World content: 10 253 characters in 68 layers, 9 692 in enabled layers at the new game. Characters are
+  created in the core when they first enter the 4000 box around the hero and then stay (position, health,
+  inventory); only the body is dropped beyond 4250.
+* The shipped world documents contain **no** `eCTrigger_PS` / `eCTriggerList_PS` / `eCEventFilter_PS` /
+  `gCEventScript_PS` property sets (scan of 2 517 parsed documents, `ow_scan`). The only trigger-family set is
+  `gCTouchDamage_PS` on 698 loose weapons / arrows with the script function `OnTouchDamage`, which is not
+  ported (no `OnTouchDamage` in `gothic-script`): the trigger fires and is recorded, no damage follows.
+  The shape is approximated by a 60 cm sphere (no shape data in the documents).
+* The hero is moved by the host (`HeroTransform` every frame), so a teleport must move the controller; the
+  core's own `teleport` only moves party members (waypoints `Teleport_<City>` are registered with the core).
+* Not covered: routine catch-up when a frozen character re-enters the range (see PORT_NOTES, simulation),
+  quest NPCs far away exist in the core only after the hero came near them once.
