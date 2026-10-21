@@ -147,7 +147,7 @@ impl SrcAnims {
                 ..Default::default()
             };
             let raw = take(frames * nt * 28)?;
-            for e in raw.chunks_exact(28) {
+            for e in raw.as_chunks::<28>().0 {
                 c.t.push(Vec3::new(f(&e[0..4]), f(&e[4..8]), f(&e[8..12])));
                 let q = Quat::from_xyzw(f(&e[12..16]), f(&e[16..20]), f(&e[20..24]), f(&e[24..28]));
                 c.q.push(if q.length_squared() > 1e-12 {
@@ -373,8 +373,12 @@ impl<'a> Retargeter<'a> {
                 continue;
             }
             let bone = &mut bones[bone_of_slot[hs as usize]];
-            let hand_rot = rig.bind_world[hand as usize].to_scale_rotation_translation().1;
-            let slot_rot = rig.bind_world[slot as usize].to_scale_rotation_translation().1;
+            let hand_rot = rig.bind_world[hand as usize]
+                .to_scale_rotation_translation()
+                .1;
+            let slot_rot = rig.bind_world[slot as usize]
+                .to_scale_rotation_translation()
+                .1;
             let axis_in_hand = hand_rot.inverse() * (slot_rot * g.slot_axis);
             let want = swq_t[src_bone] * g.src_axis;
             let v = (bone.align * bone.bind_rot).inverse() * want;
@@ -517,7 +521,8 @@ impl<'a> Retargeter<'a> {
             for (i, b) in self.bones.iter().enumerate() {
                 let slot = self.rig.slot_of[b.node as usize] as usize;
                 let got = wpos[slot] - wpos[root_slot] - base_got[i];
-                let want = self.opt.basis * (wp[b.src] - wp[root.src]) * self.opt.scale - base_want[i];
+                let want =
+                    self.opt.basis * (wp[b.src] - wp[root.src]) * self.opt.scale - base_want[i];
                 let e = (got - want).length();
                 acc[i].0 += e;
                 acc[i].1 = acc[i].1.max(e);
@@ -640,9 +645,17 @@ impl<'a> Retargeter<'a> {
         let mut stats = Vec::new();
         if let Some(feet) = self.feet {
             let rest_src = feet.map(|f| self.src_rest_world_pos[f.1].y);
-            let rest_tgt = feet.map(|f| self.rig.bind_world[self.rig.slot_node[f.0] as usize].w_axis.y);
+            let rest_tgt = feet.map(|f| {
+                self.rig.bind_world[self.rig.slot_node[f.0] as usize]
+                    .w_axis
+                    .y
+            });
             for f in 0..frames {
-                let low = if src_foot_y[f][0] <= src_foot_y[f][1] { 0 } else { 1 };
+                let low = if src_foot_y[f][0] <= src_foot_y[f][1] {
+                    0
+                } else {
+                    1
+                };
                 stats.push([
                     src_foot_y[f][low] - rest_src[low],
                     foot_actual[f][low] + dys[f] - rest_tgt[low],

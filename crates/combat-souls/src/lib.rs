@@ -13,14 +13,14 @@
 //! (see [`math`]).
 pub mod actions;
 pub mod animmap;
-#[cfg(feature = "pack")]
-pub mod pack;
 pub mod events;
 pub mod foe;
 pub mod hero;
 pub mod lockcam;
 pub mod lockon;
 pub mod math;
+#[cfg(feature = "pack")]
+pub mod pack;
 pub mod sink;
 pub mod tuning;
 pub mod world;

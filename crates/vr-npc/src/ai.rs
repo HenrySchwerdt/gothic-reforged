@@ -173,10 +173,24 @@ pub struct NpcIntent {
     pub phase: Phase,
 }
 
+/// An order from an outside decision maker (the original game AI via [`crate::exec`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Order {
+    /// Strike this way as soon as range and an attack slot allow.
+    Attack(AttackDir),
+    /// Hold the guard up (the original `Parade`).
+    Guard,
+}
+
 /// Per-NPC combat brain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CombatAi {
     pub settings: AiSettings,
+    /// `true`: picks its own attacks (the VR-05 standalone opponent). `false`: attacks only on
+    /// an [`Order`], so the original AI decides when and with what.
+    pub autonomous: bool,
+    /// The pending order (consumed when the attack starts; `Guard` holds until replaced).
+    pub order: Option<Order>,
     pub root: Vec3,
     pub yaw: f32,
     pub phase: Phase,
@@ -272,6 +286,8 @@ impl CombatAi {
     pub fn new(root: Vec3, yaw: f32, seed: u64) -> Self {
         Self {
             settings: AiSettings::default(),
+            autonomous: true,
+            order: None,
             root,
             yaw,
             phase: Phase::Ready,
@@ -387,13 +403,21 @@ impl CombatAi {
                 Phase::Ready
             }
             Phase::Ready | Phase::Block(_) => {
+                let in_range = dist <= s.max_range + 0.1 && dist >= s.min_range - 0.2;
                 if let Some(side) = threat {
                     Phase::Block(side)
-                } else if self.cooldown <= 0.0
-                    && dist <= s.max_range + 0.1
-                    && dist >= s.min_range - 0.2
-                    && slots.request(id)
-                {
+                } else if self.order == Some(Order::Guard) {
+                    Phase::Block(GuardSide::Right)
+                } else if !self.autonomous {
+                    match self.order {
+                        Some(Order::Attack(d)) if in_range && slots.request(id) => {
+                            self.order = None;
+                            self.attacks += 1;
+                            Phase::Telegraph(d, 0.0)
+                        }
+                        _ => Phase::Ready,
+                    }
+                } else if self.cooldown <= 0.0 && in_range && slots.request(id) {
                     let k = ((self.rand() * 4.0) as usize).min(3);
                     self.attacks += 1;
                     Phase::Telegraph(s.attack_pattern.unwrap_or(AttackDir::ALL[k]), 0.0)

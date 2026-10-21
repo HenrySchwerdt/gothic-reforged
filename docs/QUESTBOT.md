@@ -13,7 +13,7 @@ cargo run -p gothic-questbot --release -- <Data> --quest Q_Name --quest Q_Other 
 Options: `--language German|English|...` (string table language, default German),
 `--quest NAME` (repeatable; default: every quest), `--strict` (no world assumptions: owner
 proximity, unknown NPC inventories and BringNpc deliveries fail), `--trace` (print every
-step), `--json FILE`. Exit code 0 = every target completed successfully, 2 = otherwise.
+step), `--isolated` (every quest alone, with only its prerequisites; prints one line per quest and the total), `--max-rounds N` (default 10000), `--json FILE`. Exit code 0 = every target completed successfully, 2 = otherwise.
 
 ## How it plays
 
@@ -31,9 +31,20 @@ Each round:
 3. **Talking**: the NPC with the best offer is addressed; the bot keeps choosing the best
    unchosen menu entry (descending into dialog trees) and leaves when nothing useful remains.
 
-Two rounds without any change of the game state (the clock excluded; idle rounds advance it
-three hours so `QuestRunning` infos can trigger) end the run; unfinished targets are then
-analysed.
+Progress is any change of the game state, except the clock and the quest log (permanent lines
+append to the log every time they run). Idle rounds advance the clock three hours so
+`QuestRunning` infos can trigger.
+
+- An info chosen without effect is *futile* until the next progress and stops counting for
+  planning. Real data has many permanent quest lines (refusals, "not yet" answers) that would
+  otherwise outscore everything and be chosen again forever.
+- Without progress, each NPC with something useful is visited once.
+- When none is left, the clock jumps a day ahead and the sweep repeats once. Only then does
+  the run end, and the unfinished targets are analysed.
+
+For an unmet game event the report lists every info that sets it and why that setter did not
+run (`already told`, `available, never chosen`, or its own unmet condition), so the remaining
+blockers can be checked against the data.
 
 ## Report format
 

@@ -35,7 +35,7 @@ fn main() -> Result<()> {
             continue;
         };
         for (i, e) in doc.entities.iter().enumerate() {
-            let Some(set) = sets
+            let Some(_set) = sets
                 .get(i)
                 .and_then(|s| s.iter().find(|s| s.class == class))
             else {
