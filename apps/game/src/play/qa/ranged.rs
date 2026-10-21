@@ -32,7 +32,7 @@ fn rec(sc: &mut Sc, on: bool) {
 /// Visual watcher: every frame the shots drawn are projected through the game camera; frames in
 /// which a spell missile / an arrow is inside the screen are counted, and so are the frames in
 /// which the bow actor exists and is inside the screen.
-fn visual_watch(sc: &mut Sc) {
+pub(super) fn visual_watch(sc: &mut Sc) {
     sc.watch(|cx| {
         use crate::walk::play::ranged::BowVisual;
         let (cam, gt) = {
@@ -625,19 +625,22 @@ pub fn shaman_duel() -> Sc {
             )
         },
     );
-    sc.check("he holds a spell in the hands (NPC mana is fixed, S:35d40)", |cx| {
-        let Some(id) = tgt_id(cx) else {
-            return Err("no shaman".into());
-        };
-        let eq = &cx.core().0.sim.actor(id).equipment;
-        let wm = eq.weapon_mode();
-        let right = eq.right.as_ref().map(|d| d.name.clone());
-        expect(
-            wm == gothic_sim::item::WeaponMode::Magic,
-            format!("weapon mode {wm:?}, right hand {right:?}"),
-            format!("weapon mode {wm:?}, right hand {right:?}"),
-        )
-    });
+    sc.check(
+        "he holds a spell in the hands (NPC mana is fixed, S:35d40)",
+        |cx| {
+            let Some(id) = tgt_id(cx) else {
+                return Err("no shaman".into());
+            };
+            let eq = &cx.core().0.sim.actor(id).equipment;
+            let wm = eq.weapon_mode();
+            let right = eq.right.as_ref().map(|d| d.name.clone());
+            expect(
+                wm == gothic_sim::item::WeaponMode::Magic,
+                format!("weapon mode {wm:?}, right hand {right:?}"),
+                format!("weapon mode {wm:?}, right hand {right:?}"),
+            )
+        },
+    );
     sc
 }
 

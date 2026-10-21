@@ -31,7 +31,7 @@ pub const MAGE_MELEE_SWITCH: f32 = 470.0;
 /// fireball (S:4a43a..4a49e, the names compared in S:49890).
 pub const STORY_CASTERS: [&str; 6] = ["Xardas", "Grok", "Ningal", "Tizgar", "Saturas", "Runak"];
 
-/// Port of S:4a370: a story mage (see [`STORY_CASTERS`]) fighting the player alone (no party
+/// Port of `IsStoryCaster` (S:4a370, helper `sub_4a370`): a story mage (see [`STORY_CASTERS`]) fighting the player alone (no party
 /// members), in a game with `ExtendedContent` or `AIMode`.
 pub fn is_story_caster(host: &dyn ScriptHost, npc: EntityId) -> bool {
     gothic_portcov::hit!("is_story_caster");
@@ -49,7 +49,7 @@ pub fn is_story_caster(host: &dyn ScriptHost, npc: EntityId) -> bool {
     STORY_CASTERS.iter().any(|n| name == *n)
 }
 
-/// Port of S:4a030: the weapon mode `npc` wants against `target` (`1` melee, `2` ranged, `3`
+/// Port of `ChooseWeaponMode` (S:4a030, helper `sub_4a030`): the weapon mode `npc` wants against `target` (`1` melee, `2` ranged, `3`
 /// magic of the original, here [`WeaponMode`]). No target: melee.
 pub fn choose_weapon_mode(host: &dyn ScriptHost, npc: EntityId, target: EntityId) -> WeaponMode {
     gothic_portcov::hit!("choose_weapon_mode");
@@ -78,7 +78,11 @@ pub fn choose_weapon_mode(host: &dyn ScriptHost, npc: EntityId, target: EntityId
         if d >= MAGE_MELEE_SWITCH {
             return M::Magic;
         }
-        return if current == M::Melee { M::Melee } else { M::Magic };
+        return if current == M::Melee {
+            M::Melee
+        } else {
+            M::Magic
+        };
     }
     if species == Species::IceGolem {
         let frozen = host.has_status(npc, 2);
@@ -93,7 +97,11 @@ pub fn choose_weapon_mode(host: &dyn ScriptHost, npc: EntityId, target: EntityId
     }
     if d < RANGED_RANGE {
         // Between 7 and 10 m the fighter keeps what it holds.
-        return if current == M::None { M::Melee } else { current };
+        return if current == M::None {
+            M::Melee
+        } else {
+            current
+        };
     }
     if host.npc_class(npc) == NpcClass::Paladin {
         return M::Magic;
@@ -104,7 +112,7 @@ pub fn choose_weapon_mode(host: &dyn ScriptHost, npc: EntityId, target: EntityId
     }
 }
 
-/// Port of S:49890: the spell template a mage readies. Story casters take their signature
+/// Port of `ChooseSpell` (S:49890, helper `sub_49890`): the spell template a mage readies. Story casters take their signature
 /// spell; goblins, fire golems and dragons the fireball, frost golems the ice lance; everyone
 /// else heals below 40 percent hit points half of the time, fights fire golems with ice and
 /// frost golems with fire, keeps the fireball or ice lance it already holds and otherwise
@@ -152,7 +160,7 @@ pub fn choose_spell(host: &mut dyn ScriptHost, npc: EntityId, held_spell: &str) 
     }
 }
 
-/// What `_AI_SelectWeapon` (S:49600) decides for `npc` against `target`: the mode to ready, or
+/// Port of `_AI_SelectWeapon` (S:49600): what the command decides for `npc` against `target`: the mode to ready, or
 /// `None` when the hands already hold it. A ranged request without a ranged weapon at hand
 /// (`has_ranged`) becomes a melee request; a mage always re-readies its spell.
 pub fn select_weapon_mode(
@@ -175,4 +183,93 @@ pub fn select_weapon_mode(
         return None;
     }
     Some(want)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enums::{NpcClass, Species, UseType};
+    use crate::testhost::TestWorld;
+
+    fn pair(species: Species, class: NpcClass, dist: f32) -> (TestWorld, EntityId, EntityId) {
+        let mut w = TestWorld::new();
+        let me = w.spawn_npc("Fighter", species, 10, 30);
+        w.set_class(me, class);
+        let foe = w.spawn_npc("Foe", Species::Human, 10, 30);
+        w.set_target(me, foe);
+        w.set_distance(me, foe, dist);
+        (w, me, foe)
+    }
+
+    #[test]
+    fn a_fighter_chooses_by_distance_and_keeps_its_weapon_in_between() {
+        use WeaponMode as M;
+        let (w, me, foe) = pair(Species::Human, NpcClass::Warrior, 500.0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Melee);
+        let (w, me, foe) = pair(Species::Human, NpcClass::Warrior, 1500.0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Ranged);
+        // 7 to 10 m: whatever is in the hands stays.
+        let (mut w, me, foe) = pair(Species::Human, NpcClass::Warrior, 850.0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Melee);
+        w.set_slot(me, crate::enums::Slot::LeftHand, UseType::Bow, 0);
+        w.set_slot(me, crate::enums::Slot::RightHand, UseType::Arrow, 0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Ranged);
+        // Skeletons and golems never draw a bow.
+        let (w, me, foe) = pair(Species::Skeleton, NpcClass::Warrior, 1500.0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Melee);
+        // No target: melee.
+        assert_eq!(choose_weapon_mode(&w, me, EntityId::NONE), M::Melee);
+    }
+
+    #[test]
+    fn a_mage_casts_from_range_and_without_an_opponent_that_can_be_hit_in_melee() {
+        use WeaponMode as M;
+        let (w, me, foe) = pair(Species::Orc, NpcClass::Mage, 1400.0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Magic);
+        let (w, me, foe) = pair(Species::Orc, NpcClass::Mage, 480.0);
+        assert_eq!(choose_weapon_mode(&w, me, foe), M::Magic);
+        // Between 4 and 4.7 m a mage that holds a melee weapon keeps it; from the empty hands it
+        // casts.
+        let (w, me, foe) = pair(Species::Orc, NpcClass::Mage, 440.0);
+        assert!(matches!(
+            choose_weapon_mode(&w, me, foe),
+            M::Magic | M::Melee
+        ));
+    }
+
+    #[test]
+    fn the_spell_follows_species_and_opponent() {
+        let (mut w, me, _) = pair(Species::Orc, NpcClass::Mage, 1400.0);
+        let s = choose_spell(&mut w, me, "");
+        assert!(
+            matches!(s, "It_Spell_Fireball" | "It_Spell_Icelance"),
+            "{s}"
+        );
+        // A held ice lance is kept.
+        assert_eq!(
+            choose_spell(&mut w, me, "It_Spell_Icelance"),
+            "It_Spell_Icelance"
+        );
+        let (mut w, goblin, _) = pair(Species::Goblin, NpcClass::Mage, 1400.0);
+        assert_eq!(
+            choose_spell(&mut w, goblin, "It_Spell_Icelance"),
+            "It_Spell_Fireball"
+        );
+        let (mut w, golem, _) = pair(Species::IceGolem, NpcClass::None, 1400.0);
+        assert_eq!(choose_spell(&mut w, golem, ""), "It_Spell_Icelance");
+    }
+
+    #[test]
+    fn the_hands_decide_whether_anything_changes() {
+        let (w, me, foe) = pair(Species::Human, NpcClass::Warrior, 1500.0);
+        // Empty hands, a bow in the bag: ready the bow; without a bow stay with melee.
+        assert_eq!(
+            select_weapon_mode(&w, me, foe, true),
+            Some(WeaponMode::Ranged)
+        );
+        assert_eq!(
+            select_weapon_mode(&w, me, foe, false),
+            Some(WeaponMode::Melee)
+        );
+    }
 }

@@ -17,12 +17,13 @@
 //! original's: clip length divided by the play speed of the move.
 use super::anim::OverlayQueue;
 use super::hero::stance_of;
-use super::hero_moves::{HIT_FRACTION, direction_word, move_clip};
+use super::hero_moves::{HIT_FRACTION, direction_word};
 use super::{NpcActor, Roster};
 use bevy::prelude::*;
+use gothic_animation::names::MotionQuery;
 use gothic_animation::{ActorLibrary, Animator, Locomotion, MountOverride, Stance, WeaponMount};
-use gothic_sim::item::Use;
 use gothic_runtime::{Command, CoreCommand, CoreEvent, CoreRes, Event};
+use gothic_sim::item::Use;
 use gothic_sim::script::enums::{Action, AniState};
 use gothic_sim::script::host::MovePhase;
 use gothic_sim::sim::EventKind;
@@ -56,6 +57,11 @@ pub struct NpcMover {
     last: Option<(Action, AniState, &'static str)>,
     /// The move in flight is a cast.
     casting: bool,
+    /// The primary pose token `Pn` of the clip names (`GetPrimaryPoseExt`): the pose the last
+    /// clip ended in.
+    pose: u8,
+    /// The pose token the core knows.
+    sent_pose: u8,
 }
 
 /// Log of the clips the NPC movers started, newest last: `(time, actor, clip, speed)`.
@@ -75,10 +81,81 @@ pub fn register(app: &mut App) {
         .init_resource::<Driven>()
         .add_systems(
             Update,
-            (announce_bodies, npc_mover, npc_root_motion, npc_weapon_mounts)
+            (
+                announce_bodies,
+                npc_mover,
+                npc_root_motion,
+                npc_weapon_mounts,
+            )
                 .chain()
                 .after(super::npcs::sync_npcs),
         );
+}
+
+/// The motion-name tokens an action may be filed under in the animation data. The engine's own
+/// action -> clip name table is not recovered; the data has no `HackAttack` and `SimpleWhirl`
+/// clips, only `WhirlAttack` (the two-hander's guard-pose swing, the dual-wielder's `Stand` swing
+/// with `Hit` and `Recover`) and `TwirlAttack` (the source file of `_AI_SimpleWhirl` is
+/// `AI_TwirlAttack.cpp`) [I].
+fn clip_tokens(action: Action) -> Vec<&'static str> {
+    match action {
+        Action::HackAttack => vec!["HackAttack", "WhirlAttack"],
+        Action::SimpleWhirl => vec!["SimpleWhirl", "WhirlAttack", "TwirlAttack"],
+        Action::WhirlAttack => vec!["WhirlAttack", "TwirlAttack"],
+        other => vec![other.name()],
+    }
+}
+
+/// The clip of a combat move by `sAICombatMoveStart`'s naming rule with the pose token of the
+/// NPC: the direction falls back to `Fwd`, the pose token to the other poses of the set.
+#[allow(clippy::too_many_arguments)]
+fn npc_move_clip(
+    lib: &ActorLibrary,
+    family: &str,
+    pose: AniState,
+    hands: (&str, &str),
+    action: Action,
+    phase: MovePhase,
+    dir: &str,
+    pn: u8,
+) -> Option<String> {
+    let pose_word = match pose {
+        AniState::Parade => "Parade",
+        _ => "Stand",
+    };
+    let first = ["P0", "P1", "P2", "P3"][usize::from(pn.min(3))];
+    let mut order: Vec<&'static str> = vec![first];
+    order.extend(["P0", "P1", "P2", "P3"].into_iter().filter(|p| *p != first));
+    for token in clip_tokens(action) {
+        for d in [dir, "Fwd"] {
+            for left in [hands.0, "None"] {
+                for pn in &order {
+                    let q = MotionQuery {
+                        pose: Some(pose_word),
+                        left: Some(left),
+                        right: Some(hands.1),
+                        pn: Some(pn),
+                        action: Some(token),
+                        phase: Some(phase.token()),
+                        mode: Some("N"),
+                        dir: Some(d),
+                    };
+                    if let Some(n) = lib.catalog.find(family, &q) {
+                        return Some(n.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The pose token a clip ends in: the `Pm` before the last word of its name.
+fn end_pose(name: &str) -> Option<u8> {
+    let mut parts = name.rsplit('_');
+    parts.next()?;
+    let p = parts.next()?;
+    p.strip_prefix('P')?.parse().ok()
 }
 
 /// Tell the core which bodies are on screen: their clips set the pace of their moves.
@@ -150,6 +227,9 @@ fn npc_mover(
                 animator.overlay = None;
                 animator.play(motion, fade, speed, 0.0);
                 mover.clip = Some(name.to_string());
+                if let Some(p) = end_pose(name) {
+                    mover.pose = p;
+                }
                 log.clips.push((now, actor, name.to_string(), speed));
                 true
             }
@@ -203,7 +283,9 @@ fn npc_mover(
                     Some(Vec2::new(p.x - me.x, p.z - me.z))
                 });
                 let dir = direction_word(forward, to_target);
-                let clip = move_clip(&lib, &family, *pose, hands, *action, *phase, dir);
+                let clip = npc_move_clip(
+                    &lib, &family, *pose, hands, *action, *phase, dir, mover.pose,
+                );
                 let ok = clip.as_deref().is_some_and(|n| {
                     start(
                         &mut lib,
@@ -240,7 +322,16 @@ fn npc_mover(
                     }));
                 }
                 mover.last = Some((*action, *pose, dir));
-                mover.casting = matches!(action, Action::Cast | Action::PowerCast | Action::QuickCast);
+                mover.casting =
+                    matches!(action, Action::Cast | Action::PowerCast | Action::QuickCast);
+            }
+            EventKind::NpcAim { actor } => {
+                // The bow's raise and aim clips are overlays with pitch variants (`Aim` mode `O`).
+                if let Some(&entity) = roster.by_actor.get(actor)
+                    && let Ok((_, _, _, _, _, _, Some(mut queue))) = q.get_mut(entity)
+                {
+                    super::anim::queue_steps(&mut queue, &[("Aim", "Raise"), ("Aim", "Aim")]);
+                }
             }
             EventKind::NpcStop { actor } => {
                 if let Some(&entity) = roster.by_actor.get(actor)
@@ -266,6 +357,14 @@ fn npc_mover(
             mover.owned = false;
             mover.clip = None;
             continue;
+        }
+        if mover.pose != mover.sent_pose {
+            // `PSNpc::GetPrimaryPoseExt` (G:+0x1a0) alternates the quick attack's hand.
+            mover.sent_pose = mover.pose;
+            cmd.write(CoreCommand(Command::NpcPrimaryPose {
+                actor: npc.0,
+                pose: mover.pose,
+            }));
         }
         if mover.run == Run::Idle {
             if mover.owned {
@@ -296,15 +395,8 @@ fn npc_mover(
                 // A spell leaves when `_AI_Cast_Execute` begins, i.e. with its `Hit` clip; a blow
                 // lands at 60 percent of its clip (`sAICombatMoveItlLoop`).
                 let frac = if mover.casting { 0.0 } else { HIT_FRACTION };
-                if phase == MovePhase::Hit
-                    && !hit_sent
-                    && length > 0.0
-                    && time >= frac * length
-                {
-                    cmd.write(CoreCommand(Command::NpcMoveHit {
-                        actor: npc.0,
-                        seq,
-                    }));
+                if phase == MovePhase::Hit && !hit_sent && length > 0.0 && time >= frac * length {
+                    cmd.write(CoreCommand(Command::NpcMoveHit { actor: npc.0, seq }));
                     mover.run = Run::Move {
                         seq,
                         phase,
@@ -312,13 +404,11 @@ fn npc_mover(
                     };
                 }
                 if finished {
-                    cmd.write(CoreCommand(Command::NpcExecDone {
-                        actor: npc.0,
-                        seq,
-                    }));
+                    cmd.write(CoreCommand(Command::NpcExecDone { actor: npc.0, seq }));
                     if phase == MovePhase::Hit {
+                        let pn = mover.pose;
                         let recover = mover.last.and_then(|(a, p, d)| {
-                            move_clip(&lib, &family, p, hands, a, MovePhase::Recover, d)
+                            npc_move_clip(&lib, &family, p, hands, a, MovePhase::Recover, d, pn)
                         });
                         let played = recover.as_deref().is_some_and(|n| {
                             let rig = animator.rig.clone();
@@ -326,6 +416,9 @@ fn npc_mover(
                                 Ok(m) => {
                                     animator.play(m, 0.0, 1.0, 0.0);
                                     mover.clip = Some(n.to_string());
+                                    if let Some(p) = end_pose(n) {
+                                        mover.pose = p;
+                                    }
                                     log.clips.push((now, npc.0, n.to_string(), 1.0));
                                     true
                                 }

@@ -679,11 +679,11 @@ pub(super) fn sync_npcs(
         &mut NpcMotion,
         Option<&mut LocomotionInput>,
         &mut Animator,
-        &CombatStance,
+        &mut CombatStance,
     )>,
 ) {
     let dt = time.delta_secs().clamp(1.0e-3, 0.1);
-    for (entity, npc, mut tf, mut m, input, mut animator, cs) in &mut q {
+    for (entity, npc, mut tf, mut m, input, mut animator, mut cs) in &mut q {
         let actor = core.0.sim.actor(npc.0);
         let down = matches!(actor.ai_mode, AiMode::Dead | AiMode::Down) || actor.hp <= 0;
         if down {
@@ -745,7 +745,13 @@ pub(super) fn sync_npcs(
             let stance = if actor.drawn {
                 match super::hero::stance_of(&actor.equipment) {
                     Stance::Unarmed => cs.0,
-                    held => held,
+                    held => {
+                        // The overlays of shots and casts follow what the hands hold now.
+                        if cs.0 != held {
+                            cs.0 = held;
+                        }
+                        held
+                    }
                 }
             } else {
                 Stance::Unarmed

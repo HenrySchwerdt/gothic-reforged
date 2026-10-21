@@ -13,13 +13,13 @@
 //! `gothic_script::combat::commands::hit_window_secs` [I: no clip lengths without a body].
 use super::*;
 use crate::brain::{NpcExec, NpcStep, Strike};
+use crate::item::Use;
 use crate::script_host::SimHost;
 use gothic_script::combat::commands::{
     MovePlan, PlanStep, begin_jump_back_command, begin_melee_command, begin_parade_command,
 };
 use gothic_script::enums as se;
 use gothic_script::host::{EntityId, MovePhase};
-use crate::item::Use;
 
 /// A host that never answers must not freeze an NPC: an instruction ends by itself after this.
 const EXEC_TIMEOUT_MS: u64 = 8_000;
@@ -363,7 +363,8 @@ impl<W: WorldQuery> Sim<W> {
             return;
         }
         let Some(m) = sim_action(action) else { return };
-        if !m.is_melee_attack() {
+        // The finishing blow kills through its own timer (`FINISHING_SECS`).
+        if !m.is_melee_attack() || m == Action::FinishingAttack {
             return;
         }
         self.resolve_strike(
@@ -410,10 +411,23 @@ impl<W: WorldQuery> Sim<W> {
         if a.brain.plan.is_idle() || a.is_player {
             return;
         }
-        let mut p = self.pos(actor);
+        let old = self.pos(actor);
+        let mut p = old;
         p.x += dx;
         p.z += dz;
-        self.world.teleport(actor, p);
+        // Bodies do not overlap: a lunge stops at the other character's capsule (2 x 35.3 cm,
+        // the NPC templates' `CollisionRadius`).
+        let blocked = self.actors.iter().any(|o| {
+            o.id != actor
+                && o.is_alive()
+                && self
+                    .world
+                    .position(o.id)
+                    .is_some_and(|q| q.dist_xz(p) < 70.6 && q.dist_xz(p) < q.dist_xz(old))
+        });
+        if !blocked {
+            self.world.teleport(actor, p);
+        }
     }
 
     /// The host's clip of the instruction `seq` of `actor` reached its damage moment.
@@ -490,7 +504,11 @@ impl<W: WorldQuery> Sim<W> {
             pose: se::AniState::Stand,
             target: Some(attacker),
         });
-        self.actors[i].brain.plan.steps.push_back(NpcStep::End { guard: false });
+        self.actors[i]
+            .brain
+            .plan
+            .steps
+            .push_back(NpcStep::End { guard: false });
         let _ = now;
     }
 }
@@ -514,7 +532,8 @@ impl<W: WorldQuery> Sim<W> {
             let a = &self.actors[i];
             matches!(a.equipment.left_use(), Use::Bow | Use::CrossBow)
                 || a.brain.melee_kit.as_ref().is_some_and(|(l, _)| {
-                    l.as_ref().is_some_and(|d| matches!(d.use_kind(), Use::Bow | Use::CrossBow))
+                    l.as_ref()
+                        .is_some_and(|d| matches!(d.use_kind(), Use::Bow | Use::CrossBow))
                 })
                 || a.inventory.iter().any(|(t, _)| {
                     self.items
@@ -630,7 +649,12 @@ impl<W: WorldQuery> Sim<W> {
             .brain
             .melee_kit
             .as_ref()
-            .and_then(|(l, r)| [l, r].into_iter().flatten().find(|d| d.use_kind() == Use::Staff))
+            .and_then(|(l, r)| {
+                [l, r]
+                    .into_iter()
+                    .flatten()
+                    .find(|d| d.use_kind() == Use::Staff)
+            })
             .cloned();
         a.equipment.left = staff;
         a.equipment.right = Some(def);

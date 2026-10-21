@@ -120,7 +120,10 @@ fn an_archer_draws_the_bow_at_range_and_the_sword_up_close() {
     sim.run_ticks(200);
     let eq = &sim.actor(id).equipment;
     assert_eq!(eq.weapon_mode(), WeaponMode::Melee, "{eq:?}");
-    assert_eq!(eq.right.as_ref().map(|d| d.name.as_str()), Some("It_1H_Sword_01"));
+    assert_eq!(
+        eq.right.as_ref().map(|d| d.name.as_str()),
+        Some("It_1H_Sword_01")
+    );
 }
 
 #[test]
@@ -192,7 +195,11 @@ fn a_host_driven_swing_lands_when_the_clip_says_so() {
     let hit = first_hit_tick.expect("the orc never hit");
     let blow = first_blow_tick.expect("the host never reported a blow");
     // The event of the blow is drained one step after the host reported it.
-    assert_eq!(hit, blow + 1, "the damage lands with the host's blow, not before");
+    assert_eq!(
+        hit,
+        blow + 1,
+        "the damage lands with the host's blow, not before"
+    );
     // The first move asked is a clip of an attack, played at the ported speed: the halberd
     // of an orc is a two-hander (0.7 for the plain attack, S:42a0).
     let (a, _, speed) = moves
@@ -200,16 +207,80 @@ fn a_host_driven_swing_lands_when_the_clip_says_so() {
         .copied()
         .find(|m| m.1 == MovePhase::Hit && m.0 != se::Action::JumpBack)
         .expect("a Hit clip");
-    assert!(matches!(
-        a,
-        se::Action::Attack
-            | se::Action::PowerAttack
-            | se::Action::QuickAttackL
-            | se::Action::QuickAttackR
-            | se::Action::SimpleWhirl
-            | se::Action::WhirlAttack
-            | se::Action::HackAttack
-    ), "{a:?} {moves:?}");
+    assert!(
+        matches!(
+            a,
+            se::Action::Attack
+                | se::Action::PowerAttack
+                | se::Action::QuickAttackL
+                | se::Action::QuickAttackR
+                | se::Action::SimpleWhirl
+                | se::Action::WhirlAttack
+                | se::Action::HackAttack
+        ),
+        "{a:?} {moves:?}"
+    );
     assert!(speed > 0.0 && speed <= 1.5, "{a:?} at {speed}");
     let _ = started_at;
+}
+
+#[test]
+fn a_hit_makes_a_host_driven_victim_play_the_stumble_of_the_result() {
+    let (mut sim, hero) = world();
+    sim.state.level = 1;
+    let mut o = Actor::npc(ActorId(0), "Orc_Raider", Species::Orc, 10, 30);
+    o.alignment = Alignment::Orc;
+    o.refresh(&SimConfig::default());
+    o.base_attitude_to_player = Attitude::None;
+    let w = gothic_sim::data::default_weapon(&sim.items, o.species).unwrap();
+    o.equipment.equip(w);
+    let orc = sim.spawn(o, Pos::flat(150.0, 0.0));
+    sim.actor_mut(hero).ai_controlled = false;
+    sim.set_host_drives_npc(orc, true);
+    sim.equip(hero, "It_1H_Sword_01").ok();
+    sim.drain_events();
+    let out = sim.melee_hit(hero, orc);
+    let ev = sim.drain_events();
+    let stumble = ev.iter().find_map(|e| match &e.kind {
+        EventKind::NpcMove {
+            actor,
+            action,
+            phase,
+            ..
+        } if *actor == orc => Some((*action, *phase)),
+        _ => None,
+    });
+    if out.result.is_parry() || out.damage == 0 {
+        return;
+    }
+    // The plan starts with the next tick of the victim.
+    sim.run_ticks(2);
+    let ev2 = sim.drain_events();
+    let found = stumble.or_else(|| {
+        ev2.iter().find_map(|e| match &e.kind {
+            EventKind::NpcMove {
+                actor,
+                action,
+                phase,
+                ..
+            } if *actor == orc => Some((*action, *phase)),
+            _ => None,
+        })
+    });
+    let (action, phase) = found.expect("the victim plays a reaction clip");
+    assert_eq!(phase, MovePhase::Hit);
+    assert!(
+        matches!(
+            action,
+            se::Action::QuickStumble
+                | se::Action::StumbleL
+                | se::Action::StumbleR
+                | se::Action::PierceStumble
+                | se::Action::ParadeStumbleL
+                | se::Action::ParadeStumbleR
+                | se::Action::HeavyParadeStumble
+        ),
+        "{action:?} for {:?}",
+        out.result
+    );
 }

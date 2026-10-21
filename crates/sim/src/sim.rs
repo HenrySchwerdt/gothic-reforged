@@ -24,9 +24,8 @@ use crate::rng::Rng;
 use crate::routine::{
     GameClock, RoutineResolver, TaskContext, follow_distance, routine_time, select_routine_task,
 };
-use crate::tactics::{attack_range, wants_to_flee};
 use crate::types::*;
-use crate::vitals::{self, TickEnv, stamina_cost};
+use crate::vitals::{self, TickEnv};
 use crate::world::{Pos, WorldQuery, in_fov};
 use gothic_gameplay::model::QuestStatus;
 use gothic_gameplay::script::{ExecResult, Output, npc_defeated, npc_killed};
@@ -164,6 +163,11 @@ pub enum EventKind {
         speed: f32,
         pose: gothic_script::enums::AniState,
         target: Option<ActorId>,
+    },
+    /// An NPC archer starts to take aim (`ZS_Attack_Shoot` S:18ed0 waits a second before
+    /// `_AI_Shoot`): the host plays the raise and aim clips of the bow.
+    NpcAim {
+        actor: ActorId,
     },
     /// The running instruction of an NPC was dropped (a blow, death): stop its clip.
     NpcStop {
@@ -696,9 +700,7 @@ impl<W: WorldQuery> Sim<W> {
                 v.brain.busy_until_ms = now + lock;
             }
         }
-        if lock > 0
-            && self.actors[vi].action != Action::SprintAttack
-            && !self.actors[vi].is_player
+        if lock > 0 && self.actors[vi].action != Action::SprintAttack && !self.actors[vi].is_player
         {
             // The victim's running instruction ends; the reaction clip of the result plays.
             self.npc_react_to_hit(vi, now, outcome.result, att);
@@ -1217,18 +1219,32 @@ impl<W: WorldQuery> Sim<W> {
         if matches!(self.actors[i].ai_mode, AiMode::Dead | AiMode::Down) {
             return;
         }
+        if st.action == Action::FinishingAttack {
+            // `OnAI_FinishingAttack`: the downed victim dies when the blow has taken
+            // `FINISHING_SECS` (the strike was queued with that delay).
+            if self.actors[st.target.0 as usize].ai_mode == AiMode::Down {
+                self.kill(st.target, Some(id));
+            }
+            return;
+        }
         let t = &self.actors[st.target.0 as usize];
         if matches!(t.ai_mode, AiMode::Dead | AiMode::Down) {
             return;
         }
-        let (sp, fist) = {
-            let a = &self.actors[i];
-            (a.species, a.equipment.weapon_damage().is_none())
-        };
         // An NPC's blow reaches as far as it may start (`GetAttackRange`, S:4e940: species base
         // plus the length of the move); the hero's keeps the slack of the player layer.
         let slack = if self.actors[i].is_player { 50.0 } else { 0.0 };
-        let reach = attack_range(sp, fist, st.action) + slack;
+        let reach = {
+            let host = crate::script_host::SimHost::new(self);
+            let mv = vitals::script_action(st.action);
+            gothic_script::combat::range::attack_range(
+                &host,
+                crate::script_host::entity_of(id),
+                crate::script_host::entity_of(st.target),
+                mv,
+            ) as f32
+                + slack
+        };
         if self.dist(id, st.target) > reach {
             self.push(EventKind::Whiff {
                 attacker: id,
@@ -1859,6 +1875,20 @@ impl<W: WorldQuery> Sim<W> {
 }
 
 /// Parse `wpos x y z` style position words (`lpos`, `wposg`, `lposg` too) [GAME_RULES 3 Spawn].
+/// The shipped `WantToFlee` is a stub (S:bd420, returns 0); the optional variant makes non-boss
+/// NPCs flee at low HP without a potion (off by default, not part of the port).
+fn wants_to_flee(cfg: &SimConfig, a: &Actor) -> bool {
+    match cfg.variants.flee_below_hp_pct {
+        Some(p) => {
+            !a.is_player
+                && !a.boss
+                && a.hp * 100 < a.hp_max(cfg) * p
+                && a.inventory.count("it_potion_health") == 0
+        }
+        None => false,
+    }
+}
+
 fn parse_pos(s: &str) -> Option<Pos> {
     let nums: Vec<f32> = s
         .split_whitespace()

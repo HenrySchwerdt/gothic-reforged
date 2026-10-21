@@ -268,10 +268,17 @@ impl<W: WorldQuery> Sim<W> {
         match cmd {
             AiCommand::Attack { action, target } => {
                 let tid = actor_id(target);
-                if action == se::Action::FinishingAttack {
-                    self.begin_swing(i, tid, Action::FinishingAttack, now);
-                } else if from_script_action(action).is_some() {
+                if from_script_action(action).is_some() {
                     self.npc_begin_melee(i, action, tid);
+                }
+                if action == se::Action::FinishingAttack {
+                    // The victim dies when the blow ran `FINISHING_SECS` (`OnAI_FinishingAttack`).
+                    let secs = gothic_script::combat::commands::FINISHING_SECS;
+                    self.actors[i].brain.strike = Some(Strike {
+                        at_ms: now + (secs * 1000.0) as u64,
+                        action: Action::FinishingAttack,
+                        target: tid,
+                    });
                 }
             }
             AiCommand::Parade { target } => {
@@ -346,7 +353,8 @@ impl<W: WorldQuery> Sim<W> {
                     gothic_script::player::ranged::shoot(&mut host, entity(id), target);
                     // `_AI_Shoot` (S:4a710) ends by preparing the next aim
                     // (`sAIPrepareAimInstr(1.0)`, S:4a8c5): the raise clip of the weapon.
-                    let crossbow = self.actors[i].equipment.left_use() == crate::item::Use::CrossBow;
+                    let crossbow =
+                        self.actors[i].equipment.left_use() == crate::item::Use::CrossBow;
                     let raise = if crossbow {
                         gothic_projectile::aim::clips::crossbow::RAISE
                     } else {
@@ -367,6 +375,9 @@ impl<W: WorldQuery> Sim<W> {
                 }
             }
             AiCommand::WaitMs { ms } => {
+                if self.actors[i].action == Action::Shoot {
+                    self.push(EventKind::NpcAim { actor: id });
+                }
                 let a = &mut self.actors[i];
                 a.brain.busy_until_ms = now + u64::from(ms);
                 if a.action == Action::Parade {
@@ -425,41 +436,6 @@ impl<W: WorldQuery> Sim<W> {
             }
             _ => {}
         }
-    }
-
-    /// Start a melee swing: pay the stamina, open the hit window later, stay busy for the
-    /// recovery. Stamina-starved fighters catch their breath instead.
-    fn begin_swing(&mut self, i: usize, tid: ActorId, m: Action, now: u64) {
-        let cost = stamina_cost(&self.cfg, m);
-        self.face(i, tid);
-        if m == Action::FinishingAttack {
-            let id = self.actors[i].id;
-            self.actors[i].action = m;
-            self.actors[i].brain.last_move = m;
-            self.actors[i].brain.busy_until_ms = now + 1200;
-            self.kill(tid, Some(id));
-            return;
-        }
-        // Opt-in variant: NPC swings are telegraphed (never changes the player's moves).
-        let telegraph = match self.cfg.variants.npc_telegraph_ms {
-            Some(ms) if !self.actors[i].is_player => u64::from(ms),
-            _ => 0,
-        };
-        let a = &mut self.actors[i];
-        if a.stamina <= 0 && cost > 0 {
-            a.brain.busy_until_ms = now + 500;
-            return;
-        }
-        a.stamina = (a.stamina - cost).max(0);
-        a.action = m;
-        a.brain.last_move = m;
-        a.brain.last_strike_ms = Some(now);
-        a.brain.strike = Some(Strike {
-            at_ms: now + (vitals::hit_window_secs(m) * 1000.0) as u64 + telegraph,
-            action: m,
-            target: tid,
-        });
-        a.brain.busy_until_ms = now + move_duration_ms(m) + telegraph;
     }
 
     /// One tick of a running movement instruction: the callback may end it by switching the

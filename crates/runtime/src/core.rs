@@ -161,6 +161,11 @@ pub enum Command {
         dx: f32,
         dz: f32,
     },
+    /// The pose token `Pn` the clips of an NPC's last move ended in (`GetPrimaryPoseExt`).
+    NpcPrimaryPose {
+        actor: ActorId,
+        pose: u8,
+    },
     /// An NPC's instruction ended.
     NpcExecDone {
         actor: ActorId,
@@ -868,6 +873,10 @@ impl Core {
             Command::HeroExecDone { seq } => self.sim.hero_exec_done(*seq),
             Command::HeroHoldSwap { seq } => self.sim.hero_hold_swap(*seq),
             Command::HostDrivesNpc { actor, on } => self.sim.set_host_drives_npc(*actor, *on),
+            Command::NpcPrimaryPose { actor, pose } => {
+                // The script counts poses from 1 (`P0` of the clip names is pose 1).
+                self.sim.script.npc_mut(*actor).primary_pose = u32::from(*pose) + 1
+            }
             Command::NpcNudge { actor, dx, dz } => self.sim.nudge_npc(*actor, *dx, *dz),
             Command::NpcMoveHit { actor, seq } => self.sim.npc_move_hit(*actor, *seq),
             Command::NpcExecDone { actor, seq } => self.sim.npc_exec_done(*actor, *seq),

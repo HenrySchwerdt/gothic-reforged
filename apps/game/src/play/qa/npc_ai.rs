@@ -14,6 +14,8 @@ use bevy::prelude::*;
 use gothic_animation::ActorLibrary;
 use gothic_sim::types::{ActorId, AttackReason};
 
+const CM: f32 = 0.01;
+
 /// Start / stop of the frame capture of `--record DIR` (fixed 1/30 s steps).
 fn rec(sc: &mut Sc, on: bool) {
     sc.act(if on { "record on" } else { "record off" }, move |cx| {
@@ -62,6 +64,25 @@ fn nearest(cx: &Cx, prefix: &str, n: usize) -> Vec<ActorId> {
     v.into_iter().take(n).map(|x| x.1).collect()
 }
 
+/// Fixed camera on the fight of the tracked characters (setup, not under test): 4.5 m to the side
+/// of the middle between the hero and the first fighter, chest high.
+fn fight_cam(cx: &mut Cx, key: &str) {
+    let hero = cx.hero_pos();
+    let Some(p) = ids(cx, key).first().and_then(|id| cx.actor_pos(*id)) else {
+        return;
+    };
+    let mid = (hero + p) * 0.5 * CM;
+    let dir = (p - hero).with_y(0.0).normalize_or_zero();
+    let side = Vec3::new(-dir.z, 0.0, dir.x);
+    let pos = mid + side * 4.5 + Vec3::Y * 1.9;
+    let look = mid + Vec3::Y * 1.1;
+    cx.world.resource_mut::<super::super::PlayState>().cinematic = Some((pos, look));
+}
+
+fn fight_cam_off(cx: &mut Cx) {
+    cx.world.resource_mut::<super::super::PlayState>().cinematic = None;
+}
+
 /// Records every frame what the fight needs: states, engaged count, hero hp drops.
 fn trace(sc: &mut Sc, key: &'static str) {
     sc.watch(move |cx| {
@@ -80,6 +101,13 @@ fn trace(sc: &mut Sc, key: &'static str) {
         if f64::from(hp) < last && last <= f64::from(max) {
             let tr = cx.st.store.entry("hero_drops".into()).or_default();
             tr.push_str(&format!("{now:.3},{}\n", last - f64::from(hp)));
+            let nearest = ids(cx, key)
+                .iter()
+                .filter_map(|id| cx.actor_pos(*id))
+                .map(|p| flat(p - cx.hero_pos()).length())
+                .fold(f32::MAX, f32::min);
+            let dd = cx.st.store.entry("drop_dists".into()).or_default();
+            dd.push_str(&format!("{nearest:.0} "));
         }
         cx.st.n.insert("hp_last".into(), f64::from(hp.max(max / 2)));
         let tracked = ids(cx, key);
@@ -170,107 +198,144 @@ fn expected_speed(name: &str, stamina_ok: bool) -> Option<Vec<f32>> {
 /// Verifies the clips of the swings the NPCs played: every swing has a clip, its speed is the
 /// ported rule's, and the damage landed 60 % into the `Hit` clip (divided by the speed).
 fn swing_checks(sc: &mut Sc, key: &'static str, min_hero_hits: usize) {
-    sc.check("the swings played their clips (no instruction without a clip)", move |cx| {
-        let missing = cx.world.resource::<NpcMoveLog>().missing.clone();
-        let swings: Vec<_> = clips(cx)
-            .into_iter()
-            .filter(|c| c.2.contains("_Attack_") || c.2.contains("PowerAttack") || c.2.contains("QuickAttack"))
-            .collect();
-        let miss: Vec<_> = missing
-            .iter()
-            .filter(|(_, m)| m.contains("Attack"))
-            .collect();
-        expect(
-            swings.len() >= 2 && miss.is_empty(),
-            format!("{} swing clips, e.g. {}", swings.len(), swings.first().map_or("", |c| c.2.as_str())),
-            format!("{} swing clips, missing {miss:?}", swings.len()),
-        )
-    });
-    sc.check("the play speed of every swing clip is the ported rule (sub_42a0)", move |cx| {
-        let mut bad = Vec::new();
-        let mut n = 0;
-        for (_, _, name, speed) in clips(cx) {
-            if let Some(exp) = expected_speed(&name, true) {
-                n += 1;
-                // Tired fighters play slower (the stamina bands of the same rule): allow it.
-                if !exp.iter().any(|e| (speed - e).abs() < 0.02 || (*e - speed) > 0.0 && (*e - speed) <= 0.31) {
-                    bad.push(format!("{name} @{speed}"));
+    sc.check(
+        "the swings played their clips (no instruction without a clip)",
+        move |cx| {
+            let missing = cx.world.resource::<NpcMoveLog>().missing.clone();
+            let swings: Vec<_> = clips(cx)
+                .into_iter()
+                .filter(|c| {
+                    c.2.contains("_Attack_")
+                        || c.2.contains("PowerAttack")
+                        || c.2.contains("QuickAttack")
+                })
+                .collect();
+            let mut miss: Vec<String> = missing
+                .iter()
+                .filter(|(_, m)| m.contains("Attack"))
+                .map(|(_, m)| m.clone())
+                .collect();
+            miss.sort();
+            miss.dedup();
+            expect(
+                swings.len() >= 2 && miss.is_empty(),
+                format!(
+                    "{} swing clips, e.g. {}",
+                    swings.len(),
+                    swings.first().map_or("", |c| c.2.as_str())
+                ),
+                format!("{} swing clips, missing {miss:?}", swings.len()),
+            )
+        },
+    );
+    sc.check(
+        "the play speed of every swing clip is the ported rule (sub_42a0)",
+        move |cx| {
+            let mut bad = Vec::new();
+            let mut n = 0;
+            for (_, _, name, speed) in clips(cx) {
+                if let Some(exp) = expected_speed(&name, true) {
+                    n += 1;
+                    // Tired fighters play slower (the stamina bands of the same rule): allow it.
+                    if !exp.iter().any(|e| {
+                        (speed - e).abs() < 0.02 || (*e - speed) > 0.0 && (*e - speed) <= 0.31
+                    }) {
+                        bad.push(format!("{name} @{speed}"));
+                    }
                 }
             }
-        }
-        expect(
-            n >= 2 && bad.is_empty(),
-            format!("{n} clips checked"),
-            format!("{n} checked, wrong: {bad:?}"),
-        )
-    });
-    sc.check("the damage lands at 60 percent of the Hit clip", move |cx| {
-        let hits: Vec<(f32, ActorId, String, f32)> = clips(cx)
-            .into_iter()
-            .filter(|c| c.2.contains("_Hit_") && !c.2.contains("Stumble") && !c.2.contains("Cast") && !c.2.contains("JumpBack"))
-            .collect();
-        let d = drops(cx);
-        let tracked = ids(cx, key);
-        let mut matched = 0;
-        let mut worst = 0.0f32;
-        let mut unmatched = Vec::new();
-        for (t, _) in &d {
-            let mut best: Option<f32> = None;
-            for (t0, who, name, speed) in &hits {
-                if !tracked.contains(who) {
-                    continue;
+            expect(
+                n >= 2 && bad.is_empty(),
+                format!("{n} clips checked"),
+                format!("{n} checked, wrong: {bad:?}"),
+            )
+        },
+    );
+    sc.check(
+        "the damage lands at 60 percent of the Hit clip",
+        move |cx| {
+            let hits: Vec<(f32, ActorId, String, f32)> = clips(cx)
+                .into_iter()
+                .filter(|c| {
+                    c.2.contains("_Hit_")
+                        && !c.2.contains("Stumble")
+                        && !c.2.contains("Cast")
+                        && !c.2.contains("JumpBack")
+                })
+                .collect();
+            let d = drops(cx);
+            let tracked = ids(cx, key);
+            let mut matched = 0;
+            let mut worst = 0.0f32;
+            let mut unmatched = Vec::new();
+            for (t, _) in &d {
+                let mut best: Option<f32> = None;
+                for (t0, who, name, speed) in &hits {
+                    if !tracked.contains(who) {
+                        continue;
+                    }
+                    let dur = {
+                        let mut lib = cx.world.resource_mut::<ActorLibrary>();
+                        lib.clip(name).map_or(0.0, |c| c.duration)
+                    };
+                    let want = 0.6 * dur / speed.max(0.05);
+                    let got = t - t0;
+                    let err = (got - want).abs();
+                    if got >= 0.0 && err < 0.2 && best.is_none_or(|b| err < b) {
+                        best = Some(err);
+                    }
                 }
-                let dur = {
-                    let mut lib = cx.world.resource_mut::<ActorLibrary>();
-                    lib.clip(name).map_or(0.0, |c| c.duration)
-                };
-                let want = 0.6 * dur / speed.max(0.05);
-                let got = t - t0;
-                let err = (got - want).abs();
-                if got >= 0.0 && err < 0.2 && best.is_none_or(|b| err < b) {
-                    best = Some(err);
+                match best {
+                    Some(e) => {
+                        matched += 1;
+                        worst = worst.max(e);
+                    }
+                    None => unmatched.push(*t),
                 }
             }
-            match best {
-                Some(e) => {
-                    matched += 1;
-                    worst = worst.max(e);
-                }
-                None => unmatched.push(*t),
-            }
-        }
-        expect(
-            d.len() >= min_hero_hits && unmatched.is_empty(),
-            format!("{matched} hero hits, all within {worst:.2}s of 0.6 * clip / speed"),
-            format!("{} hero hits, unmatched at {unmatched:?}", d.len()),
-        )
-    });
+            expect(
+                d.len() >= min_hero_hits && unmatched.is_empty(),
+                format!("{matched} hero hits, all within {worst:.2}s of 0.6 * clip / speed"),
+                format!("{} hero hits, unmatched at {unmatched:?}", d.len()),
+            )
+        },
+    );
 }
 
 fn provoke(sc: &mut Sc, key: &'static str, prefix: &'static str, n: usize) {
-    sc.act(format!("setup: {n} x {prefix} attack the hero"), move |cx| {
-        let found = nearest(cx, prefix, n);
-        if found.len() < n {
-            cx.check("enough characters", false, format!("{} of {n} {prefix}", found.len()));
-            return;
-        }
-        let hero = cx.core().0.hero;
-        let mut list = String::new();
-        for id in &found {
-            if !list.is_empty() {
-                list.push(',');
+    sc.act(
+        format!("setup: {n} x {prefix} attack the hero"),
+        move |cx| {
+            let found = nearest(cx, prefix, n);
+            if found.len() < n {
+                cx.check(
+                    "enough characters",
+                    false,
+                    format!("{} of {n} {prefix}", found.len()),
+                );
+                return;
             }
-            list.push_str(&id.0.to_string());
-            let name = name_of(cx, *id);
-            let hp = cx.core().0.sim.actor(*id).hp;
-            let d = cx
-                .actor_pos(*id)
-                .map_or(0.0, |p| flat(p - cx.hero_pos()).length());
-            cx.note(format!("{name} hp {hp} at {d:.0} cm attacks the hero"));
-            cx.core_mut().0.sim.assess_target(*id, hero, AttackReason::Enemy);
-        }
-        cx.st.store.insert(key.into(), list);
-    });
+            let hero = cx.core().0.hero;
+            let mut list = String::new();
+            for id in &found {
+                if !list.is_empty() {
+                    list.push(',');
+                }
+                list.push_str(&id.0.to_string());
+                let name = name_of(cx, *id);
+                let hp = cx.core().0.sim.actor(*id).hp;
+                let d = cx
+                    .actor_pos(*id)
+                    .map_or(0.0, |p| flat(p - cx.hero_pos()).length());
+                cx.note(format!("{name} hp {hp} at {d:.0} cm attacks the hero"));
+                cx.core_mut()
+                    .0
+                    .sim
+                    .assess_target(*id, hero, AttackReason::Enemy);
+            }
+            cx.st.store.insert(key.into(), list);
+        },
+    );
 }
 
 /// Hero against `n` raiders of the start: standing still, they come and fight.
@@ -283,20 +348,19 @@ fn raiders(n: usize, secs: f32, name: &'static str) -> Sc {
     sc.wait(2.5);
     sc.shot(&format!("{name}_approach"));
     sc.step(format!("the fight, {secs} s"), move |cx| {
-        // The camera follows the fight (setup, not under test).
-        if let Some(id) = ids(cx, "npcs").first().copied()
-            && let Some(p) = cx.actor_pos(id)
-        {
-            cx.aim_at(p, -0.1);
-        }
-        if cx.t > secs {
-            Poll::Done
-        } else {
-            Poll::Wait
-        }
+        fight_cam(cx, "npcs");
+        if cx.t > secs { Poll::Done } else { Poll::Wait }
     });
     sc.shot(&format!("{name}_fight"));
     rec(&mut sc, false);
+    sc.act("camera back", fight_cam_off);
+    sc.act(
+        "note: distance of the nearest fighter at each hero hit",
+        |cx| {
+            let d = cx.st.store.get("drop_dists").cloned().unwrap_or_default();
+            cx.note(format!("hero hit at distances (cm): {d}"));
+        },
+    );
     sc.check("the fighters went through the ported attack states", |cx| {
         let all = ids(cx, "npcs");
         let mut text = Vec::new();
@@ -316,14 +380,19 @@ fn raiders(n: usize, secs: f32, name: &'static str) -> Sc {
                 )
             });
             text.push(format!("{}: {}", name_of(cx, *id), s.join(" ")));
-            ok_all &= s.iter().any(|x| x == "ZS_Attack_Goto") && s.iter().any(|x| x == "ZS_Attack_Loop");
+            ok_all &=
+                s.iter().any(|x| x == "ZS_Attack_Goto") && s.iter().any(|x| x == "ZS_Attack_Loop");
             let _ = swing;
         }
         expect(ok_all, text.join(" | "), text.join(" | "))
     });
     sc.check("somebody swung and the swing played its clip", |cx| {
         let swung = clips(cx).iter().any(|c| c.2.contains("Attack_Hit"));
-        expect(swung, "an Attack Hit clip played", "no attack clip in the log")
+        expect(
+            swung,
+            "an Attack Hit clip played",
+            "no attack clip in the log",
+        )
     });
     sc
 }
@@ -331,11 +400,23 @@ fn raiders(n: usize, secs: f32, name: &'static str) -> Sc {
 pub fn npc_orc1() -> Sc {
     let mut sc = raiders(1, 40.0, "orc1");
     swing_checks(&mut sc, "npcs", 1);
-    sc.check("the orc keeps its distance rules (never inside the hero)", |cx| {
-        let id = ids(cx, "npcs")[0];
-        let d = cx.st.n.get(&format!("dmin_{}", id.0)).copied().unwrap_or(0.0);
-        expect(d > 60.0, format!("closest {d:.0} cm"), format!("closest {d:.0} cm: inside the hero"))
-    });
+    sc.check(
+        "the orc keeps its distance rules (never inside the hero)",
+        |cx| {
+            let id = ids(cx, "npcs")[0];
+            let d = cx
+                .st
+                .n
+                .get(&format!("dmin_{}", id.0))
+                .copied()
+                .unwrap_or(0.0);
+            expect(
+                d > 60.0,
+                format!("closest {d:.0} cm"),
+                format!("closest {d:.0} cm: inside the hero"),
+            )
+        },
+    );
     sc
 }
 
@@ -362,6 +443,7 @@ pub fn npc_shaman() -> Sc {
     grab(&mut sc);
     find_and_place(&mut sc, "Shaman", 1400.0);
     trace(&mut sc, "npcs");
+    super::ranged::visual_watch(&mut sc);
     sc.act("setup: the shaman attacks the hero", |cx| {
         let id = ActorId(cx.st.n["tgt"] as u32);
         cx.st.store.insert("npcs".into(), id.0.to_string());
@@ -370,27 +452,23 @@ pub fn npc_shaman() -> Sc {
         cx.st.n.insert("casts0".into(), f64::from(f.casts));
         let s = cx.world.resource::<ShotsOnScreen>();
         cx.st.n.insert("m0".into(), f64::from(s.spell_spawned));
-        cx.core_mut().0.sim.assess_target(id, hero, AttackReason::Enemy);
+        cx.core_mut()
+            .0
+            .sim
+            .assess_target(id, hero, AttackReason::Enemy);
     });
     rec(&mut sc, true);
     sc.step("the duel, 40 s", move |cx| {
-        if let Some(id) = ids(cx, "npcs").first().copied()
-            && let Some(p) = cx.actor_pos(id)
-        {
-            cx.aim_at(p, -0.05);
-        }
+        fight_cam(cx, "npcs");
         let s = cx.world.resource::<ShotsOnScreen>();
         let m = s.spell_spawned;
         let vis = cx.st.n.get("vis_spell").copied().unwrap_or(0.0);
         let _ = (m, vis);
-        if cx.t > 40.0 {
-            Poll::Done
-        } else {
-            Poll::Wait
-        }
+        if cx.t > 40.0 { Poll::Done } else { Poll::Wait }
     });
     sc.shot("shaman_cast");
     rec(&mut sc, false);
+    sc.act("camera back", fight_cam_off);
     sc.check("the shaman holds a spell (ported _AI_SelectWeapon)", |cx| {
         let id = ids(cx, "npcs")[0];
         let eq = cx.core().0.sim.actor(id).equipment.clone();
@@ -407,13 +485,31 @@ pub fn npc_shaman() -> Sc {
         let m = cx.world.resource::<ShotsOnScreen>().spell_spawned;
         expect(
             f64::from(f) > cx.st.n["casts0"] && f64::from(m) > cx.st.n["m0"],
-            format!("casts {} -> {f}, missiles {} -> {m}", cx.st.n["casts0"], cx.st.n["m0"]),
+            format!(
+                "casts {} -> {f}, missiles {} -> {m}",
+                cx.st.n["casts0"], cx.st.n["m0"]
+            ),
             format!("casts {f}, missiles {m}"),
         )
     });
+    sc.check(
+        "VISUAL: the spell missile was drawn on screen while it flew",
+        |cx| {
+            let n = cx.st.n.get("vis_spell").copied().unwrap_or(0.0);
+            expect(
+                n >= 3.0,
+                format!("{n} frames inside the screen"),
+                format!("only {n} frames"),
+            )
+        },
+    );
     sc.check("the spell hurt the hero (a missile reached him)", |cx| {
         let d = drops(cx);
-        expect(!d.is_empty(), format!("{} hero hits", d.len()), "no hp lost")
+        expect(
+            !d.is_empty(),
+            format!("{} hero hits", d.len()),
+            "no hp lost",
+        )
     });
     sc
 }
@@ -424,38 +520,44 @@ pub fn npc_archer() -> Sc {
     grab(&mut sc);
     find_and_place(&mut sc, "RebWarrior", 1800.0);
     trace(&mut sc, "npcs");
+    super::ranged::visual_watch(&mut sc);
     sc.act("setup: the archer attacks the hero", |cx| {
         let id = ActorId(cx.st.n["tgt"] as u32);
         cx.st.store.insert("npcs".into(), id.0.to_string());
         let hero = cx.core().0.hero;
         let s = cx.world.resource::<ShotsOnScreen>();
         cx.st.n.insert("a0".into(), f64::from(s.arrows_spawned));
-        cx.core_mut().0.sim.assess_target(id, hero, AttackReason::Enemy);
+        cx.core_mut()
+            .0
+            .sim
+            .assess_target(id, hero, AttackReason::Enemy);
     });
     rec(&mut sc, true);
     sc.step("the duel, 40 s", move |cx| {
         let id = ids(cx, "npcs")[0];
-        if let Some(p) = cx.actor_pos(id) {
-            cx.aim_at(p, -0.05);
-        }
+        fight_cam(cx, "npcs");
         // Keep the hero out of melee reach so the bow stays the weapon (setup, not under test).
         let wm = cx.core().0.sim.actor(id).equipment.weapon_mode();
         if wm == gothic_sim::item::WeaponMode::Ranged {
             let k = cx.st.n.get("ranged_frames").copied().unwrap_or(0.0);
             cx.st.n.insert("ranged_frames".into(), k + 1.0);
         }
-        if cx.t > 40.0 {
-            Poll::Done
-        } else {
-            Poll::Wait
-        }
+        if cx.t > 40.0 { Poll::Done } else { Poll::Wait }
     });
     sc.shot("archer_shoots");
     rec(&mut sc, false);
-    sc.check("the archer took the bow at range (ported _AI_SelectWeapon, S:4a030)", |cx| {
-        let k = cx.st.n.get("ranged_frames").copied().unwrap_or(0.0);
-        expect(k > 10.0, format!("bow in the hands for {k} frames"), "the bow was never in the hands")
-    });
+    sc.act("camera back", fight_cam_off);
+    sc.check(
+        "the archer took the bow at range (ported _AI_SelectWeapon, S:4a030)",
+        |cx| {
+            let k = cx.st.n.get("ranged_frames").copied().unwrap_or(0.0);
+            expect(
+                k > 10.0,
+                format!("bow in the hands for {k} frames"),
+                "the bow was never in the hands",
+            )
+        },
+    );
     sc.check("arrows flew", |cx| {
         let a = cx.world.resource::<ShotsOnScreen>().arrows_spawned;
         expect(
@@ -464,11 +566,17 @@ pub fn npc_archer() -> Sc {
             format!("arrows {a}"),
         )
     });
-    sc.check("the archer's aim clips played", |cx| {
-        // The projectile events carry the archer's `Aim` overlay (play/ranged.rs).
-        let n = cx.world.resource::<NpcMoveLog>().clips.len();
-        expect(n > 0 || true, format!("{n} script clips"), "none")
-    });
+    sc.check(
+        "VISUAL: the arrow was drawn on screen while it flew",
+        |cx| {
+            let n = cx.st.n.get("vis_arrow").copied().unwrap_or(0.0);
+            expect(
+                n >= 2.0,
+                format!("{n} frames inside the screen"),
+                format!("only {n} frames"),
+            )
+        },
+    );
     sc
 }
 
@@ -477,48 +585,56 @@ pub fn npc_vs_npc() -> Sc {
     let mut sc = Sc::new(200.0);
     grab(&mut sc);
     trace(&mut sc, "npcs");
-    sc.act("setup: a raider and the nearest human attack each other", |cx| {
-        let Some(&r) = nearest(cx, "Orc_GameStartRaider", 1).first() else {
-            cx.check("a raider exists", false, "none");
-            return;
-        };
-        let rp = cx.actor_pos(r).unwrap_or(Vec3::ZERO);
-        let hero = cx.core().0.hero;
-        let human = cx
-            .core()
-            .0
-            .sim
-            .actors
-            .iter()
-            .filter(|a| {
-                a.is_alive()
-                    && a.id != hero
-                    && a.id != r
-                    && a.species == gothic_sim::types::Species::Human
-                    && !a.name.starts_with("Orc")
-            })
-            .filter_map(|a| cx.actor_pos(a.id).map(|p| (flat(p - rp).length(), a.id)))
-            .min_by(|a, b| a.0.total_cmp(&b.0));
-        let Some((d, h)) = human else {
-            cx.check("a human exists", false, "none");
-            return;
-        };
-        cx.note(format!(
-            "{} vs {} at {d:.0} cm",
-            name_of(cx, r),
-            name_of(cx, h)
-        ));
-        cx.st
-            .store
-            .insert("npcs".into(), format!("{},{}", r.0, h.0));
-        cx.st.n.insert("hp_r0".into(), f64::from(cx.core().0.sim.actor(r).hp));
-        cx.st.n.insert("hp_h0".into(), f64::from(cx.core().0.sim.actor(h).hp));
-        let mut c = cx.core_mut();
-        c.0.sim.assess_target(r, h, AttackReason::Enemy);
-        c.0.sim.assess_target(h, r, AttackReason::Enemy);
-    });
+    sc.act(
+        "setup: a raider and the nearest human attack each other",
+        |cx| {
+            let Some(&r) = nearest(cx, "Orc_GameStartRaider", 1).first() else {
+                cx.check("a raider exists", false, "none");
+                return;
+            };
+            let rp = cx.actor_pos(r).unwrap_or(Vec3::ZERO);
+            let hero = cx.core().0.hero;
+            let human = cx
+                .core()
+                .0
+                .sim
+                .actors
+                .iter()
+                .filter(|a| {
+                    a.is_alive()
+                        && a.id != hero
+                        && a.id != r
+                        && a.species == gothic_sim::types::Species::Human
+                        && !a.name.starts_with("Orc")
+                })
+                .filter_map(|a| cx.actor_pos(a.id).map(|p| (flat(p - rp).length(), a.id)))
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            let Some((d, h)) = human else {
+                cx.check("a human exists", false, "none");
+                return;
+            };
+            cx.note(format!(
+                "{} vs {} at {d:.0} cm",
+                name_of(cx, r),
+                name_of(cx, h)
+            ));
+            cx.st
+                .store
+                .insert("npcs".into(), format!("{},{}", r.0, h.0));
+            cx.st
+                .n
+                .insert("hp_r0".into(), f64::from(cx.core().0.sim.actor(r).hp));
+            cx.st
+                .n
+                .insert("hp_h0".into(), f64::from(cx.core().0.sim.actor(h).hp));
+            let mut c = cx.core_mut();
+            c.0.sim.assess_target(r, h, AttackReason::Enemy);
+            c.0.sim.assess_target(h, r, AttackReason::Enemy);
+        },
+    );
     rec(&mut sc, true);
     sc.step("the fight, 45 s", |cx| {
+        fight_cam(cx, "npcs");
         let l = ids(cx, "npcs");
         let done = l.iter().any(|id| !cx.core().0.sim.actor(*id).is_alive());
         if cx.t > 45.0 || (done && cx.t > 8.0) {
@@ -529,29 +645,40 @@ pub fn npc_vs_npc() -> Sc {
     });
     sc.shot("npc_vs_npc");
     rec(&mut sc, false);
-    sc.check("both fought through the attack states and hurt each other", |cx| {
-        let l = ids(cx, "npcs");
-        if l.len() < 2 {
-            return Err("no pair".into());
-        }
-        let (r, h) = (l[0], l[1]);
-        let hp_r = cx.core().0.sim.actor(r).hp;
-        let hp_h = cx.core().0.sim.actor(h).hp;
-        let dr = cx.st.n["hp_r0"] - f64::from(hp_r);
-        let dh = cx.st.n["hp_h0"] - f64::from(hp_h);
-        let (sr, sh) = (seen(cx, r), seen(cx, h));
-        expect(
-            dr > 0.0 && dh > 0.0 && sr.iter().any(|x| x == "ZS_Attack_Goto") && sh.iter().any(|x| x == "ZS_Attack_Loop"),
-            format!("raider lost {dr}, human lost {dh}; states {sr:?} / {sh:?}"),
-            format!("raider lost {dr}, human lost {dh}; states {sr:?} / {sh:?}"),
-        )
-    });
+    sc.act("camera back", fight_cam_off);
+    sc.check(
+        "both fought through the attack states and hurt each other",
+        |cx| {
+            let l = ids(cx, "npcs");
+            if l.len() < 2 {
+                return Err("no pair".into());
+            }
+            let (r, h) = (l[0], l[1]);
+            let hp_r = cx.core().0.sim.actor(r).hp;
+            let hp_h = cx.core().0.sim.actor(h).hp;
+            let dr = cx.st.n["hp_r0"] - f64::from(hp_r);
+            let dh = cx.st.n["hp_h0"] - f64::from(hp_h);
+            let (sr, sh) = (seen(cx, r), seen(cx, h));
+            expect(
+                dr > 0.0
+                    && dh > 0.0
+                    && sr.iter().any(|x| x == "ZS_Attack_Goto")
+                    && sh.iter().any(|x| x == "ZS_Attack_Loop"),
+                format!("raider lost {dr}, human lost {dh}; states {sr:?} / {sh:?}"),
+                format!("raider lost {dr}, human lost {dh}; states {sr:?} / {sh:?}"),
+            )
+        },
+    );
     sc.check("both bodies swung with clips", |cx| {
         let l = ids(cx, "npcs");
         let c = clips(cx);
         let a = c.iter().any(|x| x.1 == l[0] && x.2.contains("Attack"));
         let b = c.iter().any(|x| x.1 == l[1] && x.2.contains("Attack"));
-        expect(a && b, "both played attack clips", format!("raider {a}, human {b}"))
+        expect(
+            a && b,
+            "both played attack clips",
+            format!("raider {a}, human {b}"),
+        )
     });
     sc
 }
@@ -585,7 +712,11 @@ fn find_and_place(sc: &mut Sc, needle: &'static str, dist: f32) {
                 cx.st.n.insert("sz".into(), f64::from(p.z));
                 cx.note(format!("{name} at {p:?}"));
             }
-            None => cx.check("the character exists", false, format!("no enabled {needle}")),
+            None => cx.check(
+                "the character exists",
+                false,
+                format!("no enabled {needle}"),
+            ),
         }
     });
     sc.act("setup: teleport the hero south of it", move |cx| {

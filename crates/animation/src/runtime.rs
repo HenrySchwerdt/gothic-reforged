@@ -633,7 +633,12 @@ pub fn write_joints_system(
 /// Chooses the drawn or holstered joint for weapons from the parent's stance.
 pub fn weapon_mount_system(
     inputs: Query<&LocomotionInput>,
-    mut mounts: Query<(&WeaponMount, &ChildOf, &mut Attachment, Option<&MountOverride>)>,
+    mut mounts: Query<(
+        &WeaponMount,
+        &ChildOf,
+        &mut Attachment,
+        Option<&MountOverride>,
+    )>,
 ) {
     for (mount, parent, mut attachment, forced) in &mut mounts {
         let Ok(input) = inputs.get(parent.parent()) else {
