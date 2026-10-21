@@ -3239,6 +3239,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-input"
+version = "0.1.0"
+
+[[package]]
 name = "gothic-inspector"
 version = "0.1.0"
 dependencies = [
@@ -3265,6 +3269,14 @@ name = "gothic-physics"
 version = "0.1.0"
 dependencies = [
  "glam",
+]
+
+[[package]]
+name = "gothic-projectile"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "gothic-formats",
 ]
 
 [[package]]
@@ -3328,8 +3340,10 @@ name = "gothic-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glam",
  "gothic-formats",
  "gothic-gameplay",
+ "gothic-projectile",
  "gothic-script",
  "serde",
  "serde_json",

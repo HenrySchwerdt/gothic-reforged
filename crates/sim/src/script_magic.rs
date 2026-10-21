@@ -31,16 +31,17 @@ use crate::world::{Pos, WorldQuery};
 
 /// Default `ShootVelocity` of a spell missile (the template value of `Mis_Fireball`).
 pub const DEFAULT_MISSILE_SPEED: f32 = 100.0;
-/// Template speeds are metres per second; positions are centimetres.
-const SPEED_UNIT_CM: f32 = 100.0;
 
 /// A projectile on its way.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Flight {
     /// What was launched.
     pub spec: ProjectileSpec,
-    /// Simulation time of the impact.
+    /// Estimated simulation time of the impact (the straight-line flight time to the target;
+    /// the real arrival is decided by the flight, see [`crate::shots`]).
     pub arrives_ms: u64,
+    /// The flight itself.
+    pub shot: crate::shots::Shot,
 }
 
 /// A running boost of the hero.
@@ -92,6 +93,12 @@ pub struct MagicTables {
     pub waypoints: BTreeMap<String, Pos>,
     casts: BTreeMap<u32, CastRec>,
     hit_mult: BTreeMap<u32, f32>,
+    /// The hero's arrow origin and aim point (set by the camera each frame).
+    pub hero_aim: Option<crate::shots::HeroAim>,
+    /// Decoded projectile templates by name; unlisted ones use the built-in arrow, bolt and
+    /// missile values.
+    pub projectile_params: BTreeMap<String, gothic_projectile::ProjectileParams>,
+    pub(crate) next_shot: u64,
 }
 
 impl ScriptTables {
@@ -396,24 +403,6 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
         self.sim.hit(att, vic, attack);
     }
     fn spawn_projectile(&mut self, p: ProjectileSpec) {
-        let now = self.sim.now_ms();
-        let from = self.entity_pos(p.owner);
-        let to = if p.target.is_some() {
-            self.entity_pos(p.target)
-        } else {
-            from
-        };
-        let speed = if p.velocity > 0.0 {
-            p.velocity
-        } else {
-            self.sim
-                .script
-                .magic
-                .spells
-                .get(&p.spell)
-                .map_or(DEFAULT_MISSILE_SPEED, |s| s.velocity)
-        };
-        let ms = (from.dist(to) / (speed * SPEED_UNIT_CM) * 1000.0) as u64;
         if let (Some(owner), target) = (actor_of(p.owner), actor_of(p.target)) {
             self.sim.push(EventKind::Projectile {
                 owner,
@@ -422,10 +411,7 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
                 spell: !p.spell.is_empty(),
             });
         }
-        self.sim.script.magic.flights.push(Flight {
-            spec: p,
-            arrives_ms: now + ms,
-        });
+        self.sim.launch_shot(p);
     }
     fn spawn_npc(&mut self, template: &str, near: EntityId) -> EntityId {
         let at = self.entity_pos(near);
@@ -601,14 +587,8 @@ impl<W: WorldQuery> Sim<W> {
     pub fn tick_magic(&mut self) {
         let now = self.now_ms();
         let dt = self.cfg.tick_ms;
-        // Projectiles that arrive.
-        let (arrived, flying): (Vec<_>, Vec<_>) = std::mem::take(&mut self.script.magic.flights)
-            .into_iter()
-            .partition(|f| f.arrives_ms <= now);
-        self.script.magic.flights = flying;
-        for f in arrived {
-            self.land_projectile(f.spec);
-        }
+        // Projectiles fly, hit and decay.
+        self.step_shots();
         // Area effects.
         let mut areas = std::mem::take(&mut self.script.magic.areas);
         let mut alive = Vec::new();
@@ -642,29 +622,20 @@ impl<W: WorldQuery> Sim<W> {
         }
     }
 
-    /// A projectile reaches its target: an arrow rolls the ranged hit chance, a spell missile
-    /// always lands; both go through the damage pipeline.
-    fn land_projectile(&mut self, spec: ProjectileSpec) {
-        let (Some(att), Some(vic)) = (actor_of(spec.owner), actor_of(spec.target)) else {
-            return;
-        };
+    /// A projectile touched a character: arrows and spell missiles go through the damage
+    /// pipeline (`head` marks a head shot). Where the shot hits is decided by its flight, not by
+    /// a dice roll.
+    pub(crate) fn land_projectile(&mut self, spec: ProjectileSpec, att: ActorId, vic: ActorId, head: bool) {
         if self.actor(vic).ai_mode == crate::types::AiMode::Dead {
             return;
         }
         if spec.spell.is_empty() {
-            if !self.rng.chance_pct(self.cfg.ranged_hit_pct) {
-                self.push(EventKind::Whiff {
-                    attacker: att,
-                    target: vic,
-                    action: crate::types::Action::Shoot,
-                });
-                return;
-            }
             let ammo = self.items.get(&spec.template).cloned().unwrap_or_default();
             let mut attack = Attack::projectile(&ammo, spec.hit_mult);
             attack.amount = spec.amount;
             attack.quality = spec.quality as i32;
             attack.damage_type = sim_damage_type(spec.damage_type);
+            attack.head_hit = head;
             self.hit(att, vic, attack);
         } else {
             let hit = SpellHit {

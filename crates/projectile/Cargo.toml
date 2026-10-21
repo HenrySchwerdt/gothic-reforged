@@ -1,0 +1,16 @@
+[package]
+name = "gothic-projectile"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Arrows, bolts and spell missiles of Gothic 3 (gCProjectile_PS): flight, hits, sticking, plus the bow aim animation coupling"
+
+[dependencies]
+glam = "0.33"
+
+[dev-dependencies]
+gothic-formats = { path = "../formats" }
+
+[lints]
+workspace = true

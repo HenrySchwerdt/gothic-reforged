@@ -11,6 +11,8 @@ serde.workspace = true
 serde_json.workspace = true
 gothic-gameplay = { path = "../gameplay" }
 gothic-script = { path = "../script" }
+gothic-projectile = { path = "../projectile" }
+glam = "0.33"
 
 [dev-dependencies]
 gothic-formats = { path = "../formats" }

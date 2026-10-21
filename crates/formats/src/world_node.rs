@@ -6,6 +6,15 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 
 const MAX_ENTITIES: usize = 4_000_000;
+/// Largest table-less layer that is still just a context (the shipped ones are 124 bytes).
+const TABLELESS_EMPTY_MAX: usize = 256;
+
+/// `GENOMFLE` envelope whose table offset is 0 (no string table at all).
+fn is_tableless(bytes: &[u8]) -> bool {
+    bytes.get(..8) == Some(b"GENOMFLE")
+        && bytes.get(8..10) == Some(&[1, 0])
+        && bytes.get(10..14) == Some(&[0, 0, 0, 0])
+}
 const MAX_PROPERTIES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -104,6 +113,23 @@ impl WorldDocument {
         Self::parse_inner(bytes)
     }
 
+    /// The `{GUID}.lrentdat` layers that carry `GENOMFLE` with table offset 0: every string of the
+    /// body is an index into a table the file does not contain. A layer that holds only its
+    /// context (no entity count follows, at most a few hundred bytes: five shipped layers) is an
+    /// empty document; anything larger needs its string table and is reported, not guessed.
+    fn parse_tableless(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() < TABLELESS_EMPTY_MAX && bytes.get(14..22) == Some(b"GENOMEDL"),
+            "world layer has no string table (GENOMFLE table offset 0, {} bytes of indexed strings)",
+            bytes.len()
+        );
+        Ok(Self {
+            kind: WorldKind::Lrentdat,
+            entities: Vec::new(),
+            edges: Vec::new(),
+        })
+    }
+
     fn parse_inner(bytes: &[u8]) -> Result<(Self, Vec<Vec<PropertySetSpan>>)> {
         // Observed empty placeholder: raw "GENOMEDL" + u16 version, nothing else
         // (ten bytes, e.g. GUID-named .lrentdat stubs). Represents zero entities.
@@ -116,6 +142,9 @@ impl WorldDocument {
                 },
                 Vec::new(),
             ));
+        }
+        if is_tableless(bytes) {
+            return Self::parse_tableless(bytes).map(|doc| (doc, Vec::new()));
         }
         let genome = GenomeFile::parse(bytes)?;
         let kind = if genome.body.starts_with(b"GENOMEDL") {
@@ -584,7 +613,19 @@ mod tests {
         bytes.extend(83u16.to_le_bytes());
         bytes.extend([0; 64]);
         let error = WorldDocument::parse(&bytes).unwrap_err();
-        assert!(format!("{error:#}").contains("table offset"));
+        assert!(format!("{error:#}").contains("no string table"));
+        // A context-only layer of the same shape (124 bytes in the shipped data) is empty.
+        let mut small = b"GENOMFLE".to_vec();
+        small.extend([1, 0, 0, 0, 0, 0]);
+        small.extend(b"GENOMEDL");
+        small.extend(83u16.to_le_bytes());
+        small.extend([0; 100]);
+        let doc = WorldDocument::parse(&small).expect("context-only layer");
+        assert_eq!(doc.kind, WorldKind::Lrentdat);
+        assert!(doc.entities.is_empty());
+        // Content without a table is never guessed.
+        small.extend([0; 400]);
+        assert!(WorldDocument::parse(&small).is_err());
     }
 
     #[test]

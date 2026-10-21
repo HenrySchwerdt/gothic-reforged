@@ -68,6 +68,51 @@ pub trait WorldQuery {
     fn is_outdoors(&self, _at: Pos) -> bool {
         false
     }
+    /// Height of a flat floor at `(x, z)` for projectiles that fall to the ground; `None` when
+    /// the world's own geometry ([`WorldQuery::surface_hit`]) answers.
+    fn ground_height(&self, _x: f32, _z: f32) -> Option<f32> {
+        None
+    }
+    /// First static contact of the segment `from -> to` (a projectile's sweep). The default
+    /// finds it by bisecting [`WorldQuery::line_of_sight`]; worlds with real geometry override
+    /// it with a ray cast that also knows the surface normal and material.
+    fn surface_hit(&self, from: Pos, to: Pos) -> Option<SurfaceContact> {
+        if self.line_of_sight(from, to) {
+            return None;
+        }
+        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+        for _ in 0..12 {
+            let mid = (lo + hi) * 0.5;
+            let p = Pos::new(
+                from.x + (to.x - from.x) * mid,
+                from.y + (to.y - from.y) * mid,
+                from.z + (to.z - from.z) * mid,
+            );
+            if self.line_of_sight(from, p) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let d = [to.x - from.x, to.y - from.y, to.z - from.z];
+        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6);
+        Some(SurfaceContact {
+            t: hi,
+            normal: [-d[0] / len, -d[1] / len, -d[2] / len],
+            material: 5,
+        })
+    }
+}
+
+/// A projectile's contact with the level.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceContact {
+    /// Position along the swept segment, `0..=1`.
+    pub t: f32,
+    /// Surface normal towards the side the projectile came from.
+    pub normal: [f32; 3],
+    /// `eEShapeMaterial` value (5 = earth when the world does not know).
+    pub material: u8,
 }
 
 /// Is `target` inside the horizontal field of view of `observer` (degrees, total angle)?
@@ -234,6 +279,9 @@ impl Grid2dWorld {
 }
 
 impl WorldQuery for Grid2dWorld {
+    fn ground_height(&self, _x: f32, _z: f32) -> Option<f32> {
+        Some(0.0)
+    }
     fn position(&self, id: ActorId) -> Option<Pos> {
         self.actors.get(&id).map(|e| e.0)
     }
