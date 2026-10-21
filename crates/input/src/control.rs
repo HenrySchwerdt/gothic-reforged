@@ -115,6 +115,7 @@ pub struct Look {
 /// the frame time (`+550 dt` right, `-550 dt` left). `invert_x` / `invert_y` flip the axes
 /// (`MouseInvertX/Y`).
 pub fn look_counts(messages: &[GameKeyMessage], dt: f32, invert_x: bool, invert_y: bool) -> Look {
+    gothic_portcov::hit!("look_counts");
     let mut look = Look::default();
     for m in messages.iter().filter(|m| m.is_pressed()) {
         let (axis_x, sign, rate) = match m.key {
