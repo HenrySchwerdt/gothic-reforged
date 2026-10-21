@@ -138,3 +138,40 @@ fn deterministic() {
     let b = play(&fixture::database(), BotOptions::default()).to_json();
     assert_eq!(a, b);
 }
+
+#[test]
+fn a_permanent_refusal_does_not_stall_the_run() {
+    // Old behaviour: the refusal outscored everything, the bot talked to Grump every round,
+    // nothing changed twice and the run ended with almost every quest open.
+    let report = play(&fixture::with_refusal(), BotOptions::default());
+    assert!(report.all_completed(), "{}", report.to_text(true));
+    let grump = report
+        .trace
+        .iter()
+        .filter(
+            |s| matches!(&s.action, Action::Talk { npc, .. } if npc.eq_ignore_ascii_case("Grump")),
+        )
+        .count();
+    // Visited, found futile, and only revisited after real progress elsewhere.
+    assert!(
+        grump >= 1 && grump <= fixture::QUESTS.len() * 4,
+        "{grump} talks to Grump"
+    );
+}
+
+#[test]
+fn stuck_runs_still_end_after_waiting_once() {
+    let report = play(&fixture::broken(), BotOptions::default());
+    assert!(!report.all_completed());
+    assert!(report.rounds < 200, "{} rounds", report.rounds);
+}
+
+#[test]
+fn stuck_report_explains_why_an_event_setter_did_not_run() {
+    let report = play(&fixture::gated(), BotOptions::default());
+    let gated = report.stuck.iter().find(|s| s.quest == "Q_Gated").unwrap();
+    let hint = gated.blockers[0].hint.as_deref().unwrap_or_default();
+    assert!(hint.contains("Gate_Open"), "{hint}");
+    assert!(hint.contains("X_Gate @Xan"), "{hint}");
+    assert!(hint.contains("Never_Set"), "{hint}");
+}

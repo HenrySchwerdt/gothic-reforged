@@ -809,6 +809,9 @@ fn update_emitters(
     stats.update_ms = t0.elapsed().as_secs_f32() * 1000.0;
 }
 
+/// Mesh transforms the batcher writes each frame.
+type MeshFrame = (&'static mut Transform, &'static mut GlobalTransform);
+
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn build_batches(
@@ -825,7 +828,7 @@ fn build_batches(
     mut scratch: Local<HashMap<BatchKey, Vec<Quad>>>,
     mut visibilities: Query<&mut Visibility>,
     mut log: Local<(u32, f32, f32)>,
-    mut frames: Query<(&mut Transform, &mut GlobalTransform), (With<Mesh3d>, Without<Camera3d>)>,
+    mut frames: Query<MeshFrame, (With<Mesh3d>, Without<Camera3d>)>,
 ) {
     let t0 = Instant::now();
     let Some((cam, tan_half)) = frustum_tangents(&cams) else {

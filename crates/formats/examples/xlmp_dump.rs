@@ -5,7 +5,12 @@ fn main() {
     }
     let b = std::fs::read(std::env::args().nth(1).unwrap()).unwrap();
     let x = gothic_formats::xlmp::Xlmp::parse(&b).unwrap();
-    println!("{} scale {} blocks {}", x.mesh, x.texel_scale, x.blocks.len());
+    println!(
+        "{} scale {} blocks {}",
+        x.mesh,
+        x.texel_scale,
+        x.blocks.len()
+    );
     for (i, k) in x.blocks.iter().enumerate() {
         let lit = k.light.iter().filter(|c| c[0] | c[1] | c[2] != 0).count();
         let data = k.tiles.iter().filter(|t| !t.bgra.is_empty()).count();
@@ -34,7 +39,11 @@ pub fn all() {
             Ok(x) => {
                 ok += 1;
                 lit += x.blocks.iter().any(|k| k.has_vertex_light()) as usize;
-                data += x.blocks.iter().any(|k| k.tiles.iter().any(|t| !t.bgra.is_empty())) as usize;
+                data += x
+                    .blocks
+                    .iter()
+                    .any(|k| k.tiles.iter().any(|t| !t.bgra.is_empty()))
+                    as usize;
             }
             Err(e) => {
                 bad += 1;

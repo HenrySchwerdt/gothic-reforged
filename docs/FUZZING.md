@@ -36,6 +36,8 @@ Two layers check this, both on synthetic inputs only (no game files):
 | `stringtable` / `quest` / `info` / `gdini` | UTF-16 string table, quest / info / generic `.ini` records |
 | `remaster_mesh` / `dds` | remaster overrides (`GRMO`, DDS) + `to_bytes` |
 | `propstream` | `read_sub_class` and `decode_value` over the property-stream grammar |
+| `weather` | `weather::parse` (`WeatherStates.g3ws`) + scale sampling (`at`, including out-of-range and NaN times) and environment lookups |
+| `terrain_name` | `terrain::parse_cell_name` (landscape cell resource names) |
 
 The shared harness is `gothic_formats::synth`:
 - `run(target, bytes)` calls the parser;
@@ -43,6 +45,11 @@ The shared harness is `gothic_formats::synth`:
   GENOMFLE envelope with a valid table, the target's magic (`GENOMEDL`, `GENOMETP`, `G3IMG`
   header fields, `gena`/`FXA `, `LMA `, `__IdvSpt_02_`, `GRMO`, the DDS header, the class
   accessor) and class names in the string table;
+- For `weather` and `igl`, `structured` builds a complete valid file: counts, property picks,
+  string indices, scale keys, tile rectangles and so on all come from the fuzzer bytes. The
+  fuzzer therefore explores the decoding, not only the magic checks.
+  `structured_generators_produce_valid_files` in `tests/robustness.rs` keeps these
+  generators valid.
 - `seeds(target)` provides the seed inputs, including a valid two-member G3V0 archive.
 
 The layouts come from `docs/research/*.md` and the parsers' own synthetic tests.
@@ -62,8 +69,14 @@ findings to `fuzz/artifacts/<target>/`. A finding becomes a regression test in
 `tests/robustness.rs` next to its fix.
 
 CI (`.github/workflows/fuzz.yml`) runs every target for 60 s on PRs that touch
-`crates/formats`, and for 10 minutes nightly or via *Run workflow*. Findings are uploaded as
-artifacts.
+`crates/formats`, and for 10 minutes nightly or via *Run workflow*.
+- **Corpus:** each target's corpus is kept in the Actions cache (`fuzz-corpus-<target>-*`).
+  Every scheduled or manual run restores the newest one, fuzzes, minimises it with
+  `cargo fuzz cmin` and saves it, so coverage accumulates over the nights. PR runs only
+  restore it.
+- **Findings:** crash inputs are uploaded as `fuzz-<target>` artifacts. When a nightly run
+  fails, the `findings` job opens the tracking issue *Fuzzing: nightly findings* the first time
+  and adds a comment with the run link after that.
 
 ## Findings so far
 
