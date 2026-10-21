@@ -519,3 +519,57 @@ pub fn broken() -> GameDatabase {
     ));
     GameDatabase::from_parts(quests, infos, texts(), "English").expect("broken fixture")
 }
+
+/// The fixture plus an NPC whose only line is a `Permanent` info belonging to `Q_Final`:
+/// always available, it outscores every unlocking or exploring line, and choosing it never
+/// changes anything. Real data has many permanent quest lines like it.
+pub fn with_refusal() -> GameDatabase {
+    use cond::*;
+    use ty::*;
+    let (quests, mut infos) = records();
+    let mut not_yet = info(
+        "G_NotYet",
+        "Grump",
+        "",
+        "Q_Final",
+        GENERAL,
+        INFO,
+        "",
+        &[ask("T_WORK"), say("T_TROUBLE")],
+    );
+    not_yet.permanent = true;
+    infos.push(not_yet);
+    GameDatabase::from_parts(quests, infos, texts(), "English").expect("refusal fixture")
+}
+
+/// The fixture plus `Q_Gated`, whose activator needs `Gate_Open`. The only info setting that
+/// event (`X_Gate` at Xan) itself needs an event nobody sets, so the stuck report has to name
+/// the setter and why it cannot run.
+pub fn gated() -> GameDatabase {
+    use cond::*;
+    use quest_type::*;
+    use ty::*;
+    let (mut quests, mut infos) = records();
+    quests.push(quest("Q_Gated", REPORT, "", "Xan", "1", ""));
+    infos.push(info(
+        "X_Gate",
+        "Xan",
+        "",
+        "",
+        GENERAL,
+        INFO,
+        "Never_Set",
+        &[ask("T_HELLO"), event("Gate_Open")],
+    ));
+    infos.push(info(
+        "X_Gated",
+        "Xan",
+        "",
+        "Q_Gated",
+        ACTIVATOR,
+        INFO,
+        "Gate_Open",
+        &[ask("T_WORK")],
+    ));
+    GameDatabase::from_parts(quests, infos, texts(), "English").expect("gated fixture")
+}
