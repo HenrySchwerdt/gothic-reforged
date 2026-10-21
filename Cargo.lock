@@ -3150,6 +3150,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-audio-plus"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "gothic-audio",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gothic-camera"
 version = "0.1.0"
 dependencies = [
