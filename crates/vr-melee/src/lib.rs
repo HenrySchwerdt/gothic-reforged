@@ -11,7 +11,7 @@ pub mod geom;
 pub mod plugin;
 pub mod profiles;
 
-pub use contact::{Bone, DamageType, HitEvent, Hitzone, MeleeEvent};
+pub use contact::{Bone, ClashKind, DamageType, HitEvent, Hitzone, MeleeEvent};
 pub use plugin::{
     ClashMessage, HitMessage, HitzoneSet, Melee, MeleeSet, MeleeWeapon, PlayerAvatar,
     PlayerHitzonesPlugin, StabMessage, VrMeleePlugin, dummy_zones, hitzones_from_body, spawn_dummy,
