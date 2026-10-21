@@ -3376,6 +3376,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-combat-souls"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "glam",
+ "gothic-camera",
+ "gothic-sim",
+]
+
+[[package]]
 name = "gothic-cook"
 version = "0.1.0"
 dependencies = [
@@ -3493,8 +3503,10 @@ dependencies = [
  "gothic-animation",
  "gothic-audio",
  "gothic-camera",
+ "gothic-combat-souls",
  "gothic-cook",
  "gothic-formats",
+ "gothic-fx",
  "gothic-gameplay",
  "gothic-importer",
  "gothic-nav",

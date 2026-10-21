@@ -20,14 +20,16 @@ mod hero;
 mod hud;
 mod interact;
 mod kit;
-mod nav;
+pub(crate) mod nav;
 mod npcs;
 mod objects;
 mod pose;
+mod qa;
 mod record;
 mod routines;
 mod saves;
 mod script;
+mod souls;
 mod windows;
 
 use crate::walk::{Player, Smoke};
@@ -381,13 +383,19 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     app.add_systems(Update, pose::pose_system.after(crate::walk::update_camera));
     npcs::register(app);
     routines::register(app);
-    nav::register(app);
+    nav::register(app, &data_dir);
     events::register(app);
     cam::register(app);
     audio::register(app);
     hud::register(app);
+    if flag(args, "--combat").as_deref() == Some("souls") {
+        souls::register(app);
+    }
     if smoke {
         script::register(app);
+    }
+    if let Some(scenario) = flag(args, "--qa") {
+        qa::register(app, &scenario);
     }
     if let Some(dir) = record {
         record::register(app, dir);

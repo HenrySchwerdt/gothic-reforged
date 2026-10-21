@@ -39,7 +39,7 @@ pub fn register(app: &mut App) {
     app.add_systems(Startup, spawn_hero)
         .add_systems(
             Update,
-            (place_hero, face_target, input, focus)
+            (place_hero, face_target, input, dodge_motion, focus)
                 .chain()
                 .before(player_motion)
                 .after(crate::walk::input_mode),
@@ -50,6 +50,55 @@ pub fn register(app: &mut App) {
                 .chain()
                 .after(update_camera),
         );
+}
+
+/// Seconds a dodge roll lasts (`EVADE_SECS` of the ported state) and how far it carries (cm) [I].
+const DODGE_SECS: f32 = 0.6;
+const DODGE_DISTANCE: f32 = 280.0;
+
+/// The body of a dodge: the original drives it with root motion; here the hero slides the
+/// distance of the roll in the dodge direction, kept out of walls by the controller, and the
+/// roll clip plays on the overlay when the animation set has one.
+fn dodge_motion(
+    mut cmds: MessageReader<CoreCommand>,
+    mut player: ResMut<Player>,
+    collision: Res<crate::walk::Collision>,
+    state: Res<PlayState>,
+    core: Res<CoreRes>,
+    time: Res<Time>,
+    mut hero: Query<&mut OverlayQueue, With<HeroActor>>,
+    mut active: Local<Option<(Vec3, f32)>>,
+) {
+    for c in cmds.read() {
+        let Command::Dodge { direction } = &c.0 else {
+            continue;
+        };
+        // The ported state refuses a dodge without stamina.
+        if core.0.sim.actor(core.0.hero).stamina <= 0 || state.hero_down {
+            continue;
+        }
+        let rot = Quat::from_rotation_y(state.hero_yaw);
+        let (local, clip) = match direction {
+            Direction::Left => (Vec3::NEG_X, "EvadeLeft"),
+            Direction::Right => (Vec3::X, "EvadeRight"),
+            Direction::Forward => (Vec3::NEG_Z, "EvadeForward"),
+            Direction::Backward => (Vec3::Z, "EvadeBackward"),
+        };
+        *active = Some((rot * local, DODGE_SECS));
+        if let Ok(mut q) = hero.single_mut() {
+            queue_steps(&mut q, &[(clip, "Hit")]);
+        }
+    }
+    let Some((dir, left)) = active.as_mut() else {
+        return;
+    };
+    let dt = time.delta_secs().min(0.05).min(*left);
+    let step = *dir * (DODGE_DISTANCE / DODGE_SECS * dt);
+    player.ctrl.nudge(&collision.0, step);
+    *left -= dt;
+    if *left <= 0.0 {
+        *active = None;
+    }
 }
 
 fn spawn_hero(mut spawner: ActorSpawner, mut state: ResMut<PlayState>, kit: Res<super::HeroKit>) {

@@ -292,6 +292,10 @@ fn handle_events(
                         });
                     }
                     PlayerEvent::Refused(r) => {
+                        // A refused start never began, so no object is in use.
+                        if !inter.holding_pose && inter.window.is_none() {
+                            inter.active = None;
+                        }
                         sfx(&mut sound, "sfx_inv_deny_01", None);
                         if let Some(t) = refusal_text(&core, r) {
                             say(&mut notify, t);

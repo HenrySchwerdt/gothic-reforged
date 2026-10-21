@@ -230,10 +230,16 @@ fn dialog_events(
                 });
             }
             Event::Saved(p) => {
-                notify.write(Notify {
-                    text: format!("Gespeichert / geladen: {}", p.display()),
-                    kind: ToastKind::Info,
-                });
+                // Autosaves are silent; a file path never belongs on screen.
+                let auto = p
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("auto"));
+                if !auto {
+                    notify.write(Notify {
+                        text: "Spiel gespeichert".into(),
+                        kind: ToastKind::Info,
+                    });
+                }
             }
             Event::Failed(t) => {
                 eprintln!("play: {t}");
@@ -410,6 +416,31 @@ fn misc_events(
     let _ = &mut core;
 }
 
+/// The character page reads `attributes` of the state; the live values (base plus equipment and
+/// effects) are the hero actor's, so they are written into the UI's copy.
+fn mirror_attributes(core: &CoreRes, state: &mut gothic_gameplay::GameState) {
+    use gothic_sim::types::DamageType as D;
+    let hero = core.0.sim.actor(core.0.hero);
+    let cfg = &core.0.sim.cfg;
+    let a = &mut state.attributes;
+    a.insert("str".into(), hero.strength(cfg));
+    a.insert("hnt".into(), hero.dexterity(cfg));
+    a.insert("int".into(), hero.intelligence(cfg));
+    a.insert("smt".into(), hero.base.smithing);
+    a.insert("thf".into(), hero.theft(cfg));
+    a.insert("alc".into(), hero.base.alchemy);
+    for (k, t) in [
+        ("prot_blade", D::Blade),
+        ("prot_impact", D::Impact),
+        ("prot_missile", D::Missile),
+        ("prot_fire", D::Fire),
+        ("prot_ice", D::Ice),
+        ("prot_lightning", D::Lightning),
+    ] {
+        a.insert(k.into(), hero.protection(cfg, t));
+    }
+}
+
 /// Mirror core state into the UI's read model and the HUD.
 fn mirror_state(
     core: Res<CoreRes>,
@@ -426,6 +457,15 @@ fn mirror_state(
         *rev = core.0.state_rev;
         session.state = core.0.state().clone();
         slots.0 = quick_slots(&play.quick, &session);
+        mirror_attributes(&core, &mut session.state);
+    }
+    // Equipment and effects change the attributes without touching the persistent state.
+    if core.0.sim.tick % 30 == 0 {
+        let mut fresh = session.state.clone();
+        mirror_attributes(&core, &mut fresh);
+        if fresh.attributes != session.state.attributes {
+            session.state.attributes = fresh.attributes;
+        }
     }
     // creature in the fight (or in front of the camera): its health shows in the top bar
     let target = play.combat_focus.map(|(id, _)| id).or(play.focus);

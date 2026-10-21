@@ -103,7 +103,10 @@ pub fn select_roster(file: &NpcFile, looks: &Looks, data_dir: &std::path::Path) 
     // skeleton-mesh resource of their `eCVisualAnimation_PS` and no body parts.
     let near = |e: &gothic_sim::data::NpcRecord| {
         let p = Vec3::from(e.position);
-        Vec2::new(p.x, p.z).distance(ARDEA_CENTRE) <= ARDEA_RADIUS
+        // The player's own template entity is the controlled hero (spawned by `spawn_hero`);
+        // spawning it as a roster character would put a second body on top of him.
+        !e.name.eq_ignore_ascii_case("PC_Hero")
+            && Vec2::new(p.x, p.z).distance(ARDEA_CENTRE) <= ARDEA_RADIUS
             && (e
                 .inventory
                 .equipped
@@ -352,6 +355,20 @@ pub struct NpcGear {
     pub give: Vec<(String, u32)>,
 }
 
+/// Pending characters whose tile is inside the streamed ring. Characters outside it wait for the
+/// observer to come closer (they spawn when their tile becomes resident), so readiness checks
+/// must not wait for them.
+pub fn pending_in_ring(roster: &Roster, stream: &Stream) -> usize {
+    roster
+        .pending
+        .iter()
+        .filter(|p| {
+            let c = stream.settings.cell_at(p.pos_cm);
+            stream.streamer.wanted().contains(&c)
+        })
+        .count()
+}
+
 /// Spawns pending NPCs whose ground collision is resident.
 #[allow(clippy::too_many_arguments)]
 fn spawn_npcs(
@@ -375,14 +392,13 @@ fn spawn_npcs(
         // Snap to the surface nearest the original height: a small window first, then the
         // first hit below the original height (never the topmost hit, which can be a roof).
         let from = Vec3::new(p.pos_cm.x, p.pos_cm.y + 50.0, p.pos_cm.z);
-        let Some(ground) = collision
+        // Flyers (gulls, flocks) hover far above the surface: with a resident tile and nothing
+        // within reach below, they stay at their original height instead of waiting forever.
+        let ground = collision
             .0
             .ground_below(from, 100.0)
             .or_else(|| collision.0.ground_below(from, 800.0))
-        else {
-            i += 1;
-            continue;
-        };
+            .unwrap_or(p.pos_cm.y);
         let p = roster.pending.remove(i);
         budget -= 1;
         let mut spec = match assemble(&spawner.library, &p) {
@@ -430,10 +446,10 @@ fn spawn_npcs(
         let stance = if creature {
             Stance::Unarmed
         } else if Species::from_name(&p.record.species) == Species::Orc && gear.equip.is_empty() {
-                Stance::TwoHand
-            } else {
-                gear.stance
-            };
+            Stance::TwoHand
+        } else {
+            gear.stance
+        };
         let look = p.look.as_ref();
         let extra = NpcExtra {
             voice: look.map(|l| l.voice.clone()).unwrap_or_default(),

@@ -449,6 +449,11 @@ impl<W: WorldQuery> Sim<W> {
             self.kill(tid, Some(id));
             return;
         }
+        // Opt-in variant: NPC swings are telegraphed (never changes the player's moves).
+        let telegraph = match self.cfg.variants.npc_telegraph_ms {
+            Some(ms) if !self.actors[i].is_player => u64::from(ms),
+            _ => 0,
+        };
         let a = &mut self.actors[i];
         if a.stamina <= 0 && cost > 0 {
             a.brain.busy_until_ms = now + 500;
@@ -459,11 +464,11 @@ impl<W: WorldQuery> Sim<W> {
         a.brain.last_move = m;
         a.brain.last_strike_ms = Some(now);
         a.brain.strike = Some(Strike {
-            at_ms: now + (vitals::hit_window_secs(m) * 1000.0) as u64,
+            at_ms: now + (vitals::hit_window_secs(m) * 1000.0) as u64 + telegraph,
             action: m,
             target: tid,
         });
-        a.brain.busy_until_ms = now + move_duration_ms(m);
+        a.brain.busy_until_ms = now + move_duration_ms(m) + telegraph;
     }
 
     /// One tick of a running movement instruction: the callback may end it by switching the
