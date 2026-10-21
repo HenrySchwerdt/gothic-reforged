@@ -29,6 +29,7 @@ mod more;
 mod more2;
 mod more3;
 mod scenarios;
+mod souls_wire;
 mod world;
 
 pub const CM: f32 = 0.01;

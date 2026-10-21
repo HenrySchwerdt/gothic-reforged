@@ -32,6 +32,8 @@ mod saves;
 mod script;
 mod er_pack;
 mod souls;
+mod souls_hud;
+mod souls_wire;
 mod teleport;
 mod triggers;
 mod windows;

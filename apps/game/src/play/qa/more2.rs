@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 type Goal = Arc<dyn Fn(&mut Cx) -> Option<Vec3> + Send + Sync>;
 
-fn flat(v: Vec3) -> Vec3 {
+pub(super) fn flat(v: Vec3) -> Vec3 {
     Vec3::new(v.x, 0.0, v.z)
 }
 
@@ -26,14 +26,14 @@ fn raider(cx: &Cx) -> Option<ActorId> {
         .map(|a| a.1)
 }
 
-fn target_goal() -> Goal {
+pub(super) fn target_goal() -> Goal {
     Arc::new(|cx| {
         let id = ActorId(cx.st.n.get("tgt").copied()? as u32);
         cx.actor_pos(id)
     })
 }
 
-fn pick_target(sc: &mut Sc) {
+pub(super) fn pick_target(sc: &mut Sc) {
     sc.act("choose the nearest raider", |cx| {
         let Some(id) = raider(cx) else {
             cx.check("a raider exists", false, "none alive");
@@ -48,7 +48,7 @@ fn pick_target(sc: &mut Sc) {
     });
 }
 
-fn grab(sc: &mut Sc) {
+pub(super) fn grab(sc: &mut Sc) {
     sc.wait(1.0);
     sc.act("grab the mouse with a click", |cx| {
         cx.cursor_to(Vec2::new(640.0, 360.0));
@@ -57,7 +57,7 @@ fn grab(sc: &mut Sc) {
     sc.wait(0.4);
 }
 
-fn tgt_id(cx: &Cx) -> Option<ActorId> {
+pub(super) fn tgt_id(cx: &Cx) -> Option<ActorId> {
     cx.st.n.get("tgt").map(|v| ActorId(*v as u32))
 }
 
