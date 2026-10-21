@@ -54,6 +54,7 @@ jobs:
         with:
           shared-key: check
       - run: cargo test --workspace --locked
+      - run: cargo test --locked -p gothic-audio-plus --features plugin
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       # VR (docs/vr/README.md): desktop-fallback demos in scripted headless mode, exit code = result.
       - run: cargo run -p gothic-vr --example greybox --locked -- --headless
