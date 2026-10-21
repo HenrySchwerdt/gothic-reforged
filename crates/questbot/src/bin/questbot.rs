@@ -202,6 +202,18 @@ fn dump(db: &GameDatabase, name: &str) {
         }
         return;
     }
+    if let Some(q) = name.strip_prefix("route:") {
+        let p = gothic_questbot::plan::Planner::new(db, &[q.to_string()]);
+        println!(
+            "route of {q}: {} quests, {} infos",
+            p.relevant_quests().len(),
+            p.route_infos().len()
+        );
+        for r in p.relevant_quests() {
+            println!("  {r}");
+        }
+        return;
+    }
     if name == "--owners" {
         println!("owners: {}, infos: {}", db.owners().count(), db.infos.len());
         println!("PC_Hero infos: {}", db.infos_of("PC_Hero").len());

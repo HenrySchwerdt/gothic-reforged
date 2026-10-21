@@ -25,8 +25,10 @@ pub struct Planner {
 
 /// Score of an info that belongs to an unfinished relevant quest.
 pub const QUEST_STEP: i32 = 100;
+/// Score of a delivery (it finishes its quest, so it waits for the rest of the route).
+pub const DELIVERY: i32 = 15;
 /// Score of an info that sets a useful event not known yet.
-pub const UNLOCKS: i32 = 80;
+pub const UNLOCKS: i32 = 150;
 /// Score of an info that starts or finishes a relevant quest by script command.
 pub const SCRIPTED: i32 = 70;
 /// Score of any other unexplored, non-permanent info.
@@ -101,6 +103,11 @@ impl Planner {
         }
     }
 
+    /// Quests on the route (normalised names).
+    pub fn relevant_quests(&self) -> &BTreeSet<String> {
+        &self.relevant
+    }
+
     /// Infos on the route to the targets (see [`Planner::new`]).
     pub fn route_infos(&self) -> &[InfoId] {
         &self.route_infos
@@ -119,11 +126,33 @@ impl Planner {
     }
 
     /// How much choosing `id` now advances the route (0 = not worth it).
-    pub fn score(&self, db: &GameDatabase, st: &GameState, id: InfoId) -> i32 {
-        self.score_depth(db, st, id, 0)
+    ///
+    /// Infos that close or fail a quest of the route score 0 unless `allow_spoilers`: the bot
+    /// takes them only when nothing else is left (`Beliar_Contact` closes `Innos_Contact`; a
+    /// player picks one side).
+    pub fn score(&self, db: &GameDatabase, st: &GameState, id: InfoId, allow_spoilers: bool) -> i32 {
+        self.score_depth(db, st, id, 0, allow_spoilers)
     }
 
-    fn score_depth(&self, db: &GameDatabase, st: &GameState, id: InfoId, depth: u8) -> i32 {
+    /// Does running `info` close or fail a quest of the route that is still going?
+    fn spoils(&self, st: &GameState, info: &gothic_formats::info::Info) -> bool {
+        info.script.iter().any(|s| {
+            matches!(
+                Cmd::parse(&s.command),
+                Some(Cmd::CloseQuest | Cmd::FailQuest)
+            ) && self.is_relevant(&s.id1)
+                && !st.quest_status(&s.id1).is_finished()
+        })
+    }
+
+    fn score_depth(
+        &self,
+        db: &GameDatabase,
+        st: &GameState,
+        id: InfoId,
+        depth: u8,
+        allow_spoilers: bool,
+    ) -> i32 {
         let info = db.info(id);
         let cond = InfoCond::from_raw(info.condition_type);
         if matches!(
@@ -132,18 +161,23 @@ impl Planner {
         ) {
             return 0;
         }
+        if !allow_spoilers && self.spoils(st, info) {
+            return 0;
+        }
         let mut best = 0;
         if !info.quest.is_empty()
             && self.is_relevant(&info.quest)
             && !st.quest_status(&info.quest).is_finished()
         {
-            best = QUEST_STEP
-                + match cond {
-                    InfoCond::Delivery | InfoCond::PartDelivery => 40,
-                    InfoCond::Success => 30,
-                    InfoCond::Activator | InfoCond::Reactivator => 20,
-                    _ => 10,
-                };
+            best = match cond {
+                // Handing in finishes the quest: every other step of the route goes first
+                // (`Hassan_Murder` needs a line of `Hassan_Kill` that only works while that
+                // quest is not finished, `Hanson_FollowTower` one of `Xardas_FindXardas`).
+                InfoCond::Delivery | InfoCond::PartDelivery => DELIVERY,
+                InfoCond::Success => QUEST_STEP + 30,
+                InfoCond::Activator | InfoCond::Reactivator => QUEST_STEP + 20,
+                _ => QUEST_STEP + 10,
+            };
         } else if !info.quest.is_empty()
             && self.is_relevant(&info.quest)
             && matches!(cond, InfoCond::Success | InfoCond::Won)
@@ -169,7 +203,7 @@ impl Planner {
         if depth < 6 {
             for &c in db.children_of(&info.name) {
                 if !st.told.contains(&norm(&db.info(c).name)) {
-                    best = best.max(self.score_depth(db, st, c, depth + 1));
+                    best = best.max(self.score_depth(db, st, c, depth + 1, allow_spoilers));
                 }
             }
         }

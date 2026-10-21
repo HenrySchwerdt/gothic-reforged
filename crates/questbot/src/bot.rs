@@ -73,6 +73,9 @@ pub struct QuestBot<'a> {
     futile: BTreeSet<String>,
     /// NPCs talked to since the last progress.
     visited: BTreeSet<String>,
+    /// Whether infos that close or fail route quests may be taken (only once nothing else is
+    /// left, see [`Planner::score`]).
+    allow_spoilers: bool,
     /// Per-NPC best score of the own (and partner-dependent hero) infos, valid for the state
     /// and clock it was computed in.
     cache: ScoreCache,
@@ -80,7 +83,7 @@ pub struct QuestBot<'a> {
 
 #[derive(Default)]
 struct ScoreCache {
-    key: (u64, u64),
+    key: (u64, u64, bool),
     scores: std::collections::HashMap<String, i32>,
 }
 
@@ -123,6 +126,7 @@ impl<'a> QuestBot<'a> {
             futile: BTreeSet::new(),
             visited: BTreeSet::new(),
             cache: ScoreCache::default(),
+            allow_spoilers: false,
         }
     }
 
@@ -166,6 +170,7 @@ impl<'a> QuestBot<'a> {
                 if self.options.cheats && pick.as_ref().is_none_or(|(s, _)| *s <= planner::EXPLORE)
                 {
                     self.world_cheats();
+                    self.satisfy_npc_conditions();
                     pick = self.pick_npc();
                 }
             }
@@ -176,6 +181,7 @@ impl<'a> QuestBot<'a> {
             if seen.insert(fingerprint(&self.state)) {
                 self.futile.clear();
                 self.visited.clear();
+                self.allow_spoilers = false;
                 waited = false;
                 self.state.hours += 1;
                 continue;
@@ -185,7 +191,14 @@ impl<'a> QuestBot<'a> {
             if talked {
                 continue;
             }
-            // Nobody left with anything useful: wait a day once and sweep again.
+            // Nobody left with anything useful: take the lines that close route quests, then
+            // wait a day once and sweep again.
+            if !self.allow_spoilers {
+                self.allow_spoilers = true;
+                self.visited.clear();
+                self.futile.clear();
+                continue;
+            }
             if waited {
                 stuck = true;
                 break;
@@ -230,6 +243,65 @@ impl<'a> QuestBot<'a> {
             action,
             quest_changes: changes,
         });
+    }
+
+    /// Route infos that need another NPC in a state the player can bring about: defeated or
+    /// dead (a fight), or talked to (a conversation).
+    fn satisfy_npc_conditions(&mut self) {
+        use gothic_gameplay::conditions::Unmet;
+        let db = self.db;
+        let route = self.planner.route_infos().to_vec();
+        for id in route {
+            let info = db.info(id);
+            if info.cond_secondary_npc.is_empty()
+                || (!info.quest.is_empty() && self.state.quest_status(&info.quest).is_finished())
+            {
+                continue;
+            }
+            for _ in 0..info.cond_secondary_npc.len() {
+                let partner = if info.owner.eq_ignore_ascii_case(PLAYER_OWNER) {
+                    ""
+                } else {
+                    info.owner.as_str()
+                };
+                let Err(Unmet::NpcStatus { npc, status }) =
+                    self.engine.check(&self.state, id, partner)
+                else {
+                    break;
+                };
+                match status {
+                    2 => {
+                        let r = script::npc_defeated(db, &mut self.state, &npc);
+                        self.record(
+                            Action::Cheat(Cheat::Defeat {
+                                npc: npc.clone(),
+                                quest: info.quest.clone(),
+                            }),
+                            &r,
+                        );
+                    }
+                    3 => {
+                        let r = script::npc_killed(db, &mut self.state, &npc);
+                        self.record(
+                            Action::Cheat(Cheat::Kill {
+                                npc: npc.clone(),
+                                quest: info.quest.clone(),
+                            }),
+                            &r,
+                        );
+                    }
+                    4 => {
+                        if db.infos_of(&npc).is_empty() {
+                            self.state.npc_mut(&npc).talked = true;
+                        } else {
+                            self.converse(&npc);
+                        }
+                    }
+                    // Alive / not defeated / not talked to: nothing to do (or too late).
+                    _ => break,
+                }
+            }
+        }
     }
 
     /// Items the player must carry for a route info to be available (a delivery asking for
@@ -452,7 +524,7 @@ impl<'a> QuestBot<'a> {
         if self.futile.contains(&norm(&self.db.info(id).name)) {
             return 0;
         }
-        self.planner.score(self.db, &self.state, id)
+        self.planner.score(self.db, &self.state, id, self.allow_spoilers)
     }
 
     /// The not yet visited NPC with the most useful offer, with its score.
@@ -477,7 +549,7 @@ impl<'a> QuestBot<'a> {
                 hero_best = hero_best.max(self.score(id));
             }
         }
-        let key = (fingerprint(&self.state), self.state.hours);
+        let key = (fingerprint(&self.state), self.state.hours, self.allow_spoilers);
         if self.cache.key != key {
             self.cache.key = key;
             self.cache.scores.clear();
@@ -520,6 +592,21 @@ impl<'a> QuestBot<'a> {
     fn talk_to(&mut self, npc: &str) {
         self.visited.insert(norm(npc));
         self.converse(npc);
+    }
+
+    /// Does choosing this info end the conversation (an `End` script line, an `End` /
+    /// `NothingToSay` condition, a `Refuse` info)?
+    fn ends_dialog(&self, id: gothic_gameplay::InfoId) -> bool {
+        use gothic_gameplay::model::InfoType;
+        let info = self.db.info(id);
+        matches!(
+            InfoCond::from_raw(info.condition_type),
+            InfoCond::End | InfoCond::NothingToSay
+        ) || InfoType::from_raw(info.info_type) == InfoType::Refuse
+            || info
+                .script
+                .iter()
+                .any(|s| Cmd::parse(&s.command) == Some(Cmd::End))
     }
 
     /// Give the player what a refused info lacks (`IS_Running_NotEnoughGold` /
@@ -591,10 +678,11 @@ impl<'a> QuestBot<'a> {
                 .iter()
                 .filter_map(|c| c.info.map(|id| (c, id)))
                 .filter(|(_, id)| !chosen.contains(&self.db.info(*id).name))
-                .map(|(c, id)| (self.score(id), c))
-                .filter(|(s, _)| *s > 0)
-                .max_by_key(|(s, _)| *s)
-                .map(|(_, c)| c.clone());
+                .map(|(c, id)| (self.score(id), c, self.ends_dialog(id)))
+                .filter(|(s, _, _)| *s > 0)
+                // Lines that end the conversation come last: whatever else is on offer first.
+                .max_by_key(|(s, _, ends)| (!*ends, *s))
+                .map(|(_, c, _)| c.clone());
             let Some(choice) = pick else {
                 // Nothing useful: leave (or step out of a child menu with its first entry).
                 if let Some(leave) = menu.iter().find(|c| c.info.is_none()) {

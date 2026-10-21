@@ -367,3 +367,31 @@ fn engine_hooks_complete_kill_quests() {
     gothic_gameplay::questmgr::on_npc_killed(&db, &mut st, "Orc", &mut sink);
     assert_eq!(st.quest_status("Q2"), QuestStatus::Success);
 }
+
+#[test]
+fn friend_lines_need_fame_of_75() {
+    // `EnclaveFriend` (24) / `PoliticalFriend` (25): `gCInfo_PS::Execute` refuses below 75
+    // (GAME_RULES 1.6); the NPC's enclave is unknown, so any enclave counts.
+    let infos = vec![
+        info("F1", "Fay", "", "", 24, 3, "", "", &[]),
+        info("F2", "Fay", "", "", 25, 3, "", "", &[]),
+    ];
+    let db = GameDatabase::from_parts(vec![], infos, strings(), "German").unwrap();
+    let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+    let mut st = GameState::new();
+    assert!(matches!(
+        eng.check(&st, id(&db, "F1"), "Fay"),
+        Err(Unmet::Flag(_))
+    ));
+    st.add_fame("enc:ishtar", 74);
+    assert!(eng.check(&st, id(&db, "F1"), "Fay").is_err());
+    st.add_fame("enc:ishtar", 1);
+    assert!(eng.check(&st, id(&db, "F1"), "Fay").is_ok());
+    // The political line looks at the political fame only.
+    assert!(eng.check(&st, id(&db, "F2"), "Fay").is_err());
+    st.add_fame("pol:rebels", 80);
+    assert!(eng.check(&st, id(&db, "F2"), "Fay").is_ok());
+    // The optimistic profile (linter) assumes the reputation.
+    let opt = Engine::with(&db, Assumptions::OPTIMISTIC);
+    assert!(opt.check(&GameState::new(), id(&db, "F1"), "Fay").is_ok());
+}
