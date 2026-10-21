@@ -274,6 +274,27 @@ impl ActorLibrary {
     pub fn has_motion(&self, name: &str) -> bool {
         self.xmot_index
             .contains_key(&format!("{}.xmot", name.to_lowercase()))
+            || self.clips.contains_key(&name.to_lowercase())
+    }
+
+    /// Registers a clip that does not come from an `.xmot` (for example a locally generated
+    /// clip pack). It is found by `clip` / `motion` / `has_motion` under its lower-cased name
+    /// and replaces a clip of the same name.
+    pub fn register_clip(&mut self, clip: Clip) {
+        let key = clip.name.to_lowercase();
+        self.bindings.retain(|(_, c), _| *c != key);
+        self.clips.insert(key, Arc::new(clip));
+    }
+
+    /// Loads a clip pack file and registers every clip in it; returns the pack so the caller
+    /// can read its timing metadata.
+    pub fn load_clip_pack(&mut self, path: &Path) -> Result<crate::clip_pack::ClipPack> {
+        let pack = crate::clip_pack::ClipPack::load(path)
+            .with_context(|| format!("clip pack {}", path.display()))?;
+        for c in &pack.clips {
+            self.register_clip(c.clip.clone());
+        }
+        Ok(pack)
     }
 
     fn find_actor(&self, wanted: &str) -> Result<usize> {
@@ -296,6 +317,14 @@ impl ActorLibrary {
         let key = format!("{}.ximg", stem.to_lowercase());
         if let Some(cached) = self.textures.get(&key) {
             return cached.clone();
+        }
+        // Local remaster profile first (see `gothic_formats::remaster`).
+        if let Some(t) = gothic_formats::remaster::Profile::global().and_then(|p| p.texture(stem)) {
+            let data: Vec<u8> = t.mips.concat();
+            let handle = bc_image(t.width, t.height, &t.fourcc, data, t.mips.len() as u32)
+                .map(|i| images.add(i));
+            self.textures.insert(key, handle.clone());
+            return handle;
         }
         let handle = (|| {
             let Some(at) = self
@@ -521,8 +550,13 @@ impl ActorLibrary {
         if let Some(p) = self.parts.get(&key) {
             return Ok(p.clone());
         }
-        let actor = Actor::parse(&self.animation.read_payload(at)?)
+        let mut actor = Actor::parse(&self.animation.read_payload(at)?)
             .map_err(|e| e.context(format!("parsing {path}")))?;
+        if let Some(ov) = gothic_formats::remaster::Profile::global()
+            .and_then(|p| p.mesh(gothic_formats::remaster::OverrideKind::Actor, &path))
+        {
+            apply_remaster(&mut actor, &ov);
+        }
         let mut rig = Rig::from_actor(path.trim_end_matches(".xact"), &actor);
         rig.family = self.motion_family(&rig.family);
         let rig = Arc::new(rig);
@@ -949,22 +983,88 @@ fn skinned_mesh(sub: &ActorSubmesh, remap: &[u16]) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
+/// Replaces the geometry of a parsed actor with a remaster override: same skeleton and
+/// materials, joints matched by node name, materials by the `#<index>` prefix.
+fn apply_remaster(actor: &mut Actor, ov: &gothic_formats::remaster::OverrideMesh) {
+    if !ov.skinned {
+        return;
+    }
+    let by_name: HashMap<String, u16> = actor
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.name.to_lowercase(), i as u16))
+        .collect();
+    let node_map: Vec<u16> = ov
+        .nodes
+        .iter()
+        .map(|n| by_name.get(&n.to_lowercase()).copied().unwrap_or(0))
+        .collect();
+    let mut submeshes = Vec::new();
+    let mut total = 0u32;
+    for s in &ov.submeshes {
+        let material = s
+            .material
+            .strip_prefix('#')
+            .and_then(|m| m.split(':').next())
+            .and_then(|m| m.parse::<u8>().ok())
+            .filter(|&m| (m as usize) < actor.materials.len())
+            .or_else(|| {
+                actor
+                    .materials
+                    .iter()
+                    .position(|m| m.name == s.material)
+                    .map(|i| i as u8)
+            })
+            .unwrap_or(0);
+        let n = s.positions.len() as u32;
+        submeshes.push(ActorSubmesh {
+            material,
+            positions: s.positions.clone(),
+            normals: s.normals.clone(),
+            uvs: s.uvs.clone(),
+            uvs2: Vec::new(),
+            indices: s.lods.first().cloned().unwrap_or_default(),
+            original_vertex: (total..total + n).collect(),
+            joints: s
+                .joints
+                .iter()
+                .map(|j| j.map(|k| node_map.get(k as usize).copied().unwrap_or(0)))
+                .collect(),
+            weights: s.weights.clone(),
+        });
+        total += n;
+    }
+    let node = actor.meshes.first().map_or(0, |m| m.node);
+    actor.meshes = vec![gothic_formats::xact::ActorMesh {
+        node,
+        original_vertex_count: total,
+        skinned: true,
+        max_influences: 4,
+        submeshes,
+    }];
+}
+
 fn texture_image(image: &Ximg) -> Option<Image> {
-    let format = match &image.fourcc {
+    let mips = image.mips();
+    let data: Vec<u8> = mips.iter().flat_map(|m| m.iter().copied()).collect();
+    bc_image(image.width, image.height, &image.fourcc, data, mips.len() as u32)
+}
+
+fn bc_image(width: u32, height: u32, fourcc: &[u8; 4], data: Vec<u8>, mip_count: u32) -> Option<Image> {
+    let format = match fourcc {
         b"DXT1" => TextureFormat::Bc1RgbaUnormSrgb,
         b"DXT3" => TextureFormat::Bc2RgbaUnormSrgb,
         b"DXT5" => TextureFormat::Bc3RgbaUnormSrgb,
         _ => return None,
     };
-    if !image.width.is_multiple_of(4) || !image.height.is_multiple_of(4) {
+    if !width.is_multiple_of(4) || !height.is_multiple_of(4) {
         return None;
     }
-    let mips = image.mips();
-    let data: Vec<u8> = mips.iter().flat_map(|m| m.iter().copied()).collect();
     let mut out = Image::new(
         Extent3d {
-            width: image.width,
-            height: image.height,
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -972,7 +1072,7 @@ fn texture_image(image: &Ximg) -> Option<Image> {
         format,
         RenderAssetUsages::RENDER_WORLD,
     );
-    out.texture_descriptor.mip_level_count = mips.len() as u32;
+    out.texture_descriptor.mip_level_count = mip_count;
     out.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
         address_mode_v: ImageAddressMode::Repeat,

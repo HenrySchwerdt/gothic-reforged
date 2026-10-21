@@ -24,6 +24,12 @@ pub fn find_motion(
     action: &str,
     phase: &str,
 ) -> Option<String> {
+    // A step of a locally generated clip pack (see `er_pack`): `pack:ER_{S}_Light1`.
+    if action.starts_with(gothic_combat_souls::animmap::PACK_PREFIX) {
+        let style = super::er_pack::style(stance)?;
+        let name = gothic_combat_souls::animmap::pack_name(action, style)?;
+        return lib.has_motion(&name).then_some(name);
+    }
     let (left, right) = stance.hands();
     let tries = [
         (Some(left), Some(right)),
@@ -63,12 +69,18 @@ pub fn start_overlay(
     let rig = animator.rig.clone();
     match lib.motion(&rig, &name) {
         Ok(motion) => {
+            // Pack clips are full-body animations; the stock ones act on the upper body.
+            let mask: Vec<f32> = if motion.clip.name.starts_with(super::er_pack::PREFIX) {
+                vec![1.0; rig.slot_node.len()]
+            } else {
+                rig.upper_body_mask()
+            };
             animator.set_overlay(Some(Overlay {
                 motion,
                 time: 0.0,
                 rate: 1.0,
                 weight: 1.0,
-                mask: rig.upper_body_mask().into(),
+                mask: mask.into(),
             }));
             true
         }

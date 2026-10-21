@@ -174,7 +174,8 @@ pub fn run(args: &[String]) -> Result<()> {
             frame: 0,
         })
         .add_plugins(GothicUiPlugin)
-        .add_systems(Update, (demo_system, use_item_toast))
+        .add_message::<DemoLog>()
+        .add_systems(Update, (demo_system, use_item_toast, feed_demo_log))
         .run();
     Ok(())
 }
@@ -189,6 +190,34 @@ fn use_item_toast(
             text: format!("Benutzt: {}", style::item_name(&s.db, &u.item)),
             kind: ToastKind::Item,
         });
+    }
+}
+
+/// Writers of the E33 / E34 demo steps.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Extra<'w> {
+    logs: MessageWriter<'w, DemoLog>,
+    screen_out: MessageWriter<'w, PrintScreen>,
+    floats: MessageWriter<'w, FloatingText>,
+    label: ResMut<'w, FocusLabel>,
+}
+
+/// Demo-only: a line for the HUD log (the log has no message of its own; the host pushes into
+/// the `HudLog` resource directly).
+#[derive(Message, Clone)]
+struct DemoLog(LogCategory, String);
+
+fn demo_log(c: LogCategory, t: &str) -> DemoLog {
+    DemoLog(c, t.to_string())
+}
+
+fn feed_demo_log(
+    mut r: MessageReader<DemoLog>,
+    settings: Res<LogSettings>,
+    mut log: ResMut<HudLog>,
+) {
+    for DemoLog(c, t) in r.read() {
+        log.push(&settings, *c, t.clone());
     }
 }
 
@@ -215,6 +244,7 @@ fn demo_system(
     mut modal: MessageWriter<ShowModal>,
     mut slots: MessageWriter<SlotList>,
     mut pages: MessageWriter<ShowPage>,
+    mut extra: Extra,
 ) {
     demo.frame += 1;
     let f = demo.frame;
@@ -236,6 +266,36 @@ fn demo_system(
         })
         .collect();
         commands.insert_resource(QuickSlots(slots));
+        // the worn weapon the inventory tooltip compares against: the last weapon in the bag
+        let worn = s
+            .state
+            .inventory
+            .keys()
+            .rfind(|k| s.items.get(k).is_some_and(|i| i.category == 1))
+            .cloned();
+        if let Some(w) = worn {
+            commands.insert_resource(EquippedItems([(1, w)].into_iter().collect()));
+        }
+        // the HUD log shows everything in the demo
+        commands.insert_resource(LogSettings {
+            enabled: true,
+            category_enabled: [true; 6],
+            ..LogSettings::default()
+        });
+        commands.insert_resource(map::MapData {
+            sheet: Some(map::MapSheet {
+                bitmap: "g3_map_world.tga".into(),
+                name: "Myrtana".into(),
+                top_left: Vec2::new(-60000.0, 60000.0),
+                bottom_right: Vec2::new(60000.0, -60000.0),
+            }),
+            markers: vec![
+                map::MapMarker::from_entity("Map_Marker_Ardea", 20000.0, -30000.0),
+                map::MapMarker::from_entity("Map_Marker_Gotha", -10000.0, 25000.0),
+                map::MapMarker::from_entity("Map_Marker_$Hidden", 0.0, 0.0),
+            ],
+            player: Vec2::new(18000.0, -26000.0),
+        });
     }
     if f == 5 {
         start.write(StartDialog {
@@ -305,7 +365,11 @@ fn demo_system(
         235 => {
             close.write(CloseScreen);
         }
+        262 => extra
+            .label
+            .show("Krieger", FocusAttitude::Hostile, 484.0, 364.0),
         270 => shot(&mut commands, "hud"),
+        272 => extra.label.clear(),
         275 => {
             open.write(OpenScreen(Screen::MainMenu));
         }
@@ -415,7 +479,75 @@ Grüße, Bob".into(),
             }))));
         }
         580 => shot(&mut commands, "book"),
-        600 => {
+        585 => {
+            act.write(Act(Action::Close));
+            act.write(Act(Action::Open(Screen::Options)));
+        }
+        600 => shot(&mut commands, "options"),
+        605 => {
+            act.write(Act(Action::Open(Screen::Audio)));
+            act.write(Act(Action::Opt(OptAction::AudioVolume(
+                settings::Volume::Music,
+                -4,
+            ))));
+        }
+        625 => shot(&mut commands, "audio"),
+        630 => {
+            act.write(Act(Action::Open(Screen::Controls)));
+            act.write(Act(Action::Opt(OptAction::Sensitivity(
+                optpages::Axis::X,
+                3,
+            ))));
+            act.write(Act(Action::Opt(OptAction::Invert(optpages::Axis::Y))));
+        }
+        650 => shot(&mut commands, "controls"),
+        655 => {
+            act.write(Act(Action::Open(Screen::ControlsCustom)));
+            act.write(Act(Action::Opt(OptAction::KeySelect(1, 0))));
+        }
+        675 => shot(&mut commands, "keys"),
+        680 => {
+            act.write(Act(Action::Open(Screen::Difficulty)));
+            act.write(Act(Action::Opt(OptAction::Difficulty(
+                settings::Difficulty::Hard,
+            ))));
+        }
+        700 => shot(&mut commands, "difficulty"),
+        705 => {
+            act.write(Act(Action::Close));
+            act.write(Act(Action::Open(Screen::Map)));
+        }
+        735 => shot(&mut commands, "map"),
+        740 => {
+            act.write(Act(Action::Close));
+            for (c, t) in [
+                (LogCategory::SystemInfo, "Spiel gespeichert."),
+                (LogCategory::Battle1, "Held trifft Scavenger (24 Schaden)"),
+                (LogCategory::SystemError, "Fehler: Skript nicht gefunden"),
+            ] {
+                extra.logs.write(demo_log(c, t));
+            }
+            extra.screen_out.write(PrintScreen {
+                text: "Aufgabe erfüllt
+[color=ffd040ff]Der Kampf um den Titel"
+                    .into(),
+                color: Color::WHITE,
+                seconds: 30.0,
+            });
+            extra.floats.write(FloatingText {
+                row: 0,
+                text: "Stufe 5 erreicht!".into(),
+                color: Color::srgb(1.0, 0.85, 0.3),
+                flags: texteffect::flags::CENTER | texteffect::flags::FADE_IN,
+                seconds: 30.0,
+            });
+        }
+        790 => shot(&mut commands, "overlays"),
+        795 => {
+            act.write(Act(Action::Open(Screen::Journal)));
+        }
+        830 => shot(&mut commands, "journal-world"),
+        835 => {
             exit.write(AppExit::Success);
         }
         _ => {}

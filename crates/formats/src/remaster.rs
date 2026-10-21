@@ -7,9 +7,11 @@
 //! Profile layout:
 //!
 //! ```text
-//! <dir>/manifest.txt      one entry per line: `<kind> <original name> <relative file>`
+//! <dir>/manifest.txt      one entry per line: `<kind> <original name> <relative file> [scale=F]`
 //!                         kinds: mesh (`.xcmsh` / `.xlmsh` name), actor (`.xact` stem),
-//!                         texture (image stem without `.ximg`); `#` starts a comment
+//!                         texture (image stem without `.ximg`); `#` starts a comment;
+//!                         `scale=F` multiplies the UV scale of a texture where it is sampled
+//!                         (a replacement covering a different real-world size)
 //! <dir>/*.grmo            replacement geometry (this module's binary format)
 //! <dir>/*.dds             DXT1 / DXT5 textures with their mip chain
 //! ```
@@ -359,13 +361,21 @@ pub enum OverrideKind {
 pub struct Profile {
     pub root: PathBuf,
     entries: HashMap<(OverrideKind, String), PathBuf>,
+    scales: HashMap<String, f32>,
 }
 
 /// Lower-case basename without the extension: the key every original name is matched by.
 pub fn key_of(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let stem = match base.rsplit_once('.') {
-        Some((s, ext)) if matches!(ext.to_ascii_lowercase().as_str(), "xcmsh" | "xlmsh" | "xact" | "ximg" | "fxa") => s,
+        Some((s, ext))
+            if matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "xcmsh" | "xlmsh" | "xact" | "ximg" | "fxa"
+            ) =>
+        {
+            s
+        }
         _ => base,
     };
     stem.to_ascii_lowercase()
@@ -376,17 +386,29 @@ impl Profile {
         let text = std::fs::read_to_string(root.join("manifest.txt"))
             .with_context(|| format!("reading {}/manifest.txt", root.display()))?;
         let mut entries = HashMap::new();
+        let mut scales = HashMap::new();
         for (n, line) in text.lines().enumerate() {
             let line = line.split('#').next().unwrap_or("").trim();
             if line.is_empty() {
                 continue;
             }
             let mut it = line.split_whitespace();
-            let (Some(kind), Some(name), Some(file), None) =
-                (it.next(), it.next(), it.next(), it.next())
+            let (Some(kind), Some(name), Some(file), extra, None) =
+                (it.next(), it.next(), it.next(), it.next(), it.next())
             else {
-                bail!("manifest line {}: expected `<kind> <name> <file>`", n + 1);
+                bail!(
+                    "manifest line {}: expected `<kind> <name> <file> [scale=F]`",
+                    n + 1
+                );
             };
+            if let Some(extra) = extra {
+                let v = extra
+                    .strip_prefix("scale=")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .filter(|v| v.is_finite() && *v > 0.0 && *v < 1000.0)
+                    .with_context(|| format!("manifest line {}: bad option {extra}", n + 1))?;
+                scales.insert(key_of(name), v);
+            }
             let kind = match kind {
                 "mesh" => OverrideKind::Mesh,
                 "actor" => OverrideKind::Actor,
@@ -403,6 +425,7 @@ impl Profile {
         Ok(Self {
             root: root.to_path_buf(),
             entries,
+            scales,
         })
     }
 
@@ -435,8 +458,15 @@ impl Profile {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+    /// UV scale multiplier of a replaced texture (1 when none is set).
+    pub fn texture_scale(&self, stem: &str) -> f32 {
+        self.scales.get(&key_of(stem)).copied().unwrap_or(1.0)
+    }
+
     pub fn path(&self, kind: OverrideKind, name: &str) -> Option<&Path> {
-        self.entries.get(&(kind, key_of(name))).map(PathBuf::as_path)
+        self.entries
+            .get(&(kind, key_of(name)))
+            .map(PathBuf::as_path)
     }
 
     fn read(&self, kind: OverrideKind, name: &str) -> Option<Vec<u8>> {
@@ -488,7 +518,11 @@ mod tests {
                 normals: vec![[0.0, 0.0, 1.0]; 3],
                 uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
                 tangents: vec![[1.0, 0.0, 0.0, 1.0]; 3],
-                joints: if skinned { vec![[0, 1, 0, 0]; 3] } else { vec![] },
+                joints: if skinned {
+                    vec![[0, 1, 0, 0]; 3]
+                } else {
+                    vec![]
+                },
                 weights: if skinned {
                     vec![[0.5, 0.5, 0.0, 0.0]; 3]
                 } else {
@@ -540,12 +574,23 @@ mod tests {
         std::fs::create_dir_all(&dir)?;
         std::fs::write(
             dir.join("manifest.txt"),
-            "# synthetic\nmesh Synthetic_Barrel.xcmsh barrel.grmo\ntexture Syn_D syn_d.dds\n",
+            "# synthetic\nmesh Synthetic_Barrel.xcmsh barrel.grmo\ntexture Syn_D syn_d.dds scale=3.5\n",
         )?;
         let p = Profile::open(&dir)?;
-        assert!(p.path(OverrideKind::Mesh, "dir/SYNTHETIC_barrel.XCMSH").is_some());
+        assert!(
+            p.path(OverrideKind::Mesh, "dir/SYNTHETIC_barrel.XCMSH")
+                .is_some()
+        );
         assert!(p.path(OverrideKind::Texture, "syn_d.ximg").is_some());
         assert!(p.path(OverrideKind::Actor, "Synthetic_Barrel").is_none());
+        assert_eq!(p.texture_scale("SYN_D"), 3.5);
+        assert_eq!(p.texture_scale("synthetic_barrel"), 1.0);
+        std::fs::write(
+            dir.join("manifest.txt"),
+            "texture a a.dds scale=-1
+",
+        )?;
+        assert!(Profile::open(&dir).is_err());
         std::fs::write(dir.join("manifest.txt"), "mesh a ../escape.grmo\n")?;
         assert!(Profile::open(&dir).is_err());
         std::fs::remove_dir_all(&dir)?;

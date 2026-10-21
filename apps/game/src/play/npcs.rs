@@ -2,7 +2,7 @@
 use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall};
 use super::data::{Roll, seed_of};
 use super::objects::WorldObjects;
-use super::{NpcActor, NpcExtra, PendingNpc, Roster, angle_delta, sim_to_bevy_yaw};
+use super::{Cand, DocState, NpcActor, NpcExtra, Roster, angle_delta, sim_to_bevy_yaw};
 use crate::walk::{Collision, ORIGIN, Stream, tile_chunk_id, update_camera};
 use crate::world_loader::Origin;
 use bevy::prelude::*;
@@ -17,9 +17,6 @@ use gothic_sim::types::{AiMode, Species};
 use gothic_sim::world::Pos;
 
 const CM: f32 = 0.01;
-/// Original-space centre and radius (cm) of the Ardea NPC set.
-const ARDEA_CENTRE: Vec2 = Vec2::new(91_000.0, -11_000.0);
-const ARDEA_RADIUS: f32 = 7_000.0;
 
 /// Appearance records of `npcs.json`, keyed by document, name and position.
 pub struct Looks {
@@ -60,154 +57,170 @@ pub fn load_looks(path: &std::path::Path) -> anyhow::Result<Looks> {
     Ok(Looks { map, hero })
 }
 
-/// (document, name) of the entities whose `eCEntity` header has Enabled
-/// cleared, in the world documents the candidates come from.
-///
-/// Rule [V data]: a disabled entity is not instantiated by the engine. The `*_npc_02` layer of
-/// every city (Ardea: 133 entities, all of them) and the story layers carry Enabled = false;
-/// they hold the post-liberation population and are switched on by story script. At a new game
-/// only the Enabled entities exist.
-fn disabled_source_ids(
-    data_dir: &std::path::Path,
-    docs: &std::collections::BTreeSet<&str>,
-) -> std::collections::HashSet<(String, String)> {
-    use gothic_formats::vfs::VirtualFileSystem;
-    use gothic_formats::world_node::WorldDocument;
-    let mut out = std::collections::HashSet::new();
-    let Ok(mut vfs) = VirtualFileSystem::open_data_dir(data_dir) else {
-        eprintln!("play: cannot open the archives for entity flags; no story filter");
-        return out;
-    };
-    let slots: Vec<_> = vfs
-        .iter()
-        .filter(|(p, _)| docs.contains(p.to_ascii_lowercase().as_str()))
-        .map(|(p, s)| (p.to_owned(), s))
-        .collect();
-    for (path, slot) in slots {
-        let Ok(bytes) = vfs.read(slot) else { continue };
-        let Ok(doc) = WorldDocument::parse(&bytes) else {
-            eprintln!("play: {path}: entity flags unreadable");
-            continue;
-        };
-        for e in doc.entities.iter().filter(|e| !e.enabled) {
-            out.insert((path.to_ascii_lowercase(), e.name.clone()));
-        }
-    }
-    out
+/// A character can be shown: humans wear a Body item; whole-body creatures (wolves, boars,
+/// seagulls ...) carry only the skeleton resource of their `eCVisualAnimation_PS` and no body
+/// parts.
+fn is_candidate(e: &gothic_sim::data::NpcRecord, looks: &Looks) -> bool {
+    // The player's own template entity is the controlled hero (spawned by `spawn_hero`);
+    // spawning it as a roster character would put a second body on top of him.
+    !e.name.eq_ignore_ascii_case("PC_Hero")
+        && (e
+            .inventory
+            .equipped
+            .iter()
+            .any(|i| i.slot.eq_ignore_ascii_case("Body"))
+            || looks
+                .map
+                .get(&look_key(&e.document, &e.name, e.position))
+                .is_some_and(is_creature))
 }
 
-pub fn select_roster(file: &NpcFile, looks: &Looks, data_dir: &std::path::Path) -> Roster {
+/// Lower-case document paths of all characters the world can show.
+pub fn candidate_docs(file: &NpcFile, looks: &Looks) -> std::collections::BTreeSet<String> {
+    file.entities
+        .iter()
+        .filter(|e| is_candidate(e, looks))
+        .map(|e| e.document.to_ascii_lowercase())
+        .collect()
+}
+
+/// Every character of the world as a candidate; which of them are shown is decided each frame
+/// by the processing range and the tile residency (`scan_candidates`).
+///
+/// Rule [V data, E20]: the layer a character is stored in is a sector layer; its root's Enabled
+/// flag is the sector's initial state (the `*_npc_02` layer of a city carries Enabled = false and
+/// holds the post-liberation population). An entity that is stored disabled inside an enabled
+/// layer is not instantiated either.
+pub fn select_roster(file: &NpcFile, looks: &Looks, flags: &super::layers::LayerFlags) -> Roster {
     let origin = Origin(ORIGIN);
     let mut r = Roster::default();
-    // Humans wear a Body item; whole-body creatures (wolves, boars, ...) carry only the
-    // skeleton-mesh resource of their `eCVisualAnimation_PS` and no body parts.
-    let near = |e: &gothic_sim::data::NpcRecord| {
-        let p = Vec3::from(e.position);
-        // The player's own template entity is the controlled hero (spawned by `spawn_hero`);
-        // spawning it as a roster character would put a second body on top of him.
-        !e.name.eq_ignore_ascii_case("PC_Hero")
-            && Vec2::new(p.x, p.z).distance(ARDEA_CENTRE) <= ARDEA_RADIUS
-            && (e
-                .inventory
-                .equipped
-                .iter()
-                .any(|i| i.slot.eq_ignore_ascii_case("Body"))
-                || looks
-                    .map
-                    .get(&look_key(&e.document, &e.name, e.position))
-                    .is_some_and(is_creature))
-    };
-    let docs: std::collections::BTreeSet<String> = file
-        .entities
-        .iter()
-        .filter(|e| near(e))
-        .map(|e| e.document.to_ascii_lowercase())
-        .collect();
-    let doc_refs = docs.iter().map(String::as_str).collect();
-    let disabled = disabled_source_ids(data_dir, &doc_refs);
+    let mut doc_index: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
     let mut skipped = 0;
     for e in &file.entities {
-        let p = Vec3::from(e.position);
-        if !near(e) {
+        if !is_candidate(e, looks) {
             continue;
         }
-        if disabled.contains(&(e.document.to_ascii_lowercase(), e.name.clone())) {
+        let doc = e.document.to_ascii_lowercase();
+        if flags.entity_disabled(&doc, &e.name) {
             skipped += 1;
             continue;
         }
+        let di = *doc_index.entry(doc.clone()).or_insert_with(|| {
+            r.docs.push(DocState {
+                sector: super::layers::sector_name(&doc),
+                enabled: flags.root_enabled(&doc),
+                path: doc.clone(),
+            });
+            (r.docs.len() - 1) as u16
+        });
         r.display.insert(
             e.name.clone(),
             e.display_name.clone().unwrap_or_else(|| e.name.clone()),
         );
-        r.pending.push(PendingNpc {
+        r.cands.push(Cand {
             record: e.clone(),
-            pos_cm: origin.point(p),
+            pos_cm: origin.point(Vec3::from(e.position)),
             look: looks
                 .map
                 .get(&look_key(&e.document, &e.name, e.position))
                 .cloned(),
+            doc: di,
+            visual: None,
+            actor: None,
+            failed: false,
         });
     }
-    // Hamlar first so the showcase finds him quickly.
-    r.pending.sort_by_key(|p| p.record.name != "Hamlar");
-    separate(&mut r.pending);
-    r.total = r.pending.len();
+    separate(&mut r.cands, &r.docs);
+    for (i, c) in r.cands.iter().enumerate() {
+        r.grid
+            .entry(grid_cell(c.pos_cm))
+            .or_default()
+            .push(i as u32);
+    }
+    let on = r
+        .cands
+        .iter()
+        .filter(|c| r.docs[c.doc as usize].enabled)
+        .count();
     eprintln!(
-        "play: story state at new game: {} NPCs enabled, {skipped} disabled (eCEntity Enabled = false) skipped",
-        r.total
+        "play: {} characters in {} layers ({} in enabled layers, {} stored disabled skipped)",
+        r.cands.len(),
+        r.docs.len(),
+        on,
+        skipped
     );
     r
 }
 
+/// Cell of the candidate grid (cm).
+const GRID: f32 = 2_500.0;
+fn grid_cell(p: Vec3) -> (i32, i32) {
+    ((p.x / GRID).floor() as i32, (p.z / GRID).floor() as i32)
+}
+
 /// The original placements belong to different story states and overlap when shown together;
-/// push neighbours apart to a minimum spacing (Hamlar stays where the data puts him).
-fn separate(list: &mut [PendingNpc]) {
+/// push neighbours apart to a minimum spacing (per grid cell, enabled layers only).
+fn separate(list: &mut [Cand], docs: &[DocState]) {
     const MIN: f32 = 110.0;
-    for _ in 0..24 {
-        let mut moved = false;
-        for i in 0..list.len() {
-            for j in (i + 1)..list.len() {
-                let d = Vec2::new(
-                    list[j].pos_cm.x - list[i].pos_cm.x,
-                    list[j].pos_cm.z - list[i].pos_cm.z,
-                );
-                let len = d.length();
-                if len >= MIN {
-                    continue;
-                }
-                moved = true;
-                let dir = if len < 1.0 {
-                    Vec2::new(1.0, 0.3).normalize()
-                } else {
-                    d / len
-                };
-                let push = (MIN - len) * 0.5;
-                let fixed_i = list[i].record.name == "Hamlar";
-                let (pi, pj) = if fixed_i {
-                    (0.0, 2.0 * push)
-                } else {
-                    (push, push)
-                };
-                list[i].pos_cm.x -= dir.x * pi;
-                list[i].pos_cm.z -= dir.y * pi;
-                list[j].pos_cm.x += dir.x * pj;
-                list[j].pos_cm.z += dir.y * pj;
-            }
+    let mut buckets: std::collections::HashMap<(i32, i32), Vec<usize>> = Default::default();
+    for (i, c) in list.iter().enumerate() {
+        if docs[c.doc as usize].enabled {
+            buckets.entry(grid_cell(c.pos_cm)).or_default().push(i);
         }
-        if !moved {
-            break;
+    }
+    for idx in buckets.values().filter(|v| v.len() > 1) {
+        for _ in 0..24 {
+            let mut moved = false;
+            for a in 0..idx.len() {
+                for b in (a + 1)..idx.len() {
+                    let (i, j) = (idx[a], idx[b]);
+                    let d = Vec2::new(
+                        list[j].pos_cm.x - list[i].pos_cm.x,
+                        list[j].pos_cm.z - list[i].pos_cm.z,
+                    );
+                    let len = d.length();
+                    if len >= MIN {
+                        continue;
+                    }
+                    moved = true;
+                    let dir = if len < 1.0 {
+                        Vec2::new(1.0, 0.3).normalize()
+                    } else {
+                        d / len
+                    };
+                    let push = (MIN - len) * 0.5;
+                    let fixed_i = list[i].record.name == "Hamlar";
+                    let (pi, pj) = if fixed_i {
+                        (0.0, 2.0 * push)
+                    } else {
+                        (push, push)
+                    };
+                    list[i].pos_cm.x -= dir.x * pi;
+                    list[i].pos_cm.z -= dir.y * pi;
+                    list[j].pos_cm.x += dir.x * pj;
+                    list[j].pos_cm.z += dir.y * pj;
+                }
+            }
+            if !moved {
+                break;
+            }
         }
     }
 }
 
 pub fn register(app: &mut App) {
-    app.add_systems(Update, spawn_npcs.after(crate::walk::spawn_pending))
-        .add_systems(
-            Update,
-            (sync_npcs, super::anim::overlay_system)
-                .chain()
-                .after(update_camera),
-        );
+    app.add_systems(
+        Update,
+        (scan_candidates, spawn_npcs)
+            .chain()
+            .after(crate::walk::spawn_pending),
+    )
+    .add_systems(
+        Update,
+        (sync_npcs, super::anim::overlay_system)
+            .chain()
+            .after(update_camera),
+    );
 }
 
 /// Per-NPC presentation state.
@@ -227,7 +240,7 @@ fn is_creature(look: &NpcLook) -> bool {
 }
 
 /// Character description from the entity's visual data; `Err` names what did not resolve.
-fn assemble(lib: &ActorLibrary, rec: &PendingNpc) -> Result<NpcSpec, String> {
+fn assemble(lib: &ActorLibrary, rec: &Cand) -> Result<NpcSpec, String> {
     let look = rec.look.as_ref().ok_or("no appearance record")?;
     gothic_animation::appearance::resolve(lib, look)
 }
@@ -355,23 +368,127 @@ pub struct NpcGear {
     pub give: Vec<(String, u32)>,
 }
 
-/// Pending characters whose tile is inside the streamed ring. Characters outside it wait for the
-/// observer to come closer (they spawn when their tile becomes resident), so readiness checks
-/// must not wait for them.
-pub fn pending_in_ring(roster: &Roster, stream: &Stream) -> usize {
-    roster
-        .pending
-        .iter()
-        .filter(|p| {
-            let c = stream.settings.cell_at(p.pos_cm);
-            stream.streamer.wanted().contains(&c)
-        })
-        .count()
+/// Characters wanted right now (inside the range box of the hero, layer enabled) that are not
+/// shown yet. Readiness checks wait for these.
+pub fn pending_in_ring(roster: &Roster, _stream: &Stream) -> usize {
+    roster.queue.len()
 }
 
-/// Spawns pending NPCs whose ground collision is resident.
+/// Half extent of the box around the hero inside which characters are shown: the entity
+/// region of interest (`Entity.ROI`, 4000) of the processing range.
+const SPAWN_RANGE: f32 = 4_000.0;
+/// Characters leave the world presentation beyond this (the 250 hysteresis of `eCEntityAdmin`).
+const DESPAWN_RANGE: f32 = 4_250.0;
+/// Seconds between candidate scans.
+const SCAN_EVERY: f32 = 0.2;
+
+fn box_distance(a: Vec3, b: Vec3) -> f32 {
+    (a.x - b.x).abs().max((a.z - b.z).abs())
+}
+
+impl Cand {
+    /// Where the character is now: the core's actor once it exists, else its home.
+    fn pos_now(&self, core: &CoreRes) -> Vec3 {
+        self.actor
+            .and_then(|a| core.0.sim.world.actors.get(&a))
+            .map_or(self.pos_cm, |(p, _)| Vec3::new(p.x, p.y, p.z))
+    }
+}
+
+/// Finds the characters to show (`Roster::queue`, nearest first) and removes the ones that left
+/// the range, whose layer was switched off, or that do not exist at this story state.
+/// The core keeps the actor (position, health, inventory); only the presentation goes.
+#[allow(clippy::too_many_arguments)]
+fn scan_candidates(
+    time: Res<Time>,
+    mut roster: ResMut<Roster>,
+    player: Res<crate::walk::Player>,
+    core: Res<CoreRes>,
+    state: Res<super::PlayState>,
+    mut events: MessageReader<gothic_runtime::CoreEvent>,
+    mut commands: Commands,
+) {
+    let mut dirty = false;
+    for e in events.read() {
+        if let gothic_runtime::Event::SectorSwitched { sector, enabled } = &e.0 {
+            eprintln!(
+                "play: sector {sector} switched {}",
+                if *enabled { "on" } else { "off" }
+            );
+            roster.sector_switches.push((sector.clone(), *enabled));
+            dirty = true;
+        }
+    }
+    if dirty {
+        let flags: Vec<bool> = roster
+            .docs
+            .iter()
+            .map(|d| core.0.document_enabled(&d.path))
+            .collect();
+        for (d, on) in roster.docs.iter_mut().zip(flags) {
+            d.enabled = on;
+        }
+    }
+    let now = time.elapsed_secs();
+    if !dirty && now - roster.last_scan < SCAN_EVERY {
+        return;
+    }
+    roster.last_scan = now;
+    let t0 = std::time::Instant::now();
+    let hero = player.ctrl.position;
+    // Leaving the world.
+    let mut gone: Vec<u32> = Vec::new();
+    for &i in &roster.live {
+        let c = &roster.cands[i as usize];
+        let busy = c.actor.is_some() && c.actor == state.dialog_npc;
+        let far = box_distance(c.pos_now(&core), hero) > DESPAWN_RANGE;
+        if !busy && (far || !roster.docs[c.doc as usize].enabled) {
+            gone.push(i);
+        }
+    }
+    for i in gone {
+        let c = &mut roster.cands[i as usize];
+        if let Some(e) = c.visual.take() {
+            commands.entity(e).despawn();
+        }
+        let actor = c.actor;
+        if let Some(a) = actor {
+            roster.by_actor.remove(&a);
+        }
+        roster.live.retain(|x| *x != i);
+        roster.despawned += 1;
+    }
+    // Entering it.
+    let (cx, cz) = grid_cell(hero);
+    let reach = (SPAWN_RANGE / GRID).ceil() as i32 + 1;
+    let mut want: Vec<(f32, u32)> = Vec::new();
+    for gx in (cx - reach)..=(cx + reach) {
+        for gz in (cz - reach)..=(cz + reach) {
+            let Some(list) = roster.grid.get(&(gx, gz)) else {
+                continue;
+            };
+            for &i in list {
+                let c = &roster.cands[i as usize];
+                if c.visual.is_some() || c.failed || !roster.docs[c.doc as usize].enabled {
+                    continue;
+                }
+                let d = box_distance(c.pos_now(&core), hero);
+                if d <= SPAWN_RANGE {
+                    want.push((d, i));
+                }
+            }
+        }
+    }
+    want.sort_by(|a, b| a.0.total_cmp(&b.0));
+    roster.queue = want.into_iter().map(|w| w.1).collect();
+    roster.total = roster.spawned + roster.queue.len();
+    roster.cost.scan.add(t0.elapsed());
+}
+
+/// Spawns queued characters whose ground collision is resident, within a time budget.
 #[allow(clippy::too_many_arguments)]
 fn spawn_npcs(
+    time: Res<Time>,
     mut roster: ResMut<Roster>,
     stream: Res<Stream>,
     collision: Res<Collision>,
@@ -380,89 +497,105 @@ fn spawn_npcs(
     objects: Res<WorldObjects>,
     core: Res<CoreRes>,
 ) {
+    let started = std::time::Instant::now();
+    let queued = !roster.queue.is_empty();
+    // A body is built on the main thread (mesh, skeleton and clip decode on a cold cache costs
+    // milliseconds). After an expensive one the next waits, so the cost spreads over frames
+    // instead of landing as one hitch: the spawner never takes more than a third of the time.
+    let now = time.elapsed_secs();
+    if now < roster.spawn_not_before {
+        return;
+    }
     let mut budget = 6;
-    let mut i = 0;
-    while i < roster.pending.len() && budget > 0 {
-        let p = &roster.pending[i];
-        let cell = stream.settings.cell_at(p.pos_cm);
+    let mut qi = 0;
+    while qi < roster.queue.len() && budget > 0 && started.elapsed().as_micros() < 3_000 {
+        let ci = roster.queue[qi] as usize;
+        let home = roster.cands[ci].pos_now(&core);
+        let cell = stream.settings.cell_at(home);
         if !collision.0.has_chunk(tile_chunk_id((cell.x, cell.z))) {
-            i += 1;
+            qi += 1;
             continue;
         }
+        roster.queue.remove(qi);
         // Snap to the surface nearest the original height: a small window first, then the
         // first hit below the original height (never the topmost hit, which can be a roof).
-        let from = Vec3::new(p.pos_cm.x, p.pos_cm.y + 50.0, p.pos_cm.z);
+        let from = Vec3::new(home.x, home.y + 50.0, home.z);
         // Flyers (gulls, flocks) hover far above the surface: with a resident tile and nothing
         // within reach below, they stay at their original height instead of waiting forever.
         let ground = collision
             .0
             .ground_below(from, 100.0)
             .or_else(|| collision.0.ground_below(from, 800.0))
-            .unwrap_or(p.pos_cm.y);
-        let p = roster.pending.remove(i);
+            .unwrap_or(home.y);
         budget -= 1;
-        let mut spec = match assemble(&spawner.library, &p) {
+        let cand = &roster.cands[ci];
+        let known = cand.actor;
+        let mut spec = match assemble(&spawner.library, cand) {
             Ok(spec) => spec,
             Err(why) => {
-                eprintln!("play: appearance of {} unresolved: {why}", p.record.name);
-                roster.total -= 1;
+                eprintln!("play: appearance of {} unresolved: {why}", cand.record.name);
+                roster.cands[ci].failed = true;
                 continue;
             }
         };
         let idx = roster.spawned;
         spec = spec.with_start_time(hash01(idx, 4) * 2.0);
-        let gear = gear_of(&objects, &core, &spawner.library, &p.record);
+        let gear = gear_of(&objects, &core, &spawner.library, &cand.record);
         for w in &gear.weapons {
             spec = spec.with_weapon(w.clone());
         }
-        let yaw = hash01(idx, 7) * std::f32::consts::TAU;
-        let pos = Vec3::new(p.pos_cm.x, ground, p.pos_cm.z);
+        let yaw = match known.and_then(|a| core.0.sim.world.actors.get(&a)) {
+            Some((_, sim_yaw)) => sim_to_bevy_yaw(*sim_yaw),
+            None => hash01(idx, 7) * std::f32::consts::TAU,
+        };
+        let pos = Vec3::new(home.x, ground, home.z);
         let tf = Transform {
             translation: pos * CM,
             rotation: Quat::from_rotation_y(yaw),
             scale: Vec3::splat(CM),
         };
+        let t_spawn = std::time::Instant::now();
         let spawned = match spawner.spawn(&spec, tf) {
             Ok(e) => Ok(e),
             Err(e) => {
                 // A weapon whose slot this skeleton lacks: spawn the character without it.
                 eprintln!(
                     "play: {} spawn with weapons failed ({e:#}), retrying bare",
-                    p.record.name
+                    cand.record.name
                 );
                 spec.weapons.clear();
                 spawner.spawn(&spec, tf)
             }
         };
+        let built = t_spawn.elapsed();
         let entity = match spawned {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("play: spawn {} failed: {e:#}", p.record.name);
-                roster.total -= 1;
+                eprintln!("play: spawn {} failed: {e:#}", cand.record.name);
+                roster.cands[ci].failed = true;
                 continue;
             }
         };
-        let creature = p.look.as_ref().is_some_and(is_creature);
+        let creature = cand.look.as_ref().is_some_and(is_creature);
         let stance = if creature {
             Stance::Unarmed
-        } else if Species::from_name(&p.record.species) == Species::Orc && gear.equip.is_empty() {
+        } else if Species::from_name(&cand.record.species) == Species::Orc && gear.equip.is_empty()
+        {
             Stance::TwoHand
         } else {
             gear.stance
         };
-        let look = p.look.as_ref();
+        let look = cand.look.as_ref();
         let extra = NpcExtra {
             voice: look.map(|l| l.voice.clone()).unwrap_or_default(),
             work: look.and_then(|l| l.routine.working_points.first().cloned()),
             relax: look.and_then(|l| l.routine.relaxing_points.first().cloned()),
             sleep: look.and_then(|l| l.routine.sleeping_points.first().cloned()),
         };
-        spawner.commands.entity(entity).insert((
+        let record = cand.record.clone();
+        let mut ec = spawner.commands.entity(entity);
+        ec.insert((
             extra,
-            NpcGear {
-                equip: gear.equip,
-                give: gear.give,
-            },
             OverlayQueue::default(),
             CombatStance(stance),
             NpcMotion {
@@ -474,13 +607,38 @@ fn spawn_npcs(
                 fallen: false,
             },
         ));
-        roster.binds.push_back(entity);
+        roster.cost.build.add(built);
+        roster.cands[ci].visual = Some(entity);
+        roster.live.push(ci as u32);
         roster.spawned += 1;
-        commands.write(CoreCommand(Command::SpawnNpc {
-            record: Box::new(p.record),
-            at: Pos::new(pos.x, ground, pos.z),
-            yaw: super::bevy_to_sim_yaw(yaw),
-        }));
+        match known {
+            Some(actor) => {
+                // The core still has this character (health, inventory, quest state): bind the
+                // new body to it instead of creating a second actor.
+                ec.insert(NpcActor(actor));
+                roster.by_actor.insert(actor, entity);
+            }
+            None => {
+                ec.insert(NpcGear {
+                    equip: gear.equip,
+                    give: gear.give,
+                });
+                roster.binds.push_back((entity, ci as u32));
+                commands.write(CoreCommand(Command::SpawnNpc {
+                    record: Box::new(record),
+                    at: Pos::new(pos.x, ground, pos.z),
+                    yaw: super::bevy_to_sim_yaw(yaw),
+                }));
+            }
+        }
+    }
+    roster.total = roster.spawned + roster.queue.len();
+    if queued {
+        roster.cost.spawn.add(started.elapsed());
+        let spent = started.elapsed().as_secs_f32();
+        if spent > 0.003 {
+            roster.spawn_not_before = now + spent * 2.0;
+        }
     }
 }
 

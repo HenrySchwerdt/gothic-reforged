@@ -8,11 +8,18 @@ import bevy_pbr::render::{
 };
 
 struct SkyParams {
+    // xyz direction to the sun
     sun_dir: vec4<f32>,
+    // colSky (eCSkydome SkyColor), w = cloud thickness
     zenith: vec4<f32>,
+    // colHaze (HazeColor)
     horizon: vec4<f32>,
+    // fog / below-horizon colour, w > 0.5: cloud texture bound
     ground: vec4<f32>,
+    // colSun (sun colour faded by height), w unused
     sun_color: vec4<f32>,
+    // colClouds
+    cloud: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> sky: SkyParams;
 @group(3) @binding(1) var clouds: texture_2d<f32>;
@@ -47,17 +54,19 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let dir = normalize(in.world_position.xyz - view.world_position.xyz);
     let sun = normalize(sky.sun_dir.xyz);
     let h = dir.y;
-    // Vertical gradient with a thicker haze band at the horizon.
-    let t = pow(clamp(h, 0.0, 1.0), 0.55);
-    var col = mix(sky.horizon.rgb, sky.zenith.rgb, t);
+    // ge_skydome.fx VS: haze weight from the elevation, sky colour lit by the sun angle
+    // (0.5 * (1.3 + d.s)), sun lobe pow(d.s, 300) * 0.5. The raw haze ratio of the original
+    // exceeds 1 over the whole dome, so the weight is reconstructed as (ratio - 1) * 2 [I].
+    let y = clamp(h, 0.0, 1.0);
     let sun_amount = max(dot(dir, sun), 0.0);
-    // Warm scattering toward the sun, strongest near the horizon.
-    let haze = pow(sun_amount, 6.0) * (1.0 - 0.6 * clamp(h, 0.0, 1.0));
-    col = col + sky.sun_color.rgb * 0.35 * haze;
-    col = col + sky.sun_color.rgb * 0.6 * pow(sun_amount, 48.0);
+    let ratio = 0.3 * (1.0 - pow(y, 0.7)) / max(0.2 * (1.0 - y), 0.00001);
+    let hz = clamp((ratio - 1.0) * 2.0, 0.0, 1.0);
+    let k = 0.5 * (1.3 + dot(dir, sun));
+    var col = mix(sky.zenith.rgb * k, sky.horizon.rgb, hz);
+    col = col + sky.sun_color.rgb * 0.5 * pow(sun_amount, 300.0);
     // Sun disc.
     let disc = smoothstep(0.9994, 0.9998, sun_amount);
-    col = mix(col, sky.sun_color.rgb * 6.0, disc);
+    col = mix(col, sky.sun_color.rgb * 3.0, disc * step(0.0, sun.y));
 
     // Clouds on a virtual plane above the viewer.
     if h > 0.015 {
@@ -75,9 +84,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             d = fbm(plane * 0.9 + vec2<f32>(tt, tt * 0.4)) * 1.4;
             tone = fbm(plane * 1.7 + 3.1);
         }
-        let cover = smoothstep(0.62, 0.95, d);
-        let shade = mix(vec3<f32>(0.62, 0.68, 0.80), vec3<f32>(1.0, 0.98, 0.94), smoothstep(0.45, 0.9, tone));
-        let lit = shade * (0.9 + 0.3 * pow(sun_amount, 3.0));
+        let lo = 0.62 + (0.45 - sky.zenith.w) * 0.6;
+        let cover = smoothstep(lo, lo + 0.33, d);
+        let shade = mix(vec3<f32>(0.7, 0.74, 0.85), vec3<f32>(1.0, 0.99, 0.97), smoothstep(0.45, 0.9, tone));
+        let lit = sky.cloud.rgb * shade * (0.85 + 0.3 * pow(sun_amount, 3.0));
         col = mix(col, lit, cover * smoothstep(0.015, 0.2, h));
     }
     // Below the horizon blend into the ground/fog colour.
@@ -85,6 +95,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
     var pbr = pbr_input_new();
     var out: FragmentOutput;
-    out.color = main_pass_post_lighting_processing(pbr, vec4<f32>(col, 1.0));
+    // The values are gamma-space like every colour of the original; convert for the linear target.
+    let lin = select(pow((max(col, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4)), col / 12.92, col <= vec3<f32>(0.04045));
+    out.color = main_pass_post_lighting_processing(pbr, vec4<f32>(lin, 1.0));
     return out;
 }

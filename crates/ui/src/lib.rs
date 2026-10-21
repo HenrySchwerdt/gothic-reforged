@@ -11,30 +11,50 @@ mod atlas;
 pub mod demo;
 pub mod dialogmenu;
 pub mod files;
+pub mod focusname;
 mod hud;
 pub mod items;
 pub mod journal;
+pub mod log;
 mod logic;
 pub mod manager;
+pub mod map;
 pub mod options;
+pub mod optpages;
+mod overlay;
 pub mod pages;
 pub mod reading;
 mod screens;
 mod screens_menu;
+mod screens_options;
 mod screens_read;
+mod screens_world;
+pub mod settings;
+pub mod stats;
 mod style;
+pub mod texteffect;
+pub mod userini;
 
 pub use assets::{Page, UiAssets};
 pub use dialogmenu::{GameMessages, MessageKind, OptionList, Subtitle};
 pub use files::{FileCommand, SlotKind, SlotList, SlotRow};
+pub use focusname::{FocusAttitude, FocusLabel};
 pub use hud::{FocusHealth, QuickSlot, QuickSlots};
 pub use items::{ItemCatalog, ItemInfo};
+pub use log::{HudLog, LogCategory, LogSettings};
 pub use manager::{EscOutcome, GuiManager, HudFlags, InputFocus, MenuPage, PageId};
 pub use options::{ApplyVideo, VideoOptions};
+pub use optpages::{OptAction, OptionsUi};
 pub use pages::{
     DocumentView, Ingredient, LootView, PageEvent, PageRow, PageView, PlayerPanel, RecipeRow,
     RecipeView, ShowPage, TradeView,
 };
+pub use settings::{
+    ApplyAudio, ApplyControls, ApplyDifficulty, AudioOptions, ControlSettings, DifficultyOptions,
+};
+pub use stats::EquippedItems;
+pub use texteffect::{FloatingText, PrintScreen, PrintScreenEnd, ScreenOutput, TextEffects};
+pub use userini::OptionsWrite;
 
 use bevy::prelude::*;
 use gothic_gameplay::dialog::{Choice, DialogSession};
@@ -123,10 +143,22 @@ pub enum Screen {
     Files,
     /// Video options page of the menu (`gCHUDMenuOptionsVideo2`).
     Video,
+    /// Options hub of the menu (`gCHUDMenuOptions2`).
+    Options,
+    /// Audio options (`gCHUDMenuOptionsAudio2`).
+    Audio,
+    /// Controls options (`gCHUDMenuOptionsControls2`).
+    Controls,
+    /// Custom key list (`gCHUDMenuOptionsControlsCustom2`).
+    ControlsCustom,
+    /// Difficulty page (`gCHUDMenuDifficulty2`).
+    Difficulty,
     /// Work-station recipe page (`gCHUDPageSynth2`), host driven (see [`pages`]).
     Recipe,
     /// Readable book or letter (`gCHUDViewBook2` / `gCHUDViewLetter2`).
     Document,
+    /// Map document page (`gCHUDViewMap2`): the level map around the player.
+    Map,
 }
 
 impl Screen {
@@ -140,8 +172,22 @@ impl Screen {
             Screen::Trade => Some(PageId::Trade),
             Screen::Loot => Some(PageId::Loot),
             Screen::Recipe => Some(PageId::Alchemy),
-            Screen::Document => Some(PageId::Documents),
-            Screen::None | Screen::MainMenu | Screen::Files | Screen::Video => None,
+            Screen::Document | Screen::Map => Some(PageId::Documents),
+            _ => None,
+        }
+    }
+
+    /// The screen that shows a menu page (pages without a screen yet show the main page).
+    pub fn from_menu_page(p: MenuPage) -> Screen {
+        match p {
+            MenuPage::Main | MenuPage::Credits | MenuPage::Confirm => Screen::MainMenu,
+            MenuPage::Options => Screen::Options,
+            MenuPage::Video => Screen::Video,
+            MenuPage::Audio => Screen::Audio,
+            MenuPage::Controls => Screen::Controls,
+            MenuPage::ControlsCustom => Screen::ControlsCustom,
+            MenuPage::Difficulty => Screen::Difficulty,
+            MenuPage::Files => Screen::Files,
         }
     }
 
@@ -151,6 +197,11 @@ impl Screen {
             Screen::MainMenu => Some(MenuPage::Main),
             Screen::Files => Some(MenuPage::Files),
             Screen::Video => Some(MenuPage::Video),
+            Screen::Options => Some(MenuPage::Options),
+            Screen::Audio => Some(MenuPage::Audio),
+            Screen::Controls => Some(MenuPage::Controls),
+            Screen::ControlsCustom => Some(MenuPage::ControlsCustom),
+            Screen::Difficulty => Some(MenuPage::Difficulty),
             _ => None,
         }
     }
@@ -328,8 +379,14 @@ pub(crate) enum Action {
     VideoSlider(options::Slider, i32),
     VideoVsync,
     VideoApply,
+    /// A button of the audio / controls / difficulty pages.
+    Opt(OptAction),
     SelectRecipe(usize),
     BookSpread(i32),
+    /// Zoom the map page in (+1) or out (-1).
+    MapZoom(i32),
+    /// The Haupt / Alle radio buttons of the quest page's world view.
+    WorldAll(bool),
 }
 
 #[derive(Message, Clone, Debug)]
@@ -361,8 +418,12 @@ pub struct UiState {
     pub(crate) files: FilesState,
     /// Draft of the video page (applied with the Apply button).
     pub(crate) video: VideoOptions,
+    /// Drafts of the audio / controls / difficulty pages.
+    pub opts: OptionsUi,
     pub(crate) recipe_sel: usize,
     pub(crate) spread: usize,
+    /// Zoom of the map page (`ZOOM_MIN..=ZOOM_MAX`).
+    pub(crate) map_zoom: f32,
 }
 
 /// State of the save / load page.
@@ -409,6 +470,17 @@ impl Plugin for GothicUiPlugin {
             .init_resource::<HostGate>()
             .init_resource::<TeachCost>()
             .init_resource::<VideoOptions>()
+            .init_resource::<AudioOptions>()
+            .init_resource::<DifficultyOptions>()
+            .init_resource::<ControlSettings>()
+            .init_resource::<stats::EquippedItems>()
+            .init_resource::<FocusLabel>()
+            .init_resource::<LogSettings>()
+            .init_resource::<HudLog>()
+            .init_resource::<TextEffects>()
+            .init_resource::<ScreenOutput>()
+            .init_resource::<map::MapData>()
+            .init_resource::<map::WorldLocations>()
             .add_message::<StartDialog>()
             .add_message::<OpenScreen>()
             .add_message::<CloseScreen>()
@@ -428,8 +500,24 @@ impl Plugin for GothicUiPlugin {
             .add_message::<SlotList>()
             .add_message::<FileCommand>()
             .add_message::<ApplyVideo>()
+            .add_message::<ApplyAudio>()
+            .add_message::<ApplyDifficulty>()
+            .add_message::<ApplyControls>()
+            .add_message::<OptionsWrite>()
+            .add_message::<PrintScreen>()
+            .add_message::<PrintScreenEnd>()
+            .add_message::<FloatingText>()
             .add_message::<Act>()
-            .add_systems(Startup, (logic::setup, hud::spawn_hud).chain())
+            .add_systems(
+                Startup,
+                (
+                    logic::setup,
+                    hud::spawn_hud,
+                    overlay::spawn_overlays,
+                    focusname::spawn_focus_name,
+                )
+                    .chain(),
+            )
             .add_systems(
                 Update,
                 (
@@ -448,6 +536,10 @@ impl Plugin for GothicUiPlugin {
                     hud::update_hud,
                     hud::toasts,
                     hud::fade_subtitle,
+                    overlay::feed_overlays,
+                    overlay::render_overlays,
+                    focusname::render_focus_name,
+                    logic::capture_keys,
                 )
                     .chain(),
             );

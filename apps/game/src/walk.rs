@@ -2,6 +2,7 @@
 //!
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
+mod env;
 mod gmat;
 mod post;
 #[path = "play/mod.rs"]
@@ -48,7 +49,9 @@ struct LoaderRes {
 }
 
 /// World-units (metres) distances for ground-cover fade and streaming.
-const FOLIAGE_FADE: (f32, f32) = (42.0, 62.0);
+/// Original vegetation view range (VeryHigh, 7500 cm) with the fade start at the middle of the
+/// randomised 65..75 % band (`eCVegetation_PS::OnRender`).
+const FOLIAGE_FADE: (f32, f32) = (52.5, 75.0);
 const VEG_RADIUS: i32 = 3;
 /// SpeedTree near/far cross-fade range in metres.
 const TREE_LOD: (f32, f32) = (40.0, 55.0);
@@ -233,7 +236,7 @@ pub fn run(args: &[String]) -> Result<()> {
                         Some(WindowResolution::new(w.parse().ok()?, h.parse().ok()?))
                     })
                     .unwrap_or_else(|| WindowResolution::new(1280, 720)),
-                present_mode: if smoke {
+                present_mode: if smoke || std::env::var_os("GR_NOVSYNC").is_some() {
                     PresentMode::AutoNoVsync
                 } else {
                     PresentMode::AutoVsync
@@ -318,6 +321,8 @@ pub fn run(args: &[String]) -> Result<()> {
         ..default()
     })
     .insert_resource(FogEnd(fog_end))
+    .insert_resource(env::OrigEnv::new(ORIGIN, args))
+    .add_plugins(env::EnvPlugin)
     .add_systems(Startup, setup)
     .add_systems(
         Update,
@@ -366,6 +371,7 @@ fn setup(
             horizon: Vec4::new(0.52, 0.70, 0.95, 1.0),
             ground: Vec4::new(0.60, 0.74, 0.92, 1.0),
             sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
+            cloud: Vec4::new(1.0, 1.0, 1.0, 1.0),
         },
     });
     commands.insert_resource(SkyHandle(sky_handle.clone()));
@@ -402,6 +408,10 @@ fn setup(
         .id();
     if std::env::var_os("GR_NOBLOOM").is_none() {
         commands.entity(cam).insert(post::BloomPost::original());
+        // The HDR exposure curve of the original needs the unclamped scene.
+        if std::env::var_os("GR_HDR").is_some() {
+            commands.entity(cam).insert(bevy::camera::Hdr);
+        }
     }
     commands.spawn((
         DirectionalLight {
@@ -439,6 +449,7 @@ fn receive_tiles(
     sky: Res<SkyHandle>,
     mut skies: ResMut<Assets<SkyMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut orig_env: ResMut<env::OrigEnv>,
 ) {
     let rx = loader.responses.lock().expect("loader channel");
     while let Ok(msg) = rx.try_recv() {
@@ -465,6 +476,7 @@ fn receive_tiles(
                     mat.params.ground.w = 1.0;
                 }
             }
+            Response::Weather(p) => orig_env.install(*p),
             Response::Failed(e) => eprintln!("loader: {e}"),
             Response::Vegetation(payload) => {
                 let key = payload.key;
@@ -944,10 +956,16 @@ fn spawn_part(
         if radius_m < env_f32("GR_SHMIN", 3.0) {
             e.insert(NotShadowCaster);
         }
-        let end = (radius_m * 60.0).clamp(40.0, 400.0);
+        // Original small-object culling (`CullSmallObjects`): fade between the distances where the
+        // projected area factor crosses S and 0.6 S, S = fScreenObjectDistanceCulling (VeryHigh).
+        let (fade_start, fade_end) = gothic_render_rules::cull::distance_band(
+            radius_m,
+            gothic_render_rules::cull::screen_cull_factor(0),
+        );
         e.insert(bevy::camera::visibility::VisibilityRange {
             start_margin: 0.0..0.0,
-            end_margin: end..end,
+            // Floor of 15 m so pick-up items stay visible (deviation: the original has no floor).
+            end_margin: fade_start.clamp(15.0, 600.0)..fade_end.clamp(20.0, 800.0),
             use_aabb: true,
         });
     }
@@ -1291,6 +1309,7 @@ fn player_motion(
 
 fn update_camera(
     fog_end: Res<FogEnd>,
+    orig_env: Res<env::OrigEnv>,
     mut fog: Query<&mut DistanceFog, With<PlayerCamera>>,
     mut player: ResMut<Player>,
     collision: Res<Collision>,
@@ -1301,7 +1320,9 @@ fn update_camera(
         return;
     };
     // Fog must not swallow the world when the camera is high above it.
-    if let Ok(mut f) = fog.single_mut() {
+    if orig_env.packet.is_none()
+        && let Ok(mut f) = fog.single_mut()
+    {
         let height = cam.translation.y.max(0.0);
         let end = fog_end.0 + 3.0 * (height - 15.0).max(0.0);
         f.falloff = FogFalloff::Linear {
