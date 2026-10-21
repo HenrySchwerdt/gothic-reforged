@@ -1,0 +1,10 @@
+[mod]
+id = "chicken_rain"
+name = "Chicken Rain"
+version = "1.0.0"
+description = "Every quest the hero finishes makes chickens fall from the sky."
+authors = ["Gothic Reforged"]
+
+[script]
+entry = "scripts/main.rhai"
+capabilities = ["world", "spawn", "ui"]
