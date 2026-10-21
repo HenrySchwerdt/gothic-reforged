@@ -147,7 +147,7 @@ impl SrcAnims {
                 ..Default::default()
             };
             let raw = take(frames * nt * 28)?;
-            for e in raw.chunks_exact(28) {
+            for e in raw.as_chunks::<28>().0 {
                 c.t.push(Vec3::new(f(&e[0..4]), f(&e[4..8]), f(&e[8..12])));
                 let q = Quat::from_xyzw(f(&e[12..16]), f(&e[16..20]), f(&e[20..24]), f(&e[24..28]));
                 c.q.push(if q.length_squared() > 1e-12 {
