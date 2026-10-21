@@ -123,6 +123,25 @@ impl WorldIndex {
         &self.records
     }
 
+    /// Number of placed meshes per PVS prefetch cell (`eCPVSCellItem`): the cell index is
+    /// `(floor(coordinate) + 1 000 000) / cell_size` on X and Z. This is the world data the
+    /// residency budget is based on. Records with non-finite positions are skipped.
+    pub fn pvs_cell_weights(&self, cell_size: u32) -> Vec<((i32, i32), u32)> {
+        const OFFSET: i64 = 1_000_000;
+        let size = i64::from(cell_size.max(1));
+        let cell = |v: f32| ((v.floor() as i64 + OFFSET).div_euclid(size)) as i32;
+        let mut counts: HashMap<(i32, i32), u32> = HashMap::new();
+        for r in &self.records {
+            let p = r.position();
+            if p[0].is_finite() && p[2].is_finite() {
+                *counts.entry((cell(p[0]), cell(p[2]))).or_default() += 1;
+            }
+        }
+        let mut v: Vec<_> = counts.into_iter().collect();
+        v.sort_unstable();
+        v
+    }
+
     /// Entities whose origin lies within `radius` (3D, source units) of `center`.
     /// Results are ordered by insertion order (deterministic). Non-finite or
     /// negative inputs yield no results.
@@ -191,6 +210,20 @@ mod tests {
             resource: Arc::from("a.xcmsh"),
             world_matrix: m,
         }
+    }
+
+    #[test]
+    fn pvs_cell_weights_count_records_per_ten_thousand_unit_cell() {
+        let mut index = WorldIndex::new();
+        index.push(rec("a", 100.0, 0.0, 100.0));
+        index.push(rec("b", 9_999.0, 5.0, 100.0));
+        index.push(rec("c", 10_000.0, 0.0, 100.0));
+        index.push(rec("d", -1.0, 0.0, -1.0));
+        index.push(rec("e", f32::NAN, 0.0, 0.0));
+        assert_eq!(
+            index.pvs_cell_weights(10_000),
+            vec![((99, 99), 1), ((100, 100), 2), ((101, 100), 1)]
+        );
     }
 
     #[test]

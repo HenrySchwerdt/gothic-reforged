@@ -1,9 +1,11 @@
 //! L2 bridge: owns the [`Core`] inside a Bevy app, ticks it at a fixed 30 Hz and carries
 //! [`Command`]s in / [`Event`]s out as Bevy messages. Contains no rendering or UI.
 mod core;
+mod processing;
 mod world;
 
 pub use core::{Command, Core, Event, HERO_REACH, TICK_HZ};
+pub use processing::{ProcessingRange, RangeEvent};
 pub use world::PlayWorld;
 
 use bevy::prelude::*;

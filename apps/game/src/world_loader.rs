@@ -147,7 +147,13 @@ pub enum Request {
     Texture(String),
 }
 pub enum Response {
-    Ready { records: usize, millis: u128 },
+    Ready {
+        records: usize,
+        millis: u128,
+        /// Placed meshes per PVS cell (cell index, count): the world data that drives the
+        /// residency budget.
+        cell_weights: Vec<((i32, i32), u32)>,
+    },
     Tile(Box<TilePayload>),
     Vegetation(Box<VegPayload>),
     Texture(String, Option<Arc<TexData>>),
@@ -181,6 +187,9 @@ pub fn spawn_loader(data_dir: std::path::PathBuf, origin: Origin) -> LoaderHandl
                     let _ = resp_tx.send(Response::Ready {
                         records: loader.index.len(),
                         millis: loader.startup_ms,
+                        cell_weights: loader
+                            .index
+                            .pvs_cell_weights(gothic_world::pvs::MAIN_CELL_SIZE),
                     });
                     while let Ok(request) = req_rx.recv() {
                         match request {

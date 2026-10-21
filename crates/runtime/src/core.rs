@@ -2,6 +2,7 @@
 //!
 //! `Core::tick(dt, &[Command]) -> Vec<Event>`; presentation never mutates state, it sends
 //! [`Command`]s and reacts to [`Event`]s.
+use crate::processing::ProcessingRange;
 use crate::world::PlayWorld;
 use anyhow::{Context, Result};
 use gothic_gameplay::dialog::{Choice, DialogSession};
@@ -240,6 +241,12 @@ pub enum Command {
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// An actor crossed the border of the entity processing range
+    /// (`OnEnterProcessingRange` / `OnExitProcessingRange`).
+    ProcessingRange {
+        actor: ActorId,
+        entered: bool,
+    },
     ActorSpawned {
         actor: ActorId,
         name: String,
@@ -373,6 +380,9 @@ pub struct Core {
     /// Arm spawned fighters with a stand-in weapon of their species (tests and tools without
     /// the character's own inventory); the play mode gives real weapons from the treasure sets.
     pub guess_weapons: bool,
+    /// The processing range (region of interest around the hero); `enabled = false` processes
+    /// every actor regardless of distance.
+    pub range: ProcessingRange,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -421,6 +431,7 @@ impl Core {
             state_rev: 1,
             inv_mirror: Default::default(),
             guess_weapons: true,
+            range: ProcessingRange::new(),
         };
         // The new game's start kit lives in the quest/dialog state; the hero actor carries it.
         core.sync_inventory();
@@ -483,6 +494,7 @@ impl Core {
         for c in commands {
             self.command(c, &mut out);
         }
+        self.update_processing_range(&mut out);
         self.acc += dt;
         let step = 1.0 / TICK_HZ;
         let mut n = 0;
@@ -541,6 +553,42 @@ impl Core {
             }
         }
         out
+    }
+
+    /// Port of the range part of `eCEntityAdmin::Process`: the hero (the camera stand-in) centres
+    /// the region of interest; actors outside it are not thought for.
+    fn update_processing_range(&mut self, out: &mut Vec<Event>) {
+        if !self.range.enabled {
+            self.sim.processing = None;
+            return;
+        }
+        let centre = self
+            .sim
+            .world
+            .actors
+            .get(&self.hero)
+            .map_or(bevy::math::Vec3::ZERO, |(p, _)| {
+                bevy::math::Vec3::new(p.x, p.y, p.z)
+            });
+        let actors = &self.sim.actors;
+        let world = &self.sim.world;
+        let view = actors.iter().filter_map(|a| {
+            let (p, _) = world.actors.get(&a.id)?;
+            Some((
+                a.id,
+                a.name.as_str(),
+                bevy::math::Vec3::new(p.x, p.y, p.z),
+                a.ai_mode == AiMode::Dead,
+            ))
+        });
+        let (events, inside) = self.range.update(centre, view);
+        for e in events {
+            out.push(Event::ProcessingRange {
+                actor: e.actor,
+                entered: e.entered,
+            });
+        }
+        self.sim.processing = Some(inside);
     }
 
     fn command(&mut self, c: &Command, out: &mut Vec<Event>) {

@@ -1246,9 +1246,13 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
         false
     }
     fn in_processing_range(&self, npc: EntityId) -> bool {
-        // The simulation processes every actor within 100 m of the hero.
-        let Some(h) = self.sim.hero else { return true };
-        actor_of(npc).is_none_or(|a| self.sim.dist(a, h) < 10_000.0)
+        // Inside the entity processing range (ROI sphere around the camera, `eCEntityAdmin`);
+        // without an attached range everything within 100 m of the hero counts.
+        match (&self.sim.processing, actor_of(npc)) {
+            (Some(set), Some(a)) => set.contains(&a) || self.sim.hero == Some(a),
+            (None, Some(a)) => self.sim.hero.is_none_or(|h| self.sim.dist(a, h) < 10_000.0),
+            _ => true,
+        }
     }
     fn start_position(&self, npc: EntityId) -> Option<SPos> {
         self.script(npc).start_pos

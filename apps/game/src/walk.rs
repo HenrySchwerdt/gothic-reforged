@@ -29,9 +29,9 @@ use gmat::{
     GothicParams, SkyMaterial, SkyParams, WaterMaterial, WaterParams,
 };
 use gothic_physics::{CharacterController, CollisionWorld, ControllerConfig};
-use gothic_world::{CellId, StreamingSettings, plan};
+use gothic_world::{StreamingSettings, TileStreamer};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Mutex,
     time::Instant,
 };
@@ -98,7 +98,8 @@ struct Pending {
 #[derive(Resource)]
 struct Stream {
     settings: StreamingSettings,
-    resident: BTreeSet<CellId>,
+    /// Tile residency under the ported PVS prefetch rules.
+    streamer: TileStreamer,
     in_flight: HashSet<TileKey>,
     pending: VecDeque<Pending>,
     spawned: HashMap<TileKey, Vec<Entity>>,
@@ -210,10 +211,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let prefix = arg("--screenshot").unwrap_or_else(|| ".local/ardea".into());
     let shots = arg("--shots").map(|s| parse_shots(&s)).unwrap_or_default();
     let handle: LoaderHandle = spawn_loader(data_dir.into(), Origin(ORIGIN));
+    // The grid keeps at least `radius` tiles resident in every direction (the prefetch
+    // rectangle is 0.4 x far plus one 10 000-unit cell).
+    let pvs_cell_size = gothic_world::pvs::MAIN_CELL_SIZE;
     let settings = StreamingSettings {
         cell_size: TILE_CM,
-        load_radius: radius,
-        retain_radius: radius + 1,
+        pvs_cell_size,
+        far: StreamingSettings::far_for_extent(radius as f32 * TILE_CM, pvs_cell_size),
         operations_per_frame: 4,
     };
     let fog_end = radius as f32 * TILE_CM * CM * 0.92;
@@ -248,8 +252,8 @@ pub fn run(args: &[String]) -> Result<()> {
         responses: Mutex::new(handle.responses),
     })
     .insert_resource(Stream {
+        streamer: TileStreamer::new(settings.clone()),
         settings,
-        resident: BTreeSet::new(),
         in_flight: HashSet::new(),
         pending: VecDeque::new(),
         spawned: HashMap::new(),
@@ -434,7 +438,12 @@ fn receive_tiles(
     let rx = loader.responses.lock().expect("loader channel");
     while let Ok(msg) = rx.try_recv() {
         match msg {
-            Response::Ready { records, millis } => {
+            Response::Ready {
+                records,
+                millis,
+                cell_weights,
+            } => {
+                stream.streamer.set_cell_weights(cell_weights);
                 stream.ready = true;
                 stream.records = records;
                 stream.loader_ms = millis;
@@ -469,7 +478,10 @@ fn receive_tiles(
                 stream.trees += payload.stats.trees;
                 stream.tiles_loaded += 1;
                 stream.last_activity = 0;
-                if stream.resident.contains(&CellId { x: key.0, z: key.1 }) {
+                if stream
+                    .streamer
+                    .is_resident(gothic_world::CellId { x: key.0, z: key.1 })
+                {
                     stream.pending.push_back(Pending {
                         payload: *payload,
                         next: 0,
@@ -501,10 +513,12 @@ fn stream_tiles(
     if !stream.ready {
         return;
     }
-    let center = stream.settings.cell_at(observer_cm(&player));
-    let delta = plan(&stream.settings, &stream.resident, center);
-    for c in delta.unload {
-        stream.resident.remove(&c);
+    let at = observer_cm(&player);
+    if stream.streamer.observe(at).is_err() {
+        return;
+    }
+    let ops = stream.settings.operations_per_frame;
+    for c in stream.streamer.take_unloads(at, ops) {
         let key = (c.x, c.z);
         stream.in_flight.remove(&key);
         stream.pending.retain(|p| p.payload.key != key);
@@ -515,11 +529,8 @@ fn stream_tiles(
             }
         }
     }
-    for c in delta.load {
-        if stream.in_flight.len() >= 24 {
-            break;
-        }
-        stream.resident.insert(c);
+    let room = 24usize.saturating_sub(stream.in_flight.len());
+    for c in stream.streamer.next_loads(at, ops.min(room)) {
         stream.in_flight.insert((c.x, c.z));
         let _ = loader.requests.send(Request::Tile((c.x, c.z)));
     }

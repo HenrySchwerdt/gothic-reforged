@@ -3290,6 +3290,7 @@ dependencies = [
  "gothic-nav",
  "gothic-physics",
  "gothic-sim",
+ "gothic-world",
  "serde",
  "serde_json",
 ]

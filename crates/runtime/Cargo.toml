@@ -10,6 +10,7 @@ bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
 gothic-gameplay = { path = "../gameplay" }
 gothic-sim = { path = "../sim" }
 gothic-nav = { path = "../nav" }
+gothic-world = { path = "../world" }
 glam = "0.33"
 anyhow.workspace = true
 serde.workspace = true

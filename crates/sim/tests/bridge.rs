@@ -360,6 +360,35 @@ fn routine_follows_the_time_of_day() {
 }
 
 #[test]
+fn actors_outside_the_processing_range_do_not_think() {
+    let mut sim = sim_with(SimConfig::default());
+    let mut r = StaticRoutines::default();
+    r.add(
+        "Smith",
+        AnchorKind::Working,
+        Pos::flat(1000.0, 0.0),
+        "Anvil",
+    );
+    sim.resolver = Some(Box::new(r));
+    let smith = sim.spawn(
+        Actor::npc(ActorId(0), "Smith", Species::Human, 5, 5),
+        Pos::flat(0.0, 0.0),
+    );
+    // An empty range: nobody is processed, the smith stays where he is.
+    sim.processing = Some(Default::default());
+    sim.run_ticks(150);
+    assert!(sim.world_pos(smith).dist_xz(Pos::flat(0.0, 0.0)) < 1.0);
+    assert!(!sim.is_processed(smith));
+    // Once inside, the routine runs.
+    sim.processing = Some([smith].into_iter().collect());
+    sim.run_ticks(150);
+    assert!(sim.world_pos(smith).dist_xz(Pos::flat(1000.0, 0.0)) < 60.0);
+    // Without a range everyone runs again.
+    sim.processing = None;
+    assert!(sim.is_processed(smith));
+}
+
+#[test]
 fn bow_shots_use_draw_time_dex_and_protection() {
     let cfg = SimConfig {
         ranged_hit_pct: 100,

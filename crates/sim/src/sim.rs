@@ -31,7 +31,7 @@ use crate::world::{Pos, WorldQuery, in_fov};
 use gothic_gameplay::model::QuestStatus;
 use gothic_gameplay::script::{ExecResult, Output, npc_defeated, npc_killed};
 use gothic_gameplay::{GameDatabase, GameState};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod ai_exec;
@@ -214,6 +214,10 @@ pub struct Sim<W: WorldQuery> {
     /// Script-port state (routine tasks, interact points, queued AI commands), see
     /// [`crate::script_host`].
     pub script: crate::script_host::ScriptTables,
+    /// Actors inside the entity processing range (`eCEntityAdmin`); `None` processes everyone.
+    /// Actors outside are not thought for at all, like unprocessed entities in the original;
+    /// the hero and companions that follow or wait for the hero always run.
+    pub processing: Option<BTreeSet<ActorId>>,
 }
 
 fn two_mut(v: &mut [Actor], i: usize, j: usize) -> (&mut Actor, &mut Actor) {
@@ -280,6 +284,7 @@ impl<W: WorldQuery> Sim<W> {
             gui_open: false,
             npc_templates: BTreeMap::new(),
             script: crate::script_host::ScriptTables::default(),
+            processing: None,
         }
     }
 
@@ -469,8 +474,23 @@ impl<W: WorldQuery> Sim<W> {
         done(self)
     }
 
+    /// Is the actor inside the processing range? Everyone is while no range is attached.
+    pub fn is_processed(&self, id: ActorId) -> bool {
+        self.processing.as_ref().is_none_or(|set| {
+            set.contains(&id)
+                || self.hero == Some(id)
+                || matches!(
+                    self.actors[id.0 as usize].brain.task,
+                    Task::FollowPlayer | Task::WaitForPlayer
+                )
+        })
+    }
+
     fn think(&mut self, i: usize, now: u64) {
         if self.actors[i].ai_mode == AiMode::Dead {
+            return;
+        }
+        if !self.is_processed(self.actors[i].id) {
             return;
         }
         // Once-per-second resource tick [CA 5.2, I on the interval].
