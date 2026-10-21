@@ -28,7 +28,7 @@ ffmpeg, or without a Bink decoder, `PlayCutscene` immediately answers with
 skipped.
 
 Licensing: ffmpeg runs as a separate program, so its LGPL/GPL terms don't extend to the game.
-If you ship ffmpeg binaries, include their license and source offer.
+If you ship ffmpeg binaries, include their license and source offer (prefer an LGPL build; see `THIRD_PARTY_NOTICES.md`). Do not switch to linking libav* in-process (static or dynamic) without a licence review: that would make the LGPL/GPL linking terms apply to the game binary.
 
 ## Player (`--features bevy`)
 
