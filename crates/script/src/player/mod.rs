@@ -337,7 +337,10 @@ mod tests {
         let cmds = w.finish_commands(p);
         assert!(cmds.iter().any(|c| matches!(
             c,
-            AiCommand::CombatMove { action: Action::QuickAttackL, .. }
+            AiCommand::CombatMove {
+                action: Action::QuickAttackL,
+                ..
+            }
         )));
     }
 
@@ -374,7 +377,13 @@ mod tests {
         commands::run(&mut w, p);
         let cmds = w.finish_commands(p);
         // A sword without a shield has no `Begin` clip: the pose snaps (`_AI_Parade`).
-        assert!(cmds.iter().all(|c| !matches!(c, AiCommand::CombatMove { phase: MovePhase::Begin, .. })));
+        assert!(cmds.iter().all(|c| !matches!(
+            c,
+            AiCommand::CombatMove {
+                phase: MovePhase::Begin,
+                ..
+            }
+        )));
         commands::run(&mut w, p);
         assert_eq!(w.ani_state(p), crate::enums::AniState::Parade);
         assert_eq!(w.pl.alignment.get(&p), Some(&foe));

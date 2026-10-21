@@ -7,7 +7,10 @@ use gothic_formats::{
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let mut vfs = VirtualFileSystem::open_data_dir(std::path::Path::new(&a[1])).expect("vfs");
-    let bytes = vfs.resolve_name("g3.efm").and_then(|s| vfs.read(s).ok()).expect("efm");
+    let bytes = vfs
+        .resolve_name("g3.efm")
+        .and_then(|s| vfs.read(s).ok())
+        .expect("efm");
     let genome = GenomeFile::parse(&bytes).expect("genome");
     let strings = Strings::new(&genome.strings);
     let mut cur = Cursor::new(genome.body);

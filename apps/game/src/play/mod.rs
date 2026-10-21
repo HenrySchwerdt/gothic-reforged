@@ -13,9 +13,6 @@ mod audio;
 mod barks;
 mod cam;
 mod controls;
-mod ranged;
-mod shots;
-mod uibridge;
 mod data;
 mod er_pack;
 mod events;
@@ -31,13 +28,16 @@ mod npcs;
 mod objects;
 mod pose;
 mod qa;
+mod ranged;
 mod record;
 mod routines;
 mod saves;
 mod script;
+mod shots;
 mod souls;
 mod teleport;
 mod triggers;
+mod uibridge;
 mod windows;
 
 use crate::walk::{Player, Smoke};
@@ -399,8 +399,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         .filter(|m| !library.static_mesh_names(m).is_empty());
     let bow_mesh = item_mesh(&items_json, "It_Bow_Hunting")
         .filter(|m| !library.static_mesh_names(m).is_empty());
-    let arrow_mesh = item_mesh(&items_json, "Arrow")
-        .filter(|m| !library.static_mesh_names(m).is_empty());
+    let arrow_mesh =
+        item_mesh(&items_json, "Arrow").filter(|m| !library.static_mesh_names(m).is_empty());
     let session = GameSession::new(db, state, catalog);
 
     let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;

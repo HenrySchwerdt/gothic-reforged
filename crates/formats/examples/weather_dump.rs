@@ -27,9 +27,20 @@ fn main() {
     for s in &data.states {
         println!(
             "{}: pps {} speed {:?} size {:?} dirscale {} tile {} dizzer {} jitter {} {} splash {} tile {} scale {:?} loop {:?} vol {}",
-            s.name, s.particles_per_second, s.speed_min_max, s.size, s.direction_scale,
-            s.current_texture_tile, s.spawn_point_dizzer, s.jitter_power, s.jitter_speed,
-            s.splash_duration, s.splash_texture_tile, s.splash_size_scale, s.loop_sample, s.loop_volume
+            s.name,
+            s.particles_per_second,
+            s.speed_min_max,
+            s.size,
+            s.direction_scale,
+            s.current_texture_tile,
+            s.spawn_point_dizzer,
+            s.jitter_power,
+            s.jitter_speed,
+            s.splash_duration,
+            s.splash_texture_tile,
+            s.splash_size_scale,
+            s.loop_sample,
+            s.loop_volume
         );
     }
 }

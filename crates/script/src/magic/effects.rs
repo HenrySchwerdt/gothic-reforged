@@ -833,7 +833,8 @@ pub fn magic_telekinesis(host: &mut dyn ScriptHost, caster: EntityId, target: En
 /// Port of `MagicTimeBubble` (S:566b0): the spell's `Smn_Timebubble` entity does the work; the
 /// function itself only exists to be called.
 pub fn magic_time_bubble(_host: &mut dyn ScriptHost, _caster: EntityId) {
-    gothic_portcov::hit!("magic_time_bubble");}
+    gothic_portcov::hit!("magic_time_bubble");
+}
 
 /// Run a spell function by the name a spell template stores in `FuncOnCast`/`FuncOnTargetHit`.
 /// Returns false when the name is not a function of the script library.

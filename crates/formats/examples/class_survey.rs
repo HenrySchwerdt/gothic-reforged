@@ -21,14 +21,16 @@ fn main() {
     for (path, slot) in slots {
         let Ok(bytes) = vfs.read(slot) else { continue };
         let want = |c: &str| classes.iter().any(|k| k == c);
-        if !classes
-            .iter()
-            .any(|k| bytes.windows(k.len().min(16)).any(|w| w == &k.as_bytes()[..k.len().min(16)]))
-        {
+        if !classes.iter().any(|k| {
+            bytes
+                .windows(k.len().min(16))
+                .any(|w| w == &k.as_bytes()[..k.len().min(16)])
+        }) {
             continue;
         }
         let mut stats = DecodeStats::default();
-        let Ok((doc, sets)) = WorldDocument::parse_with_properties(&bytes, &|c| want(c), &mut stats)
+        let Ok((doc, sets)) =
+            WorldDocument::parse_with_properties(&bytes, &|c| want(c), &mut stats)
         else {
             continue;
         };

@@ -82,10 +82,13 @@ fn main() -> anyhow::Result<()> {
                 "  right hand mesh centroid {:?} ({cnt} verts)",
                 sum / cnt as f32
             );
-        if let Some(i) = rig.node("Slot_LeftHand_Weapon") {
-            let a = model[i as usize].matrix3;
-            println!("  left slot axes X {:?} Y {:?} Z {:?}", a.x_axis, a.y_axis, a.z_axis);
-        }
+            if let Some(i) = rig.node("Slot_LeftHand_Weapon") {
+                let a = model[i as usize].matrix3;
+                println!(
+                    "  left slot axes X {:?} Y {:?} Z {:?}",
+                    a.x_axis, a.y_axis, a.z_axis
+                );
+            }
         }
         for (slot, &n) in rig.slot_node.iter().enumerate() {
             if m.binding.node_of_slot[slot] == NONE {

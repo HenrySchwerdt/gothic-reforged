@@ -178,7 +178,11 @@ impl PlayerApi for TestWorld {
         self.pl.weapon_config = v;
     }
     fn azimuth_elevation(&self, from: EntityId, to: EntityId) -> (f32, f32) {
-        self.pl.aziel.get(&(from, to)).copied().unwrap_or((0.0, 0.0))
+        self.pl
+            .aziel
+            .get(&(from, to))
+            .copied()
+            .unwrap_or((0.0, 0.0))
     }
     fn hit_direction(&self, e: EntityId) -> u32 {
         self.pl.hit_dir.get(&e).copied().unwrap_or(0)

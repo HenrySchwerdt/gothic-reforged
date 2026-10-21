@@ -717,7 +717,9 @@ fn slot_gizmos(
     if !want {
         return;
     }
-    let Ok((anim, comp, root)) = hero.single() else { return };
+    let Ok((anim, comp, root)) = hero.single() else {
+        return;
+    };
     for name in ["slot_lefthand_weapon", "slot_righthand_weapon"] {
         if let Some(j) = comp
             .0
@@ -727,7 +729,10 @@ fn slot_gizmos(
         {
             let m = root.affine() * *j;
             let (_, rot, pos) = m.to_scale_rotation_translation();
-            gizmos.axes(Transform::from_translation(pos.into()).with_rotation(rot), 0.25);
+            gizmos.axes(
+                Transform::from_translation(pos.into()).with_rotation(rot),
+                0.25,
+            );
         }
     }
 }

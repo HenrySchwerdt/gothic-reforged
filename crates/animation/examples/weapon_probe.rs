@@ -40,7 +40,8 @@ fn main() -> anyhow::Result<()> {
             }
             c = up as usize;
         }
-        let fore = (Vec3::from(hand) - chain.get(1).map_or(Vec3::ZERO, |x| x.1)).normalize_or_zero();
+        let fore =
+            (Vec3::from(hand) - chain.get(1).map_or(Vec3::ZERO, |x| x.1)).normalize_or_zero();
         println!("{s}: pos {:?}", Vec3::from(m.translation));
         println!("  X axis {:?}", m.matrix3.x_axis.normalize());
         println!("  Y axis {:?}", m.matrix3.y_axis.normalize());
@@ -55,7 +56,11 @@ fn main() -> anyhow::Result<()> {
             .keys()
             .filter(|k| k.to_lowercase().starts_with("slot_"))
             .collect();
-        println!("clip {}: {} node tracks, slot tracks: {slots:?}", clip.name, clip.nodes.len());
+        println!(
+            "clip {}: {} node tracks, slot tracks: {slots:?}",
+            clip.name,
+            clip.nodes.len()
+        );
     }
     // The mesh: bounds and the head side of the long axis, as the game mirrors it (x -> -x).
     let mut mp = PakArchive::open(dir.join("_compiledMesh.pak"))?;
@@ -82,7 +87,13 @@ fn main() -> anyhow::Result<()> {
     }
     println!("mesh {mesh}: min {lo:?} max {hi:?} (mirrored)");
     let ext = hi - lo;
-    let long = if ext.x >= ext.y && ext.x >= ext.z { 0 } else if ext.y >= ext.z { 1 } else { 2 };
+    let long = if ext.x >= ext.y && ext.x >= ext.z {
+        0
+    } else if ext.y >= ext.z {
+        1
+    } else {
+        2
+    };
     println!("long axis {long}, extent {ext:?}");
     // The thick end: the half of the vertices with the larger cross-section spread.
     let mid = (lo[long] + hi[long]) * 0.5;

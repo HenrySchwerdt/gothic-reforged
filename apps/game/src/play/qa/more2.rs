@@ -89,19 +89,22 @@ pub fn combat_basic() -> Sc {
     sc.wait(0.12);
     sc.act("second tap", |cx| cx.tap(KeyCode::KeyA));
     sc.wait(1.2);
-    sc.check("no double-tap dodge in the player layer (the hero strafes two short steps)", |cx| {
-        let p = cx.hero_pos();
-        let d = Vec2::new(
-            p.x - cx.st.n["dodge_x"] as f32,
-            p.z - cx.st.n["dodge_z"] as f32,
-        )
-        .length();
-        expect(
-            d < 260.0,
-            format!("moved {d:.0} cm"),
-            format!("{d:.0} cm after two taps: a dodge slide ran"),
-        )
-    });
+    sc.check(
+        "no double-tap dodge in the player layer (the hero strafes two short steps)",
+        |cx| {
+            let p = cx.hero_pos();
+            let d = Vec2::new(
+                p.x - cx.st.n["dodge_x"] as f32,
+                p.z - cx.st.n["dodge_z"] as f32,
+            )
+            .length();
+            expect(
+                d < 260.0,
+                format!("moved {d:.0} cm"),
+                format!("{d:.0} cm after two taps: a dodge slide ran"),
+            )
+        },
+    );
     approach(
         &mut sc,
         "the raider",
