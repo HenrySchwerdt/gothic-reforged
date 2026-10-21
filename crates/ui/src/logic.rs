@@ -69,13 +69,10 @@ pub(crate) fn hotkeys(
         }
         return;
     }
-    if ui.screen == Screen::MainMenu {
-        return;
-    }
-    if ui.page.is_some() {
+    if ui.page.is_some() && ui.screen != Screen::Document {
         // trade and loot pages: the host reads the keys, only Esc closes here
         if keys.just_pressed(KeyCode::Escape) {
-            act.write(Act(Action::Close));
+            act.write(Act(Action::Escape));
         }
         return;
     }
@@ -86,8 +83,38 @@ pub(crate) fn hotkeys(
                 act.write(Act(Action::Choose(i)));
             }
         }
+        if keys.just_pressed(KeyCode::ArrowDown) {
+            act.write(Act(Action::OptionStep(1)));
+        }
+        if keys.just_pressed(KeyCode::ArrowUp) {
+            act.write(Act(Action::OptionStep(-1)));
+        }
+        if n > 0
+            && keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space])
+            && let Some(i) = ui.options.selected()
+        {
+            act.write(Act(Action::Choose(i)));
+        }
         if n == 0 && keys.any_just_pressed([KeyCode::Space, KeyCode::Enter, KeyCode::Escape]) {
             act.write(Act(Action::Close));
+        }
+        return;
+    }
+    if matches!(ui.screen, Screen::MainMenu | Screen::Files | Screen::Video) {
+        if keys.just_pressed(KeyCode::Escape) {
+            act.write(Act(Action::Escape));
+        }
+        return;
+    }
+    if ui.screen == Screen::Document {
+        if keys.any_just_pressed([KeyCode::ArrowRight, KeyCode::PageDown]) {
+            act.write(Act(Action::BookSpread(1)));
+        }
+        if keys.any_just_pressed([KeyCode::ArrowLeft, KeyCode::PageUp]) {
+            act.write(Act(Action::BookSpread(-1)));
+        }
+        if keys.just_pressed(KeyCode::Escape) {
+            act.write(Act(Action::Escape));
         }
         return;
     }
@@ -106,38 +133,81 @@ pub(crate) fn hotkeys(
             }));
         }
     }
-    if keys.just_pressed(KeyCode::Escape) && ui.is_open() {
-        act.write(Act(Action::Close));
+    if keys.just_pressed(KeyCode::Escape) {
+        act.write(Act(Action::Escape));
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Outbox<'w> {
+    choose: MessageWriter<'w, ChooseOption>,
+    use_item: MessageWriter<'w, UseItem>,
+    trade: MessageWriter<'w, TradeRequest>,
+    pages: MessageWriter<'w, PageEvent>,
+    ended: MessageWriter<'w, DialogEnded>,
+    menu: MessageWriter<'w, MenuChoice>,
+    answer: MessageWriter<'w, ModalAnswer>,
+    files: MessageWriter<'w, FileCommand>,
+    video: MessageWriter<'w, ApplyVideo>,
+}
+
+/// Close whatever is on show (page, dialog, screen).
+fn close_all(ui: &mut UiState, out: &mut Outbox) {
+    if ui.page.take().is_some() {
+        out.pages.write(PageEvent::Close);
+    }
+    if let Some(d) = ui.dialog.take() {
+        out.ended.write(DialogEnded {
+            npc: d.session.npc.clone(),
+        });
+    }
+    ui.set_screen(Screen::None);
+}
+
+/// Open the save / load page: the host answers with a [`SlotList`].
+fn open_files(ui: &mut UiState, out: &mut Outbox, save_mode: bool) {
+    ui.files = FilesState {
+        save_mode,
+        can_save: ui.menu_can_save,
+        ..FilesState::default()
+    };
+    out.files.write(FileCommand::Refresh);
+    ui.set_screen(Screen::Files);
+}
+
+fn open_video(ui: &mut UiState, current: &VideoOptions) {
+    ui.video = current.clone();
+    ui.set_screen(Screen::Video);
+}
+
 pub(crate) fn dispatch_actions(
     mut acts: MessageReader<Act>,
     mut ui: ResMut<UiState>,
-    mut choose: MessageWriter<ChooseOption>,
-    mut use_item: MessageWriter<UseItem>,
-    mut trade: MessageWriter<TradeRequest>,
-    mut pages: MessageWriter<PageEvent>,
-    mut ended: MessageWriter<DialogEnded>,
-    mut menu: MessageWriter<MenuChoice>,
-    mut answer: MessageWriter<ModalAnswer>,
+    mut out: Outbox,
+    gate: Res<HostGate>,
+    mut video: ResMut<VideoOptions>,
 ) {
     for Act(a) in acts.read() {
         match a.clone() {
             Action::Choose(index) => {
-                choose.write(ChooseOption { index });
+                out.choose.write(ChooseOption { index });
             }
-            Action::Close => {
-                if ui.page.take().is_some() {
-                    pages.write(PageEvent::Close);
+            Action::Close => close_all(&mut ui, &mut out),
+            Action::Escape => {
+                let modal = ui.modal.is_some();
+                match ui.gui.escape(modal, gate.esc_blocked) {
+                    EscOutcome::ClosedPage => close_all(&mut ui, &mut out),
+                    EscOutcome::OpenedMenu | EscOutcome::MenuBack(_) => {
+                        ui.set_screen(Screen::MainMenu);
+                    }
+                    EscOutcome::ClosedMenu => ui.set_screen(Screen::None),
+                    EscOutcome::Modal | EscOutcome::Ignored => {}
                 }
-                if let Some(d) = ui.dialog.take() {
-                    ended.write(DialogEnded {
-                        npc: d.session.npc.clone(),
-                    });
+            }
+            Action::MenuBack => {
+                if ui.gui.is_menu_open() {
+                    ui.set_screen(Screen::MainMenu);
                 }
-                ui.set_screen(Screen::None);
             }
             Action::Open(s) => {
                 let ok = match s {
@@ -145,7 +215,17 @@ pub(crate) fn dispatch_actions(
                         ui.trade.is_some() || matches!(ui.page, Some(PageView::Trade(_)))
                     }
                     Screen::Loot => matches!(ui.page, Some(PageView::Loot(_))),
+                    Screen::Recipe => matches!(ui.page, Some(PageView::Recipe(_))),
+                    Screen::Document => matches!(ui.page, Some(PageView::Document(_))),
                     Screen::Dialog => ui.dialog.is_some(),
+                    Screen::Files => {
+                        open_files(&mut ui, &mut out, false);
+                        continue;
+                    }
+                    Screen::Video => {
+                        open_video(&mut ui, &video);
+                        continue;
+                    }
                     _ => true,
                 };
                 if ok {
@@ -171,10 +251,16 @@ pub(crate) fn dispatch_actions(
                 ui.dirty = true;
             }
             Action::UseItem(item) => {
-                use_item.write(UseItem { item });
+                out.use_item.write(UseItem { item });
             }
             Action::Menu(e) => {
-                menu.write(MenuChoice(e));
+                out.menu.write(MenuChoice(e));
+                match e {
+                    MenuEntry::LoadGame => open_files(&mut ui, &mut out, false),
+                    MenuEntry::SaveGame => open_files(&mut ui, &mut out, true),
+                    MenuEntry::Options => open_video(&mut ui, &video),
+                    _ => {}
+                }
             }
             Action::TipCheck => {
                 ui.tip_never = !ui.tip_never;
@@ -184,10 +270,17 @@ pub(crate) fn dispatch_actions(
                 if let Some(m) = ui.modal.take() {
                     match m {
                         Modal::Confirm { tag, .. } => {
-                            answer.write(ModalAnswer { tag, yes });
+                            if let Some(cmd) = files::confirm_command(&tag, yes) {
+                                let leave = matches!(cmd, FileCommand::Save { .. });
+                                out.files.write(cmd);
+                                if leave {
+                                    ui.set_screen(Screen::None);
+                                }
+                            }
+                            out.answer.write(ModalAnswer { tag, yes });
                         }
                         Modal::Tip { .. } => {
-                            answer.write(ModalAnswer {
+                            out.answer.write(ModalAnswer {
                                 tag: "tip".into(),
                                 yes: ui.tip_never,
                             });
@@ -197,11 +290,95 @@ pub(crate) fn dispatch_actions(
                 }
             }
             Action::Trade(item, buy) => {
-                trade.write(TradeRequest { item, buy });
+                out.trade.write(TradeRequest { item, buy });
             }
             Action::Page(e) => {
-                pages.write(e);
+                out.pages.write(e);
             }
+            Action::OptionStep(d) => {
+                ui.options.step(d);
+                ui.dirty = true;
+            }
+            Action::FileSelect(i) => {
+                ui.files.selected = i;
+                ui.dirty = true;
+            }
+            Action::FileDo => file_primary(&mut ui, &mut out),
+            Action::FileDelete => {
+                if let Some(row) = ui.files.selected.and_then(|i| ui.files.rows.get(i)) {
+                    let key = row.key.clone();
+                    ui.modal = Some(Modal::Confirm {
+                        tag: format!("{}:{key}", files::CONFIRM_DELETE),
+                        text: "Spielstand wirklich löschen?".into(),
+                        yes: "Ja".into(),
+                        no: "Nein".into(),
+                    });
+                    ui.dirty = true;
+                }
+            }
+            Action::VideoMode(d) => {
+                let modes = options::DEFAULT_MODES;
+                let i = ui.video.mode_index(modes) as i32;
+                let to = (i + d).clamp(0, modes.len() as i32 - 1) as usize;
+                (ui.video.width, ui.video.height) = modes[to];
+                ui.dirty = true;
+            }
+            Action::VideoSlider(slider, steps) => {
+                let v = ui.video.slider(slider) + steps as f32 * 0.05;
+                ui.video.set_slider(slider, v);
+                ui.dirty = true;
+            }
+            Action::VideoVsync => {
+                ui.video.vsync = !ui.video.vsync;
+                ui.dirty = true;
+            }
+            Action::VideoApply => {
+                *video = ui.video.clone();
+                out.video.write(ApplyVideo(ui.video.clone()));
+            }
+            Action::SelectRecipe(i) => {
+                ui.recipe_sel = i;
+                ui.dirty = true;
+            }
+            Action::BookSpread(d) => {
+                ui.spread = (ui.spread as i64 + i64::from(d)).max(0) as usize;
+                ui.dirty = true;
+            }
+        }
+    }
+}
+
+/// The page's main button: load the selected slot, or save (a new slot, or after the overwrite
+/// confirmation).
+fn file_primary(ui: &mut UiState, out: &mut Outbox) {
+    let row = ui
+        .files
+        .selected
+        .and_then(|i| ui.files.rows.get(i))
+        .cloned();
+    if !ui.files.save_mode {
+        if let Some(r) = row {
+            out.files.write(FileCommand::Load { key: r.key });
+            ui.set_screen(Screen::None);
+        }
+        return;
+    }
+    if !ui.files.can_save {
+        return;
+    }
+    match row {
+        Some(r) => {
+            ui.modal = Some(Modal::Confirm {
+                tag: format!("{}:{}", files::CONFIRM_OVERWRITE, r.key),
+                text: "Spielstand überschreiben?".into(),
+                yes: "Ja".into(),
+                no: "Nein".into(),
+            });
+            ui.dirty = true;
+        }
+        None => {
+            out.files.write(FileCommand::Save { key: None });
+            ui.set_screen(Screen::None);
         }
     }
 }
@@ -346,15 +523,23 @@ pub(crate) fn drive_dialog(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn screens_requests(
     mut open: MessageReader<OpenScreen>,
     mut close: MessageReader<CloseScreen>,
     mut trades: MessageReader<OpenTrade>,
     mut pages: MessageReader<ShowPage>,
     mut modals: MessageReader<ShowModal>,
+    mut slots: MessageReader<SlotList>,
     mut act: MessageWriter<Act>,
     mut ui: ResMut<UiState>,
 ) {
+    for l in slots.read() {
+        ui.files.rows = l.rows.clone();
+        ui.files.can_save = l.can_save;
+        ui.files.selected = ui.files.selected.filter(|i| *i < l.rows.len());
+        ui.dirty = true;
+    }
     for m in modals.read() {
         ui.modal = Some(m.0.clone());
         ui.tip_never = false;
@@ -366,13 +551,18 @@ pub(crate) fn screens_requests(
                 let screen = match v {
                     PageView::Trade(_) => Screen::Trade,
                     PageView::Loot(_) => Screen::Loot,
+                    PageView::Recipe(_) => Screen::Recipe,
+                    PageView::Document(_) => Screen::Document,
                 };
                 ui.page = Some(v);
                 ui.set_screen(screen);
             }
             None => {
                 ui.page = None;
-                if matches!(ui.screen, Screen::Trade | Screen::Loot) {
+                if matches!(
+                    ui.screen,
+                    Screen::Trade | Screen::Loot | Screen::Recipe | Screen::Document
+                ) {
                     ui.set_screen(Screen::None);
                 }
             }
@@ -432,5 +622,66 @@ pub(crate) fn apply_dialog_updates(
         }
         ui.set_screen(Screen::Dialog);
         ui.dirty = true;
+    }
+}
+
+/// Keep the dialog models in step with the conversation: a new spoken line starts the
+/// subtitle (`StartSay`), a new menu restarts the option list on its first row.
+pub(crate) fn sync_dialog_models(
+    cfg: Res<UiConfig>,
+    mut ui: ResMut<UiState>,
+    mut seen: Local<(u64, u64)>,
+) {
+    let Some(d) = ui.dialog.as_ref() else {
+        *seen = (0, 0);
+        return;
+    };
+    let hash = |s: &str| {
+        s.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+        })
+    };
+    let last = d.lines.last().map(|l| l.text.clone());
+    let lines_sig = last.as_deref().map_or(0, hash) ^ (d.lines.len() as u64) << 48;
+    let menu_sig = d.menu.iter().fold(d.menu.len() as u64, |h, c| {
+        h.wrapping_mul(31) ^ hash(&c.label)
+    });
+    let menu_len = d.menu.len();
+    if lines_sig != seen.0 {
+        seen.0 = lines_sig;
+        if let Some(t) = last.filter(|t| !t.is_empty()) {
+            let width = dialogmenu::approx_text_width(&t, 15.0);
+            ui.subtitle.start(&t, cfg.subtitles, false, width);
+        }
+    }
+    if menu_sig != seen.1 {
+        seen.1 = menu_sig;
+        ui.options = OptionList::new(DIALOG_ROWS);
+        ui.options.reset(menu_len);
+        ui.dirty = true;
+    }
+}
+
+/// Visible rows of the dialog option list (169 px band, 24 px rows).
+pub(crate) const DIALOG_ROWS: usize = 7;
+
+/// Fade the talk line and age the game messages.
+pub(crate) fn tick_models(time: Res<Time>, mut ui: ResMut<UiState>) {
+    let dt = time.delta_secs();
+    if ui.subtitle.visible() || !ui.subtitle.text.is_empty() {
+        ui.subtitle.tick(dt);
+    }
+}
+
+/// Mouse wheel over the dialog list scrolls its window.
+pub(crate) fn dialog_wheel(
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    mut ui: ResMut<UiState>,
+) {
+    for w in wheel.read() {
+        if ui.screen == Screen::Dialog && ui.options.len() > DIALOG_ROWS {
+            ui.options.scroll(-w.y.signum() as i32);
+            ui.dirty = true;
+        }
     }
 }

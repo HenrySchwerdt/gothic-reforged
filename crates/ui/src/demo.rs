@@ -213,6 +213,8 @@ fn demo_system(
     mut exit: MessageWriter<AppExit>,
     mut act: MessageWriter<Act>,
     mut modal: MessageWriter<ShowModal>,
+    mut slots: MessageWriter<SlotList>,
+    mut pages: MessageWriter<ShowPage>,
 ) {
     demo.frame += 1;
     let f = demo.frame;
@@ -330,7 +332,90 @@ Drücke jetzt die Taste '1', um das Schwert zu ziehen.".into(),
             }));
         }
         385 => shot(&mut commands, "tip"),
-        400 => {
+        390 => {
+            act.write(Act(Action::Modal(false)));
+            act.write(Act(Action::Close));
+            open.write(OpenScreen(Screen::Files));
+        }
+        394 => {
+            let row = |n: usize, kind, ms: u64| SlotRow {
+                key: format!("slot_{n:02}.g3rs"),
+                name: format!("slot_{n:02}"),
+                kind,
+                saved_unix: 1_700_000_000 + n as u64,
+                game_ms: ms,
+                play_ms: ms / 24,
+                region: "G3_World_01_Ardea".into(),
+                level: 4 + n as u32,
+            };
+            slots.write(SlotList {
+                rows: vec![
+                    row(1, SlotKind::Quick, 90_000_000),
+                    row(2, SlotKind::Manual, 200_000_000),
+                    row(3, SlotKind::Auto, 310_000_000),
+                ],
+                can_save: true,
+            });
+            act.write(Act(Action::FileSelect(Some(1))));
+        }
+        420 => shot(&mut commands, "files"),
+        425 => {
+            act.write(Act(Action::Open(Screen::Video)));
+        }
+        460 => shot(&mut commands, "video"),
+        465 => {
+            act.write(Act(Action::Close));
+            let ing = |n: &str, need, have| Ingredient {
+                item: n.into(),
+                name: n.replace('_', " "),
+                need,
+                have,
+            };
+            pages.write(ShowPage(Some(PageView::Recipe(RecipeView {
+                title: "Alchemie".into(),
+                recipes: vec![
+                    RecipeRow {
+                        key: 0,
+                        product: "It_Potion_Health".into(),
+                        name: "Trank der Lebenskraft".into(),
+                        description: "Dieser Trank ist echt Klasse.".into(),
+                        ingredients: vec![ing("It_Plant_Healing", 2, 3), ing("It_Water", 1, 0)],
+                        requirement: "Alchemie 10".into(),
+                        craftable: false,
+                    },
+                    RecipeRow {
+                        key: 1,
+                        product: "It_Torch_Burning".into(),
+                        name: "Fackel".into(),
+                        ..default()
+                    },
+                ],
+                gold: 1234,
+                hint: String::new(),
+            }))));
+        }
+        500 => shot(&mut commands, "recipe"),
+        505 => {
+            pages.write(ShowPage(Some(PageView::Document(DocumentView {
+                title: "Brief an die Korinther".into(),
+                left: "Moin Jungs, was geht ab? Ich hoffe, ihr seid wohlauf und die Ernte war gut. Hier im Norden ist es kalt geworden.
+
+Grüße, Bob".into(),
+                right: String::new(),
+                is_book: false,
+            }))));
+        }
+        540 => shot(&mut commands, "letter"),
+        545 => {
+            pages.write(ShowPage(Some(PageView::Document(DocumentView {
+                title: "Die Ankunft des weißen Mannes".into(),
+                left: "Es war einmal ein Mann, der zog aus, um die Welt zu sehen. ".repeat(14),
+                right: "Und dann kam der Winter. ".repeat(20),
+                is_book: true,
+            }))));
+        }
+        580 => shot(&mut commands, "book"),
+        600 => {
             exit.write(AppExit::Success);
         }
         _ => {}

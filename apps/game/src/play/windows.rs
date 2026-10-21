@@ -23,15 +23,117 @@ use gothic_sim::sim::Sim;
 use gothic_sim::types::ActorId;
 use gothic_sim::world::WorldQuery;
 use gothic_ui::{
-    LootView, Notify, PageEvent, PageRow, PageView, PlayerPanel, Screen, ShowPage, ToastKind,
-    TradeView, UiState,
+    ApplyVideo, HostGate, Ingredient, LootView, Notify, PageEvent, PageRow, PageView, PlayerPanel,
+    RecipeRow, RecipeView, Screen, ShowPage, TeachCost, ToastKind, TradeView, UiState,
 };
 
 pub fn register(app: &mut App) {
     app.add_systems(
         Update,
-        (page_events, show_pages, hold_cursor, smoke).chain(),
+        (
+            page_events,
+            show_pages,
+            hold_cursor,
+            smoke,
+            gui_gate,
+            install_teach_cost,
+            apply_video,
+        )
+            .chain(),
     );
+}
+
+/// Esc belongs to the world while an interaction window is open; the GUI manager must not open
+/// the menu then.
+fn gui_gate(inter: Res<Interaction>, mut gate: ResMut<HostGate>) {
+    gate.esc_blocked = inter.window.is_some();
+}
+
+/// Teachers charge learning points by the game rule of `gothic_sim::economy::teach_cost`.
+fn install_teach_cost(core: Res<CoreRes>, mut cost: ResMut<TeachCost>, mut done: Local<bool>) {
+    if std::mem::replace(&mut *done, true) {
+        return;
+    }
+    let cfg = core.0.sim.cfg.clone();
+    cost.0 = std::sync::Arc::new(move |tag, current, points| {
+        gothic_sim::economy::teach_cost(&cfg, tag, current, points)
+    });
+}
+
+/// Apply the video page: present mode and window size (brightness / gamma ramps need a
+/// display-ramp or grading hook that the renderer does not have yet).
+fn apply_video(
+    mut events: MessageReader<ApplyVideo>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    for ApplyVideo(v) in events.read() {
+        let Ok(mut w) = windows.single_mut() else {
+            continue;
+        };
+        w.present_mode = if v.vsync {
+            bevy::window::PresentMode::AutoVsync
+        } else {
+            bevy::window::PresentMode::AutoNoVsync
+        };
+        w.resolution.set(v.width as f32, v.height as f32);
+    }
+}
+
+/// The recipes of a work-station window as the recipe page (`gCHUDPageSynth2`).
+fn recipe_view(core: &CoreRes, win: &OpenWindow) -> RecipeView {
+    let hero = core.0.sim.actor(core.0.hero);
+    let name = |t: &str| {
+        core.0
+            .db
+            .text(&format!("FO_{t}"))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| t.replace('_', " "))
+    };
+    let recipes = win
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(key, l)| {
+            let LineAction::Craft(id) = l.action else {
+                return None;
+            };
+            let r = core.0.sim.script.recipe_of(id)?;
+            let ingredients: Vec<Ingredient> = r
+                .ingredients
+                .iter()
+                .map(|(t, need)| Ingredient {
+                    item: t.clone(),
+                    name: name(t),
+                    need: *need,
+                    have: hero.inventory.count(t),
+                })
+                .collect();
+            let skilled = r.required_perk.is_empty() || hero.has_perk(&r.required_perk);
+            Some(RecipeRow {
+                key,
+                product: r.result.clone(),
+                name: name(&r.result),
+                description: core
+                    .0
+                    .db
+                    .text(&format!("FD_{}", r.result))
+                    .unwrap_or_default(),
+                craftable: skilled && ingredients.iter().all(|i| i.have >= i.need),
+                ingredients,
+                requirement: if r.required_perk.is_empty() {
+                    String::new()
+                } else {
+                    name(&r.required_perk)
+                },
+            })
+        })
+        .collect();
+    RecipeView {
+        title: win.title.clone(),
+        recipes,
+        gold: gold_of(&hero.inventory),
+        hint: win.footer.clone(),
+    }
 }
 
 fn gold_of(inv: &Inventory) -> i64 {
@@ -165,6 +267,7 @@ fn show_pages(
     };
     let expected = match win.kind {
         WindowKind::Trade { .. } => Screen::Trade,
+        WindowKind::Station { .. } => Screen::Recipe,
         _ => Screen::Loot,
     };
     let lost = inter.page_shown && ui.screen != expected;
@@ -176,6 +279,7 @@ fn show_pages(
     }
     let view = match win.kind {
         WindowKind::Trade { npc } => PageView::Trade(trade_view(&mut core, npc, &win.footer)),
+        WindowKind::Station { .. } => PageView::Recipe(recipe_view(&core, &win)),
         _ => PageView::Loot(loot_view(&core, &win)),
     };
     out.write(ShowPage(Some(view)));
@@ -213,6 +317,7 @@ fn page_events(
             }
             (PageEvent::LootTake { key }, _) => inter.window_key = Some(key + 1),
             (PageEvent::LootTakeAll, _) => inter.window_enter = true,
+            (PageEvent::Craft { key }, _) => inter.window_key = Some(key + 1),
             (PageEvent::TradeAdd { player_side, key }, Some(npc)) => {
                 let r = core.0.sim.trade_step(npc, *player_side, *key, true, step);
                 if r == Step::Refused {

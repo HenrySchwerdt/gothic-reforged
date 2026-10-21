@@ -14,6 +14,14 @@ pub(crate) enum HudBar {
     Mp,
     Focus,
 }
+/// Part of the persistent HUD whose visibility the GUI manager's flag table decides.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HudGroup {
+    /// Compass and the three player bars (flag 1).
+    Bars,
+    /// Quick bar (flag 2).
+    Quick,
+}
 #[derive(Component)]
 pub(crate) struct SlotsRoot;
 #[derive(Component)]
@@ -23,10 +31,8 @@ pub(crate) struct Rose;
 #[derive(Component)]
 pub(crate) struct ToastRoot;
 #[derive(Component)]
-pub(crate) struct Toast(Timer);
+pub(crate) struct Toast;
 
-const TOAST_SECONDS: f32 = 4.5;
-const MAX_TOASTS: usize = 6;
 const BAR_W: f32 = 201.0;
 const BAR_H: f32 = 19.0;
 
@@ -79,7 +85,7 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
             n.left = px(16);
             n.top = Val::Auto;
             n.bottom = px(8);
-            r.spawn(n).with_children(|c| {
+            r.spawn((HudGroup::Bars, n)).with_children(|c| {
                 spawn_pic(c, &a, COMPASS_WHEEL, 8.0, 8.0, Some((84.0, 84.0)));
                 let mut rose = spawn_pic(c, &a, COMPASS_ROSE, 20.0, 20.0, Some((60.0, 60.0)));
                 rose.insert(Rose);
@@ -90,7 +96,7 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
             n.margin = UiRect::left(px(-260));
             n.top = Val::Auto;
             n.bottom = px(24);
-            r.spawn(n).with_children(|c| {
+            r.spawn((HudGroup::Quick, n)).with_children(|c| {
                 spawn_pic(c, &a, QUICKSLOTS, 0.0, 0.0, Some((520.0, 56.0)));
                 c.spawn((SlotsRoot, abs(0.0, 0.0, 520.0, 56.0)));
             });
@@ -108,7 +114,7 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
                 n.right = px(16);
                 n.top = Val::Auto;
                 n.bottom = px(61.0 - 20.0 * i as f32);
-                r.spawn(n).with_children(|c| {
+                r.spawn((HudGroup::Bars, n)).with_children(|c| {
                     spawn_pic(c, &a, STATUSBAR, 0.0, 0.0, None);
                     c.spawn(bar_fill(color, kind));
                 });
@@ -141,7 +147,7 @@ pub(crate) fn spawn_hud(mut commands: Commands, assets: Res<UiAssets>) {
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn update_hud(
     mut commands: Commands,
     ui: Res<UiState>,
@@ -151,20 +157,32 @@ pub(crate) fn update_hud(
     slots: Res<QuickSlots>,
     session: Option<Res<GameSession>>,
     assets: Res<UiAssets>,
-    mut root: Query<&mut Visibility, (With<HudRoot>, Without<FocusRoot>)>,
+    mut root: Query<&mut Visibility, (With<HudRoot>, Without<FocusRoot>, Without<HudGroup>)>,
+    mut groups: Query<(&HudGroup, &mut Visibility), (Without<HudRoot>, Without<FocusRoot>)>,
     mut bars: Query<(&HudBar, &mut Node), Without<SlotsRoot>>,
     mut rose: Query<&mut UiTransform, With<Rose>>,
     mut focus_root: Query<&mut Visibility, With<FocusRoot>>,
     slot_root: Query<(Entity, Option<&Children>), With<SlotsRoot>>,
     mut last_slots: Local<u32>,
 ) {
-    // the full-width dialog / trade panels replace the HUD, every other page keeps it
-    for mut v in &mut root {
-        *v = if matches!(ui.screen, Screen::Dialog | Screen::Trade | Screen::MainMenu) {
-            Visibility::Hidden
-        } else {
+    // which HUD parts stay up is the GUI manager's table row of the open page; an open menu
+    // takes the whole stage
+    let flags = ui.gui.flags();
+    let shown = |on: bool| {
+        if on {
             Visibility::Inherited
-        };
+        } else {
+            Visibility::Hidden
+        }
+    };
+    for mut v in &mut root {
+        *v = shown(!ui.gui.is_menu_open());
+    }
+    for (g, mut v) in &mut groups {
+        *v = shown(match g {
+            HudGroup::Bars => flags.bars,
+            HudGroup::Quick => flags.quickslots,
+        });
     }
     for (b, mut n) in &mut bars {
         let f = match b {
@@ -176,7 +194,7 @@ pub(crate) fn update_hud(
         n.width = px(176.0 * f);
     }
     for mut v in &mut focus_root {
-        *v = if focus.0.is_some() {
+        *v = if focus.0.is_some() && flags.focus {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -288,47 +306,76 @@ pub(crate) fn glyph(category: i32) -> Pic {
     }
 }
 
+/// Game messages: the model (`UiState::messages`, FIFO with lifetime) is the truth, the
+/// entities under the toast root mirror its lines in order and fade in the last second.
 pub(crate) fn toasts(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<UiAssets>,
+    mut ui: ResMut<UiState>,
     mut msgs: MessageReader<Notify>,
-    root: Query<Entity, With<ToastRoot>>,
-    mut live: Query<(Entity, &mut Toast)>,
+    root: Query<(Entity, Option<&Children>), With<ToastRoot>>,
+    mut colors: Query<&mut TextColor, With<Toast>>,
 ) {
-    for (e, mut t) in &mut live {
-        if t.0.tick(time.delta()).is_finished() {
-            commands.entity(e).despawn();
-        }
-    }
-    let Ok(root) = root.single() else {
+    let Ok((root, kids)) = root.single() else {
         return;
     };
-    let mut count = live.iter().count();
+    let mut kids: Vec<Entity> = kids.map(|k| k.to_vec()).unwrap_or_default();
     for n in msgs.read() {
-        if count >= MAX_TOASTS {
-            if let Some((e, _)) = live.iter().next() {
-                commands.entity(e).despawn();
+        let kind = match n.kind {
+            ToastKind::Quest | ToastKind::Xp | ToastKind::Item | ToastKind::Info => {
+                MessageKind::Info
             }
-            count -= 1;
+        };
+        let before = ui.messages.lines().count();
+        ui.messages.print(n.text.clone(), kind);
+        if before >= GameMessages::MAX_LINES && !kids.is_empty() {
+            commands.entity(kids.remove(0)).despawn();
         }
-        count += 1;
         let t = commands
             .spawn((
-                Toast(Timer::from_seconds(TOAST_SECONDS, TimerMode::Once)),
-                Node::default(),
-                children![(
-                    Text::new(n.text.clone()),
-                    TextFont {
-                        font: assets.font.clone().into(),
-                        font_size: FontSize::Px(18.0),
-                        ..default()
-                    },
-                    TextColor(TEXT),
-                    TextShadow::default(),
-                )],
+                Toast,
+                Text::new(n.text.clone()),
+                TextFont {
+                    font: assets.font.clone().into(),
+                    font_size: FontSize::Px(18.0),
+                    ..default()
+                },
+                TextColor(TEXT),
+                TextShadow::default(),
             ))
             .id();
         commands.entity(root).add_child(t);
+        kids.push(t);
+    }
+    ui.messages.tick(time.delta_secs());
+    let alive = ui.messages.lines().count();
+    let expired = kids.len().saturating_sub(alive);
+    for e in kids.drain(..expired) {
+        commands.entity(e).despawn();
+    }
+    for (e, line) in kids.iter().zip(ui.messages.lines()) {
+        if let Ok(mut c) = colors.get_mut(*e) {
+            c.0 = TEXT.with_alpha(GameMessages::alpha(line));
+        }
+    }
+}
+
+/// Fade of the talk line, following the subtitle model without a screen rebuild.
+pub(crate) fn fade_subtitle(
+    ui: Res<UiState>,
+    mut parts: Query<
+        (Option<&mut ImageNode>, Option<&mut TextColor>),
+        With<crate::screens::SubtitleFade>,
+    >,
+) {
+    let a = ui.subtitle.alpha;
+    for (img, text) in &mut parts {
+        if let Some(mut i) = img {
+            i.color = Color::srgba(1.0, 1.0, 1.0, a);
+        }
+        if let Some(mut t) = text {
+            t.0 = t.0.with_alpha(a);
+        }
     }
 }

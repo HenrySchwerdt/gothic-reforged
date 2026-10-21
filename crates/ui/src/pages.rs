@@ -64,10 +64,57 @@ pub struct LootView {
     pub hint: String,
 }
 
+/// One ingredient line of a recipe.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ingredient {
+    pub item: String,
+    pub name: String,
+    pub need: u32,
+    pub have: u32,
+}
+
+/// One known recipe (`gCRecipe_PS` of a blueprint the hero carries).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecipeRow {
+    /// Host key (echoed by [`PageEvent::Craft`]).
+    pub key: usize,
+    /// Template of the product (icon).
+    pub product: String,
+    pub name: String,
+    pub description: String,
+    pub ingredients: Vec<Ingredient>,
+    /// Required skill, shown under "Erforderliche Kenntnisse" (empty = none).
+    pub requirement: String,
+    /// The hero has the ingredients and the skill.
+    pub craftable: bool,
+}
+
+/// The work-station page (`gCHUDPageSynth2`): the recipe list on the right, the card of the
+/// selected recipe on the left (`gCHUDViewRecipe2`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RecipeView {
+    pub title: String,
+    pub recipes: Vec<RecipeRow>,
+    pub gold: i64,
+    pub hint: String,
+}
+
+/// A readable document: book (two columns) or letter (one column).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DocumentView {
+    pub title: String,
+    pub left: String,
+    /// Empty for a letter.
+    pub right: String,
+    pub is_book: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageView {
     Trade(TradeView),
     Loot(LootView),
+    Recipe(RecipeView),
+    Document(DocumentView),
 }
 
 /// Host -> UI: show (or, with `None`, close) a page.
@@ -98,6 +145,10 @@ pub enum PageEvent {
         key: usize,
     },
     LootTakeAll,
+    /// Make the recipe with this host key.
+    Craft {
+        key: usize,
+    },
     /// The page was closed (button, Esc, or the hotkey).
     Close,
 }

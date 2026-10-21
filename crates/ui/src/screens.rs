@@ -5,38 +5,53 @@ use crate::atlas::*;
 use crate::hud::item_icon;
 use crate::style::*;
 use crate::*;
-use gothic_gameplay::model::{Cmd, QuestStatus};
+use gothic_gameplay::model::Cmd;
 use gothic_gameplay::state::{GOLD_ITEM, LogKind};
 use gothic_gameplay::transcript::quest_title;
 
 #[derive(Component)]
 pub(crate) struct ScreenRoot;
 
-struct Cx<'a> {
-    a: &'a UiAssets,
-    s: &'a GameSession,
-    ui: &'a UiState,
-    vitals: PlayerVitals,
+pub(crate) struct Cx<'a> {
+    pub a: &'a UiAssets,
+    pub s: &'a GameSession,
+    pub ui: &'a UiState,
+    pub vitals: PlayerVitals,
+    pub cost: &'a TeachCost,
+    pub applied: &'a VideoOptions,
 }
 
 impl Cx<'_> {
-    fn t(&self, key: &str, fallback: &str) -> String {
+    pub(crate) fn t(&self, key: &str, fallback: &str) -> String {
         self.s.db.text(key).unwrap_or_else(|| fallback.to_string())
     }
-    fn scroll_y(&self, name: &'static str) -> f32 {
+    /// The localized clock format; the string table of this install leaves it empty, then the
+    /// German form is used instead of the original's English built-in.
+    pub(crate) fn clock_format(&self) -> String {
+        let t = self.t("HUD_File_SaveGame_Format", "");
+        if t.chars().count() < 6 {
+            "$(day). Tag, $(hour):$(minute)".into()
+        } else {
+            t
+        }
+    }
+    pub(crate) fn scroll_y(&self, name: &'static str) -> f32 {
         self.ui.scroll.get(name).copied().unwrap_or(0.0)
     }
-    fn font(&self) -> &Handle<Font> {
+    pub(crate) fn font(&self) -> &Handle<Font> {
         &self.a.font
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild(
     mut commands: Commands,
     mut ui: ResMut<UiState>,
     session: Res<GameSession>,
     assets: Res<UiAssets>,
     vitals: Res<PlayerVitals>,
+    cost: Res<TeachCost>,
+    applied: Res<VideoOptions>,
     roots: Query<Entity, With<ScreenRoot>>,
     scrolls: Query<(&ScrollArea, &ScrollPosition)>,
 ) {
@@ -59,6 +74,8 @@ pub(crate) fn rebuild(
         s: &session,
         ui: &ui,
         vitals: *vitals,
+        cost: &cost,
+        applied: &applied,
     };
     if ui.screen == Screen::None && ui.modal.is_none() {
         return;
@@ -93,6 +110,10 @@ pub(crate) fn rebuild(
                 Screen::Character => character(p, &cx),
                 Screen::Trade => trade(p, &cx),
                 Screen::Loot => loot_page(p, &cx),
+                Screen::Files => crate::screens_menu::files_page(p, &cx),
+                Screen::Video => crate::screens_menu::video_page(p, &cx),
+                Screen::Recipe => crate::screens_read::recipe_page(p, &cx),
+                Screen::Document => crate::screens_read::document_page(p, &cx),
             });
             if let Some(m) = ui.modal.clone() {
                 root.spawn((
@@ -112,11 +133,18 @@ pub(crate) fn rebuild(
 }
 
 // ------------------------------------------------------------------------------ pieces
-fn heading(p: &mut P, cx: &Cx, s: impl Into<String>, r: (f32, f32, f32, f32)) {
+pub(crate) fn heading(p: &mut P, cx: &Cx, s: impl Into<String>, r: (f32, f32, f32, f32)) {
     label(p, &cx.a.heading, s, r, 22.0, TEXT_HI, Al::Center);
 }
 
-fn body(p: &mut P, cx: &Cx, s: impl Into<String>, r: (f32, f32, f32, f32), al: Al, c: Color) {
+pub(crate) fn body(
+    p: &mut P,
+    cx: &Cx,
+    s: impl Into<String>,
+    r: (f32, f32, f32, f32),
+    al: Al,
+    c: Color,
+) {
     label(p, cx.font(), s, r, 16.0, c, al);
 }
 
@@ -126,7 +154,7 @@ fn kv_row(p: &mut P, cx: &Cx, ox: f32, oy: f32, y: f32, k: &str, v: String) {
     body(p, cx, v, (ox + 166.0, oy + y, 124.0, 20.0), Al::Right, TEXT);
 }
 
-fn frame_box(bg: Color) -> impl Bundle {
+pub(crate) fn frame_box(bg: Color) -> impl Bundle {
     (BackgroundColor(bg), BorderColor::all(BORDER))
 }
 
@@ -516,7 +544,12 @@ fn item_view(p: &mut P, cx: &Cx, key: &str, actions: Vec<(String, Action)>) {
     }
 }
 
-fn txt_wrap(font: &Handle<Font>, s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+pub(crate) fn txt_wrap(
+    font: &Handle<Font>,
+    s: impl Into<String>,
+    size: f32,
+    color: Color,
+) -> impl Bundle {
     (
         Text::new(s),
         TextFont {
@@ -657,18 +690,6 @@ fn character(p: &mut P, cx: &Cx) {
 }
 
 // ------------------------------------------------------------------------------ journal
-fn quest_tab_of(s: QuestStatus) -> Option<usize> {
-    match s {
-        QuestStatus::Running => Some(0),
-        QuestStatus::Success | QuestStatus::Won => Some(1),
-        QuestStatus::Failed
-        | QuestStatus::Lost
-        | QuestStatus::Obsolete
-        | QuestStatus::Cancelled => Some(2),
-        QuestStatus::Open => None,
-    }
-}
-
 fn dialog_excerpt(db: &gothic_gameplay::GameDatabase, info: &str) -> Vec<String> {
     let Some(id) = db.info_id(info) else {
         return Vec::new();
@@ -728,13 +749,11 @@ fn journal(p: &mut P, cx: &Cx) {
             if on { TEXT_HI } else { TEXT },
         ));
     }
-    let mut list: Vec<(String, String)> = st
-        .quests
-        .iter()
-        .filter(|(_, q)| q.status.and_then(quest_tab_of) == Some(cx.ui.quest_tab))
-        .map(|(n, _)| (quest_title(db, n), n.clone()))
-        .collect();
-    list.sort();
+    let list: Vec<(String, String)> =
+        journal::quest_rows(st, cx.ui.quest_tab, |n| quest_title(db, n))
+            .into_iter()
+            .map(|r| (r.title, r.name))
+            .collect();
     let selected = cx
         .ui
         .quest_sel
@@ -809,12 +828,9 @@ fn journal(p: &mut P, cx: &Cx) {
                 d.spawn(txt(cx.font(), quest_title(db, name), 18.0, TEXT_HI));
                 for e in st.log.iter().filter(|e| &e.quest == name) {
                     match &e.kind {
-                        LogKind::Status(s) => {
-                            let t = match s {
-                                QuestStatus::Running => "Aufgabe begonnen",
-                                QuestStatus::Success | QuestStatus::Won => "Aufgabe erfüllt",
-                                QuestStatus::Failed => "Aufgabe gescheitert",
-                                _ => continue,
+                        LogKind::Status(_) => {
+                            let Some(t) = journal::status_line(&e.kind) else {
+                                continue;
                             };
                             d.spawn(txt(cx.font(), format!("- {t} -"), 14.0, TEXT_DIM));
                         }
@@ -871,14 +887,21 @@ fn journal(p: &mut P, cx: &Cx) {
             TEXT,
         );
     }
-    // clock
-    spawn_pic(p, cx.a, TIME_SKY, ox + 330.0, oy + 460.0, None);
+    // clock: sky strip of the time of day and the localized "day, hour:minute" label
+    let (day, hour, minute) = journal::clock_from_ms(st.hours * 3_600_000);
+    spawn_pic(
+        p,
+        cx.a,
+        TIME_OF_DAY[journal::time_of_day(hour)],
+        ox + 330.0,
+        oy + 460.0,
+        None,
+    );
     spawn_pic(p, cx.a, TIME_LABEL, ox + 330.0, oy + 493.0, None);
-    let h = st.hours;
     body(
         p,
         cx,
-        format!("{}. Tag, {:02}:00", h / 24 % 365 + 1, h % 24),
+        journal::format_clock(&cx.clock_format(), 1, day, hour, minute).replace('\n', ", "),
         (ox + 330.0, oy + 493.0, 158.0, 34.0),
         Al::Center,
         TEXT,
@@ -896,64 +919,119 @@ fn fame_name(db: &gothic_gameplay::GameDatabase, key: &str) -> String {
 }
 
 // -------------------------------------------------------------------------------- dialog
+/// Marks the talk line so its fade can follow `UiState::subtitle` without a rebuild.
+#[derive(Component)]
+pub(crate) struct SubtitleFade;
+
+/// " (5 LP, 100 Gold)" for a teach option, from the teacher's offers.
+fn teach_suffix(offer: &journal::TeachOffer) -> String {
+    let mut parts = Vec::new();
+    if offer.lp_cost > 0 {
+        parts.push(format!("{} LP", offer.lp_cost));
+    }
+    if offer.gold_cost > 0 {
+        parts.push(format!("{} Gold", offer.gold_cost));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    }
+}
+
 fn dialog(p: &mut P, cx: &Cx) {
     let Some(view) = cx.ui.dialog.as_ref() else {
         return;
     };
-    // subtitle: the latest spoken line (the original shows no name header)
-    if let Some(l) = view.lines.last() {
-        spawn_pic(p, cx.a, TALK, 227.0, 100.0, None);
+    // talk line (`StartSay`): single lines centred, longer text left aligned, fades with the
+    // subtitle model; the original shows no name header
+    let sub = &cx.ui.subtitle;
+    if !sub.text.is_empty() {
+        let a = sub.alpha;
+        let mut pic = spawn_pic(p, cx.a, TALK, 227.0, 100.0, None);
+        pic.insert(SubtitleFade);
+        let player = view.lines.last().is_some_and(|l| l.player);
+        let (align, justify) = match sub.align {
+            Some(dialogmenu::SubtitleAlign::Left) => (JustifyContent::FlexStart, Justify::Left),
+            _ => (JustifyContent::Center, Justify::Center),
+        };
+        let color = if player { TEXT_HI } else { TEXT };
         p.spawn((
             Node {
                 overflow: Overflow::clip(),
                 align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
+                justify_content: align,
                 ..abs(227.0 + 19.0, 100.0 + 9.0, 532.0, 62.0)
             },
             children![(
-                txt_wrap(
-                    cx.font(),
-                    l.text.clone(),
-                    15.0,
-                    if l.player { TEXT_HI } else { TEXT }
-                ),
-                TextLayout::justify(Justify::Center),
+                SubtitleFade,
+                txt_wrap(cx.font(), sub.text.clone(), 15.0, color.with_alpha(a)),
+                TextLayout::justify(justify),
             )],
         ));
     }
     spawn_pic(p, cx.a, DIALOG, 22.0, 534.0, None);
-    p.spawn((
-        Node {
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::scroll_y(),
-            ..abs(22.0 + 60.0, 534.0 + 22.0, 858.0, 169.0)
-        },
-        scroll_area("dialog", cx.scroll_y("dialog")),
-    ))
+    // teacher prices for `Teach` options
+    let offers = journal::teach_offers(&cx.s.db, &cx.s.state, &view.session.npc, &*cx.cost.0);
+    if !offers.is_empty() {
+        body(
+            p,
+            cx,
+            format!("Lernpunkte: {}", cx.s.state.learning_points),
+            (22.0 + 700.0, 534.0 + 2.0, 240.0, 20.0),
+            Al::Right,
+            TEXT_HI,
+        );
+    }
+    let list = &cx.ui.options;
+    p.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        overflow: Overflow::clip(),
+        ..abs(22.0 + 60.0, 534.0 + 22.0, 858.0, 169.0)
+    })
     .with_children(|m| {
+        let row = |m: &mut P, i: usize, text: String, action: Action| {
+            let sel = list.selected() == Some(i);
+            m.spawn((
+                button(action, if sel { SEL } else { Color::NONE }, SEL),
+                Node {
+                    padding: UiRect::axes(px(14), px(2)),
+                    flex_shrink: 0.0,
+                    height: px(24),
+                    ..default()
+                },
+                children![txt(
+                    cx.font(),
+                    text,
+                    16.0,
+                    if sel { cx.a.palette.text_hover } else { TEXT }
+                )],
+            ));
+        };
         if view.menu.is_empty() {
-            m.spawn((
-                button(Action::Close, Color::NONE, SEL),
-                Node {
-                    padding: UiRect::axes(px(14), px(2)),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                children![txt(cx.font(), "Weiter", 16.0, TEXT)],
-            ));
+            row(m, 0, "Weiter".into(), Action::Close);
         }
-        for (i, c) in view.menu.iter().enumerate() {
-            m.spawn((
-                button(Action::Choose(i), Color::NONE, SEL),
-                Node {
-                    padding: UiRect::axes(px(14), px(2)),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                children![txt(cx.font(), c.label.replace('\n', " "), 16.0, TEXT)],
-            ));
+        for i in list.visible_rows() {
+            let Some(c) = view.menu.get(i) else { continue };
+            let mut text = c.label.replace('\n', " ");
+            if let Some(info) = c.info.map(|id| cx.s.db.info(id).name.as_str())
+                && let Some(o) = offers.iter().find(|o| o.info == info)
+            {
+                text.push_str(&teach_suffix(o));
+            }
+            row(m, i, text, Action::Choose(i));
         }
     });
+    if list.len() > list.visible_rows().len() {
+        body(
+            p,
+            cx,
+            format!("{} / {}", list.selected().map_or(0, |i| i + 1), list.len()),
+            (22.0 + 900.0, 534.0 + 190.0, 70.0, 18.0),
+            Al::Right,
+            TEXT_DIM,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------- trade
@@ -1090,6 +1168,14 @@ fn main_menu(p: &mut P, cx: &Cx) {
     for (t, e, y, on) in entries {
         menu_button(p, cx, t, (386.0, y, 252.0, 32.0), e, on);
     }
+    // "Back" button of the menu resource: return to the game
+    crate::screens_menu::menu_btn(
+        p,
+        cx,
+        &cx.t("HUD_Back", "Zurück zum Spiel"),
+        (402.0, 682.0, 220.0, 32.0),
+        Some(Action::Close),
+    );
 }
 
 // ---------------------------------------------------------------------------------- modal
@@ -1206,13 +1292,13 @@ fn modal(p: &mut P, cx: &Cx, m: &Modal) {
 }
 
 // ------------------------------------------------------------- host-driven pages
-type Box4 = (f32, f32, f32, f32);
+pub(crate) type Box4 = (f32, f32, f32, f32);
 
 /// Icon cells of a page list: `cols` cells of 48 px per row, scrollable. `mk` makes the
 /// click action of a row (`None`: the cells only show). The count sits bottom right, the
 /// unit price top left.
 #[allow(clippy::too_many_arguments)]
-fn row_grid(
+pub(crate) fn row_grid(
     p: &mut P,
     cx: &Cx,
     rect: Box4,
@@ -1313,7 +1399,7 @@ fn row_grid(
 }
 
 /// A text button; `action: None` draws it greyed out.
-fn page_button(p: &mut P, cx: &Cx, text: &str, r: Box4, action: Option<Action>) {
+pub(crate) fn page_button(p: &mut P, cx: &Cx, text: &str, r: Box4, action: Option<Action>) {
     let mut n = abs(r.0, r.1, r.2, r.3);
     n.border = UiRect::all(px(2));
     n.align_items = AlignItems::Center;
@@ -1342,7 +1428,7 @@ fn page_button(p: &mut P, cx: &Cx, text: &str, r: Box4, action: Option<Action>) 
     }
 }
 
-fn gold_line(p: &mut P, cx: &Cx, at: (f32, f32), label_w: f32, value: i64) {
+pub(crate) fn gold_line(p: &mut P, cx: &Cx, at: (f32, f32), label_w: f32, value: i64) {
     body(
         p,
         cx,
@@ -1362,7 +1448,7 @@ fn gold_line(p: &mut P, cx: &Cx, at: (f32, f32), label_w: f32, value: i64) {
 }
 
 /// `1234567` -> `1.234.567` (German grouping).
-fn thousands(v: i64) -> String {
+pub(crate) fn thousands(v: i64) -> String {
     let s = v.abs().to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
@@ -1375,7 +1461,7 @@ fn thousands(v: i64) -> String {
 }
 
 /// The hero's inventory panel with the category tabs (right side of both pages).
-fn player_panel(
+pub(crate) fn player_panel(
     p: &mut P,
     cx: &Cx,
     bgpic: Pic,

@@ -9,17 +9,32 @@
 pub mod assets;
 mod atlas;
 pub mod demo;
+pub mod dialogmenu;
+pub mod files;
 mod hud;
 pub mod items;
+pub mod journal;
 mod logic;
+pub mod manager;
+pub mod options;
 pub mod pages;
+pub mod reading;
 mod screens;
+mod screens_menu;
+mod screens_read;
 mod style;
 
 pub use assets::{Page, UiAssets};
+pub use dialogmenu::{GameMessages, MessageKind, OptionList, Subtitle};
+pub use files::{FileCommand, SlotKind, SlotList, SlotRow};
 pub use hud::{FocusHealth, QuickSlot, QuickSlots};
 pub use items::{ItemCatalog, ItemInfo};
-pub use pages::{LootView, PageEvent, PageRow, PageView, PlayerPanel, ShowPage, TradeView};
+pub use manager::{EscOutcome, GuiManager, HudFlags, InputFocus, MenuPage, PageId};
+pub use options::{ApplyVideo, VideoOptions};
+pub use pages::{
+    DocumentView, Ingredient, LootView, PageEvent, PageRow, PageView, PlayerPanel, RecipeRow,
+    RecipeView, ShowPage, TradeView,
+};
 
 use bevy::prelude::*;
 use gothic_gameplay::dialog::{Choice, DialogSession};
@@ -27,6 +42,17 @@ use gothic_gameplay::script::Output;
 use gothic_gameplay::{Assumptions, GameDatabase, GameState};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Learning-point price of teaching `points` units of an attribute (`tag`, current value):
+/// 1:1 unless the host installs the game rule (`gothic_sim::economy::teach_cost`).
+#[derive(Resource, Clone)]
+pub struct TeachCost(pub std::sync::Arc<journal::CostRule>);
+
+impl Default for TeachCost {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(|_, _, points| points))
+    }
+}
 
 /// Everything the UI reads and (for dialogs) mutates.
 #[derive(Resource)]
@@ -63,6 +89,8 @@ pub struct UiConfig {
     pub spawn_camera: bool,
     /// Scale the UI with the window (designed for 1280x720).
     pub auto_scale: bool,
+    /// The "subtitles" option (`Options.Audio` / `Subtitle`): talk lines are shown.
+    pub subtitles: bool,
 }
 
 impl Default for UiConfig {
@@ -73,6 +101,7 @@ impl Default for UiConfig {
             drive_dialog: true,
             spawn_camera: false,
             auto_scale: true,
+            subtitles: true,
         }
     }
 }
@@ -90,6 +119,41 @@ pub enum Screen {
     Loot,
     /// Full-screen main menu (banner background, entries report [`MenuChoice`]).
     MainMenu,
+    /// Save / load page of the menu (`gCHUDMenuFiles2`), fed by [`SlotList`].
+    Files,
+    /// Video options page of the menu (`gCHUDMenuOptionsVideo2`).
+    Video,
+    /// Work-station recipe page (`gCHUDPageSynth2`), host driven (see [`pages`]).
+    Recipe,
+    /// Readable book or letter (`gCHUDViewBook2` / `gCHUDViewLetter2`).
+    Document,
+}
+
+impl Screen {
+    /// The HUD page this screen is, if it is one.
+    pub fn page_id(self) -> Option<PageId> {
+        match self {
+            Screen::Dialog => Some(PageId::Dialog),
+            Screen::Journal => Some(PageId::Quests),
+            Screen::Inventory => Some(PageId::Inventory),
+            Screen::Character => Some(PageId::Skills),
+            Screen::Trade => Some(PageId::Trade),
+            Screen::Loot => Some(PageId::Loot),
+            Screen::Recipe => Some(PageId::Alchemy),
+            Screen::Document => Some(PageId::Documents),
+            Screen::None | Screen::MainMenu | Screen::Files | Screen::Video => None,
+        }
+    }
+
+    /// The menu page this screen is, if it is one.
+    pub fn menu_page(self) -> Option<MenuPage> {
+        match self {
+            Screen::MainMenu => Some(MenuPage::Main),
+            Screen::Files => Some(MenuPage::Files),
+            Screen::Video => Some(MenuPage::Video),
+            _ => None,
+        }
+    }
 }
 
 // ---- messages: host -> UI ----------------------------------------------------------
@@ -251,6 +315,21 @@ pub(crate) enum Action {
     Menu(MenuEntry),
     Modal(bool),
     TipCheck,
+    /// Esc, routed by the GUI manager rules.
+    Escape,
+    /// Move the selection of the dialog option list.
+    OptionStep(i32),
+    /// Back one menu page (the "Zurück" buttons).
+    MenuBack,
+    FileSelect(Option<usize>),
+    FileDo,
+    FileDelete,
+    VideoMode(i32),
+    VideoSlider(options::Slider, i32),
+    VideoVsync,
+    VideoApply,
+    SelectRecipe(usize),
+    BookSpread(i32),
 }
 
 #[derive(Message, Clone, Debug)]
@@ -273,12 +352,43 @@ pub struct UiState {
     pub(crate) tip_never: bool,
     /// Whether "Spiel speichern" is enabled in the main menu.
     pub menu_can_save: bool,
+    /// Page stack, HUD visibility flags and Esc routing (`gCGUIManager`).
+    pub gui: GuiManager,
+    /// Selection of the dialog option list.
+    pub options: OptionList,
+    pub subtitle: Subtitle,
+    pub messages: GameMessages,
+    pub(crate) files: FilesState,
+    /// Draft of the video page (applied with the Apply button).
+    pub(crate) video: VideoOptions,
+    pub(crate) recipe_sel: usize,
+    pub(crate) spread: usize,
+}
+
+/// State of the save / load page.
+#[derive(Default)]
+pub(crate) struct FilesState {
+    pub rows: Vec<SlotRow>,
+    pub can_save: bool,
+    /// Opened from "Spiel speichern" (rows can be overwritten, a new slot can be written).
+    pub save_mode: bool,
+    pub selected: Option<usize>,
+}
+
+/// What the host tells the GUI manager about the world (Esc routing).
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct HostGate {
+    /// The host handles Esc itself (an interaction window of the world is open), so Esc must
+    /// not open the menu.
+    pub esc_blocked: bool,
 }
 
 impl UiState {
     pub fn set_screen(&mut self, s: Screen) {
         self.screen = s;
         self.dirty = true;
+        self.gui.set_page(s.page_id());
+        self.gui.set_menu(s.menu_page());
     }
     /// True while any full screen (not the HUD) is shown.
     pub fn is_open(&self) -> bool {
@@ -296,6 +406,9 @@ impl Plugin for GothicUiPlugin {
             .init_resource::<PlayerHeading>()
             .init_resource::<QuickSlots>()
             .init_resource::<FocusHealth>()
+            .init_resource::<HostGate>()
+            .init_resource::<TeachCost>()
+            .init_resource::<VideoOptions>()
             .add_message::<StartDialog>()
             .add_message::<OpenScreen>()
             .add_message::<CloseScreen>()
@@ -312,6 +425,9 @@ impl Plugin for GothicUiPlugin {
             .add_message::<ShowModal>()
             .add_message::<ModalAnswer>()
             .add_message::<MenuChoice>()
+            .add_message::<SlotList>()
+            .add_message::<FileCommand>()
+            .add_message::<ApplyVideo>()
             .add_message::<Act>()
             .add_systems(Startup, (logic::setup, hud::spawn_hud).chain())
             .add_systems(
@@ -322,12 +438,16 @@ impl Plugin for GothicUiPlugin {
                     logic::dispatch_actions,
                     logic::drive_dialog,
                     logic::apply_dialog_updates,
+                    logic::sync_dialog_models,
+                    logic::tick_models,
+                    logic::dialog_wheel,
                     logic::screens_requests,
                     screens::rebuild,
                     style::hover_style,
                     style::scroll_wheel,
                     hud::update_hud,
                     hud::toasts,
+                    hud::fade_subtitle,
                 )
                     .chain(),
             );

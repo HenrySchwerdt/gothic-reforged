@@ -65,8 +65,54 @@ impl Page {
     }
 }
 
+/// Text and button colours of the GUI theme (`theme_g3.thm`, element `Button.Button.Back`).
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    pub text: Color,
+    pub text_hover: Color,
+    pub text_disabled: Color,
+    pub button: Color,
+    pub button_hover: Color,
+    pub button_disabled: Color,
+}
+
+impl Default for Palette {
+    /// The values of the shipped theme, used until / unless the file is read.
+    fn default() -> Self {
+        Self {
+            text: Color::srgba_u8(0xE9, 0xD9, 0xC7, 210),
+            text_hover: Color::srgba_u8(0xFF, 0xEB, 0xDC, 255),
+            text_disabled: Color::srgba_u8(0xE9, 0xD9, 0xC7, 128),
+            button: Color::srgba_u8(0x3C, 0x28, 0x19, 200),
+            button_hover: Color::srgba_u8(0x3C, 0x28, 0x19, 255),
+            button_disabled: Color::srgba_u8(0x3C, 0x28, 0x19, 80),
+        }
+    }
+}
+
+impl Palette {
+    pub fn from_theme(t: &gothic_formats::theme::Theme) -> Self {
+        use gothic_formats::theme::{Rgba, State};
+        let c = |v: Rgba| Color::srgba_u8(v.r, v.g, v.b, v.a);
+        // element 33 = Button.Button.Back
+        let Some(e) = t.elements.get(33) else {
+            return Self::default();
+        };
+        Self {
+            text: c(e.font_color(State::Normal)),
+            text_hover: c(e.font_color(State::MouseOver)),
+            text_disabled: c(e.font_color(State::Disabled)),
+            button: c(e.texture_color(State::Normal)),
+            button_hover: c(e.texture_color(State::MouseOver)),
+            button_disabled: c(e.texture_color(State::Disabled)),
+        }
+    }
+}
+
 #[derive(Resource, Default, Clone)]
 pub struct UiAssets {
+    /// Colours read from the compiled theme.
+    pub palette: Palette,
     /// Body font (Times New Roman Bold when installed, else `Gothic3.ttf`).
     pub font: Handle<Font>,
     /// Heading font (Times New Roman Bold Italic, else the body font).
@@ -189,7 +235,13 @@ pub fn load_install_assets(
     out.igl = load_igl(install);
     match PakArchive::open(install.join("Data").join("gui.pak")) {
         Ok(mut pak) => {
-            let mut pages = (2..=2).chain(9..=17).map(Page::Bg).collect::<Vec<_>>();
+            if let Ok(b) = read_pak_member(&mut pak, "themes/g3/compiled/theme_g3.thm") {
+                match gothic_formats::theme::Theme::parse(&b) {
+                    Ok(t) => out.palette = Palette::from_theme(&t),
+                    Err(e) => warn!("UI: theme_g3.thm unreadable ({e:#})"),
+                }
+            }
+            let mut pages = (1..=3).chain(8..=17).map(Page::Bg).collect::<Vec<_>>();
             pages.extend([Page::Icons, Page::Theme]);
             pages.extend((0..ITEM_GROUPS.len() as u8).map(Page::Item));
             for p in pages {

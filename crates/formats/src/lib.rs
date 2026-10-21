@@ -9,6 +9,7 @@ pub mod props;
 pub mod quest;
 pub mod stringtable;
 pub mod template;
+pub mod theme;
 pub mod terrain;
 pub mod vfs;
 pub mod world_node;

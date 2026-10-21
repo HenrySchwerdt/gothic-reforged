@@ -87,6 +87,24 @@ pub const GLYPH_BOOK: Pic = ic(406, 250, 29, 20);
 pub const GLYPH_ANVIL: Pic = ic(318, 247, 24, 22);
 pub const MARK_QUEST: Pic = ic(481, 284, 18, 18).keyed("g3_hud_icon_location_ardea.tga");
 
+pub const SYNTH_RECIPE: Pic = bg(14, 622, 1, 367, 638).keyed("g3_hud_view_synth_recipe_back.tga"); // 14,16
+pub const RECIPE: Pic = bg(15, 583, 510, 333, 507).keyed("g3_hud_view_recipe_back.tga");
+pub const LETTER: Pic = bg(15, 583, 1, 333, 507).keyed("g3_hud_view_letter_back.tga");
+pub const BOOK: Pic = bg(16, 1, 1, 601, 504).keyed("g3_hud_view_book_back.tga"); // 24,83
+pub const DOCUMENT: Pic = bg(12, 1, 1, 621, 638).keyed("g3_hud_view_document_back.tga"); // 14,16
+/// Time-of-day strips of the quest view: dawn, day, dusk, night (158x34 each).
+pub const TIME_OF_DAY: [Pic; 4] = [
+    bg(17, 733, 606, 158, 34).keyed("g3_hud_view_quests_time_dawn.tga"),
+    TIME_SKY,
+    bg(17, 774, 501, 158, 34).keyed("g3_hud_view_quests_time_dusk.tga"),
+    bg(17, 774, 537, 158, 34).keyed("g3_hud_view_quests_time_night.tga"),
+];
+
+/// Menu page backgrounds (1024x768 at the top of their atlas page).
+pub const MENU_FILES_BG: Pic = bg(3, 0, 0, 1024, 768).keyed("g3_hud_view_menu_files_back.tga");
+pub const MENU_VIDEO_BG: Pic =
+    bg(8, 0, 0, 1024, 768).keyed("g3_hud_view_menu_options_video_back.tga");
+
 /// Main-menu banner background (page 02, 1024x768 at the top of the atlas).
 pub const MENU_BG: Pic = bg(2, 0, 0, 1024, 768).keyed("g3_hud_view_menu_main_back.tga");
 #[allow(dead_code)]

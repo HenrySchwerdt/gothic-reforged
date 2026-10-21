@@ -7,7 +7,9 @@ use super::objects::WorldObjects;
 use bevy::prelude::*;
 use gothic_runtime::save::{MANUAL_SLOTS, SaveDir};
 use gothic_runtime::{Command, CoreCommand, CoreEvent, CoreRes, Event, SavePath};
-use gothic_ui::{MenuChoice, MenuEntry};
+use gothic_ui::{
+    FileCommand, MenuChoice, MenuEntry, SlotKind as UiSlotKind, SlotList, SlotRow, UiState,
+};
 
 /// Size of a region cell in centimetres (placeholder until the world regions are ported).
 const REGION_CELL_CM: f32 = 20_000.0;
@@ -17,7 +19,13 @@ const AUTOSAVE_COOLDOWN_SECS: f32 = 120.0;
 pub fn register(app: &mut App) {
     app.add_systems(
         Update,
-        (slot_keys, menu_entries, autosave, resync_world_after_load),
+        (
+            slot_keys,
+            menu_entries,
+            file_commands,
+            autosave,
+            resync_world_after_load,
+        ),
     );
 }
 
@@ -59,24 +67,90 @@ fn slot_keys(
     }
 }
 
-fn menu_entries(
-    mut menu: MessageReader<MenuChoice>,
+/// The menu's "Beenden" leaves the game; Load / Save open the files page of the UI, which talks
+/// to [`file_commands`].
+fn menu_entries(mut menu: MessageReader<MenuChoice>, mut exit: MessageWriter<AppExit>) {
+    for m in menu.read() {
+        if m.0 == MenuEntry::Quit {
+            exit.write(AppExit::Success);
+        }
+    }
+}
+
+fn slot_rows(dir: &SaveDir) -> Vec<SlotRow> {
+    dir.list()
+        .into_iter()
+        .filter_map(|s| {
+            let key = s.path.file_name()?.to_string_lossy().into_owned();
+            Some(SlotRow {
+                key,
+                name: s.header.name.clone(),
+                kind: match s.header.kind {
+                    gothic_runtime::save::SlotKind::Quick => UiSlotKind::Quick,
+                    gothic_runtime::save::SlotKind::Auto => UiSlotKind::Auto,
+                    gothic_runtime::save::SlotKind::Manual => UiSlotKind::Manual,
+                },
+                saved_unix: s.header.saved_unix,
+                game_ms: s.header.game_ms,
+                play_ms: s.header.play_ms,
+                region: s.header.region.clone(),
+                level: s.header.hero_level,
+            })
+        })
+        .collect()
+}
+
+/// A slot key is a bare file name of the save directory (no separators, no parent hops).
+fn slot_path(dir: &SaveDir, key: &str) -> Option<std::path::PathBuf> {
+    let ok = !key.is_empty()
+        && !key.contains(['/', '\\'])
+        && key != ".."
+        && key.ends_with(&format!(".{}", gothic_runtime::save::EXT));
+    ok.then(|| dir.0.join(key))
+}
+
+/// Answers of the files page: list the slots, load, save, delete.
+fn file_commands(
+    mut files: MessageReader<FileCommand>,
     save: Res<SavePath>,
+    core: Res<CoreRes>,
+    mut ui: ResMut<UiState>,
+    mut list: MessageWriter<SlotList>,
     mut commands: MessageWriter<CoreCommand>,
 ) {
     let dir = dir_of(&save);
-    for m in menu.read() {
-        match m.0 {
-            MenuEntry::SaveGame => {
-                commands.write(CoreCommand(Command::Save(next_manual(&dir))));
-            }
-            MenuEntry::LoadGame => {
-                if let Some(newest) = dir.list().into_iter().next() {
-                    commands.write(CoreCommand(Command::Load(newest.path)));
+    let can_save = !core.0.dialog_open();
+    ui.menu_can_save = can_save;
+    for f in files.read() {
+        match f {
+            FileCommand::Refresh => {}
+            FileCommand::Load { key } => {
+                if let Some(p) = slot_path(&dir, key) {
+                    commands.write(CoreCommand(Command::Load(p)));
                 }
             }
-            _ => {}
+            FileCommand::Save { key } => {
+                if !can_save {
+                    continue;
+                }
+                let path = key
+                    .as_deref()
+                    .and_then(|k| slot_path(&dir, k))
+                    .unwrap_or_else(|| next_manual(&dir));
+                commands.write(CoreCommand(Command::Save(path)));
+            }
+            FileCommand::Delete { key } => {
+                // only numbered manual slots can be removed from the page
+                let manual = key.starts_with("slot_");
+                if let Some(p) = slot_path(&dir, key).filter(|_| manual) {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
         }
+        list.write(SlotList {
+            rows: slot_rows(&dir),
+            can_save,
+        });
     }
 }
 
