@@ -1,0 +1,60 @@
+// Synthetic placeholder weather table. NOT the original Gothic 3 values.
+(
+    transition_seconds: 45.0,
+    hold_seconds: (180.0, 600.0),
+    wind_direction_deg: 60.0,
+    profiles: {
+        Clear: (
+            cloud_cover: 0.2, cloud_darkness: 0.0, cloud_speed: 4.0,
+            wind: 2.0, fog_density: 1.0, fog_tint: (0.6, 0.68, 0.8), fog_tint_amount: 0.0,
+        ),
+        Rain: (
+            cloud_cover: 0.85, cloud_darkness: 0.5, cloud_speed: 8.0,
+            rain: 1.0, wind: 5.0, fog_density: 2.0,
+            fog_tint: (0.45, 0.48, 0.52), fog_tint_amount: 0.4, sun_dim: 0.6,
+        ),
+        Storm: (
+            cloud_cover: 1.0, cloud_darkness: 0.85, cloud_speed: 16.0,
+            rain: 1.0, wind: 14.0, fog_density: 3.0,
+            fog_tint: (0.3, 0.32, 0.36), fog_tint_amount: 0.6, sun_dim: 0.85,
+            lightning_per_minute: 4.0,
+        ),
+        Snow: (
+            cloud_cover: 0.9, cloud_darkness: 0.3, cloud_speed: 5.0,
+            snow: 1.0, wind: 3.0, fog_density: 2.5,
+            fog_tint: (0.8, 0.84, 0.9), fog_tint_amount: 0.6, sun_dim: 0.5,
+        ),
+        Sandstorm: (
+            cloud_cover: 0.5, cloud_darkness: 0.2, cloud_speed: 12.0,
+            sand: 1.0, wind: 18.0, fog_density: 6.0,
+            fog_tint: (0.75, 0.55, 0.32), fog_tint_amount: 0.85, sun_dim: 0.55,
+        ),
+    },
+    climates: {
+        // Central regions (Myrtana-like).
+        "temperate": {
+            Clear: [(Clear, 3.0), (Rain, 1.5), (Storm, 0.4)],
+            Rain: [(Clear, 2.0), (Rain, 1.0), (Storm, 0.7)],
+            Storm: [(Rain, 2.0), (Clear, 1.0)],
+            Snow: [(Clear, 1.0)],
+            Sandstorm: [(Clear, 1.0)],
+        },
+        // Northern mountains (Nordmar-like).
+        "cold": {
+            Clear: [(Clear, 2.0), (Snow, 2.0)],
+            Snow: [(Snow, 1.5), (Clear, 1.0)],
+            Rain: [(Snow, 1.0)],
+            Storm: [(Snow, 1.0)],
+            Sandstorm: [(Clear, 1.0)],
+        },
+        // Desert (Varant-like).
+        "desert": {
+            Clear: [(Clear, 4.0), (Sandstorm, 1.0)],
+            Sandstorm: [(Clear, 2.0), (Sandstorm, 0.5)],
+            Rain: [(Clear, 1.0)],
+            Storm: [(Clear, 1.0)],
+            Snow: [(Clear, 1.0)],
+        },
+    },
+    surface: (wetting: 0.01, drying: 0.002, snowing: 0.004, thawing: 0.001),
+)
