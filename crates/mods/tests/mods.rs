@@ -4,8 +4,8 @@ use gothic_gameplay::Engine;
 use gothic_gameplay::GameState;
 use gothic_gameplay::model::QuestStatus;
 use gothic_mods::{
-    HotReload, LoadedMod, Manifest, ModData, OrderProblem, PatchFile, RecordKind, apply, diff,
-    discover, resolve,
+    HotReload, LoadOrder, LoadedMod, Manifest, ModData, OrderProblem, PatchFile, RecordKind, apply,
+    diff, resolve,
 };
 use gothic_sim::item::ItemDef;
 use serde_json::json;
@@ -62,9 +62,16 @@ fn examples() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples")
 }
 
+/// The example data mod alone (`mods/examples` also holds script-only example mods).
+fn hermit() -> LoadOrder {
+    resolve(vec![
+        LoadedMod::load(&examples().join("forest_hermit")).unwrap(),
+    ])
+}
+
 #[test]
 fn example_mod_adds_item_dialog_line_and_quest() {
-    let order = resolve(discover(&examples()).unwrap());
+    let order = hermit();
     let (data, report) = apply(base(), &order);
     assert!(report.is_clean(), "{}", report.to_text());
     assert_eq!(report.applied, ["forest_hermit@1.0.0"]);
@@ -116,7 +123,7 @@ fn example_mod_adds_item_dialog_line_and_quest() {
 
 #[test]
 fn applied_data_round_trips_through_a_diff_patch() {
-    let order = resolve(discover(&examples()).unwrap());
+    let order = hermit();
     let (modded, _) = apply(base(), &order);
     let patch = diff(&base(), &modded);
     // The diff survives TOML and RON serialisation ...
