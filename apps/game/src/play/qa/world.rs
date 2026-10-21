@@ -365,15 +365,83 @@ pub fn walk_to_reddock() -> Sc {
     });
     sc.shot("ardea");
     // Reddock market: the middle of the city's characters.
-    sc.step("walk to Reddock", |cx| {
+    // The route is the one the original navigation graph gives (`gCNavigationMap::FindWay`,
+    // authored zones and road corridors); the hero follows its points like a player on the road.
+    let mut route: Option<Vec<Vec3>> = None;
+    let mut next = 0usize;
+    sc.step("walk to Reddock", move |cx| {
         let goal = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
-        if cx.t > 170.0 {
+        let hero = cx.player().ctrl.position;
+        if route.is_none() {
+            let graph = cx
+                .world
+                .resource::<crate::walk::play::nav::NavRes>()
+                .0
+                .graph();
+            let found = graph.and_then(|g| g.find_way(hero, goal).ok());
+            match &found {
+                Some(r) => cx.note(format!(
+                    "FindWay Ardea -> Reddock: {} points, {:.0} m",
+                    r.points.len(),
+                    r.length / 100.0
+                )),
+                None => cx.note("FindWay found no route: straight line with detours"),
+            }
+            if let Some(r) = &found {
+                let list: Vec<String> = r
+                    .points
+                    .iter()
+                    .map(|p| format!("({:.0},{:.0},{:.0})", p.x, p.y, p.z))
+                    .collect();
+                cx.note(format!("route points {}", list.join(" ")));
+            }
+            route = Some(found.map(|r| r.points).unwrap_or_default());
+        }
+        let tick = (cx.t / 10.0) as i64;
+        if cx.st.n.get("walk_tick").copied().unwrap_or(-1.0) < tick as f64 {
+            cx.st.n.insert("walk_tick".into(), tick as f64);
+            cx.note(format!(
+                "walk t={:.0}s hero ({:.0}, {:.0}, {:.0}) cm, {:.0} m to the goal, waypoint {next}, mode {:?}",
+                cx.t,
+                hero.x,
+                hero.y,
+                hero.z,
+                Vec2::new(hero.x - goal.x, hero.z - goal.z).length() / 100.0,
+                cx.world.resource::<PlayState>().mode
+            ));
+        }
+        if cx.t > 240.0 {
             cx.note("walk timed out: continuing from where the hero stands");
             cx.key_up(KeyCode::KeyW);
             return Poll::Done;
         }
-        cx.walk_to(goal, 900.0, true)
+        let pts = route.as_ref().unwrap();
+        // Skip waypoints already passed; head for the next one, the goal last.
+        while next < pts.len() && Vec2::new(hero.x - pts[next].x, hero.z - pts[next].z).length() < 250.0 {
+            next += 1;
+        }
+        if next < pts.len() {
+            // Local steering like a walking character: the grid mesh grown from the collision
+            // around the hero refines the leg to the next authored point (`SharedNav::path`).
+            let leg = cx
+                .world
+                .resource::<crate::walk::play::nav::NavRes>()
+                .0
+                .path(hero, pts[next]);
+            let head = leg
+                .and_then(|l| {
+                    l.points
+                        .into_iter()
+                        .find(|p| Vec2::new(hero.x - p.x, hero.z - p.z).length() > 200.0)
+                })
+                .unwrap_or(pts[next]);
+            let _ = cx.walk_to(head, 100.0, true);
+            Poll::Wait
+        } else {
+            cx.walk_to(goal, 900.0, true)
+        }
     });
+    sc.shot("walk_end");
     sc.act("record where the walk ended", |cx| {
         let goal = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
         let p = cx.player().ctrl.position;
@@ -740,5 +808,79 @@ pub fn world_census() -> Sc {
         },
     );
     report_frames(&mut sc, "census hops", 0);
+    sc
+}
+
+/// Daily schedules away from Ardea: in Reddock the clock is set to noon, night and early
+/// morning (forward only, `GetRoutineTime`: 0 sleep, 1 work, 2 relax); the characters of the
+/// city must walk to their other routine points each time.
+pub fn world_routines() -> Sc {
+    use std::sync::{Arc, Mutex};
+    let mut sc = Sc::new(700.0);
+    grab(&mut sc);
+    sc.act("setup: stand in Reddock", |cx| {
+        let at = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
+        place_hero(cx, at + Vec3::Y * 300.0);
+    });
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.wait(10.0);
+    let last: Arc<Mutex<std::collections::HashMap<u32, Vec3>>> = Default::default();
+    for (label, hour) in [("noon", 12u64), ("night", 23), ("morning", 7)] {
+        let first = last.clone();
+        sc.act(format!("clock to {label}"), move |cx| {
+            let now_day = cx.core().0.sim.clock.game_ms / 86_400_000;
+            let target = (now_day + 1) * 86_400_000 + hour * 3_600_000;
+            cx.core_mut().0.sim.clock.game_ms = target;
+            let r = cx.world.resource::<Roster>();
+            let ids: Vec<_> = r
+                .live
+                .iter()
+                .filter_map(|i| r.cands[*i as usize].actor)
+                .collect();
+            let mut map = first.lock().unwrap();
+            map.clear();
+            for a in ids {
+                if let Some(p) = cx.actor_pos(a) {
+                    map.insert(a.0, p);
+                }
+            }
+        });
+        sc.wait(45.0);
+        let last = last.clone();
+        sc.act(format!("{label}: who moved"), move |cx| {
+            let map = last.lock().unwrap();
+            let mut moved = 0;
+            let mut far = 0;
+            for (id, p0) in map.iter() {
+                if let Some(p) = cx.actor_pos(gothic_sim::types::ActorId(*id)) {
+                    let d = Vec2::new(p.x - p0.x, p.z - p0.z).length();
+                    if d > 100.0 {
+                        moved += 1;
+                    }
+                    if d > 1500.0 {
+                        far += 1;
+                    }
+                }
+            }
+            let with_points = cx.world.resource::<crate::walk::play::objects::WorldObjects>().with_points;
+            cx.st.n.insert(format!("moved_{label}"), f64::from(moved));
+            cx.note(format!(
+                "ROUTINE {label}: {moved} of {} Reddock-area characters moved > 1 m, {far} > 15 m; characters with routine points so far {with_points}",
+                map.len()
+            ));
+        });
+        sc.shot(label);
+    }
+    sc.check("the schedule moves characters outside Ardea", |cx| {
+        let total: f64 = ["noon", "night", "morning"]
+            .iter()
+            .map(|l| cx.st.n.get(&format!("moved_{l}")).copied().unwrap_or(0.0))
+            .sum();
+        expect(
+            total > 0.0,
+            format!("{total} character moves over three schedule changes"),
+            "nobody moved when the routine time changed".to_string(),
+        )
+    });
     sc
 }
