@@ -206,6 +206,14 @@ impl Foe {
             foe: self.id,
             attack: index as u8,
         });
+        let a = self.profile.attacks[index];
+        self.events.push(Event::FoeTelegraph {
+            foe: self.id,
+            attack: index as u8,
+            lead: a.windup,
+            track: a.track_until.min(a.windup),
+            parryable: a.parryable,
+        });
         true
     }
 
@@ -267,6 +275,12 @@ impl Foe {
                 let a = self.profile.attacks[i as usize];
                 if self.t < a.track_until {
                     self.yaw = turn_toward(self.yaw, goal_yaw, turn);
+                } else if self.t - DT < a.track_until && a.track_until < a.windup {
+                    // The swing direction is fixed from here: the dodge cue.
+                    self.events.push(Event::FoeCommit {
+                        foe: self.id,
+                        attack: i,
+                    });
                 }
                 if self.t >= a.windup {
                     self.struck = false;

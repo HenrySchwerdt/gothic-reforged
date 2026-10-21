@@ -20,6 +20,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::{CursorGrabMode, CursorOptions, PresentMode, PrimaryWindow, WindowResolution};
+use glam::Vec3 as GVec3;
 use gothic_animation::{
     ActorLibrary, ActorSpawner, AnimationPlugin, Animator, LocomotionInput, NpcSpec, Stance,
     WeaponSpec, pack_overlay as ov,
@@ -32,12 +33,15 @@ use gothic_combat_souls::animmap::{self, PackPose};
 use gothic_combat_souls::events::Event as SEvent;
 use gothic_combat_souls::foe::FoeState;
 use gothic_combat_souls::hero::{Button, State};
+use gothic_combat_souls::hero::{Hero, Motion, kinematic_move};
 use gothic_combat_souls::plugin::{
-    InputLatch, SoulsBackend, SoulsEvent, SoulsPlugin, SoulsRes, SoulsView, from_bevy, to_bevy,
+    CameraShake, InputLatch, SoulsBackend, SoulsEvent, SoulsPlugin, SoulsRes, SoulsView, from_bevy,
+    to_bevy,
 };
 use gothic_combat_souls::sink::SimpleSink;
-use gothic_combat_souls::world::OpenField;
+use gothic_combat_souls::world::Env;
 use gothic_combat_souls::{FoeProfile, SoulsWorld, Tuning};
+use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::time::Duration;
 
@@ -75,6 +79,8 @@ enum BarKind {
 struct Cam {
     state: CameraState,
     placed: bool,
+    /// Camera position of the last frame (cm), for the occlusion test.
+    eye: GVec3,
 }
 
 #[derive(Resource, Default)]
@@ -98,6 +104,65 @@ struct ActorOpt {
 
 #[derive(Component)]
 struct ActorVis;
+
+/// The ring wall plus free-standing pillars that block sight and movement (cm, XZ).
+#[derive(Resource, Clone)]
+struct Pillars {
+    arena: f32,
+    list: Vec<(Vec2, f32)>,
+}
+
+impl Pillars {
+    fn new() -> Self {
+        Self {
+            arena: ARENA,
+            list: vec![
+                (Vec2::new(320.0, -420.0), 70.0),
+                (Vec2::new(-480.0, -380.0), 80.0),
+                (Vec2::new(150.0, -1350.0), 90.0),
+            ],
+        }
+    }
+
+    fn push_out(&self, p: GVec3, radius: f32) -> GVec3 {
+        let mut q = Vec2::new(p.x, p.z);
+        for (c, r) in &self.list {
+            let d = q - *c;
+            let min = r + radius;
+            if d.length() < min {
+                q = *c + d.normalize_or(Vec2::X) * min;
+            }
+        }
+        if q.length() > self.arena - radius {
+            q = q.normalize() * (self.arena - radius);
+        }
+        GVec3::new(q.x, p.y, q.y)
+    }
+}
+
+impl Env for Pillars {
+    fn line_of_sight(&self, from: GVec3, to: GVec3) -> bool {
+        let (a, b) = (Vec2::new(from.x, from.z), Vec2::new(to.x, to.z));
+        let ab = b - a;
+        !self.list.iter().any(|(c, r)| {
+            let t = ((*c - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+            (a + ab * t).distance(*c) < *r
+        })
+    }
+
+    fn move_hero(&mut self, hero: &mut Hero, motion: &Motion, t: &Tuning) {
+        kinematic_move(hero, motion, t);
+        hero.pos = self.push_out(hero.pos, t.hero_radius);
+    }
+
+    fn slide(&mut self, pos: GVec3, delta: GVec3) -> GVec3 {
+        self.push_out(pos + delta, 55.0)
+    }
+}
+
+/// Foes that just committed their swing (seconds left of the cue).
+#[derive(Resource, Default)]
+struct CommitFlash(HashMap<u32, f32>);
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -181,10 +246,10 @@ fn main() {
     .insert_resource(res)
     .insert_resource(SoulsBackend {
         sink: Box::new(sink),
-        env: Box::new(OpenField {
-            arena_radius: Some(ARENA),
-        }),
+        env: Box::new(Pillars::new()),
     })
+    .insert_resource(Pillars::new())
+    .init_resource::<CommitFlash>()
     .insert_resource(ClearColor(Color::srgb(0.07, 0.07, 0.09)))
     .insert_resource(Opts {
         shots,
@@ -205,6 +270,7 @@ fn main() {
             pose_foes,
             hud_system,
             collect_log,
+            commit_flash,
             lock_marker,
             quit_on_escape,
         )
@@ -238,6 +304,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     res: Res<SoulsRes>,
     opts: Res<Opts>,
+    pillars: Res<Pillars>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     if !opts.shots
@@ -252,6 +319,7 @@ fn setup(
     commands.insert_resource(Cam {
         state,
         placed: false,
+        eye: GVec3::ZERO,
     });
     commands.spawn((Camera3d::default(), Transform::from_xyz(0.0, 3.0, 8.0)));
     commands.spawn((
@@ -279,6 +347,13 @@ fn setup(
         perceptual_roughness: 1.0,
         ..default()
     });
+    for (c, r) in &pillars.list {
+        commands.spawn((
+            Mesh3d(meshes.add(Cylinder::new(r * CM, 4.0))),
+            MeshMaterial3d(stone.clone()),
+            Transform::from_xyz(c.x * CM, 2.0, c.y * CM),
+        ));
+    }
     let pillar = meshes.add(Cuboid::new(0.8, 3.5, 0.8));
     for i in 0..16 {
         let a = i as f32 / 16.0 * 2.0 * PI;
@@ -504,6 +579,8 @@ fn camera_system(
     mut res: ResMut<SoulsRes>,
     motion: Res<AccumulatedMouseMotion>,
     opts: Res<Opts>,
+    pillars: Res<Pillars>,
+    shake: Res<CameraShake>,
     mut q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
 ) {
     let Ok((mut tf, mut proj)) = q.single_mut() else {
@@ -529,8 +606,11 @@ fn camera_system(
     if res.world.recenter {
         res.lock_cam.recenter();
     }
+    // A pillar between the camera and the target lifts the orbit to look over it.
+    let occluded =
+        target.is_some_and(|t| cam.placed && !pillars.line_of_sight(cam.eye, t + GVec3::Y * 120.0));
     res.lock_cam
-        .drive(&mut cam.state, hero_pos, target, hero_yaw, dt);
+        .drive_with(&mut cam.state, hero_pos, target, hero_yaw, dt, occluded);
     let look = if target.is_some() || opts.shots {
         Vec2::ZERO
     } else {
@@ -545,7 +625,8 @@ fn camera_system(
         },
         &NoWorld,
     );
-    tf.translation = to_bevy(out.position) * CM;
+    cam.eye = out.position;
+    tf.translation = to_bevy(out.position + shake.offset) * CM;
     tf.rotation = out.rotation;
     if let Projection::Perspective(p) = &mut *proj {
         p.fov = out.fov_deg.to_radians();
@@ -837,6 +918,38 @@ fn lock_marker(res: Res<SoulsRes>, mut gizmos: Gizmos) {
     );
 }
 
+fn commit_flash(
+    time: Res<Time>,
+    res: Res<SoulsRes>,
+    mut ev: MessageReader<SoulsEvent>,
+    mut flash: ResMut<CommitFlash>,
+    mut gizmos: Gizmos,
+) {
+    for SoulsEvent(e) in ev.read() {
+        if let SEvent::FoeCommit { foe, .. } = e {
+            flash.0.insert(*foe, 0.35);
+        }
+    }
+    let dt = time.delta_secs();
+    flash.0.retain(|_, t| {
+        *t -= dt;
+        *t > 0.0
+    });
+    // The commit cue: a white ring that shrinks while the swing direction is fixed.
+    for (id, t) in &flash.0 {
+        if let Some(f) = res.world.foe(*id) {
+            gizmos.circle(
+                Isometry3d::new(
+                    to_bevy(f.pos) * CM + Vec3::Y * 0.05,
+                    Quat::from_rotation_x(-FRAC_PI_2),
+                ),
+                0.7 + t * 2.0,
+                Color::srgb(1.0, 1.0, 1.0),
+            );
+        }
+    }
+}
+
 fn collect_log(mut ev: MessageReader<SoulsEvent>, mut log: ResMut<EventLog>) {
     for SoulsEvent(e) in ev.read() {
         let line = match e {
@@ -853,7 +966,11 @@ fn collect_log(mut ev: MessageReader<SoulsEvent>, mut log: ResMut<EventLog>) {
                 )
             }
             SEvent::HeroHurt { result, damage, .. } => format!("took {result:?} {damage}"),
-            SEvent::FoeWindup { foe, .. } => format!("foe {foe} winds up"),
+            SEvent::FoeTelegraph { foe, lead, .. } => {
+                format!("foe {foe} winds up ({:.2} s)", lead)
+            }
+            SEvent::FoeCommit { foe, .. } => format!("foe {foe} commits: roll now"),
+            SEvent::Feedback { cause, .. } => format!("{cause:?}!"),
             SEvent::FoeStaggered { by_parry, .. } => {
                 (if *by_parry { "PARRIED" } else { "staggered" }).to_string()
             }
@@ -933,9 +1050,12 @@ fn script_input(
             (172, "roll2"),
             (306, "attack"),
             (392, "parry"),
+            (396, "parry-shake"),
             (470, "strafe"),
+            (550, "pillar-lift"),
+            (600, "pillar-unlock"),
         ];
-        script.exit_at = Some(520);
+        script.exit_at = Some(620);
     }
     let tick = res.world.tick;
     let was = latch.current;
@@ -992,6 +1112,22 @@ fn script_shots(
     // Scripted foe behaviour.
     if tick == 100 {
         res.world.foe_mut(1).map(|f| f.command_attack(0));
+    }
+    if tick == 510 {
+        // After the strafe, put a pillar between the hero and the locked foe: the lock holds for the grace
+        // period while the camera rises over the pillar, then breaks.
+        if let Some(f) = res.world.foe(1) {
+            let (c, r) = Pillars::new().list[0];
+            let foe = Vec2::new(f.pos.x, f.pos.z);
+            let away = (c - foe).normalize_or(Vec2::X);
+            let p = c + away * (r + 160.0);
+            res.world.hero.pos = GVec3::new(p.x, 0.0, p.y);
+            res.world.hero.yaw =
+                gothic_combat_souls::math::yaw_of(GVec3::new(-away.x, 0.0, -away.y));
+            if let Some(f) = res.world.foe_mut(1) {
+                f.autonomous = false;
+            }
+        }
     }
     if tick == 330 {
         // Bring the foe next to the hero for a clean parry, then swing.

@@ -32,9 +32,9 @@ pub mod plugin;
 mod tests;
 
 pub use actions::{ActionId, Dir, Hurt, StrikeKind};
-pub use events::{Event, HitResult};
+pub use events::{Event, FeedbackCause, HitResult};
 pub use foe::{Foe, FoeProfile, FoeState};
 pub use hero::{Hero, Input};
 pub use sink::{HitSink, SimSink, SimpleSink};
-pub use tuning::Tuning;
+pub use tuning::{FeedbackTuning, Impact, Shake, Tuning};
 pub use world::{Env, OpenField, SoulsWorld};

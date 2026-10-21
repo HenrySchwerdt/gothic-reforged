@@ -676,3 +676,195 @@ mod pipeline {
         let _ = dir_of(0.0);
     }
 }
+
+// ---- SOULS-02: feedback, telegraph cues, buffers, stamina curve, lock upkeep -------------------
+
+fn feedback(rig: &Rig) -> Vec<(crate::events::FeedbackCause, f32)> {
+    rig.log
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::Feedback {
+                cause, hit_stop, ..
+            } => Some((*cause, *hit_stop)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn parry_and_guard_break_send_feedback_and_freeze_the_hero() {
+    use crate::events::FeedbackCause;
+    let t = Tuning::default();
+    // Parry (same timing as `parry_staggers_the_foe_and_opens_a_riposte`).
+    let mut rig = Rig::new(150.0, FoeProfile::classic());
+    rig.w.foe_mut(FOE).unwrap().command_attack(0);
+    rig.run(2, &idle());
+    rig.tick(&Input {
+        guard: press(),
+        ..idle()
+    });
+    let mut froze = false;
+    for _ in 0..30 {
+        rig.tick(&Input {
+            guard: held(),
+            ..idle()
+        });
+        froze |= rig.w.hero.hit_stop >= t.feedback.parry.hit_stop - DT * 1.5;
+    }
+    assert_eq!(
+        feedback(&rig),
+        vec![(FeedbackCause::Parry, t.feedback.parry.hit_stop)]
+    );
+    assert!(froze, "the parry hit-stop reached the hero");
+    // Guard break.
+    let mut rig = Rig::new(150.0, FoeProfile::classic());
+    rig.w.hero.stamina = 2.0;
+    rig.run(
+        10,
+        &Input {
+            guard: held(),
+            ..idle()
+        },
+    );
+    rig.w.foe_mut(FOE).unwrap().command_attack(0);
+    rig.run(
+        40,
+        &Input {
+            guard: held(),
+            ..idle()
+        },
+    );
+    assert_eq!(
+        feedback(&rig),
+        vec![(FeedbackCause::GuardBreak, t.feedback.guard_break.hit_stop)]
+    );
+    // The shake itself is a decaying oscillation that ends on time.
+    let s = t.feedback.guard_break.shake;
+    assert_eq!(s.at(s.duration), 0.0);
+    assert!((0..20).any(|i| s.at(i as f32 * 0.01).abs() > 0.3));
+}
+
+#[test]
+fn telegraph_events_give_lead_time_and_a_commit_cue() {
+    let mut rig = Rig::new(150.0, FoeProfile::telegraphed());
+    rig.w.foe_mut(FOE).unwrap().command_attack(0);
+    let attack = rig.w.foe(FOE).unwrap().profile.attacks[0];
+    let start = rig.w.tick;
+    rig.run(120, &idle());
+    let tele = rig.w.foe(FOE).unwrap().events.is_empty();
+    assert!(tele, "events are drained into the world log");
+    // command_attack's events surface with the next step.
+    let telegraphs: Vec<f32> = rig
+        .log
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::FoeTelegraph { lead, .. } => Some(*lead),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(telegraphs, vec![attack.windup]);
+    let commit = rig
+        .log
+        .iter()
+        .find(|(_, e)| matches!(e, Event::FoeCommit { .. }))
+        .map(|(t, _)| *t - start)
+        .expect("telegraphed swings commit before they land");
+    let strike = rig
+        .log
+        .iter()
+        .find(|(_, e)| matches!(e, Event::FoeStrike { .. }))
+        .map(|(t, _)| *t - start)
+        .unwrap();
+    assert!(commit < strike, "commit {commit} before strike {strike}");
+    assert!(
+        (strike - commit) as f32 * DT >= 0.25,
+        "at least a quarter second between commit and swing"
+    );
+    // The classic foe tracks until it swings: no commit cue.
+    let mut rig = Rig::new(150.0, FoeProfile::classic());
+    rig.w.foe_mut(FOE).unwrap().command_attack(0);
+    rig.run(60, &idle());
+    assert!(
+        !rig.log
+            .iter()
+            .any(|(_, e)| matches!(e, Event::FoeCommit { .. }))
+    );
+}
+
+#[test]
+fn buffered_rolls_expire_sooner_than_buffered_attacks() {
+    use crate::hero::{Req, buffer_window};
+    let t = Tuning::default();
+    assert!(buffer_window(Req::Dodge, &t) < buffer_window(Req::Light, &t));
+    // A roll pressed right after a light swing starts: the swing's dodge cancel opens at
+    // frame 9 (0.3 s), later than the 0.25 s roll buffer, so the late roll is dropped...
+    let run = |dodge_secs: f32| {
+        let mut rig = Rig::new(10_000.0, FoeProfile::classic());
+        rig.w.tuning.buffer_dodge_secs = dodge_secs;
+        rig.tick(&light_press());
+        rig.w.hero.buffer = Some((Req::Dodge, 0.0));
+        rig.run(40, &idle());
+        rig.actions().iter().map(|a| a.1).collect::<Vec<_>>()
+    };
+    assert_eq!(run(t.buffer_dodge_secs), vec![ActionId::Light(1)]);
+    // ...while the old, attack-length window would have rolled.
+    assert_eq!(
+        run(t.buffer_secs),
+        vec![ActionId::Light(1), ActionId::Backstep]
+    );
+}
+
+#[test]
+fn stamina_regen_ramps_up_and_an_empty_bar_waits_longer() {
+    use crate::hero::regen_rate;
+    let t = Tuning::default();
+    assert!((regen_rate(0.0, &t) - t.stamina_regen * t.stamina_regen_start).abs() < 1e-4);
+    assert_eq!(regen_rate(t.stamina_ramp, &t), t.stamina_regen);
+    assert_eq!(regen_rate(10.0, &t), t.stamina_regen);
+    // Spend a little: refill starts after the normal delay.
+    let mut rig = Rig::new(800.0, FoeProfile::classic());
+    rig.w.hero.stamina = 50.0;
+    rig.w.hero.spend_for_test(10.0, &t);
+    let ticks_until_regen = |rig: &mut Rig| {
+        let start = rig.w.hero.stamina;
+        (1..400)
+            .find(|_| {
+                rig.tick(&idle());
+                rig.w.hero.stamina > start
+            })
+            .unwrap()
+    };
+    let normal = ticks_until_regen(&mut rig);
+    // Empty the bar: the extra delay applies.
+    let mut rig = Rig::new(800.0, FoeProfile::classic());
+    rig.w.hero.stamina = 5.0;
+    rig.w.hero.spend_for_test(10.0, &t);
+    let empty = ticks_until_regen(&mut rig);
+    let extra = ((empty - normal) as f32 * DT - t.exhausted_delay).abs();
+    assert!(extra < 0.05, "normal {normal} empty {empty}");
+}
+
+#[test]
+fn killing_the_locked_foe_moves_the_lock_to_the_next_one() {
+    let mut rig = Rig::new(500.0, FoeProfile::classic());
+    let second = rig.w.add_foe(
+        2,
+        Vec3::new(150.0, 0.0, -700.0),
+        500.0,
+        FoeProfile::classic(),
+    );
+    second.autonomous = false;
+    rig.tick(&Input {
+        lock: true,
+        ..idle()
+    });
+    assert_eq!(rig.w.lock.target, Some(FOE));
+    rig.w.foe_mut(FOE).unwrap().state = FoeState::Dead;
+    rig.tick(&idle());
+    assert_eq!(rig.w.lock.target, Some(2));
+    assert!(
+        rig.log
+            .iter()
+            .any(|(_, e)| *e == Event::LockChanged { target: Some(2) })
+    );
+}

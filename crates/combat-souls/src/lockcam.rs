@@ -9,11 +9,20 @@ use gothic_camera::CameraState;
 const FOLLOW_TAU: f32 = 0.12;
 /// Elevation above the horizon for a level target (rad).
 const BASE_ELEVATION: f32 = 0.34;
+/// Extra elevation while the view of the target is blocked (look over the obstacle).
+const OCCLUSION_LIFT: f32 = 0.35;
+/// Seconds the lift takes to build up / fall off.
+const LIFT_TAU: f32 = 0.25;
+/// Below this horizontal distance the target is (nearly) inside the hero: hold the yaw
+/// instead of spinning around.
+const CLOSE_HOLD: f32 = 60.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LockCam {
     /// A recenter swing (lock pressed with nothing to lock) is running.
     recenter: f32,
+    /// Current extra elevation for an occluded target (rad).
+    lift: f32,
 }
 
 /// Yaw and elevation that put the target ahead of the hero.
@@ -42,10 +51,38 @@ impl LockCam {
         hero_yaw: f32,
         dt: f32,
     ) {
+        self.drive_with(cam, hero, target, hero_yaw, dt, false);
+    }
+
+    /// [`LockCam::drive`] with occlusion: while `occluded` (the camera cannot see the
+    /// target, e.g. a pillar after the boom collided) the orbit rises to look over it.
+    pub fn drive_with(
+        &mut self,
+        cam: &mut CameraState,
+        hero: Vec3,
+        target: Option<Vec3>,
+        hero_yaw: f32,
+        dt: f32,
+        occluded: bool,
+    ) {
         let (cur_yaw, cur_elev) = (cam.view_yaw(), cam.orbit_degrees().1.to_radians());
         let k = 1.0 - (-dt / FOLLOW_TAU).exp();
+        let lift_goal = if occluded && target.is_some() {
+            OCCLUSION_LIFT
+        } else {
+            0.0
+        };
+        self.lift += (lift_goal - self.lift) * (1.0 - (-dt / LIFT_TAU).exp());
         let goal = match target {
-            Some(t) => Some(orbit_for(hero, t)),
+            Some(t) => {
+                let (yaw, elev) = orbit_for(hero, t);
+                let yaw = if flat(t - hero).length() < CLOSE_HOLD {
+                    cur_yaw
+                } else {
+                    yaw
+                };
+                Some((yaw, (elev + self.lift).min(1.0)))
+            }
             None if self.recenter > 0.0 => {
                 self.recenter -= dt;
                 Some((hero_yaw, 0.25))
@@ -85,5 +122,46 @@ mod tests {
         }
         let (want, _) = orbit_for(hero, target);
         assert!(angle_diff(cam.view_yaw(), want).abs() < 0.02);
+    }
+
+    #[test]
+    fn occlusion_lifts_the_camera_and_lets_it_down_again() {
+        let mut cam = CameraState::new(CameraConfig::default(), PresetTable::default());
+        let mut lc = LockCam::default();
+        let target = Vec3::new(0.0, 0.0, -600.0);
+        for _ in 0..120 {
+            lc.drive_with(&mut cam, Vec3::ZERO, Some(target), 0.0, 1.0 / 60.0, false);
+        }
+        let level = cam.orbit_degrees().1;
+        for _ in 0..120 {
+            lc.drive_with(&mut cam, Vec3::ZERO, Some(target), 0.0, 1.0 / 60.0, true);
+        }
+        let lifted = cam.orbit_degrees().1;
+        assert!(lifted > level + 10.0, "{level} -> {lifted}");
+        for _ in 0..240 {
+            lc.drive_with(&mut cam, Vec3::ZERO, Some(target), 0.0, 1.0 / 60.0, false);
+        }
+        assert!((cam.orbit_degrees().1 - level).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_target_inside_the_hero_does_not_spin_the_camera() {
+        let mut cam = CameraState::new(CameraConfig::default(), PresetTable::default());
+        let mut lc = LockCam::default();
+        lc.drive(
+            &mut cam,
+            Vec3::ZERO,
+            Some(Vec3::new(0.0, 0.0, -500.0)),
+            0.0,
+            1.0,
+        );
+        let yaw = cam.view_yaw();
+        // The target jitters around the hero's own position (e.g. pushed into it).
+        for i in 0..60 {
+            let a = i as f32 * 2.1;
+            let t = Vec3::new(a.cos() * 20.0, 0.0, a.sin() * 20.0);
+            lc.drive(&mut cam, Vec3::ZERO, Some(t), 0.0, 1.0 / 60.0);
+        }
+        assert!(angle_diff(cam.view_yaw(), yaw).abs() < 1e-3);
     }
 }
