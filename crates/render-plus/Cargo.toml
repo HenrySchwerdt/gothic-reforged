@@ -1,0 +1,29 @@
+[package]
+name = "gothic-render-plus"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Opt-in modern render profile: SSAO, TAA + sharpening, volumetric fog, soft/contact shadows, SSR, with a frame-time budget"
+
+[features]
+default = []
+# Bevy plugin that applies the profile to marked cameras and lights.
+render = ["dep:bevy", "bevy/3d_bevy_render"]
+# Percentage-closer soft shadows for the sun (Bevy's experimental PCSS; without it soft
+# shadows fall back to temporal filtering plus contact shadows).
+pcss = ["render", "bevy/experimental_pbr_pcss"]
+# Windowed greybox A/B demo.
+demo = ["render", "bevy/bevy_winit", "bevy/x11", "bevy/multi_threaded", "bevy/default_font", "bevy/png", "bevy/ui_bevy_render", "bevy/bluenoise_texture"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"], optional = true }
+
+[[example]]
+name = "render_plus_demo"
+required-features = ["demo"]
+
+[lints]
+workspace = true

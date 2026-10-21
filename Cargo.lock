@@ -3615,16 +3615,27 @@ dependencies = [
  "gothic-camera",
  "gothic-combat-souls",
  "gothic-cook",
+ "gothic-environment",
  "gothic-formats",
  "gothic-fx",
  "gothic-gameplay",
  "gothic-importer",
  "gothic-nav",
  "gothic-physics",
+ "gothic-render-rules",
  "gothic-runtime",
  "gothic-sim",
  "gothic-ui",
  "gothic-world",
+ "serde_json",
+]
+
+[[package]]
+name = "gothic-render-plus"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "serde",
  "serde_json",
 ]
 
