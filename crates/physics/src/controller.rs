@@ -656,6 +656,7 @@ impl CharacterController {
                 // `OnSlide` -> `PS_Slide_Jump` -> `_AI_Jump` (S:af1d0): movement mode 6 and the
                 // normal jump velocity, after `SLIDE_JUMP_DELAY` seconds of sliding.
                 if jump && self.slide_time > SLIDE_JUMP_DELAY {
+                    gothic_portcov::hit!("on_slide_jump");
                     self.take_off(report);
                     return self.air_step(world, dir, want, dt, report);
                 }

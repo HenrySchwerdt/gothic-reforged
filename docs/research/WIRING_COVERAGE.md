@@ -1060,3 +1060,16 @@ Entered: `PS_Interact` (9), `PS_Interact_Anvil` (4), `PS_Interact_Chest` (5), `P
 | `close_menu` | 1 | menu_save_load | crates/ui/src/manager.rs:228 |
 | `on_untouch` | 1 | triggers | crates/world/src/trigger.rs:350 |
 | `deactivate` | 1 | triggers | crates/world/src/trigger.rs:724 |
+
+## Movement states re-run (2026-10-22, branch night/p4-move)
+
+`port-coverage` build, scenarios `p4_jump`, `p4_fall`, `p4_slide`, `p4_swim`, `controls_basic`, `world_walk`, `sit_pose`, `craft_anvil`, `combat_basic` (dumps merged; `scripts/portcov/report.py` was not re-run, the numbers below are read from the dumps). Newly called by the running game:
+
+| function | calls | caller |
+|---|---|---|
+| `Sim::movement_mode_changed` (`OnMovementModeChanged`, S:adbf0) | 118 | `Command::HeroModeChanged` from `P/move_states.rs::after_motion` |
+| `ps_jump` (`PS_Normal_Jump`) | 7 | jump key (`p4_jump`, `p4_slide`) |
+| `ps_normal`, `ps_normal_loop`, `ps_sneak`, `confirm` | 13 / 2219 / 1 / 3 | as before |
+| `on_slide_jump` (`OnSlide` -> `PS_Slide_Jump`, `CharacterController::sub_step`) | see `p4_slide` | jump key after 0.6 s of sliding |
+
+Still never called and now duplicates of the wired path: `down::fall_damage`, `down::land_from_fall` (S:adbf0 landing rule on the `ScriptHost`) and `physics::fall_damage` as an entry point; the running game applies the same rule through `Sim::land` -> `vitals::fall_damage` (it needs the simulation's kill path for the hero). The movement mode machine and controller functions (`gCCharacterMovement_PS`) carry no `Port of ... (Dll:addr)` doc line and are not in the manifest; their behaviour is covered by the `p4_*` scenarios instead (state entered, clip, hit points, positions).

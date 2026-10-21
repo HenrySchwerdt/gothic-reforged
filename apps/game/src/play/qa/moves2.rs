@@ -1,5 +1,5 @@
 //! Movement-state scenarios, part 2: slide and swim / dive (see `moves.rs`).
-use super::moves::{grab, hero_clip, mode, ms, settle};
+use super::moves::{grab, hero_clip, mode, ms, rec, settle};
 use super::{Cx, Poll, Sc, expect};
 use bevy::prelude::*;
 use gothic_animation::locomotion::MoveKind;
@@ -37,6 +37,7 @@ pub fn p4_slide() -> Sc {
             cx.note("synthetic 55 degree ramp, 2000 cm long, at the top of the world");
         },
     );
+    rec(&mut sc, true);
     sc.act("stand at the top of the ramp", |cx| {
         let (x, y, z) = (
             cx.st.n["sx"] as f32,
@@ -98,6 +99,7 @@ pub fn p4_slide() -> Sc {
         Poll::Wait
     });
     sc.shot("slide_jump");
+    rec(&mut sc, false);
     sc.step("ride the ramp down to the flat floor (Slide_End)", |cx| {
         let (name, kind) = hero_clip(cx);
         if name.contains("Slide_End") && kind == Some(MoveKind::SlideEnd) {
@@ -274,6 +276,7 @@ pub fn p4_swim() -> Sc {
             format!("clip {name}"),
         )
     });
+    rec(&mut sc, true);
     sc.act("dive: hold Ctrl (Down)", |cx| {
         cx.st
             .n
@@ -328,6 +331,7 @@ pub fn p4_swim() -> Sc {
             format!("mode {:?}", mode(cx)),
         )
     });
+    rec(&mut sc, false);
     sc.act("back to the beach (S)", |cx| {
         cx.aim_at(Vec3::new(6400.0, 0.0, -12_500.0), -0.2);
         cx.key_down(KeyCode::KeyW);
@@ -369,6 +373,9 @@ pub fn p4_swim() -> Sc {
     // Falling into deep water: no damage, `ZS_DiveIn`, swim pose; a very long fall teaches
     // Perk_Acrobatic (OnMovementModeChanged: S:adbf0, 7.45 s at S:0x10107658).
     for (tag, h, secs_min) in [("dive", 1500.0f32, 0.0f32), ("long", 11500.0, 7.45)] {
+        if tag == "dive" {
+            rec(&mut sc, true);
+        }
         let t1 = tag.to_string();
         sc.act(
             format!("drop into the sea from {h} cm ({tag})"),
@@ -376,7 +383,7 @@ pub fn p4_swim() -> Sc {
                 let (x, y, z) = (
                     cx.st.n["swim_x"] as f32,
                     cx.st.n["swim_y"] as f32,
-                    cx.st.n["swim_z"] as f32,
+                    cx.st.n["swim_z"] as f32 - 1500.0, // deeper water, further out
                 );
                 let hero = cx.core().0.hero;
                 let max = {
@@ -454,6 +461,9 @@ pub fn p4_swim() -> Sc {
             );
         }
         sc.shot(&format!("{tag}_in_water"));
+        if tag == "dive" {
+            rec(&mut sc, false);
+        }
     }
     sc
 }

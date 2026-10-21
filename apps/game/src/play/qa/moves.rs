@@ -39,6 +39,18 @@ pub(super) fn grab(sc: &mut Sc) {
     sc.wait(0.4);
 }
 
+/// Switch the frame recorder (`--record DIR`) on or off; a no-op without the flag.
+pub(super) fn rec(sc: &mut Sc, on: bool) {
+    sc.act(if on { "record on" } else { "record off" }, move |cx| {
+        if let Some(mut r) = cx
+            .world
+            .get_resource_mut::<crate::walk::play::record::Recorder>()
+        {
+            r.active = on;
+        }
+    });
+}
+
 /// Wait until the hero stands on the ground at the start.
 pub(super) fn settle(sc: &mut Sc) {
     sc.until("grounded at the start", 60.0, |cx| {
@@ -186,6 +198,9 @@ pub fn p4_fall() -> Sc {
     });
     for (tag, h) in [("low", 250.0f32), ("mid", 1104.0), ("high", 1500.0)] {
         let tag_ = tag.to_string();
+        if tag == "mid" {
+            rec(&mut sc, true);
+        }
         sc.act(format!("drop from {h} cm ({tag})"), move |cx| {
             let (gx, gy, gz) = (
                 cx.st.n["gx"] as f32,
@@ -260,6 +275,9 @@ pub fn p4_fall() -> Sc {
         sc.act(format!("clear the landing ({tag})"), |cx| {
             cx.key_up(KeyCode::KeyW);
         });
+        if tag == "mid" {
+            rec(&mut sc, false);
+        }
         let tag3 = tag.to_string();
         sc.check(
             format!("{tag}: hit points lost = floor(160 (t-0.9)^2)"),
@@ -308,6 +326,27 @@ pub fn p4_fall() -> Sc {
         }
         sc.wait(1.0);
     }
+    sc.act("a fall from 4000 cm kills the hero (ZS_RagDollDead)", |cx| {
+        let (gx, gy, gz) = (
+            cx.st.n["gx"] as f32,
+            cx.st.n["gy"] as f32,
+            cx.st.n["gz"] as f32,
+        );
+        let mut p = cx.world.resource_mut::<crate::walk::Player>();
+        p.ctrl.last_landing = None;
+        p.ctrl.teleport(Vec3::new(gx, gy + 4000.0, gz));
+    });
+    sc.until("the hero is down", 20.0, |cx| cx.play().hero_down || cx.hero_hp() <= 0);
+    sc.check("the hero died of the fall", |cx| {
+        let hero = cx.core().0.hero;
+        let dead = cx.core().0.sim.actor(hero).ai_mode == gothic_sim::types::AiMode::Dead;
+        let t = cx.player().ctrl.last_landing.map_or(0.0, |l| l.fall_time);
+        expect(
+            dead || cx.hero_hp() <= 0,
+            format!("hp {}, fell {t:.2} s (formula {})", cx.hero_hp(), (160.0 * (t - 0.9).powi(2)) as i32),
+            format!("hp {}", cx.hero_hp()),
+        )
+    });
     sc.check("fall damage events reached the simulation", |cx| {
         let n = ms(cx).landings;
         expect(

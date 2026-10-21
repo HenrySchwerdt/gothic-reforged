@@ -127,6 +127,7 @@ fn after_motion(
     core: Res<CoreRes>,
     mut ms: ResMut<MoveStates>,
     mut player: ResMut<Player>,
+    mut state: ResMut<PlayState>,
     mut commands: MessageWriter<CoreCommand>,
     mut hero: Query<&mut LocomotionInput, With<HeroActor>>,
 ) {
@@ -172,6 +173,11 @@ fn after_motion(
         }));
     }
     let mode = player.ctrl.machine.mode();
+    // `PS_Swim_Loop` (S:af8e0) has no weapon handling: nothing is drawn while swimming.
+    if matches!(mode, MovementMode::Swimming | MovementMode::Diving) && state.drawn {
+        state.drawn = false;
+        commands.write(CoreCommand(Command::SetDrawn(false)));
+    }
     // The stamina tick (S:b0520): `IsSprinting`; jumping costs and gives nothing.
     let movement = match mode {
         MovementMode::Sprinting => Movement::Sprinting,
