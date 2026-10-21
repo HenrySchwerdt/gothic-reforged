@@ -3822,6 +3822,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-render-plus"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gothic-render-rules"
 version = "0.1.0"
 
