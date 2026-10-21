@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "crates/formats", "crates/importer", "crates/world", "apps/inspector", "apps/game", "crates/physics", "crates/animation", "crates/audio", "crates/ui", "crates/sim", "crates/script", "crates/runtime", "crates/cook", "crates/nav", "crates/camera", "crates/fx", "crates/combat-souls", "crates/input", "crates/projectile", "crates/mods", "crates/mods-script"]
-default-members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "apps/inspector", "crates/formats", "crates/importer", "crates/world", "crates/sim", "crates/script", "crates/runtime", "crates/cook", "crates/nav", "crates/camera", "crates/fx", "crates/combat-souls", "crates/input", "crates/projectile", "crates/mods", "crates/mods-script"]
+members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "crates/formats", "crates/importer", "crates/world", "apps/inspector", "apps/game", "crates/physics", "crates/animation", "crates/audio", "crates/ui", "crates/sim", "crates/script", "crates/runtime", "crates/cook", "crates/nav", "crates/camera", "crates/fx", "crates/combat-souls", "crates/input", "crates/projectile", "crates/mods", "crates/mods-script", "apps/modtool"]
+default-members = ["crates/gameplay", "apps/dialog-cli", "apps/questlint", "apps/inspector", "crates/formats", "crates/importer", "crates/world", "crates/sim", "crates/script", "crates/runtime", "crates/cook", "crates/nav", "crates/camera", "crates/fx", "crates/combat-souls", "crates/input", "crates/projectile", "crates/mods", "crates/mods-script", "apps/modtool"]
 resolver = "3"
 
 [workspace.package]

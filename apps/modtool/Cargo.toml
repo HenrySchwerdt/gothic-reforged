@@ -1,0 +1,28 @@
+[package]
+name = "gothic-modtool"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Mod manager: create, validate, pack, sign, install and order data and script mods"
+
+[[bin]]
+name = "modtool"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml = "0.8"
+semver = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+ed25519-dalek = "2"
+getrandom = "0.3"
+gothic-mods = { path = "../../crates/mods" }
+gothic-formats = { path = "../../crates/formats" }
+gothic-mods-script = { path = "../../crates/mods-script" }
+
+[lints]
+workspace = true
