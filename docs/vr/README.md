@@ -74,7 +74,9 @@ cargo test -p gothic-vr -p gothic-vr-physics -p gothic-vr-melee -p gothic-vr-npc
 ```
 
 All tests are headless and deterministic (fixed 90 Hz steps; avian runs inside a
-`MinimalPlugins` app via `gothic_vr_physics::testing::Rig`).
+`MinimalPlugins` app via `gothic_vr_physics::testing::Rig`). In CI they run in the separate
+`vr` job on Windows and Linux, together with the two headless demos; see `docs/CI.md` for
+costs and caching.
 
 | Area | Tests |
 | --- | --- |
