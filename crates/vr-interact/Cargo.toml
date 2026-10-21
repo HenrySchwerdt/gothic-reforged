@@ -1,0 +1,18 @@
+[package]
+name = "gothic-vr-interact"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "VR interactions (point, grab, lockpick, spells, bow, crouch, dodge) mapped onto the core's Commands"
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
+glam = { version = "0.33", features = ["serde"] }
+serde.workspace = true
+gothic-vr = { path = "../vr" }
+gothic-runtime = { path = "../runtime" }
+gothic-sim = { path = "../sim" }
+
+[lints]
+workspace = true

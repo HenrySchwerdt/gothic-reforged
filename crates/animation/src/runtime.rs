@@ -12,8 +12,7 @@ use crate::{
     animator::{Animator, Overlay},
     library::{ActorLibrary, AssetStores, Composition},
     locomotion::{
-        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveKind, RIGHT,
-        Stance,
+        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveKind, RIGHT, Stance,
     },
 };
 use anyhow::{Result, anyhow};
@@ -262,18 +261,22 @@ impl ActorSpawner<'_, '_> {
                 part_joints.iter().map(|&j| joints[j as usize]).collect();
             let mut mesh_entities = Vec::new();
             for m in &part.meshes {
-                mesh_entities.push(commands.spawn((
-                    Mesh3d(m.mesh.clone()),
-                    MeshMaterial3d(m.material.clone()),
-                    SkinnedMesh {
-                        inverse_bindposes: part.inverse_bindposes.clone(),
-                        joints: skin_joints.clone(),
-                    },
-                    part.aabb,
-                    Transform::default(),
-                    Visibility::default(),
-                    ChildOf(root),
-                )).id());
+                mesh_entities.push(
+                    commands
+                        .spawn((
+                            Mesh3d(m.mesh.clone()),
+                            MeshMaterial3d(m.material.clone()),
+                            SkinnedMesh {
+                                inverse_bindposes: part.inverse_bindposes.clone(),
+                                joints: skin_joints.clone(),
+                            },
+                            part.aabb,
+                            Transform::default(),
+                            Visibility::default(),
+                            ChildOf(root),
+                        ))
+                        .id(),
+                );
             }
             part_meshes.0.push((part.name.clone(), mesh_entities));
         }

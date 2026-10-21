@@ -35,3 +35,34 @@ rigid bodies (hands, props, weapons, NPC bone colliders) against static greybox 
 `VrLayer::{World, Hand, Prop, Body}`: hands hit everything, props hit world/hands/props,
 bodies (NPC bone colliders, dummies) hit world/hands. Weapons pass through bodies on purpose:
 weapon-vs-body is resolved by the melee contact model (damage, bite impulse, stab joints).
+
+## Two stacks in one game (VR-09)
+
+The VR crates (`vr-physics`, `vr-melee`, `vr-npc`, `vr-archery`) keep using avian3d
+directly; `gothic-physics` stays the game's physics. They solve different problems:
+`gothic-physics` has the static level (`CollisionWorld`), the ported Gothic 3 character
+controller, verlet ragdolls and crowd separation, but no rigid-body dynamics, joints or
+contact solver; the VR layer needs exactly those (PD-driven hands, props with mass, stab
+joints, arrows). Porting them into `gothic-physics` would mean writing a second rigid-body
+engine; wrapping avian behind a `gothic-physics` trait would hide the components the VR
+plugins query every step. Instead `crates/vr-bridge` (`gothic-vr-bridge`) keeps the two
+consistent where they meet:
+
+| Seam | Adapter |
+| --- | --- |
+| units | `units`: centimetres / sim yaw (`Pos::yaw_to`) <-> metres / Bevy yaw, consistent with `hero_transform` |
+| level | `LevelChunkMessage::{Loaded, Unloaded}` streams the same triangle chunks the `CollisionWorld` gets into avian static trimeshes (`load_both` feeds both from one call) |
+| actors | every actor the core spawns gets a kinematic avian proxy (`RuntimeActor`, `Body` layer) with melee hitzones that follows `Core::sim.world.actors` each fixed step and despawns with the actor |
+| damage | a player `HitMessage` on a proxy becomes `Command::Attack { target }`; the core applies reach, strike gap and the original damage (hits below `BridgeSettings::min_quality` are dropped) |
+| time | `CorePlugin` sets `Time<Fixed>` to 30 Hz, the VR physics needs 90 Hz: `CoreTickPlugin` ticks the core at 30 Hz from `Update` with the same `CoreCommand` / `CoreEvent` messages |
+
+Tests (`crates/vr-bridge/tests/runtime_actor.rs`, synthetic core with no game data): a
+physics hand swings a physics sword into an actor spawned through `Command::SpawnNpc`, the
+hit reaches the core as `Attack` and the actor's hit points drop; proxies follow core moves
+and despawn with the actor; a crate rests on a streamed chunk and falls when it is unloaded;
+the core advances one second per 90 physics frames while the fixed step stays at 90 Hz.
+
+Limits: proxies are kinematic, so hands cannot shove core actors (use `gothic-vr-npc`'s
+active ragdoll as a character's body for that and report its position to the core); the
+proxy hitzones are a standing humanoid, not the animated skeleton; arrow hits
+(`ArrowHitMessage`) are not mapped yet.
