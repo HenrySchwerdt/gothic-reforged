@@ -1,6 +1,6 @@
 # VR mode (PC VR first)
 
-Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06.
+Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06, #48 VR-12.
 
 Everything here is developed and tested with **synthetic content only** (greybox boxes,
 capsule dummies, procedural weapons). No Gothic 3 assets, data or decompiled code are used.
@@ -32,6 +32,7 @@ cargo run -p gothic-vr --example greybox -- --headless   # scripted CI run (exit
 cargo run -p gothic-vr-sandbox                           # everything: props, dummies, duel, range
 cargo run -p gothic-vr-sandbox -- --peaceful --strength 120
 cargo run -p gothic-vr-sandbox -- --headless             # scripted CI duel (exit code)
+cargo run -p gothic-vr-npc --example exec_duel           # VR-12: original-AI intents vs scripted player
 ```
 
 On Linux the windowed builds use X11 (`libxkbcommon-x11` is needed at runtime). Without a GPU,
@@ -86,6 +87,7 @@ costs and caching.
 | physics hands | PD follow, walls stop the hand, grab/snap/carry, lag vs weight and strength, two hands, throw, stuck-hand snap, determinism |
 | melee | fast swing cuts, slow swing harmless, waggle, flat = blunt, mace, no tunnelling, self-hits, re-hit cooldown, stab sticks / wiggle / pulls out, slow poke, block protects, counter-swing parries, determinism; plus physics hand + sword vs dummy |
 | NPC | ragdoll stands, collapses, light hit staggers and recovers, heavy hit fells and gets up, push and grab, hitzones; AI telegraphs on the right side, edge-first strikes, attack slots, distance, blocking, recoil, disabled when down; headless duel (NPC hits player, player hit staggers NPC, overhead blocked → recoil) |
+| execution layer (VR-12) | sim action numbering → moves, commanded humanoid attacks only on an order, Parade → guard, attack slots (3 attackers, 2 slots), quadruped bite → `AiHitEvent` with the original action, guard in the path → blocked + recoil, humanoid clash → recoil, melee hit carries the action (once per attack), knockdown → get up |
 | archery | quiver over the shoulder only, nocking, draw power, small draw drops, off-axis loses the arrow, damage hook, ballistic range, drag, orientation, wall sticking, ricochet, body hit + carried along, no tunnelling, aim assist, determinism; physics range (10 m hit at full draw, half draw falls short) |
 
 ## Integration hooks for the real game
@@ -102,3 +104,36 @@ costs and caching.
   send `HeroTransform` every frame (`send_hero_transform`).
 * **Weapons**: replace `props::*` specs and `profiles::profile_for` with data from the item
   templates (mass, length, grip, blade/point geometry).
+
+## Execution layer for the original AI (VR-12)
+
+`gothic_vr_npc::exec` keeps the original AI in charge of **when**, **whom** and **which move**
+and only decides **how** the move is executed physically. The host feeds one `AiIntent
+{ target, action }` per decision (`AiAction::from_sim` takes the `gothic_sim::types::Action`
+value) into an `Executor` per NPC:
+
+| Original action | Humanoid (`BodyKind::Humanoid`) | Quadruped |
+| --- | --- | --- |
+| Attack, QuickAttack, GetUpAttack | `Swing` alternating right/left | `Bite` |
+| QuickAttackR / QuickAttackL | `Swing(FromRight / FromLeft)` | `Bite` |
+| PowerAttack, HackAttack, JumpAttack, FinishingAttack | `Swing(Overhead)` | `Lunge` (Hack, Finishing: `Bite`) |
+| PierceAttack, SprintAttack, RamAttack | `Swing(Thrust)` | `Lunge` |
+| SimpleWhirl, WhirlAttack | `Swing` alternating | `Swipe` |
+| Parade | guard (`Phase::Block`) | – |
+
+* Every attack is telegraphed (`ExecEvent::Telegraph { vr_move, lead }`) and needs an attack
+  slot (`AttackSlots`, 1–2 per target); without one the NPC waits (`WaitingForSlot`).
+* Humanoids run the existing `CombatAi` in commanded mode (`autonomous = false`, `order`), so
+  the active ragdoll and the physical weapon work as before; the host forwards the melee
+  model's contacts: `Executor::on_melee_hit(..) -> Option<AiHitEvent>` (once per attack) and
+  `Executor::on_clash(recoil)` (block / parry → recoil).
+* Quadrupeds (`Species::is_humanoid() == false`) use a kinematic `QuadBody`: the mouth or paw
+  sweeps against the target's hitzones and guard blade (`TargetBody`), a guard in the path
+  blocks and the animal recoils; `on_hit_taken(true, ..)` knocks it down and it gets up.
+* `AiHitEvent { attacker, victim, action, vr_move, bone, damage_type, point, direction,
+  impact_speed }` carries the original action, so the original damage formula can apply
+  its move strength (quick attacks, power attacks, ...). Nothing here computes damage.
+
+Not done yet (needs the game): reading the intents from `gothic-sim` per frame, mapping
+entity ids, the Bevy plugin wiring of `Executor` next to `VrNpc`, and a ragdoll body for
+quadrupeds (the kinematic body is a stand-in).
