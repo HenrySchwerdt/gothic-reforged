@@ -26,6 +26,7 @@ mod objects;
 mod pose;
 mod record;
 mod routines;
+mod saves;
 mod script;
 mod windows;
 
@@ -372,6 +373,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     hero::register(app);
     objects::register(app);
+    saves::register(app);
     interact::register(app);
     windows::register(app);
     barks::register(app);

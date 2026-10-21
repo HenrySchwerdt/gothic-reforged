@@ -262,10 +262,10 @@ pub(super) fn input(
     }
 
     // ---- save / load / screens -------------------------------------------------------------
-    if just_pressed(&keys, Act::QuickSave) || just_pressed(&keys, Act::Save) {
+    if just_pressed(&keys, Act::QuickSave) {
         commands.write(CoreCommand(Command::Save(save.0.clone())));
     }
-    if just_pressed(&keys, Act::QuickLoad) || just_pressed(&keys, Act::Load) {
+    if just_pressed(&keys, Act::QuickLoad) {
         commands.write(CoreCommand(Command::Load(save.0.clone())));
     }
     if !blocked && !window_open {

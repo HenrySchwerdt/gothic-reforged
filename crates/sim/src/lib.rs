@@ -32,6 +32,7 @@ pub mod data;
 pub mod economy;
 pub mod item;
 pub mod perception;
+pub mod persist;
 pub mod rng;
 pub mod routine;
 pub mod script_host;

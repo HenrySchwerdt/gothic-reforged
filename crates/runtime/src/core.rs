@@ -235,8 +235,15 @@ pub enum Command {
         /// Amount.
         amount: u32,
     },
+    /// Write a save game (the slot kind follows the file name: `quick`, `auto_*`, else manual).
     Save(std::path::PathBuf),
     Load(std::path::PathBuf),
+    /// Presentation state stored with the next saves (`region`, `camera`, ...) and handed back
+    /// by [`Event::Loaded`] consumers through [`Core::host`].
+    SetHost {
+        key: String,
+        value: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +390,8 @@ pub struct Core {
     /// The processing range (region of interest around the hero); `enabled = false` processes
     /// every actor regardless of distance.
     pub range: ProcessingRange,
+    /// Host presentation state stored in save games (see [`Command::SetHost`]).
+    pub host: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -432,6 +441,7 @@ impl Core {
             inv_mirror: Default::default(),
             guess_weapons: true,
             range: ProcessingRange::new(),
+            host: Default::default(),
         };
         // The new game's start kit lives in the quest/dialog state; the hero actor carries it.
         core.sync_inventory();
@@ -768,17 +778,34 @@ impl Core {
                 self.sync_inventory();
                 self.state_rev += 1;
             }
-            Command::Save(p) => match self.save_to(p) {
-                Ok(()) => out.push(Event::Saved(p.clone())),
-                Err(e) => out.push(Event::Failed(format!("save: {e:#}"))),
-            },
-            Command::Load(p) => match self.load_from(p) {
-                Ok(ev) => {
+            Command::Save(p) => {
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("save");
+                let kind = if stem == "quick" {
+                    crate::save::SlotKind::Quick
+                } else if stem.starts_with("auto") {
+                    crate::save::SlotKind::Auto
+                } else {
+                    crate::save::SlotKind::Manual
+                };
+                let meta = crate::save::SaveMeta {
+                    name: stem.to_string(),
+                    kind,
+                };
+                match self.save_file(p, &meta) {
+                    Ok(()) => out.push(Event::Saved(p.clone())),
+                    Err(e) => out.push(Event::Failed(format!("save: {e:#}"))),
+                }
+            }
+            Command::Load(p) => match self.load_file(p) {
+                Ok(_) => {
                     out.push(Event::Saved(p.clone()));
-                    out.push(ev);
+                    out.push(self.loaded_event());
                 }
                 Err(e) => out.push(Event::Failed(format!("load: {e:#}"))),
             },
+            Command::SetHost { key, value } => {
+                self.host.insert(key.clone(), value.clone());
+            }
         }
     }
 
@@ -992,6 +1019,25 @@ impl Core {
             actors,
         };
         Ok(serde_json::to_string_pretty(&file)?)
+    }
+
+    /// Reset everything derived or transient after a save was applied.
+    pub(crate) fn after_restore(&mut self) {
+        self.dialog = None;
+        self.hero_next_strike_ms = 0;
+        // The hero actor's bag is the authority of a save; the dialog state mirrors it.
+        self.inv_mirror = self.sim.actor(self.hero).inventory.clone();
+        self.sim.state.inventory = self.inv_mirror.clone();
+        self.state_rev += 1;
+    }
+
+    /// The event that tells the host where the hero stands after a load.
+    pub fn loaded_event(&self) -> Event {
+        let hero = self.sim.world.actors.get(&self.hero).copied().unwrap_or_default();
+        Event::Loaded {
+            hero: hero.0,
+            yaw: hero.1,
+        }
     }
 
     pub fn save_to(&self, path: &std::path::Path) -> Result<()> {

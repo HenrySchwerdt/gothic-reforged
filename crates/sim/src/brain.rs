@@ -3,7 +3,7 @@ use crate::routine::{RoutinePoint, RoutineTask, RoutineTime};
 use crate::types::{Action, ActorId};
 
 /// AI tasks (the `ZS_*` states the simulation models).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Task {
     /// Daily routine (`ContinueRoutine`): walk to the routine point and perform its task.
     #[default]

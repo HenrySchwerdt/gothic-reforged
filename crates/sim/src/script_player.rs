@@ -47,14 +47,14 @@ pub struct ObjectData {
 /// Player-side script state of a simulation.
 #[derive(Debug, Clone, Default)]
 pub struct PlayerTables {
-    objects: BTreeMap<u32, ObjectData>,
-    counters: [u32; 2],
+    pub(crate) objects: BTreeMap<u32, ObjectData>,
+    pub(crate) counters: [u32; 2],
     recipes: BTreeMap<i32, Recipe>,
     recipe_items: BTreeMap<String, SkillCategory>,
     blade_items: BTreeSet<String>,
     /// The hero is busy (an animation plays) until this simulation time.
     pub busy_until_ms: u64,
-    books: [i32; 3],
+    pub(crate) books: [i32; 3],
     boulders: BTreeMap<u32, gothic_script::player::api::BoulderClass>,
 }
 

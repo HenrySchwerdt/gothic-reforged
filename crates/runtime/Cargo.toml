@@ -12,11 +12,13 @@ gothic-sim = { path = "../sim" }
 gothic-nav = { path = "../nav" }
 gothic-world = { path = "../world" }
 glam = "0.33"
+flate2 = "1"
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gothic-formats = { path = "../formats" }
 gothic-physics = { path = "../physics" }
 
 [lints]

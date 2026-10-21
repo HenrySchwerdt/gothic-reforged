@@ -2,6 +2,7 @@
 //! [`Command`]s in / [`Event`]s out as Bevy messages. Contains no rendering or UI.
 mod core;
 mod processing;
+pub mod save;
 mod world;
 
 pub use core::{Command, Core, Event, HERO_REACH, TICK_HZ};
@@ -28,7 +29,7 @@ pub struct SavePath(pub std::path::PathBuf);
 
 impl Default for SavePath {
     fn default() -> Self {
-        Self(".local/saves/quick.json".into())
+        Self(".local/saves/quick.g3rs".into())
     }
 }
 
