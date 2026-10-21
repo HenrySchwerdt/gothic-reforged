@@ -33,8 +33,9 @@ pub enum XrBackendKind {
     Desktop,
     /// A scripted [`InputScript`] (headless CI, demos).
     Scripted,
-    /// An OpenXR runtime (SteamVR, Quest Link, ...). Not available in this build; requesting
-    /// it falls back to [`XrBackendKind::Desktop`] with a warning.
+    /// An OpenXR runtime (SteamVR, Quest Link, Monado, ...): tracking and controller input
+    /// with the `openxr` cargo feature (see [`crate::openxr`]); without the feature or a
+    /// usable runtime it falls back to [`XrBackendKind::Desktop`] with a warning.
     OpenXr,
     /// Another plugin, a test or a recording writes [`PendingXrFrame`] itself.
     External,
@@ -182,17 +183,7 @@ pub struct VrPlugin {
 impl Plugin for VrPlugin {
     fn build(&self, app: &mut App) {
         let backend = match self.backend {
-            XrBackendKind::OpenXr => {
-                let note = "OpenXR requested, but this build has no OpenXR backend (no Bevy 0.20 \
-                            compatible bevy_mod_openxr release yet, see docs/vr/OPENXR.md); \
-                            using the desktop fallback"
-                    .to_string();
-                warn!("{note}");
-                XrBackend {
-                    kind: XrBackendKind::Desktop,
-                    note,
-                }
-            }
+            XrBackendKind::OpenXr => openxr_backend(app),
             kind => XrBackend {
                 kind,
                 note: format!("{kind:?} backend"),
@@ -234,6 +225,65 @@ impl Plugin for VrPlugin {
             )
             .add_systems(Update, solve_body.in_set(VrSet::Body))
             .add_systems(Update, sync_tracked.in_set(VrSet::Sync));
+    }
+}
+
+/// Start the OpenXR input backend, or explain the desktop fallback.
+fn openxr_backend(app: &mut App) -> XrBackend {
+    #[cfg(feature = "openxr")]
+    let backend = match crate::openxr::OpenXrInput::new("Gothic Reforged") {
+        Ok(xr) => {
+            let note = format!(
+                "OpenXR input from {} (headless session: tracking and controllers; the window \
+                 mirrors the rig)",
+                xr.description
+            );
+            info!("{note}");
+            app.insert_non_send(xr)
+                .add_systems(Update, openxr_frame.in_set(VrSet::Backend));
+            XrBackend {
+                kind: XrBackendKind::OpenXr,
+                note,
+            }
+        }
+        Err(e) => {
+            let note = format!("OpenXR unavailable ({e}); using the desktop fallback");
+            warn!("{note}");
+            XrBackend {
+                kind: XrBackendKind::Desktop,
+                note,
+            }
+        }
+    };
+    #[cfg(not(feature = "openxr"))]
+    let backend = {
+        let _ = app;
+        let note = "OpenXR requested, but this build has no OpenXR backend (build with \
+                    `--features gothic-vr/openxr`, see docs/vr/OPENXR.md); using the desktop \
+                    fallback"
+            .to_string();
+        warn!("{note}");
+        XrBackend {
+            kind: XrBackendKind::Desktop,
+            note,
+        }
+    };
+    backend
+}
+
+#[cfg(feature = "openxr")]
+fn openxr_frame(
+    xr: Option<NonSendMut<crate::openxr::OpenXrInput>>,
+    input: Res<VrInputRes>,
+    mut pending: ResMut<PendingXrFrame>,
+) {
+    let Some(mut xr) = xr else {
+        return;
+    };
+    match xr.frame(&input.0.current) {
+        Ok(Some(frame)) => pending.0 = Some(frame),
+        Ok(None) => {}
+        Err(e) => warn!("OpenXR frame: {e}"),
     }
 }
 

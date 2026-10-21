@@ -48,6 +48,14 @@ pub fn is_world_document(path: &str) -> bool {
     path.ends_with(".node") || path.ends_with(".lrentdat")
 }
 
+/// Legacy level-mesh geometry layers (`*_SpG.node` without the GENOMFLE envelope). Their
+/// `Levelmesh` directories hold no `.sec`/`.secdat` and no sector lists them, so the engine never
+/// loads them (verified over every sector file by the `ow_refs` example); they parse, but their
+/// placements are not part of the world and their mesh names are dangling development leftovers.
+pub fn is_unlisted_levelmesh(path: &str, bytes: &[u8]) -> bool {
+    path.to_ascii_lowercase().ends_with("_spg.node") && !bytes.starts_with(b"GENOMFLE")
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct VfsSummary {
     pub archives_in_mount_order: Vec<String>,
@@ -73,6 +81,12 @@ pub struct WorldSurvey {
     pub documents_total: usize,
     pub documents_ok: usize,
     pub documents_failed: usize,
+    /// Layers whose writer never finalized them (GENOMFLE table offset 0, content present): the
+    /// engine's loader aborts on them and no sector lists them, so they are unused, not failures.
+    pub documents_unfinalized_unused: usize,
+    /// Legacy `*_SpG.node` level meshes that parse but no sector lists (see `is_unlisted_levelmesh`);
+    /// their entities and mesh references are excluded from the totals below.
+    pub documents_unlisted_levelmesh: usize,
     pub documents_by_kind: BTreeMap<String, usize>,
     pub non_genome_stubs: usize,
     pub errors: BTreeMap<String, ErrorClass>,
@@ -109,13 +123,18 @@ pub fn world_survey(vfs: &mut VirtualFileSystem) -> Result<WorldSurvey> {
     };
     let mut mesh_refs: BTreeSet<String> = BTreeSet::new();
     for (path, slot) in docs {
+        let mut unfinalized = false;
+        let mut unlisted = false;
         let result = vfs.read(slot).and_then(|bytes| {
             if bytes.len() < 64 && !bytes.starts_with(b"GENOMFLE") {
                 report.non_genome_stubs += 1;
             }
+            unfinalized = gothic_formats::world_node::is_unfinalized_layer(&bytes);
+            unlisted = is_unlisted_levelmesh(&path, &bytes);
             WorldDocument::parse(&bytes)
         });
         match result {
+            Ok(_) if unlisted => report.documents_unlisted_levelmesh += 1,
             Ok(doc) => {
                 report.documents_ok += 1;
                 *report
@@ -140,6 +159,7 @@ pub fn world_survey(vfs: &mut VirtualFileSystem) -> Result<WorldSurvey> {
                     report.entities_with_mesh += usize::from(has_mesh);
                 }
             }
+            Err(_) if unfinalized => report.documents_unfinalized_unused += 1,
             Err(error) => {
                 report.documents_failed += 1;
                 record_error(&mut report.errors, &path, &error);

@@ -35,16 +35,16 @@ signal to revisit deletion semantics. `Projects_compiled.p00` holds only
 
 | Result | Count |
 | --- | ---: |
-| documents | 2 536 (2 408 node, 104 lrentdat parsed, 24 failed) |
-| parsed | **2 512 (99.05 %)** |
-| entities | 231 126 (133 419 with a mesh reference) |
+| documents | 2 536 (2 410 node + 11 unlisted level meshes, 112 lrentdat, 3 unfinalized and unused) |
+| parsed | **2 533 (99.9 %; the other 3 are never loaded by the engine)** |
+| entities | 231 223 (133 419 with a mesh reference) |
 | mesh/asset reference occurrences | 151 272 (xcmsh 133 594, xlmsh 1 074, fxa 16 604) |
 | unique mesh references | 4 768 |
 | resolved against `_compiledMesh.pak/.p00` | 4 757 (basename lookup) |
 | unresolved | 11 |
 | resolved meshes that parse | 4 757 / 4 757 |
 | xlmsh LOD levels | 212, all resolve to an xcmsh |
-| placements in `WorldIndex` | 134 668 (xcmsh/xlmsh, from 2 512 documents) |
+| placements in `WorldIndex` | 134 668 (xcmsh/xlmsh, from 2 522 documents) |
 
 Fixes made for this: SysDyn main `.lrentdat` (80 MB) failed the
 text budget because property names were allocated per property; names/types are
@@ -55,61 +55,91 @@ required to be unique (identity is document + index). The ten-byte
 `GENOMEDL` + u16 placeholder (seven GUID `.lrentdat` stubs) is an empty
 document.
 
-### The 24 remaining failures (precise classes)
+### The 24 former failures (resolved 2026-10-21, verified against the decompiled loaders)
 
-Open-world pass (2026-10-21): **5 of the 24 now parse** (the five 124-byte table-less layers
-below are empty documents); 19 remain, with the structure findings added under each class.
-`ow_scan` / `ow_extract` / `ow_find` / `ow_props` (`crates/importer/examples/`) reproduce the
-numbers; extracted bytes stay under `.local/legacy/`.
+All 24 are now accounted for: **21 parse** and **3 are proven unused** (not failures).
+Reproduce: `ow_try FILE...` (parse any extracted document), `ow_refs DATA_DIR` (which layers any
+sector names), `ow_region DATA_DIR` (entities / `gCNPC_PS` sets per region), all in
+`crates/importer/examples/`. Function addresses are from the decompiled `Engine.dll`
+(`.local/research/engine/`).
 
-1. **Eight GUID `.lrentdat`, GENOMFLE header with table offset 0, no
-   `0xDEADBEEF` table anywhere** (Montera dynamic objects 03, Nordmar
-   outdoor NPC 01, Varant outdoor dynamic objects 02, Varant ruins dynamic
-   objects 01, Alshedim, Morasul outdoor NPC 01, two Morasul temple groups;
-   Montera is 6.9 MB). Body is the normal v83 layout (`GENOMEDL`, u16 83, context
-   class, 0x40/0x53 dynamic entities, `0xDEADC0DE` terminators, ~18 000
-   property sets) but every string is a table index and the table is missing.
-   Not in the shared `stringtable.bin` (dialogue text) nor
-   `compiledinfos_G3_World_01.bin` (info/dialog classes). Context-class size is 0.
-   Unresolved: where the engine takes the table from. Not guessed.
-   Findings (2026-10-21): five of the eight are 124-byte layers that hold only the context
-   (`GENOMEDL`, u16 83, context class with string index 0, size 0, then u16 30 and two indexed
-   properties = the context box and `RootEntity`/path, no entity count): **parsed as empty
-   documents** (`WorldDocument::parse_tableless`). The other three carry content (Montera
-   dynamic objects 03 6.9 MB, Varant outdoor dynamic objects 02 3.1 MB, Morasul outdoor NPC 01
-   407 KB) in the normal v83 entity layout (`0x40`/`0x53`, 20-byte ids, `0xDEADC0DE`) with every
-   string a `u16` index; the indices are assigned in order of first use (context class 0, its
-   property names and types 1..4, ...), so the table is the file's own string sequence and
-   cannot be recovered without it (entity names, mesh and voice names, scripts are values).
-   Their sectors (`Montera_Dynamic_Objects_03`, ...) also have a named `*_SHyb.node` (22 KB) and
-   `.sec`/`.secdat` with normal tables that do not hold the strings; the Morasul NPC GUID layer
-   has no `.sec` at all (an orphan, probably never loaded). No archive holds a companion table
-   (searched every archive for the GUID). Unresolved, not guessed: the characters of that
-   layer are missing from `npcs.json`.
-2. **Eleven `*_SpG.node`** (Myrtana landscape 02/03/04, water depth/test,
-   Faring dummy water, Vangard magic barrier, Nordmar and Varant location add-ons,
-   Fireclan/Wolfclan city) **and two `*_Spat.node`** (Faring VFX, Morasul lights):
-   *no GENOMFLE envelope*, u16 30, u32 entity count, then legacy spatial version
-   0x22 with common-entity version 0x38 (56) and inline length-prefixed strings.
-   Header fields differ from v83 (nine flags before alpha, two after, a 19-byte
-   tail then `u32` values that are not the v83 scaling/flag pair, class records as
-   `u16 0x32, u32 size, inline name`). These contain level-mesh/water entities
-   (`eCVisualMeshStatic_PS` appears inline). Unparsed; landscape geometry for
-   Ardea comes from the CStat cells (`terrain.rs`), not these.
-   Findings (2026-10-21), `g3_test_faring_dummy_water_01_spg.node` (3 KB): `u16 30`, `u32 3`
-   entities, each `u16 0`, `u16 0x22`, `u16 0x38`, `u16 1`, 20-byte id, flag bytes, inline
-   `u16 len + name` (`Root`, ..., `G3_Dummy_Faring_Water_01`), two 4x4 matrices and boxes, then
-   a count and the property sets `u16 0x32, u32 size, u16 len + name` (`eCVisualMeshStatic_PS`).
-   The field-level layout between the matrices and the box tail is not decoded; the contents
-   (dummy water, level mesh remnants, a magic barrier, add-on locations) are not part of the
-   playable Ardea slice.
-3. **Three raw `GENOMEDL` v56 `.lrentdat`** (`G3_StartUp` SysDyn, Faring VFX,
-   Morasul temple lights): same legacy generation as 2, plus an inline string
-   table directly after the first accessor. Unparsed.
-   Findings: the raw `GENOMEDL` v56 layer is the same container with inline strings
-   (`u16 len + text`): `eCEntityDynamicContext` with `ContextBox bCBox`, `ID bCGuid`,
-   `RootEntity` ..., then `0x40` entities. Faring VFX (551 B) and the StartUp SysDyn (6 KB)
-   are near empty; the Morasul temple lights (43 KB) are lights only.
+**How the engine reads a layer.** A sector (`.secdat`: `u16` version, `u32` dynamic count,
+`u32` geometry count, then that many names) lists its layers *by name*
+(`gCSector::DoLoadData` 0x10193c40 -> `ImportDynamicLayer`/`ImportGeometryLayer`); a name `X`
+resolves to the header `X.lrent`/`X.lrgeo` and the data file `X.lrentdat`/`X.lrgeodat`/`X.node`
+(`eCProcessibleElement::GetDataFilePath`, `LoadData` 0x1005d2f0). Nothing enumerates a directory
+for layers. `LoadData` and `eCGeometrySpatialContext::ReadNodes` 0x1021c080 handle an envelope:
+if the first eight bytes are `GENOMFLE`, read `u16` version and `u32` table offset, **seek to the
+offset and require `0xDEADBEEF` there (`ge_archivefile.cpp` line 0x1f2, `CallFatalError`
+otherwise)**, load the string table (`FUN_1029f220`), seek back. `eCArchiveFile::Read(bCString)`
+0x102a7600 returns `table[u16 index]` when a table is loaded and a plain `u16 length + bytes`
+string when not. The writer (`eCArchiveFile::Open` 0x102a7280 for writing) emits
+`GENOMFLE`, version 1 and a **placeholder offset 0**; only `Close` 0x102a7500 appends the table
+and patches the offset.
+
+1. **Three never-finalized `{GUID}.lrentdat` layers: unused (proven).** Montera dynamic objects 03
+   (6.9 MB), Varant outdoor dynamic objects 02 (3.1 MB), Morasul outdoor NPC 01 (0.4 MB) still
+   have the placeholder offset 0: the editor wrote the body but never ran `Close`, so the string
+   table was never produced anywhere. That is why no companion table exists in any archive, and
+   why `stringtable.bin` / `compiledinfos_*.bin` do not hold the strings. The shipped engine
+   could not load them: offset 0 makes `LoadData` read `GENO` where it requires `0xDEADBEEF`
+   (fatal error), so they must never be reached, and they are not: (a) the three directories have
+   **no `.lrent` header** (`ow_refs`), (b) the three sectors' `.secdat` list **zero dynamic
+   layers** (Montera 03 and Varant 02: geometry layer `*_SHyb` only; the Morasul one has no `.sec`
+   at all), (c) no `.secdat` anywhere names them. Likewise every other header-less GUID
+   `.lrentdat`/`.lrgeodat` leftover (the five 124-byte ones parse as empty documents).
+   `WorldDocument::parse` keeps reporting them as an error with the explanation, and
+   `world_node::is_unfinalized_layer` lets tools classify them; the survey counts them as
+   `documents_unfinalized_unused`. Not recoverable, and not needed.
+   *Where the Mora Sul / Montera / Varant NPCs really come from:* the named, finalized layers
+   (`ow_region`): Mora Sul city 218 entities / 69 `gCNPC_PS` (`G3_Varant_01_MoraSul_NPC_01/02`),
+   Mora Sul temple 299 / 101, Montera city 637 / 195, Varant `_outdoor` 26 / 4, Faring 466 / 144;
+   the outdoor population is in the huge `SysDyn_{9A103CC2}` system layer (26 976
+   entities, 5 888 NPC property sets) and the Myrtana `_Outdoor` layers (2 631 entities, 2 629 NPC sets). The per-region counts
+   are in line with the other cities (Ardea 211 / 61, Geldern 440 / 137, Silden 432 / 129), so
+   nothing is missing from the shipped game: the orphan layers are development leftovers (the
+   Morasul one sits in the only `Outdoor_MoraSul_NPC` directory that has no sector at all).
+
+2. **Eleven `*_SpG.node` + two `*_Spat.node`: parse; the eleven SpG are unused.** They are
+   *raw* documents with no envelope. `ReadNodes` reads a `u16` version from byte 0 (the shipped
+   files carry 30, 56 or 72) and dispatches: **< 56 -> `ReadNodesOld` 0x1021b9c0** (inline
+   `u16 length + bytes` strings), **56..82 -> `ReadNodesV56` 0x1021bc30**, which reads a
+   `bCPOStream` (`ReadFile` 0x10057b50): `u16` stream version 1, one flag byte, `u32` count and
+   that many inline strings, `u32` payload size, then a payload in which every string is a `u16`
+   index into that list (`bCPOStream::Read(bCString)` 0x10057da0). Payload: `u32` entity count,
+   per entity two bools (has template, patching disabled), `eCSpatialEntity::Read` 0x10228d50
+   (`u16` 0x1e..0x22: template flag + 20-byte id, 0x23 adds 84 bytes of boxes),
+   `eCEntity::Read` 0x102257f0 -> **`ReadV63` 0x10225840** for entity versions below 83,
+   trailing 20-byte template id if has-template and not patching-disabled, then the parent/child
+   pairs ended by `(-1, -1)` (`ReadDependency` 0x1021a150). `ReadV63` differs from v83 by:
+   per-version extra bools, `bStack_71` flag before the alpha, an inline name, two spheres and
+   floats, the property sets in `u16 version, u32 size, name, accessor object, 0xDEADC0DE`
+   records, and **objects whose `bCPropertyObjectBase::ReadData` 0x10056ca0 header depends on the
+   object version**: 1 = class name string + 20-byte id, 2..81 = 20-byte id, 82+ = nothing.
+   All 13 parse (`WorldDocument::parse`, bounded, synthetic tests in `world_node.rs`).
+   Only the two `_Spat` documents are listed by a sector (`Faring_VFX`, `MoraSul_Temple_Lights_01`:
+   a lone root entity each). The eleven `_SpG` documents sit in `*_Levelmesh_*` directories that
+   have **no `.sec`/`.secdat`** and no sector names them (`ow_refs`): old landscape/water level
+   meshes that were replaced by the CStat cells; their mesh names are dangling (485 of them do
+   not exist in any archive). `survey::is_unlisted_levelmesh` therefore excludes them from the
+   entity/mesh totals and from `WorldIndex` (`documents_unlisted_levelmesh`: 11).
+
+3. **Three raw `GENOMEDL` layers: parse and are used.** `gCDynamicLayer::DoLoadData` 0x100c5a50
+   branches on the first eight bytes: `GENOMEDL` + version <= 56 goes through the same
+   `bCPOStream` path as item 2 (`gCWorld::OnLoadDynamicContext` 0x1019c420), anything else
+   without a `GENOMFLE` header (the `G3_StartUp` `SysDyn_{D9B95D54}` layer starts directly with the
+   accessor bytes `01 00 01 01 00 01`) reads the accessor with inline strings. Entities are
+   `eCDynamicEntity` below version 83 (`u16` derived-class version, `u16` 1, extra bool, creator
+   flag) followed by `ReadV63`. Faring VFX (551 B, 1 entity), Morasul temple lights (43 KB,
+   92 lights) and the StartUp SysDyn (2 entities) all decode; their sectors list them
+   (`G3_Myrtana_01_Faring_VFX`, `G3_Varant_01_MoraSul_Temple_Lights_01`).
+   Typed property decoding (`parse_with_properties`) is not implemented for the pre-83
+   layouts: it returns one empty set list per entity.
+
+Totals now: 2 536 documents, 2 533 parse, 3 unfinalized-unused, 0 failures; 231 223 entities
+counted (11 unlisted level meshes with 785 further entities excluded), mesh numbers unchanged
+(4 768 unique, 4 757 resolved, 11 dangling); `WorldIndex` 134 668 placements, 3 documents
+reported as failed.
 
 The unresolved 11 mesh names (`G3_Armor_Shield_Tower_03..07`,
 `G3_Weapons_Melee_1H_Sword_Normal_01`, `..._2H_Axe_Double_02`,

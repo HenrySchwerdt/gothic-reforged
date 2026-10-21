@@ -11,8 +11,13 @@
 //! 3. **Talk** to the best NPC: open the dialog and keep choosing the most useful unchosen
 //!    entry (descending into dialog trees) until nothing useful is left, then leave.
 //!
-//! A round in which the serialised game state does not change means the bot is stuck; the
-//! unfinished targets are then analysed for their blockers ([`crate::report`]).
+//! Progress is any change of the serialised game state (the clock aside). An info chosen
+//! without any change (a permanent refusal, an already-delivered report) is *futile* until the
+//! next progress and no longer counts for planning, so the bot moves on to other NPCs instead
+//! of repeating it. Without progress, every NPC with something useful is visited once; when
+//! none is left the clock jumps a day ahead (time-gated infos) and the sweep repeats once. Only
+//! then is the bot stuck, and the unfinished targets are analysed for their blockers
+//! ([`crate::report`]).
 use crate::plan::Planner;
 use crate::report::{Action, BotReport, Cheat, QuestChange, TraceStep, analyse_stuck};
 use gothic_gameplay::conditions::is_item_name;
@@ -59,6 +64,10 @@ pub struct QuestBot<'a> {
     planner: Planner,
     trace: Vec<TraceStep>,
     cheated: BTreeSet<(String, &'static str)>,
+    /// Infos chosen without effect since the last progress (normalised names).
+    futile: BTreeSet<String>,
+    /// NPCs talked to since the last progress.
+    visited: BTreeSet<String>,
 }
 
 impl<'a> QuestBot<'a> {
@@ -75,6 +84,8 @@ impl<'a> QuestBot<'a> {
             options,
             trace: Vec::new(),
             cheated: BTreeSet::new(),
+            futile: BTreeSet::new(),
+            visited: BTreeSet::new(),
         }
     }
 
@@ -92,7 +103,8 @@ impl<'a> QuestBot<'a> {
     pub fn run(mut self) -> BotReport {
         let mut rounds = 0;
         let mut stuck = false;
-        let mut idle = 0;
+        // Whether the clock already jumped ahead since the last progress.
+        let mut waited = false;
         while !self.all_finished() {
             if rounds >= self.options.max_rounds {
                 stuck = true;
@@ -103,22 +115,29 @@ impl<'a> QuestBot<'a> {
             if self.options.cheats {
                 self.world_cheats();
             }
-            if !self.all_finished() {
-                self.talk_round();
-            }
-            // Time passes between actions; an idle round waits a few hours more, since
-            // `QuestRunning` infos need two hours since their quest started.
-            if fingerprint(&self.state) == before {
-                idle += 1;
-                if idle >= IDLE_ROUNDS {
-                    stuck = true;
-                    break;
-                }
-                self.state.hours += 3;
-            } else {
-                idle = 0;
+            let talked = !self.all_finished() && self.talk_round();
+            if fingerprint(&self.state) != before {
+                self.futile.clear();
+                self.visited.clear();
+                waited = false;
                 self.state.hours += 1;
+                continue;
             }
+            // No progress. `QuestRunning` infos need two hours since their quest started, so
+            // idle rounds let a few hours pass.
+            self.state.hours += 3;
+            if talked {
+                continue;
+            }
+            // Nobody left with anything useful: wait a day once and sweep again.
+            if waited {
+                stuck = true;
+                break;
+            }
+            waited = true;
+            self.state.hours += WAIT_HOURS;
+            self.futile.clear();
+            self.visited.clear();
         }
         let stuck_quests = if stuck {
             analyse_stuck(self.db, &self.engine, &self.state, self.targets())
@@ -240,12 +259,22 @@ impl<'a> QuestBot<'a> {
         }
     }
 
-    /// Talk to the NPC with the most useful offer, if any.
-    fn talk_round(&mut self) {
+    /// Planner score of an info, or 0 if it was futile since the last progress.
+    fn score(&self, id: gothic_gameplay::InfoId) -> i32 {
+        if self.futile.contains(&norm(&self.db.info(id).name)) {
+            return 0;
+        }
+        self.planner.score(self.db, &self.state, id)
+    }
+
+    /// Talk to the not yet visited NPC with the most useful offer. Returns whether there was
+    /// one.
+    fn talk_round(&mut self) -> bool {
         let mut npcs: Vec<String> = self
             .db
             .owners()
             .filter(|o| !o.eq_ignore_ascii_case(PLAYER_OWNER))
+            .filter(|o| !self.visited.contains(&norm(o)))
             .map(str::to_string)
             .collect();
         npcs.sort();
@@ -256,15 +285,18 @@ impl<'a> QuestBot<'a> {
                     .engine
                     .root_list(&self.state, npc)
                     .into_iter()
-                    .map(|id| self.planner.score(self.db, &self.state, id))
+                    .map(|id| self.score(id))
                     .max()?;
                 (score > 0).then_some((score, npc.clone()))
             })
             // Highest score, ties by name (deterministic).
             .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
-        if let Some((_, npc)) = best {
-            self.converse(&npc);
-        }
+        let Some((_, npc)) = best else {
+            return false;
+        };
+        self.visited.insert(norm(&npc));
+        self.converse(&npc);
+        true
     }
 
     /// Infos told since `before` (what actually ran), in database order.
@@ -305,7 +337,7 @@ impl<'a> QuestBot<'a> {
                 .iter()
                 .filter_map(|c| c.info.map(|id| (c, id)))
                 .filter(|(_, id)| !chosen.contains(&self.db.info(*id).name))
-                .map(|(c, id)| (self.planner.score(self.db, &self.state, id), c))
+                .map(|(c, id)| (self.score(id), c))
                 .filter(|(s, _)| *s > 0)
                 .max_by_key(|(s, _)| *s)
                 .map(|(_, c)| c.clone());
@@ -333,7 +365,11 @@ impl<'a> QuestBot<'a> {
             let id = choice.info.expect("info choice");
             chosen.insert(self.db.info(id).name.clone());
             let told = self.state.told.clone();
+            let before = fingerprint(&self.state);
             let res = self.engine.choose(&mut self.state, &mut session, &choice);
+            if fingerprint(&self.state) == before {
+                self.futile.insert(norm(&self.db.info(id).name));
+            }
             let ran = self.ran_since(&told);
             self.record(
                 Action::Talk {
@@ -348,13 +384,15 @@ impl<'a> QuestBot<'a> {
     }
 }
 
-/// Rounds without any state change before the bot gives up.
-const IDLE_ROUNDS: usize = 2;
+/// Hours the clock jumps ahead when no NPC has anything useful left.
+const WAIT_HOURS: u64 = 24;
 
-/// Serialised state without the clock (waiting is not progress).
+/// Serialised state without the clock (waiting is not progress) and without the quest log
+/// (permanent lines append to it every time they run, which is not progress either).
 fn fingerprint(st: &GameState) -> String {
     let mut s = st.clone();
     s.hours = 0;
+    s.log.clear();
     serde_json::to_string(&s).unwrap_or_default()
 }
 
