@@ -616,13 +616,19 @@ impl Core {
     /// change. This is also how a loaded save restores the sectors
     /// (`gCSectorPersistence_PS::UpdateSectors`).
     fn sync_sectors(&mut self, out: &mut Vec<Event>) {
-        let mut wanted: std::collections::BTreeMap<String, bool> = self.sector_defaults.clone();
+        // Sector names compare case-insensitively (the registry does); the script's
+        // `SetSectorStatus` spelling and the world's directory name must be one entry.
+        let mut wanted: std::collections::BTreeMap<String, bool> = self
+            .sector_defaults
+            .iter()
+            .map(|(n, on)| (n.to_ascii_lowercase(), *on))
+            .collect();
         wanted.extend(
             self.sim
                 .state
                 .sectors
                 .iter()
-                .map(|(n, on)| (n.clone(), *on)),
+                .map(|(n, on)| (n.to_ascii_lowercase(), *on)),
         );
         let scene = self.range.scene_mut();
         let mut changed = false;
@@ -635,8 +641,12 @@ impl Core {
                 scene.sectors.register(&name, on);
             }
             scene.sectors.enable(&mut scene.tree, &name, on);
+            let shown = scene
+                .sectors
+                .sector(&name)
+                .map_or_else(|| name.clone(), |s| s.name.clone());
             out.push(Event::SectorSwitched {
-                sector: name,
+                sector: shown,
                 enabled: on,
             });
             changed = true;

@@ -19,9 +19,14 @@ pub const NAMES: &[&str] = &[
     "combat_basic",
     "magic_bow",
     "souls_basic",
+    "souls_er",
     "swim",
     "routine_reentry",
     "ui_screens",
+    "sector_switch",
+    "teleport",
+    "walk_to_reddock",
+    "world_walk",
 ];
 
 pub fn build(name: &str) -> Option<Sc> {
@@ -41,9 +46,16 @@ pub fn build(name: &str) -> Option<Sc> {
         "ui_screens" => super::more::ui_screens(),
         "combat_basic" => super::more2::combat_basic(),
         "souls_basic" => super::more2::souls_basic(),
+        "souls_er" => super::more2::souls_er(),
         "magic_bow" => super::more2::magic_bow(),
         "swim" => super::more2::swim(),
         "routine_reentry" => super::more2::routine_reentry(),
+        "sector_switch" => super::world::sector_switch(),
+        "teleport" => super::world::teleport(),
+        "walk_to_reddock" => super::world::walk_to_reddock(),
+        "world_walk" => super::world::world_walk(),
+        "triggers" => super::world::triggers(),
+        "perf_idle" => super::world::perf_idle(),
         _ => return None,
     })
 }
