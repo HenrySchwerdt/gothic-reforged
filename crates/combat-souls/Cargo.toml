@@ -1,0 +1,27 @@
+[package]
+name = "gothic-combat-souls"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Opt-in Souls-style combat flow (rolls, chains, parry, lock-on, telegraphed enemies) over the ported Gothic damage pipeline"
+
+[features]
+default = []
+# Bevy plugin: input, fixed-tick driver, lock-on camera, animation mapping.
+plugin = ["dep:bevy", "bevy/bevy_window", "bevy/gamepad"]
+# Standalone arena demo (examples/arena.rs): renders primitive shapes, needs no game data.
+demo = ["plugin", "bevy/3d_bevy_render", "bevy/ui", "bevy/bevy_winit", "bevy/default_font", "bevy/bevy_gizmos_render", "bevy/multi_threaded", "bevy/png", "bevy/bevy_log"]
+
+[dependencies]
+glam = "0.33"
+gothic-sim = { path = "../sim" }
+gothic-camera = { path = "../camera" }
+bevy = { workspace = true, features = ["std", "async_executor"], optional = true }
+
+[[example]]
+name = "arena"
+required-features = ["demo"]
+
+[lints]
+workspace = true

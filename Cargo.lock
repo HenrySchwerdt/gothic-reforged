@@ -3159,6 +3159,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-combat-souls"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "glam",
+ "gothic-camera",
+ "gothic-sim",
+]
+
+[[package]]
 name = "gothic-cook"
 version = "0.1.0"
 dependencies = [

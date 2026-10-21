@@ -38,6 +38,10 @@ pub struct Variants {
     /// Parrying needs stamina > 0 (inferred in the base rules, see `combat::can_parade`);
     /// set to `false` to allow parrying with an empty stamina bar.
     pub parry_needs_stamina: Option<bool>,
+    /// Telegraphed NPC melee (Souls-style combat mode): every NPC swing is held this many
+    /// milliseconds longer before its hit window opens and before the NPC may act again, so the
+    /// raised weapon can be read and answered. `None` = the original near-instant swing.
+    pub npc_telegraph_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
