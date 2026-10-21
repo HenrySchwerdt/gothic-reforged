@@ -1,10 +1,8 @@
 //! Physics hands on avian3d: PD follow, collision, grabbing, weight, two hands, throwing,
 //! snapping and determinism. Fully headless and deterministic (fixed 90 Hz steps).
-mod common;
-
 use bevy::prelude::*;
-use common::Rig;
 use gothic_vr::{Hand, Pose};
+use gothic_vr_physics::testing::{self as common, Rig};
 use gothic_vr_physics::{Held, PhysicsHand, VrStrength, props, spawn_prop, static_box};
 
 fn floor(c: &mut Commands) {

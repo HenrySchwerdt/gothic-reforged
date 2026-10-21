@@ -208,9 +208,11 @@ pub fn spawn_prop(commands: &mut Commands, spec: &PropSpec, pose: Pose) -> Entit
         RigidBody::Dynamic,
         Collider::compound(shapes),
         ColliderDensity(spec.density()),
+        // Props pass through bodies: weapon-vs-body contacts are resolved by the melee
+        // contact model (damage, bite, stab joints), not by rigid collision.
         CollisionLayers::new(
             VrLayer::Prop,
-            [VrLayer::World, VrLayer::Hand, VrLayer::Prop, VrLayer::Body],
+            [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
         ),
         Transform::from_translation(pose.position).with_rotation(pose.rotation),
         Name::new(format!("{:?}", spec.kind)),

@@ -3565,6 +3565,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-vr-melee"
+version = "0.1.0"
+dependencies = [
+ "avian3d",
+ "bevy",
+ "glam",
+ "gothic-vr",
+ "gothic-vr-physics",
+ "serde",
+]
+
+[[package]]
 name = "gothic-vr-physics"
 version = "0.1.0"
 dependencies = [

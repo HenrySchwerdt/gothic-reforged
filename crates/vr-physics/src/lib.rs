@@ -12,10 +12,12 @@
 //! * [`grab`]: Bevy-free grip selection.
 //! * [`props`]: procedural weapons/boxes.
 //! * [`hands`]: the Bevy/avian plugin.
+//! * [`testing`]: a headless, deterministic test rig.
 pub mod grab;
 pub mod hands;
 pub mod pd;
 pub mod props;
+pub mod testing;
 
 pub use avian3d;
 pub use hands::{

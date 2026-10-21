@@ -1,0 +1,18 @@
+[package]
+name = "gothic-vr-melee"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Blade & Sorcery-style physical melee: swept blade/blunt/pierce contacts, stabs, blocks and parries"
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
+glam = { version = "0.33", features = ["serde"] }
+serde.workspace = true
+gothic-vr = { path = "../vr" }
+gothic-vr-physics = { path = "../vr-physics" }
+avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "default-collider", "xpbd_joints", "parallel", "debug-plugin"] }
+
+[lints]
+workspace = true

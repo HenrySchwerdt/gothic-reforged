@@ -1,10 +1,9 @@
-//! Headless avian test rig: tracked frames are written directly, physics runs at 90 Hz with
-//! one fixed step per update.
-#![allow(dead_code)]
+//! Headless test rig for VR physics (also used by the melee, NPC and archery crates):
+//! tracked frames are written directly, physics runs at 90 Hz with one fixed step per update.
+use crate::VrPhysicsPlugin;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use gothic_vr::{Hand, PendingXrFrame, Pose, VrPlugin, XrBackendKind, XrFrame};
-use gothic_vr_physics::VrPhysicsPlugin;
 use std::time::Duration;
 
 pub const HZ: f64 = 90.0;
@@ -16,6 +15,14 @@ pub struct Rig {
 
 impl Rig {
     pub fn new(setup: impl FnOnce(&mut Commands) + Send + Sync + 'static) -> Self {
+        Self::with_plugins(setup, |_| {})
+    }
+
+    /// Like [`Rig::new`], with extra plugins added before startup.
+    pub fn with_plugins(
+        setup: impl FnOnce(&mut Commands) + Send + Sync + 'static,
+        plugins: impl FnOnce(&mut App),
+    ) -> Self {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin))
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
@@ -26,6 +33,7 @@ impl Rig {
                 backend: XrBackendKind::External,
             })
             .add_plugins(VrPhysicsPlugin::default());
+        plugins(&mut app);
         let setup = std::sync::Mutex::new(Some(setup));
         app.add_systems(Startup, move |mut commands: Commands| {
             if let Some(f) = setup.lock().unwrap().take() {
@@ -61,11 +69,12 @@ impl Rig {
         self.frame.hand_mut(hand).grip = if on { 1.0 } else { 0.0 };
     }
 
+    /// Position of a physics hand.
     pub fn hand_pos(&mut self, hand: Hand) -> Vec3 {
         let mut q = self
             .app
             .world_mut()
-            .query::<(&Transform, &gothic_vr_physics::PhysicsHand)>();
+            .query::<(&Transform, &crate::PhysicsHand)>();
         q.iter(self.app.world())
             .find(|(_, h)| h.hand == hand)
             .map(|(t, _)| t.translation)
