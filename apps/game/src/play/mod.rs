@@ -78,6 +78,8 @@ pub struct Cand {
     pub actor: Option<ActorId>,
     /// The appearance does not resolve; never retried.
     pub failed: bool,
+    /// When the body's parts were handed to the background decoder (seconds since start).
+    pub prefetch_at: Option<f32>,
 }
 
 /// A world document (sector layer) that holds characters.
@@ -380,8 +382,9 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     let npcs = NpcFile::load(std::path::Path::new(".local/npcs.json")).map_err(|e| {
         anyhow::anyhow!("NPC database (run `gothic-inspector npc-dump` first): {e:#}")
     })?;
-    let library = ActorLibrary::open(&data_dir)
+    let mut library = ActorLibrary::open(&data_dir)
         .map_err(|e| anyhow::anyhow!("opening actor archives: {e:#}"))?;
+    library.start_prefetch();
     let audio = GothicAudioPlugin::open(&data_dir, "German")
         .map_err(|e| anyhow::anyhow!("opening audio: {e:#}"))?;
     eprintln!("play: data loaded in {} ms", started.elapsed().as_millis());

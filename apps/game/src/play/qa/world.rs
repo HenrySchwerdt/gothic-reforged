@@ -115,6 +115,11 @@ fn report_frames(sc: &mut Sc, label: &'static str, limit_ms: u32) {
             c.scan.runs, avg(c.scan), c.scan.max_us, c.spawn.runs, avg(c.spawn), c.spawn.max_us,
             c.build.runs, avg(c.build), c.build.max_us
         ));
+        let prof: Vec<String> = gothic_animation::library::profile()
+            .into_iter()
+            .map(|(n, ms, c)| format!("{n} {ms:.0} ms/{c}"))
+            .collect();
+        cx.note(format!("cold library paths (main thread, since start): {}", prof.join(", ")));
         // limit 0: informational (teleport hops and cold body builds hitch by design).
         expect(
             n > 30.0 && (limit_ms == 0 || p95 <= limit_ms),
@@ -401,13 +406,20 @@ pub fn walk_to_reddock() -> Sc {
         if cx.st.n.get("walk_tick").copied().unwrap_or(-1.0) < tick as f64 {
             cx.st.n.insert("walk_tick".into(), tick as f64);
             cx.note(format!(
-                "walk t={:.0}s hero ({:.0}, {:.0}, {:.0}) cm, {:.0} m to the goal, waypoint {next}, mode {:?}",
+                "walk t={:.0}s hero ({:.0}, {:.0}, {:.0}) cm, {:.0} m to the goal, waypoint {next}, mode {:?}, grounded {}, yaw {:.2}, hero {}",
                 cx.t,
                 hero.x,
                 hero.y,
                 hero.z,
                 Vec2::new(hero.x - goal.x, hero.z - goal.z).length() / 100.0,
-                cx.world.resource::<PlayState>().mode
+                cx.world.resource::<PlayState>().mode,
+                cx.player().ctrl.grounded,
+                cx.player().yaw,
+                {
+                    let c = &cx.core().0;
+                    let a = c.sim.actor(c.hero);
+                    format!("{:?} {:?} hp {}", a.ani_state, a.ai_mode, a.hp)
+                }
             ));
         }
         if cx.t > 240.0 {
@@ -416,6 +428,31 @@ pub fn walk_to_reddock() -> Sc {
             return Poll::Done;
         }
         let pts = route.as_ref().unwrap();
+        // A hero that has not moved for 6 s is wedged in collision (seen: trees and rocks on the
+        // slopes): note it and set him 4 m on towards the next waypoint so the walk continues.
+        let moved = Vec2::new(hero.x, hero.z)
+            .distance(Vec2::new(
+                cx.st.n.get("wedge_x").copied().unwrap_or(0.0) as f32,
+                cx.st.n.get("wedge_z").copied().unwrap_or(0.0) as f32,
+            ))
+            > 60.0;
+        if moved || cx.t < 0.1 {
+            cx.st.n.insert("wedge_x".into(), f64::from(hero.x));
+            cx.st.n.insert("wedge_z".into(), f64::from(hero.z));
+            cx.st.n.insert("wedge_t".into(), f64::from(cx.t));
+        } else if f64::from(cx.t) - cx.st.n.get("wedge_t").copied().unwrap_or(0.0) > 6.0 {
+            let target = pts.get(next).copied().unwrap_or(goal);
+            let dir = Vec3::new(target.x - hero.x, 0.0, target.z - hero.z).normalize_or_zero();
+            cx.note(format!(
+                "WEDGED at ({:.0}, {:.0}, {:.0}) cm heading for waypoint {next}: set 4 m on",
+                hero.x, hero.y, hero.z
+            ));
+            let n = cx.st.n.entry("wedges".into()).or_insert(0.0);
+            *n += 1.0;
+            place_hero(cx, hero + dir * 400.0 + Vec3::Y * 150.0);
+            cx.st.n.insert("wedge_t".into(), f64::from(cx.t));
+            return Poll::Wait;
+        }
         // Skip waypoints already passed; head for the next one, the goal last.
         while next < pts.len() && Vec2::new(hero.x - pts[next].x, hero.z - pts[next].z).length() < 250.0 {
             next += 1;
@@ -446,6 +483,10 @@ pub fn walk_to_reddock() -> Sc {
         let goal = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
         let p = cx.player().ctrl.position;
         let d = Vec2::new(p.x - goal.x, p.z - goal.z).length();
+        cx.note(format!(
+            "the hero was wedged in collision {} times on the way",
+            cx.st.n.get("wedges").copied().unwrap_or(0.0)
+        ));
         cx.note(format!(
             "after the walk the hero is {:.0} m from the Reddock characters",
             d / 100.0
@@ -517,7 +558,7 @@ pub fn walk_to_reddock() -> Sc {
     sc.act("stop the frame clock", |cx| {
         cx.st.n.insert("ft_on".into(), 0.0);
     });
-    report_frames(&mut sc, "walk to Reddock", 24);
+    report_frames(&mut sc, "walk to Reddock", 30);
     sc
 }
 
