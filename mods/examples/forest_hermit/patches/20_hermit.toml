@@ -1,0 +1,42 @@
+# The hermit himself (NPC template, npcs.json form).
+[[npcs.add]]
+name = "Hermit"
+display_name = "MOD_HERMIT_NAME"
+species = "Human"
+class = "Citizen"
+level = 5
+attitude_to_player = "Neutral"
+
+# His quest: bring two herbs, get tea.
+[[quests.add]]
+name = "Q_HermitTea"
+quest_type = 0                # HasItems
+log_topic = "MOD_HERMIT_QUEST"
+experience_points = 100
+delivery_entities = ["It_Herb"]
+delivery_amounts = [2]
+destination_entity = "Hermit"
+
+[[infos.add]]
+name = "H_Quest"
+owner = "Hermit"
+quest = "Q_HermitTea"
+condition_type = 6            # Activator
+info_type = 3                 # Info
+sort_id = 10
+script = [
+  { command = "Say", entity1 = "player", entity2 = "", id1 = "", id2 = "", text = "MOD_HERMIT_ASK" },
+  { command = "Say", entity1 = "npc", entity2 = "", id1 = "", id2 = "", text = "MOD_HERMIT_HERBS" },
+]
+
+[[infos.add]]
+name = "H_QuestDone"
+owner = "Hermit"
+quest = "Q_HermitTea"
+condition_type = 8            # Delivery
+info_type = 3
+sort_id = 20
+script = [
+  { command = "Say", entity1 = "player", entity2 = "", id1 = "", id2 = "", text = "MOD_HERMIT_GIVE" },
+  { command = "Give", entity1 = "npc", entity2 = "player", id1 = "It_HermitTea", id2 = "1", text = "" },
+]
