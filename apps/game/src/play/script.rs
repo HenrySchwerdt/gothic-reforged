@@ -273,7 +273,7 @@ fn direct(
                 && veg.in_flight.is_empty()
                 && veg.pending.is_empty()
                 && player.placed
-                && roster.pending.is_empty()
+                && super::npcs::pending_in_ring(&roster, &stream) == 0
                 && roster.binds.is_empty()
                 && hamlar.is_some();
             if ready && stream.last_activity > 5 {

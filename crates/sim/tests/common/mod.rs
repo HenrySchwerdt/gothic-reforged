@@ -72,11 +72,17 @@ pub struct Report {
 }
 
 /// Hero (level 1, 1H sword) vs `orc`; returns when one of them is down or after 180 s.
-pub fn duel(seed: u64, items: &ItemDb, mut orc: Actor, hero_skill: i32) -> Report {
+pub fn duel(seed: u64, items: &ItemDb, orc: Actor, hero_skill: i32) -> Report {
     let cfg = SimConfig {
         seed,
         ..SimConfig::default()
     };
+    duel_cfg(cfg, items, orc, hero_skill)
+}
+
+/// [`duel`] with an explicit configuration (variants).
+pub fn duel_cfg(cfg: SimConfig, items: &ItemDb, mut orc: Actor, hero_skill: i32) -> Report {
+    let seed = cfg.seed;
     let mut sim = Sim::new(cfg, open_world(), items.clone());
     sim.player_alignment = Alignment::Reb; // Orcs are hostile to rebels [CA 10.4]
     sim.state.level = 1;

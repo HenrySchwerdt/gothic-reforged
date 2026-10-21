@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
         return gothic_ui::demo::run(&std::env::args().collect::<Vec<_>>());
     }
     #[cfg(feature = "viewer")]
-    if std::env::args().any(|a| a == "--actor") {
+    if std::env::args().any(|a| a == "--actor" || a == "--zoo") {
         return actor_viewer::run();
     }
     #[cfg(feature = "viewer")]

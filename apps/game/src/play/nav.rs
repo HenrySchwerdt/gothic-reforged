@@ -14,8 +14,56 @@ use std::collections::HashSet;
 #[derive(Resource)]
 pub struct NavRes(pub SharedNav);
 
-pub fn register(app: &mut App) {
-    app.insert_resource(NavRes(SharedNav::new(NavMesh::new(NavParams::default()))))
+/// Decodes the authored navigation zones and corridors of the Ardea documents on a worker
+/// thread and installs the original-graph `FindWay` (E39-E43) in the shared handle when done.
+/// Positions go through the same mirrored, origin-relative map as the NPC placements.
+fn spawn_graph_build(nav: SharedNav, data_dir: std::path::PathBuf) {
+    let _ = std::thread::Builder::new()
+        .name("nav-graph".into())
+        .spawn(move || {
+            let t = std::time::Instant::now();
+            let Ok(mut vfs) = gothic_formats::vfs::VirtualFileSystem::open_data_dir(&data_dir)
+            else {
+                eprintln!("play: nav graph: cannot open the data directory");
+                return;
+            };
+            let slots: Vec<_> = vfs
+                .iter()
+                .filter(|(p, _)| {
+                    let l = p.to_ascii_lowercase();
+                    l.contains("ardea") && (l.ends_with(".node") || l.ends_with(".lrentdat"))
+                })
+                .map(|(p, s)| (p.to_owned(), s))
+                .collect();
+            let mut scene = gothic_nav::NavScene::default();
+            for (path, slot) in &slots {
+                match vfs.read(*slot) {
+                    Ok(bytes) => {
+                        if let Err(e) = scene.add_document(&bytes, true) {
+                            eprintln!("play: nav graph: {path}: {e:#}");
+                        }
+                    }
+                    Err(e) => eprintln!("play: nav graph: {path}: {e:#}"),
+                }
+            }
+            let origin = crate::world_loader::Origin(crate::walk::ORIGIN);
+            let graph = gothic_nav::NavGraph::build(&scene, &|p| origin.point(p));
+            eprintln!(
+                "play: nav graph: {} zones, {} corridors ({} dangling) from {} documents in {} ms",
+                graph.zone_count(),
+                graph.path_count(),
+                graph.dangling_paths,
+                slots.len(),
+                t.elapsed().as_millis()
+            );
+            nav.set_graph(std::sync::Arc::new(graph));
+        });
+}
+
+pub fn register(app: &mut App, data_dir: &std::path::Path) {
+    let shared = SharedNav::new(NavMesh::new(NavParams::default()));
+    spawn_graph_build(shared.clone(), data_dir.to_path_buf());
+    app.insert_resource(NavRes(shared))
         .add_systems(Update, grow)
         .add_systems(
             Update,

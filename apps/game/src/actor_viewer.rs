@@ -4,6 +4,8 @@
 //! gothic-reforged --actor Hero [--motion walk|run|idle|<name>] [--stance 1h] [--sword]
 //!                 [--yaw DEG] [--smoke] [--screenshot PATH]
 //! gothic-reforged --actor Hero --crowd 100 [--bench] [--smoke] [--screenshot PATH]
+//! gothic-reforged --actor Hero --body G3_Hero_Body_FatSmith --head G3_Head_Fat_Myrtana_02
+//!                 --lipsync LINE.xlip [--smoke]   (writes .local/lipsync-{1,2,3}.png)
 //! ```
 //!
 //! Single mode shows the hero; without `--motion` it is driven through the locomotion state
@@ -44,6 +46,10 @@ struct Config {
     /// `--zoo`: every creature species in a grid; `--only NAME` shows one large.
     zoo: bool,
     only: Option<String>,
+    /// `--lipsync FILE`: a `.xlip` played on the character (with `--body` / `--head`).
+    lipsync: Option<String>,
+    body: Option<String>,
+    head: Option<String>,
 }
 
 #[derive(Component)]
@@ -166,6 +172,9 @@ pub fn run() -> Result<()> {
         speed: flag("--speed").map(str::parse).transpose()?.unwrap_or(0.0),
         zoo: has("--zoo"),
         only: flag("--only").map(str::to_string),
+        lipsync: flag("--lipsync").map(str::to_string),
+        body: flag("--body").map(str::to_string),
+        head: flag("--head").map(str::to_string),
     };
     let library = ActorLibrary::open(&data_dir)
         .map_err(|e| e.context(format!("opening archives in {}", data_dir.display())))?;
@@ -198,6 +207,7 @@ pub fn run() -> Result<()> {
         .init_resource::<Frames>()
         .insert_resource(ClearColor(Color::srgb(0.07, 0.08, 0.1)))
         .add_systems(Startup, setup)
+        .add_systems(Update, lipsync_capture)
         .add_systems(
             Update,
             (
@@ -236,7 +246,59 @@ fn hash01(index: usize, salt: u64) -> f32 {
     (x >> 40) as f32 / (1u64 << 24) as f32
 }
 
-fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
+/// Screenshot schedule of `--lipsync` (seconds on the face rig's clock).
+#[derive(Resource)]
+struct LipShots {
+    times: Vec<f32>,
+}
+
+/// Takes `.local/lipsync-N.png`: after a warm-up the face rig is set to each scheduled moment
+/// (held for a few frames, the clock keeps running) and a screenshot is requested; quits after
+/// the last one.
+fn lipsync_capture(
+    shots: Option<Res<LipShots>>,
+    mut faces: Query<&mut gothic_animation::FaceRig>,
+    mut commands: Commands,
+    mut exit: MessageWriter<AppExit>,
+    mut frame: Local<u32>,
+) {
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    const WARM_UP: u32 = 90;
+    const SPACING: u32 = 24;
+    const HOLD: u32 = 3;
+    let Some(shots) = shots else { return };
+    let Some(mut face) = faces.iter_mut().next() else {
+        return;
+    };
+    *frame += 1;
+    if *frame < WARM_UP {
+        // Keep the clip at its start while the renderer warms up.
+        face.seek(0.0);
+        return;
+    }
+    let k = ((*frame - WARM_UP) / SPACING) as usize;
+    let phase = (*frame - WARM_UP) % SPACING;
+    if k >= shots.times.len() {
+        if *frame > WARM_UP + SPACING * shots.times.len() as u32 + 20 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    }
+    if phase <= HOLD {
+        face.seek(shots.times[k] - 0.005);
+    }
+    if phase == HOLD {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(format!(".local/lipsync-{}.png", k + 1)));
+    }
+}
+
+fn setup(
+    mut spawner: ActorSpawner,
+    config: Res<Config>,
+    mut lip_start: MessageWriter<gothic_animation::LipSyncStart>,
+) {
     let mut center = Vec3::new(0.0, 95.0, 0.0);
     let mut distance = 300.0;
     let mut pitch = 0.08;
@@ -270,8 +332,8 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
         yaw = std::f32::consts::PI;
         let _ = rows;
     } else if config.crowd == 0 {
-        let mut spec = NpcSpec::new("G3_Hero_Body_Player")
-            .with_part("G3_Hero_Head_Player")
+        let mut spec = NpcSpec::new(config.body.as_deref().unwrap_or("G3_Hero_Body_Player"))
+            .with_part(config.head.as_deref().unwrap_or("G3_Hero_Head_Player"))
             .with_stance(config.stance);
         if config.sword {
             spec = spec.with_weapon(WeaponSpec::one_hand_sword("G3_Weapon_1H_Sword_01"));
@@ -282,6 +344,27 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
         match spawner.spawn(&spec, Transform::default()) {
             Ok(entity) => {
                 spawner.commands.entity(entity).insert(Hero);
+                if let Some(path) = &config.lipsync {
+                    match std::fs::read(path)
+                        .map_err(anyhow::Error::from)
+                        .and_then(|b| gothic_audio::lipsync::LipSync::parse(&b))
+                    {
+                        Ok(lip) => {
+                            lip_start.write(gothic_animation::LipSyncStart {
+                                entity,
+                                frames: lip.frames.iter().map(|f| (f.time, f.viseme)).collect(),
+                            });
+                            spawner.commands.insert_resource(LipShots {
+                                times: lip.distinct_mouth_times(3),
+                            });
+                            // Face close-up.
+                            center = Vec3::new(0.0, 168.0, 0.0);
+                            distance = 70.0;
+                            pitch = 0.0;
+                        }
+                        Err(error) => eprintln!("lipsync {path}: {error:#}"),
+                    }
+                }
             }
             Err(error) => eprintln!("hero spawn failed: {error:#}"),
         }

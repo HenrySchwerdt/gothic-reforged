@@ -19,7 +19,25 @@ struct FocusText;
 const BOX_W: f32 = 320.0;
 
 pub fn register(app: &mut App) {
-    app.add_systems(Startup, spawn).add_systems(Update, update);
+    app.add_systems(Startup, spawn)
+        .add_systems(Update, (update, sync_gui_open));
+}
+
+/// While a full screen or an interaction window is up the hero cannot be hurt
+/// (`gui_open` of the combat context, as the original's HUD pages set it).
+fn sync_gui_open(
+    ui: Res<UiState>,
+    inter: Res<Interaction>,
+    mut cmd: MessageWriter<gothic_runtime::CoreCommand>,
+    mut last: Local<bool>,
+) {
+    let want = ui.is_open() || inter.window.is_some();
+    if want != *last {
+        *last = want;
+        cmd.write(gothic_runtime::CoreCommand(
+            gothic_runtime::Command::GuiOpen(want),
+        ));
+    }
 }
 
 fn spawn(mut commands: Commands, assets: Option<Res<UiAssets>>) {

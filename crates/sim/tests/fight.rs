@@ -179,3 +179,41 @@ fn real_ardea_orc_duel_report() {
     );
     assert!(hero + orc > 0);
 }
+
+#[test]
+fn telegraph_variant_delays_npc_swings_only() {
+    use gothic_sim::config::Variants;
+    let items = synthetic_items();
+    let first_orc_swing = |r: &common::Report| {
+        r.events
+            .iter()
+            .find_map(|e| match &e.kind {
+                gothic_sim::sim::EventKind::Hit { attacker, .. }
+                | gothic_sim::sim::EventKind::Whiff { attacker, .. }
+                    if attacker.0 == 1 =>
+                {
+                    Some(e.t_ms)
+                }
+                _ => None,
+            })
+            .expect("the orc swings")
+    };
+    let base = SimConfig {
+        seed: 11,
+        ..SimConfig::default()
+    };
+    let slow = SimConfig {
+        variants: Variants {
+            npc_telegraph_ms: Some(700),
+            ..Variants::default()
+        },
+        ..base.clone()
+    };
+    let a = first_orc_swing(&duel_cfg(base.clone(), &items, synthetic_orc(), 70));
+    let b = first_orc_swing(&duel_cfg(slow, &items, synthetic_orc(), 70));
+    assert!(b >= a + 600, "telegraph holds the swing: {a} ms -> {b} ms");
+    // Variant off is bit-identical to the plain duel.
+    let r1 = duel_cfg(base, &items, synthetic_orc(), 70);
+    let r2 = duel(11, &items, synthetic_orc(), 70);
+    assert_eq!(r1.events, r2.events);
+}

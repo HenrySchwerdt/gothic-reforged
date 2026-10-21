@@ -3286,6 +3286,7 @@ dependencies = [
  "gothic-animation",
  "gothic-audio",
  "gothic-camera",
+ "gothic-combat-souls",
  "gothic-cook",
  "gothic-formats",
  "gothic-fx",

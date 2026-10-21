@@ -258,13 +258,21 @@ fn show_pages(
     mut core: ResMut<CoreRes>,
     ui: Res<UiState>,
     mut out: MessageWriter<ShowPage>,
+    mut stale_frames: Local<u32>,
 ) {
     let Some(win) = inter.window.clone() else {
-        if std::mem::take(&mut inter.page_shown) {
+        // A page of the world windows may never outlive its window: if the close raced with
+        // the UI's own Esc handling the `page_shown` flag is already gone, so a page screen
+        // without a window for a few frames is closed here (seen as a stuck loot page).
+        let stale = matches!(ui.screen, Screen::Loot | Screen::Recipe | Screen::Trade);
+        *stale_frames = if stale { *stale_frames + 1 } else { 0 };
+        if std::mem::take(&mut inter.page_shown) || *stale_frames > 3 {
+            *stale_frames = 0;
             out.write(ShowPage(None));
         }
         return;
     };
+    *stale_frames = 0;
     let expected = match win.kind {
         WindowKind::Trade { .. } => Screen::Trade,
         WindowKind::Station { .. } => Screen::Recipe,
@@ -393,17 +401,19 @@ fn refusal(core: &CoreRes, npc: ActorId, player_side: bool, key: usize) -> Strin
     String::new()
 }
 
-/// The mouse is needed while a page is open; `walk.rs` re-locks it on every click, so it is
+/// The mouse is needed while a page or a full screen (inventory, journal, character, menu) is
+/// open; `walk.rs` re-locks it on every click, so it is
 /// freed again each frame.
 fn hold_cursor(
     inter: Res<Interaction>,
+    ui: Res<UiState>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut relock: Local<Option<bool>>,
 ) {
     let Ok(mut c) = cursor.single_mut() else {
         return;
     };
-    if inter.window.is_some() {
+    if inter.window.is_some() || ui.is_open() {
         if relock.is_none() {
             *relock = Some(c.grab_mode != CursorGrabMode::None);
         }
