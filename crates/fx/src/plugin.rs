@@ -810,6 +810,7 @@ fn update_emitters(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn build_batches(
     mut commands: Commands,
     cams: Query<(&Camera, &GlobalTransform, &Projection), With<Camera3d>>,
