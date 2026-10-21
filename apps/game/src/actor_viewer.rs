@@ -41,6 +41,9 @@ struct Config {
     /// Upper-body overlay action (`ArmsCrossed`, ...) and initial ground speed (cm/s).
     overlay: Option<String>,
     speed: f32,
+    /// `--zoo`: every creature species in a grid; `--only NAME` shows one large.
+    zoo: bool,
+    only: Option<String>,
 }
 
 #[derive(Component)]
@@ -60,6 +63,36 @@ struct CrowdMember {
 
 #[derive(Component)]
 struct Hero;
+
+const ZOO_CELL: f32 = 200.0;
+
+/// A creature of the `--zoo` grid; positioned and scaled once its bounds are known.
+#[derive(Component)]
+struct ZooSlot {
+    index: usize,
+    columns: usize,
+    name: String,
+}
+
+/// Creature body actors: a body whose name token is a motion family that is not one of the
+/// humanoid families (those are covered by `--crowd`).
+fn zoo_species(library: &ActorLibrary, only: Option<&str>) -> Vec<String> {
+    const HUMANOID: [&str; 6] = ["hero", "orc", "slave", "fat", "babe", "head"];
+    let families: Vec<&str> = library.catalog.families();
+    library.actor_names(|n| {
+        let mut tokens = n.split('_');
+        let (Some("G3"), Some(species), Some("Body")) =
+            (tokens.next(), tokens.next(), tokens.next())
+        else {
+            return false;
+        };
+        let lower = species.to_lowercase();
+        !n.contains("LOD")
+            && !HUMANOID.contains(&lower.as_str())
+            && families.contains(&lower.as_str())
+            && only.is_none_or(|o| n.to_lowercase().contains(&o.to_lowercase()))
+    })
+}
 
 #[derive(Resource, Default)]
 struct Frames {
@@ -103,7 +136,9 @@ pub fn run() -> Result<()> {
         None => Stance::Unarmed,
     };
     let screenshot = flag("--screenshot")
-        .unwrap_or(if crowd > 0 {
+        .unwrap_or(if has("--zoo") {
+            ".local/zoo.png"
+        } else if crowd > 0 {
             ".local/crowd.png"
         } else {
             ".local/actor-smoke.png"
@@ -129,6 +164,8 @@ pub fn run() -> Result<()> {
         ],
         overlay: flag("--overlay").map(str::to_string),
         speed: flag("--speed").map(str::parse).transpose()?.unwrap_or(0.0),
+        zoo: has("--zoo"),
+        only: flag("--only").map(str::to_string),
     };
     let library = ActorLibrary::open(&data_dir)
         .map_err(|e| e.context(format!("opening archives in {}", data_dir.display())))?;
@@ -141,7 +178,11 @@ pub fn run() -> Result<()> {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gothic Reforged / actor viewer".into(),
-                resolution: WindowResolution::new(1280, 720),
+                resolution: if has("--zoo") && flag("--only").is_none() {
+                    WindowResolution::new(2560, 1440)
+                } else {
+                    WindowResolution::new(1280, 720)
+                },
                 present_mode: if config.bench {
                     PresentMode::AutoNoVsync
                 } else {
@@ -161,6 +202,8 @@ pub fn run() -> Result<()> {
             Update,
             (
                 crowd_script,
+                zoo_fit,
+                zoo_drive,
                 hero_keys,
                 hero_overlay,
                 smoke_drive,
@@ -199,7 +242,34 @@ fn setup(mut spawner: ActorSpawner, config: Res<Config>) {
     let mut pitch = 0.08;
     // The authored facing is rotated to -Z (Bevy forward), so the front is seen from -Z.
     let mut yaw = config.yaw_degrees.to_radians() + std::f32::consts::PI;
-    if config.crowd == 0 {
+    if config.zoo {
+        let names = zoo_species(&spawner.library, config.only.as_deref());
+        let columns = if config.only.is_some() { 1 } else { 9 };
+        for (i, name) in names.iter().enumerate() {
+            let spec = NpcSpec::new(name.clone()).with_start_time(hash01(i, 4));
+            match spawner.spawn(&spec, Transform::default()) {
+                Ok(e) => {
+                    spawner.commands.entity(e).insert(ZooSlot {
+                        index: i,
+                        columns,
+                        name: name.clone(),
+                    });
+                }
+                Err(error) => eprintln!("ZOO FAIL {name}: {error:#}"),
+            }
+        }
+        eprintln!("zoo: {} species", names.len());
+        let rows = names.len().div_ceil(columns);
+        center = Vec3::new(0.0, 0.0, 0.0);
+        distance = if config.only.is_some() {
+            300.0
+        } else {
+            rows as f32 * ZOO_CELL * 1.45
+        };
+        pitch = 0.0;
+        yaw = std::f32::consts::PI;
+        let _ = rows;
+    } else if config.crowd == 0 {
         let mut spec = NpcSpec::new("G3_Hero_Body_Player")
             .with_part("G3_Hero_Head_Player")
             .with_stance(config.stance);
@@ -641,5 +711,86 @@ fn update_title(
         } else {
             "Gothic Reforged / actor viewer".into()
         };
+    }
+}
+
+/// Places zoo creatures on their grid cell, scaled so the largest extent fits the cell.
+fn zoo_fit(
+    mut commands: Commands,
+    mut query: Query<
+        (
+            Entity,
+            &ZooSlot,
+            &gothic_animation::runtime::CharacterComposition,
+            &mut Transform,
+        ),
+        Without<Fitted>,
+    >,
+    mut camera: Query<&mut Orbit>,
+) {
+    for (entity, slot, composition, mut transform) in &mut query {
+        let Some(part) = composition.0.parts.first() else {
+            continue;
+        };
+        let half = Vec3::from(part.aabb.half_extents);
+        let centre = Vec3::from(part.aabb.center);
+        let size = (half * 2.0).max_element().max(1.0);
+        let single = slot.columns == 1;
+        let scale = if single {
+            250.0 / size
+        } else {
+            ZOO_CELL * 0.8 / size
+        };
+        let (col, row) = (slot.index % slot.columns, slot.index / slot.columns);
+        let x = (col as f32 - (slot.columns as f32 - 1.0) * 0.5) * ZOO_CELL;
+        let y = -(row as f32) * ZOO_CELL;
+        // Feet (aabb minimum) on the cell floor, centred horizontally.
+        transform.translation = Vec3::new(
+            x - centre.x * scale,
+            y - (centre.y - half.y) * scale,
+            -centre.z * scale,
+        );
+        transform.scale = Vec3::splat(scale);
+        eprintln!(
+            "ZOO {:2} {} extent {:.0}x{:.0}x{:.0} family {} joints {}",
+            slot.index,
+            slot.name,
+            half.x * 2.0,
+            half.y * 2.0,
+            half.z * 2.0,
+            composition.0.rig.family,
+            composition.0.joint_nodes.len()
+        );
+        if std::env::var_os("ZOO_NODES").is_some() {
+            let rig = &composition.0.rig;
+            let list: Vec<&str> = rig
+                .names
+                .iter()
+                .zip(&rig.slot_of)
+                .filter(|(_, s)| **s != u16::MAX)
+                .map(|(n, _)| n.as_str())
+                .collect();
+            eprintln!("NODES {}: {}", slot.name, list.join(" "));
+        }
+        commands.entity(entity).insert(Fitted);
+        if let Ok(mut orbit) = camera.single_mut() {
+            let rows = 6.0_f32;
+            if !single {
+                orbit.target = Vec3::new(0.0, -(rows - 1.0) * ZOO_CELL * 0.5 + 80.0, 0.0);
+            } else {
+                orbit.target = Vec3::new(0.0, 80.0, 0.0);
+            }
+        }
+    }
+}
+
+#[derive(Component)]
+struct Fitted;
+
+/// Zoo animation script: idle until frame 120, then walk (screenshots at 80 and 180).
+fn zoo_drive(frames: Res<Frames>, mut query: Query<&mut LocomotionInput, With<ZooSlot>>) {
+    let walking = frames.count >= 120;
+    for mut input in &mut query {
+        input.velocity = if walking { FORWARD * 120.0 } else { Vec3::ZERO };
     }
 }

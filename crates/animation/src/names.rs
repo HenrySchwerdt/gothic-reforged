@@ -141,6 +141,22 @@ impl MotionCatalog {
             .map(|(n, _)| n.as_str())
     }
 
+    /// Lower-case family names with at least one parsed motion, sorted.
+    pub fn families(&self) -> Vec<&str> {
+        let mut f: Vec<&str> = self.by_actor.keys().map(String::as_str).collect();
+        f.sort_unstable();
+        f
+    }
+
+    /// All parsed motions of `family` in preference order.
+    pub fn motions(&self, family: &str) -> impl Iterator<Item = (&str, &MotionName)> {
+        self.by_actor
+            .get(&family.to_lowercase())
+            .into_iter()
+            .flatten()
+            .map(|(n, m)| (n.as_str(), m))
+    }
+
     pub fn parsed(&self, actor: &str, name: &str) -> Option<&MotionName> {
         self.by_actor
             .get(&actor.to_lowercase())?

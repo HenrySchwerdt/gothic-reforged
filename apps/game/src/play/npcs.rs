@@ -99,13 +99,20 @@ fn disabled_source_ids(
 pub fn select_roster(file: &NpcFile, looks: &Looks, data_dir: &std::path::Path) -> Roster {
     let origin = Origin(ORIGIN);
     let mut r = Roster::default();
+    // Humans wear a Body item; whole-body creatures (wolves, boars, ...) carry only the
+    // skeleton-mesh resource of their `eCVisualAnimation_PS` and no body parts.
     let near = |e: &gothic_sim::data::NpcRecord| {
         let p = Vec3::from(e.position);
         Vec2::new(p.x, p.z).distance(ARDEA_CENTRE) <= ARDEA_RADIUS
-            && e.inventory
+            && (e
+                .inventory
                 .equipped
                 .iter()
                 .any(|i| i.slot.eq_ignore_ascii_case("Body"))
+                || looks
+                    .map
+                    .get(&look_key(&e.document, &e.name, e.position))
+                    .is_some_and(is_creature))
     };
     let docs: std::collections::BTreeSet<String> = file
         .entities
@@ -209,6 +216,11 @@ pub struct NpcMotion {
     pub ground_at: Vec2,
     pub velocity: Vec3,
     pub fallen: bool,
+}
+
+/// A whole-body creature: the skeleton resource is the mesh and no body parts are listed.
+fn is_creature(look: &NpcLook) -> bool {
+    look.visual.parts.is_empty() && look.visual.skeleton.is_some()
 }
 
 /// Character description from the entity's visual data; `Err` names what did not resolve.
@@ -414,8 +426,10 @@ fn spawn_npcs(
                 continue;
             }
         };
-        let stance =
-            if Species::from_name(&p.record.species) == Species::Orc && gear.equip.is_empty() {
+        let creature = p.look.as_ref().is_some_and(is_creature);
+        let stance = if creature {
+            Stance::Unarmed
+        } else if Species::from_name(&p.record.species) == Species::Orc && gear.equip.is_empty() {
                 Stance::TwoHand
             } else {
                 gear.stance

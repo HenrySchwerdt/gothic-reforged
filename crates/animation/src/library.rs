@@ -114,6 +114,7 @@ pub struct ActorLibrary {
     statics: HashMap<String, Arc<StaticAsset>>,
     compositions: HashMap<String, Arc<Composition>>,
     loco: HashMap<(String, LocoKey), Option<String>>,
+    family_alias: HashMap<String, String>,
 }
 
 fn basename(path: &str) -> String {
@@ -199,7 +200,53 @@ impl ActorLibrary {
             statics: HashMap::new(),
             compositions: HashMap::new(),
             loco: HashMap::new(),
+            family_alias: HashMap::new(),
         })
+    }
+
+    /// Motion family (the actor token of the motion names) of the skeleton whose animated
+    /// nodes carry the prefix `node_family`. Usually the two agree; where they differ in the
+    /// data (`Aligator` nodes, `Alligator` motions; `Keiler` nodes, `Boar` motions) the family
+    /// is found from the node names the family's own clips animate.
+    pub fn motion_family(&mut self, node_family: &str) -> String {
+        let lower = node_family.to_lowercase();
+        if self.catalog.motions(&lower).next().is_some() {
+            return node_family.to_string();
+        }
+        if self.family_alias.is_empty() {
+            let families: Vec<String> = self
+                .catalog
+                .families()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            for family in families {
+                let Some(name) = self
+                    .catalog
+                    .motions(&family)
+                    .next()
+                    .map(|(n, _)| n.to_string())
+                else {
+                    continue;
+                };
+                let Ok(clip) = self.clip(&name) else { continue };
+                let prefix = clip
+                    .nodes
+                    .iter()
+                    .filter(|n| !crate::rig::is_helper(&n.name))
+                    .find_map(|n| n.name.split('_').next().map(str::to_lowercase));
+                if let Some(prefix) = prefix
+                    && prefix != family
+                {
+                    self.family_alias.insert(prefix, family);
+                }
+            }
+            self.family_alias.insert(String::new(), String::new());
+        }
+        self.family_alias
+            .get(&lower)
+            .cloned()
+            .unwrap_or_else(|| node_family.to_string())
     }
 
     /// Names (without extension) of all installed actors passing `filter`, sorted.
@@ -476,7 +523,9 @@ impl ActorLibrary {
         }
         let actor = Actor::parse(&self.animation.read_payload(at)?)
             .map_err(|e| e.context(format!("parsing {path}")))?;
-        let rig = Arc::new(Rig::from_actor(path.trim_end_matches(".xact"), &actor));
+        let mut rig = Rig::from_actor(path.trim_end_matches(".xact"), &actor);
+        rig.family = self.motion_family(&rig.family);
+        let rig = Arc::new(rig);
         // Compact joint table: only nodes that carry weight.
         let mut used = BTreeSet::new();
         for mesh in &actor.meshes {

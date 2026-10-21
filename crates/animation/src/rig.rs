@@ -173,10 +173,30 @@ impl Rig {
                 .iter()
                 .position(|n| n.to_lowercase().ends_with(suffix))
         };
-        let (foot, toe) = (find("left_foot_foot_1")?, find("left_foot_toe_1")?);
-        let d = Vec3::from(model[toe].translation) - Vec3::from(model[foot].translation);
-        let h = Vec3::new(d.x, 0.0, d.z);
-        (h.length() > 1e-3).then(|| h.normalize())
+        let at = |i: usize| Vec3::from(model[i].translation);
+        let horizontal = |d: Vec3| {
+            let h = Vec3::new(d.x, 0.0, d.z);
+            (h.length() > 1e-3).then(|| h.normalize())
+        };
+        // Creatures (quadrupeds, hunched bipeds, flyers): pelvis-side spine to head, when that
+        // vector lies mostly in the horizontal plane. Upright characters fall through to the
+        // foot-to-toe direction.
+        if let (Some(base), Some(head)) = (find("spine_spine_1"), find("head_head_1")) {
+            let d = at(head) - at(base);
+            let h = Vec3::new(d.x, 0.0, d.z);
+            if h.length() > 0.35 * d.length() {
+                return horizontal(d);
+            }
+        }
+        if let (Some(foot), Some(toe)) = (find("left_foot_foot_1"), find("left_foot_toe_1")) {
+            return horizontal(at(toe) - at(foot));
+        }
+        // Headless chains (snakes): along the spine.
+        let base = find("spine_spine_1")?;
+        let tip = (2..=12)
+            .rev()
+            .find_map(|n| find(&format!("spine_spine_{n}")))?;
+        horizontal(at(tip) - at(base))
     }
 
     /// Per-slot weights for an upper-body layer: 1 for everything below `Spine_2` (including
