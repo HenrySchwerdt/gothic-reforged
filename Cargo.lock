@@ -3361,6 +3361,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-video"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gothic-world"
 version = "0.1.0"
 dependencies = [
