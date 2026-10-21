@@ -1,6 +1,6 @@
 # VR mode (PC VR first)
 
-Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06, #46 VR-10, #47 VR-11, #48 VR-12.
+Issues: #8 (epic), #2 VR-01, #3 VR-02, #4 VR-03, #5 VR-04, #6 VR-05, #7 VR-06, #20 VR-09, #46 VR-10, #47 VR-11, #48 VR-12.
 
 Everything here is developed and tested with **synthetic content only** (greybox boxes,
 capsule dummies, procedural weapons). No Gothic 3 assets, data or decompiled code are used.
@@ -17,6 +17,7 @@ local maintainer step; the hooks for it are listed below.
 | `crates/vr-npc` (`gothic-vr-npc`) | VR-05 | active ragdoll (balance, stagger, fall, get-up), combat AI (telegraphs, attack slots, blocking, recoil), Bevy plugin |
 | `crates/vr-interact` (`gothic-vr-interact`) | VR-11 | point / grab / lockpick / drink / spell ring + casting / bow / crouch / dodge / hop mapped onto the core's `Command`s, `CoreApi` + stub core, Bevy plugin |
 | `crates/vr-ui` (`gothic-vr-ui`) | VR-10 | world-space HUD over `gothic-ui`'s page state: wrist vitals, quick-slot wheel, backpack inventory, dialog options beside the NPC, journal book, held map, world-locked subtitles; comfort rules; drawn panels (UI to texture) and a gizmo greybox view |
+| `crates/vr-bridge` (`gothic-vr-bridge`) | VR-09 | adapters to `gothic-physics` / `gothic-runtime`: units, level chunks as avian trimeshes, runtime actors as melee proxies, hits as `Command::Attack`, 30 Hz core ticking beside 90 Hz physics (see `PHYSICS.md`) |
 | `crates/vr-archery` (`gothic-vr-archery`) | VR-06 | quiver/nock/draw/release, ballistic arrows that stick, aim assist, damage hook |
 | `apps/vr-sandbox` (`gothic-vr-sandbox`) | all | greybox level with everything above |
 
@@ -76,7 +77,7 @@ enable it in `docs/vr/OPENXR.md`.
 ## Tests
 
 ```sh
- -p gothic-vr-ui
+cargo test -p gothic-vr -p gothic-vr-physics -p gothic-vr-melee -p gothic-vr-npc -p gothic-vr-archery -p gothic-vr-interact -p gothic-vr-ui -p gothic-vr-bridge
 ```
 
 All tests are headless and deterministic (fixed 90 Hz steps; avian runs inside a
