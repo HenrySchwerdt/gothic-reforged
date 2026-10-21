@@ -218,6 +218,50 @@ the script vocabulary: `event_from_runtime(&Event) -> Option<ScriptEvent>` and
 commands are shown by the presentation layer. Tests and tools drive mods with
 `gothic_mods_script::StubCore`, a headless stand-in for the core.
 
+## In the game (`--play --mods DIR`)
+
+Mods are strictly opt-in: without `--mods DIR` (or `GR_MODS=DIR`; `GR_MODS=1` means `./mods`)
+the game loads exactly the data it loaded before. Glue: `apps/game/src/walk/cloud/mods.rs` and
+`scripts.rs`; one hook each in `play::install` and `walk::run`.
+
+```sh
+cargo run -p gothic-reforged --features viewer -- --play --mods mods/examples
+GR_MODS=1 cargo run -p gothic-reforged --features viewer -- --play
+```
+
+* **Which mods:** the enabled mods of the mod list (`DIR/modlist.toml`, as `modtool enable /
+  disable / move` keep it; mods not in the list count as enabled), in its load order
+  (`gothic_modtool::ModList::active_mods`). A mod folder that cannot be read leaves the game
+  unmodded and says so on stderr.
+* **Data overlays (wired):** applied once at start on top of the quest / dialog database
+  (cooked cache or installation) and the item templates of `.local/items.json`, before the
+  core is created. The report (`mods: N applied ..., CONFLICT ..., ERROR ...`) goes to stderr.
+  If the modded database does not build, the original data is kept.
+* **Script mods (wired):** the mods with a `[script]` section are hosted for the whole
+  session. Every frame, after the fixed core ticks and before the presentation reads the
+  core's events, the scripts get one `on_tick` (`dt` = the frame time, not the core tick) and
+  the mapped core events; `rewrite_line` replaces the text of `LineSpoken` events in place
+  (the dialog box shows it; the voice key is unchanged). `GiveHero` / `GiveNpc` go to the core,
+  `notice` shows a toast. The `world` snapshot has the core's actors and positions (mirrored,
+  origin-relative centimetres, the space the play mode builds its world in), quest states and
+  game hours; `guild` is the actor's enclave.
+
+Not wired / not verified:
+
+* **NPC records** in patches are applied and validated against the templates of
+  `.local/npcs.json`, but nothing in the play mode uses them: the world's characters come from
+  the placed entities and their looks, and the core's template table is empty. A new NPC is not
+  placed in the world.
+* **`spawn_npc`** commands are dropped (one warning per mod): the play mode binds each
+  `ActorSpawned` event to the next body waiting in its roster, so a script-spawned actor would
+  take another character's body. Needs a roster path for actors without a placed entity.
+* **Item UI data:** modded items are in the core's item database but not in the UI's item
+  catalogue (icon, description), which is still read from `.local/items.json`.
+* **Hot reload** (`HotReload`, `ScriptHost::poll_reload`) is not polled in the game.
+* Nothing of this was run against the real game data here (no data in CI); the tests apply the
+  example mods to a synthetic database and drive the script system in a headless Bevy app:
+  `cargo test -p gothic-reforged --features viewer -- cloud`.
+
 ## Mod manager (`apps/modtool`)
 
 `modtool` creates, checks, packages, installs and orders mods (data overlays and script mods).
