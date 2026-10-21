@@ -98,6 +98,7 @@ jobs:
       - run: cargo run -p gothic-vr --example greybox --locked -- --headless
       - run: cargo run -p gothic-vr-sandbox --locked -- --headless
       - run: cargo run -p gothic-vr-interact --example interact_greybox --locked
+      - run: cargo run -p gothic-vr-ui --example hud_greybox --locked -- --headless
 
   # Release build of the game executable; no game data is ever packaged.
   release:

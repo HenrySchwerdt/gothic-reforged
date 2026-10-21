@@ -1,0 +1,17 @@
+[package]
+name = "gothic-vr-ui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "World-space VR HUD (wrist vitals, quick-slot wheel, backpack, dialog, journal, map, subtitles) over gothic-ui's page state"
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "bevy_gizmos"] }
+glam = { version = "0.33", features = ["serde"] }
+serde.workspace = true
+gothic-ui = { path = "../ui" }
+gothic-vr = { path = "../vr" }
+
+[lints]
+workspace = true
