@@ -53,7 +53,7 @@ fn damage_numbers_match_the_formulas() {
                             | Action::PierceAttack
                             | Action::SimpleWhirl,
                         55
-                    ) | (Action::QuickAttack, 27)
+                    ) | (Action::QuickAttack | Action::QuickAttackR | Action::QuickAttackL, 27)
                         | (Action::HackAttack, 110)
                 );
                 assert!(ok, "unexpected hero damage {action:?} {damage}");
@@ -65,7 +65,7 @@ fn damage_numbers_match_the_formulas() {
                         Action::Attack | Action::PierceAttack | Action::PowerAttack,
                         58
                     ) | (Action::HackAttack, 116)
-                        | (Action::QuickAttack, 29)
+                        | (Action::QuickAttack | Action::QuickAttackR | Action::QuickAttackL, 29)
                         | (Action::WhirlAttack | Action::SimpleWhirl, 58)
                 );
                 assert!(ok, "unexpected orc damage {action:?} {damage}");

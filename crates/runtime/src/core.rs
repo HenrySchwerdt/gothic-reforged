@@ -144,6 +144,29 @@ pub enum Command {
         /// Sequence number of the event.
         seq: u32,
     },
+    /// The host plays the clips of an NPC (its body is shown) and reports their moments back.
+    HostDrivesNpc {
+        actor: ActorId,
+        on: bool,
+    },
+    /// The `Hit` clip of an NPC's combat move reached the damage moment (`OnHit`).
+    NpcMoveHit {
+        actor: ActorId,
+        /// Sequence number of the `NpcMove` event.
+        seq: u32,
+    },
+    /// The clip of an NPC's script instruction moved its body (root motion, in cm).
+    NpcNudge {
+        actor: ActorId,
+        dx: f32,
+        dz: f32,
+    },
+    /// An NPC's instruction ended.
+    NpcExecDone {
+        actor: ActorId,
+        /// Sequence number of the event.
+        seq: u32,
+    },
     /// The `Begin` clip of the hero's hold ended: the item changes slots.
     HeroHoldSwap {
         /// Sequence number of the `HeroHold` event.
@@ -844,6 +867,10 @@ impl Core {
             Command::HeroMoveHit { seq } => self.sim.hero_move_hit(*seq),
             Command::HeroExecDone { seq } => self.sim.hero_exec_done(*seq),
             Command::HeroHoldSwap { seq } => self.sim.hero_hold_swap(*seq),
+            Command::HostDrivesNpc { actor, on } => self.sim.set_host_drives_npc(*actor, *on),
+            Command::NpcNudge { actor, dx, dz } => self.sim.nudge_npc(*actor, *dx, *dz),
+            Command::NpcMoveHit { actor, seq } => self.sim.npc_move_hit(*actor, *seq),
+            Command::NpcExecDone { actor, seq } => self.sim.npc_exec_done(*actor, *seq),
             Command::TakeLoot { object, index } => {
                 let taken = self.sim.script.take_loot(EntityId(*object), *index);
                 for (item, n) in taken {

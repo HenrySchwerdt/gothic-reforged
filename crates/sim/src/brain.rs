@@ -52,8 +52,76 @@ pub struct GotoState {
     pub since_ms: u64,
 }
 
+/// One step of the `_AI_*` command an NPC executes (the plan of
+/// `gothic_script::combat::commands::begin_melee_command` and its siblings).
+#[derive(Debug, Clone, PartialEq)]
+pub enum NpcStep {
+    /// `AddStaminaPoints(delta)` between two instructions.
+    Stamina(i32),
+    /// `sAICombatMoveInstr`: a clip of `action` in `phase` at `speed` against `target`.
+    Move {
+        action: gothic_script::enums::Action,
+        phase: gothic_script::host::MovePhase,
+        speed: f32,
+        pose: gothic_script::enums::AniState,
+        target: Option<ActorId>,
+    },
+    /// `sAIWaitInstr(ms)`.
+    Wait(u32),
+    /// The command is over: the pose it leaves (`Parade` keeps the guard up).
+    End { guard: bool },
+}
+
+/// The instruction in flight of an NPC's plan.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum NpcExec {
+    #[default]
+    Idle,
+    /// A timed instruction (`sAIWaitInstr`, headless clips).
+    Wait { until_ms: u64 },
+    /// A combat-move clip: the host reports the damage moment and the end (`Sim::npc_move_hit`,
+    /// `Sim::npc_exec_done`); headless runs use the timers.
+    Move {
+        seq: u32,
+        action: gothic_script::enums::Action,
+        hit_phase: bool,
+        target: Option<ActorId>,
+        /// Headless: when the damage lands (`None` once it did or for clips without a blow).
+        hit_at_ms: Option<u64>,
+        /// Headless: when the instruction ends; the host path uses the deadline only.
+        end_ms: u64,
+        hit_sent: bool,
+    },
+}
+
+/// The `_AI_*` instructions an NPC works through, one after the other.
+#[derive(Debug, Clone, Default)]
+pub struct NpcPlan {
+    pub steps: std::collections::VecDeque<NpcStep>,
+    pub exec: NpcExec,
+    /// Sequence number of the last instruction handed to the host.
+    pub seq: u32,
+    /// Deadline of the instruction in flight (a host that never answers must not freeze it).
+    pub deadline_ms: u64,
+    /// The host plays this actor's clips and reports back.
+    pub host_drives: bool,
+}
+
+impl NpcPlan {
+    /// Nothing queued and nothing running.
+    pub fn is_idle(&self) -> bool {
+        self.steps.is_empty() && self.exec == NpcExec::Idle
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Brain {
+    /// The `_AI_*` instruction plan in flight.
+    pub plan: NpcPlan,
+    /// Headless timers: when the `Raise` clip of the move in flight started.
+    pub last_raise_ms: Option<u64>,
+    /// The melee weapons stowed while the actor holds a bow or a spell (`left`, `right`).
+    pub melee_kit: Option<(Option<crate::item::ItemDef>, Option<crate::item::ItemDef>)>,
     pub task: Task,
     pub since_ms: u64,
     /// Task to return to after a stumble.

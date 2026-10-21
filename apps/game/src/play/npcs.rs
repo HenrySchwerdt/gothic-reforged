@@ -221,7 +221,29 @@ pub fn register(app: &mut App) {
             .chain()
             .after(update_camera),
     );
+    super::npc_moves::register(app);
+    app.add_systems(Update, los_service);
 }
+
+/// Answers the line-of-sight questions the simulation asked (`eCEntity::IsFreeLOS`): a ray from
+/// eye to eye against the level geometry.
+fn los_service(core: Res<CoreRes>, collision: Res<Collision>) {
+    /// Height of the eyes above the feet in cm [I: the captured NPC capsule is 129 + 2 x 35].
+    const EYE: f32 = 150.0;
+    let world = &core.0.sim.world;
+    for (from, to) in world.take_los_queries() {
+        let a = Vec3::new(from.x, from.y + EYE, from.z);
+        let b = Vec3::new(to.x, to.y + EYE, to.z);
+        let d = b - a;
+        let len = d.length();
+        let free = len < 1.0 || collision.0.raycast(a, d / len, len).is_none();
+        world.answer_los(from, to, free);
+    }
+}
+
+/// Turn rate of a character in radians per second: `TurnSpeedMax` 200 degrees
+/// (`gothic_physics::MovementProfile::human_npc`).
+const NPC_TURN_RATE: f32 = 200.0 * std::f32::consts::PI / 180.0;
 
 /// Per-NPC presentation state.
 #[derive(Component)]
@@ -644,7 +666,7 @@ fn spawn_npcs(
 
 /// Core actor state -> entity transform, locomotion input and fall poses.
 #[allow(clippy::too_many_arguments)]
-fn sync_npcs(
+pub(super) fn sync_npcs(
     time: Res<Time>,
     core: Res<CoreRes>,
     collision: Res<Collision>,
@@ -700,7 +722,8 @@ fn sync_npcs(
         m.last_cm = Vec3::new(p.x, m.ground_y, p.z);
         let target = sim_to_bevy_yaw(sim_yaw);
         let delta = angle_delta(m.yaw, target);
-        let step = (7.0 * dt).min(delta.abs()) * delta.signum();
+        // `TurnSpeedMax` of the NPC templates (200 degrees per second).
+        let step = (NPC_TURN_RATE * dt).min(delta.abs()) * delta.signum();
         m.yaw += step;
         // Write only on change so idle characters keep their transform un-flagged (transform
         // propagation, the joint writer and the renderer all skip unchanged entities).
@@ -716,21 +739,35 @@ fn sync_npcs(
             tf.scale = Vec3::splat(CM);
         }
         if let Some(mut input) = input {
-            let stance = if actor.drawn { cs.0 } else { Stance::Unarmed };
+            // The hands decide the stance: a fighter that switched to the bow stands as an
+            // archer (`_AI_SelectWeapon`); the stance of the spawn is the fallback for
+            // characters whose weapons the simulation does not hold as items (natural weapons).
+            let stance = if actor.drawn {
+                match super::hero::stance_of(&actor.equipment) {
+                    Stance::Unarmed => cs.0,
+                    held => held,
+                }
+            } else {
+                Stance::Unarmed
+            };
             let turn_error = if m.velocity.length() < 30.0 {
                 delta - step
             } else {
                 0.0
             };
+            // The guard of `_AI_Parade` stays up as a pose until the next instruction.
+            let parade = actor.ani_state == gothic_sim::types::AniState::Parade;
             if input.velocity != m.velocity
                 || !input.grounded
                 || input.stance != stance
                 || input.turn_error != turn_error
+                || input.parade != parade
             {
                 input.velocity = m.velocity;
                 input.grounded = true;
                 input.stance = stance;
                 input.turn_error = turn_error;
+                input.parade = parade;
             }
         }
     }

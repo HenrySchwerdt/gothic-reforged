@@ -29,6 +29,7 @@ mod melee;
 mod more;
 mod more2;
 mod more3;
+mod npc_ai;
 mod ranged;
 mod scenarios;
 mod world;
@@ -238,7 +239,9 @@ pub fn register(app: &mut App, scenario: &str) {
         );
         std::process::exit(2);
     };
-    let dir = PathBuf::from(format!(".local/qa/{scenario}"));
+    // `GR_QA_DIR` redirects the output (parallel QA runs keep their screenshots apart).
+    let root = std::env::var("GR_QA_DIR").unwrap_or_else(|_| ".local/qa".to_string());
+    let dir = PathBuf::from(format!("{root}/{scenario}"));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     app.insert_resource(Qa {

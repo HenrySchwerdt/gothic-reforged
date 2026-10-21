@@ -16,8 +16,6 @@ use gothic_script::host::{AiCommand, EntityId, GotoKind, NpcApi};
 use gothic_script::routine::state::{Callback, State};
 use gothic_script::routine::work::{Flow, run_state};
 
-/// Speed of the sidestep and backing-off movements in game units per second [I].
-const SIDESTEP_SPEED: f32 = 300.0;
 /// Contact distance at which an approach to an actor stops by itself.
 const CONTACT_DISTANCE: f32 = 110.0;
 /// Distance at which a walk to a point or object counts as arrived.
@@ -269,33 +267,18 @@ impl<W: WorldQuery> Sim<W> {
         }
         match cmd {
             AiCommand::Attack { action, target } => {
-                let Some(m) = from_script_action(action) else {
-                    return;
-                };
-                self.begin_swing(i, actor_id(target), m, now);
+                let tid = actor_id(target);
+                if action == se::Action::FinishingAttack {
+                    self.begin_swing(i, tid, Action::FinishingAttack, now);
+                } else if from_script_action(action).is_some() {
+                    self.npc_begin_melee(i, action, tid);
+                }
             }
             AiCommand::Parade { target } => {
-                self.face(i, actor_id(target));
-                let a = &mut self.actors[i];
-                a.action = Action::Parade;
-                a.brain.parade_until_ms = now + 600;
-                a.brain.busy_until_ms = now + 600;
-                a.brain.last_move = Action::Parade;
+                self.npc_begin_parade(i, actor_id(target));
             }
             AiCommand::JumpBack { target } => {
-                let tid = actor_id(target);
-                let tp = self.pos(tid);
-                let me = self.pos(id);
-                let dir = me.yaw_to(tp);
-                let to = Pos::new(me.x - dir.cos() * 250.0, me.y, me.z - dir.sin() * 250.0);
-                self.world.move_towards(id, to, 250.0);
-                self.face(i, tid);
-                let cost = stamina_cost(&self.cfg, Action::JumpBack);
-                let a = &mut self.actors[i];
-                a.action = Action::JumpBack;
-                a.brain.last_move = Action::JumpBack;
-                a.brain.busy_until_ms = now + 600;
-                a.stamina = (a.stamina - cost).max(0);
+                self.npc_begin_jump_back(i, actor_id(target));
             }
             AiCommand::CombatGoto {
                 target,
@@ -361,8 +344,16 @@ impl<W: WorldQuery> Sim<W> {
                     // (NPC archers are re-supplied), it lands after its flight time.
                     let mut host = crate::script_host::SimHost::new(self);
                     gothic_script::player::ranged::shoot(&mut host, entity(id), target);
+                    // `_AI_Shoot` (S:4a710) ends by preparing the next aim
+                    // (`sAIPrepareAimInstr(1.0)`, S:4a8c5): the raise clip of the weapon.
+                    let crossbow = self.actors[i].equipment.left_use() == crate::item::Use::CrossBow;
+                    let raise = if crossbow {
+                        gothic_projectile::aim::clips::crossbow::RAISE
+                    } else {
+                        gothic_projectile::aim::clips::bow::RAISE
+                    };
                     self.actors[i].action = Action::Shoot;
-                    self.actors[i].brain.busy_until_ms = now + 1500;
+                    self.actors[i].brain.busy_until_ms = now + (raise * 1000.0) as u64;
                 } else {
                     let ammo = if self.actors[i].equipment.left_use() == crate::item::Use::CrossBow
                     {
@@ -398,13 +389,13 @@ impl<W: WorldQuery> Sim<W> {
             AiCommand::UseItem(name) if name.eq_ignore_ascii_case("It_Potion_Health") => {
                 self.drink_potion(i, now);
             }
+            AiCommand::SelectWeapon => self.npc_select_weapon(i),
             AiCommand::Cast { power } => {
-                // The ported cast pipeline: load, (power), cast, reset; the spell data come
-                // from the spell templates.
-                let mut host = crate::script_host::SimHost::new(self);
-                gothic_script::magic::cast::run_cast(&mut host, entity(id), power);
-                self.actors[i].action = Action::Cast;
-                self.actors[i].brain.busy_until_ms = now + 1500;
+                // The ported cast pipeline (`run_cast`, S:38710): the animation plays, the
+                // spell leaves at the damage moment of its `Hit` clip.
+                if let Some(t) = self.actors[i].target {
+                    self.npc_begin_cast(i, power, t);
+                }
             }
             AiCommand::HoldInventoryStacks {
                 right: -1,
@@ -502,10 +493,11 @@ impl<W: WorldQuery> Sim<W> {
         let dist = ((dest.x - me.x).powi(2) + (dest.z - me.z).powi(2)).sqrt();
         match g.kind {
             GotoKind::Approach => {
-                let speed = if g.walk_mode == 1 {
-                    WALK_SPEED
-                } else {
-                    RUN_SPEED
+                // `GetCombatWalkMode` (S:1b060): 1 walk, 2 run, 3 sprint.
+                let speed = match g.walk_mode {
+                    1 => WALK_SPEED,
+                    3 => SPRINT_SPEED,
+                    _ => RUN_SPEED,
                 };
                 if dist <= g.stop {
                     self.actors[i].brain.goto = None;

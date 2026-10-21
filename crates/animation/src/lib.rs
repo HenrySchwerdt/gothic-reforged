@@ -45,7 +45,9 @@ pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
 pub use face::{FaceRig, LipSyncStart};
 pub use library::{ActorLibrary, AssetStores, Composition};
 pub use locomotion::{Locomotion, LocomotionInput, Stance};
-pub use runtime::{ActorSpawner, AnimationStats, AttachSpec, NpcSpec, WeaponSpec};
+pub use runtime::{
+    ActorSpawner, AnimationStats, AttachSpec, MountOverride, NpcSpec, WeaponMount, WeaponSpec,
+};
 pub use stream::{
     ActorBundle, ActorStreamPlugin, ActorStreamer, BuildRequest, BuildSource, PendingActor,
     StreamConfig, StreamFocus, StreamStats,

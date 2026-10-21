@@ -625,13 +625,17 @@ pub fn shaman_duel() -> Sc {
             )
         },
     );
-    sc.check("his mana was spent", |cx| {
-        let m0 = cx.st.n["mana0"];
-        let mn = cx.st.n.get("mana_min").copied().unwrap_or(m0);
+    sc.check("he holds a spell in the hands (NPC mana is fixed, S:35d40)", |cx| {
+        let Some(id) = tgt_id(cx) else {
+            return Err("no shaman".into());
+        };
+        let eq = &cx.core().0.sim.actor(id).equipment;
+        let wm = eq.weapon_mode();
+        let right = eq.right.as_ref().map(|d| d.name.clone());
         expect(
-            mn < m0,
-            format!("mana {m0} -> {mn} (lowest)"),
-            format!("mana {m0}, lowest {mn}"),
+            wm == gothic_sim::item::WeaponMode::Magic,
+            format!("weapon mode {wm:?}, right hand {right:?}"),
+            format!("weapon mode {wm:?}, right hand {right:?}"),
         )
     });
     sc

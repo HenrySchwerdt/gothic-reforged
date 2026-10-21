@@ -523,12 +523,13 @@ fn shot_animations(
                 };
                 if *spell {
                     // The hero's raise already ran; the missile leaves, hit and recover follow.
-                    let steps: &[(&'static str, &'static str)] = if *owner == hero_id {
-                        &[("Cast", "Hit"), ("Cast", "Recover")]
-                    } else {
-                        &[("Cast", "Raise"), ("Cast", "Hit"), ("Cast", "Recover")]
-                    };
-                    super::anim::queue_steps(&mut queue, steps);
+                    // NPC casters play their clips as script instructions (`npc_moves`).
+                    if *owner == hero_id {
+                        super::anim::queue_steps(
+                            &mut queue,
+                            &[("Cast", "Hit"), ("Cast", "Recover")],
+                        );
+                    }
                 } else if *owner == hero_id {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Recover")]);
                 } else {
