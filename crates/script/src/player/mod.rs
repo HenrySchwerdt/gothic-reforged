@@ -69,7 +69,7 @@ mod tests {
     use super::commands;
     use super::evade::Direction;
     use crate::enums::{Action, UseType};
-    use crate::host::{AiCommand, EntityApi, EntityId, NpcApi, StatsApi};
+    use crate::host::{EntityApi, EntityId, NpcApi, StatsApi};
     use crate::routine::state::State;
     use crate::routine::work::Flow;
     use crate::testhost::TestWorld;
