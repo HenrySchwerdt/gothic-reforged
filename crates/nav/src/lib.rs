@@ -12,6 +12,14 @@
 //! Layers (bridges over roads, floors of a house) are handled by growing the mesh from seed
 //! points: each cell takes the ground reachable from its parent, so overlapping layers do not
 //! mix as long as they are seeded from the right side.
+pub mod agent;
+pub mod graph;
+pub mod scene;
+
+pub use agent::{NavAgent, NavEvent, NavOffset, OffsetChoice, StuckAction};
+pub use graph::{AreaId, FindWayError, NavGraph, NavRoute};
+pub use scene::NavScene;
+
 use glam::{Vec2, Vec3};
 use gothic_physics::{CollisionWorld, MovementProfile};
 use std::cmp::Ordering;
@@ -596,26 +604,94 @@ fn time_to_collision(p: Vec2, v: Vec2, r: f32) -> f32 {
 }
 
 /// Shared handle for the game: the mesh is grown on a worker or in a system while the
-/// simulation reads paths.
+/// simulation reads paths. Routes come from the authored navigation graph first (the original
+/// `FindWay` over zones and corridors, [`NavGraph`]); the grid mesh refines legs the zone
+/// shapes do not know about (buildings, props inside a zone) and answers alone where the
+/// graph has no data (point outside every zone, different nets, no graph loaded).
 #[derive(Clone)]
-pub struct SharedNav(pub Arc<RwLock<NavMesh>>);
+pub struct SharedNav(pub Arc<RwLock<NavMesh>>, GraphSlot);
+
+type GraphSlot = Arc<RwLock<Option<Arc<NavGraph>>>>;
 
 impl SharedNav {
     pub fn new(mesh: NavMesh) -> Self {
-        Self(Arc::new(RwLock::new(mesh)))
+        Self(Arc::new(RwLock::new(mesh)), GraphSlot::default())
+    }
+
+    /// Attach (or replace) the authored navigation graph. Positions of the graph must be in
+    /// the host space of the callers' coordinates.
+    pub fn set_graph(&self, graph: Arc<NavGraph>) {
+        if let Ok(mut slot) = self.1.write() {
+            *slot = Some(graph);
+        }
+    }
+
+    pub fn graph(&self) -> Option<Arc<NavGraph>> {
+        self.1.read().ok()?.clone()
+    }
+
+    /// Route from the authored graph only (no grid refinement).
+    pub fn graph_route(&self, from: Vec3, to: Vec3) -> Option<NavRoute> {
+        self.graph()?.find_way(from, to).ok()
     }
 
     pub fn path(&self, from: Vec3, to: Vec3) -> Option<Path> {
+        if let Some(route) = self.graph_route(from, to) {
+            return Some(self.refine(route));
+        }
         self.0.read().ok()?.find_path(from, to)
     }
 
-    pub fn path_length(&self, from: Vec3, to: Vec3) -> Option<f32> {
-        self.path(from, to).map(|p| p.length)
+    /// Replace the legs of a graph route that the grid knows to be blocked by grid paths.
+    fn refine(&self, route: NavRoute) -> Path {
+        let Ok(mesh) = self.0.read() else {
+            return Path {
+                points: route.points,
+                length: route.length,
+            };
+        };
+        let mut pts: Vec<Vec3> = Vec::with_capacity(route.points.len());
+        for (i, &p) in route.points.iter().enumerate() {
+            let Some(&a) = i.checked_sub(1).and_then(|k| route.points.get(k)) else {
+                pts.push(p);
+                continue;
+            };
+            let known = mesh.nearest_cell(a.x, a.z, 2).is_some()
+                && mesh.nearest_cell(p.x, p.z, 2).is_some();
+            if known && !mesh.line_walkable(a, p) {
+                let straight = (p - a).xz_len();
+                if let Some(detour) = mesh.find_path(a, p)
+                    && detour.length < straight * 2.5 + 200.0
+                {
+                    pts.extend(detour.points.into_iter().skip(1));
+                    continue;
+                }
+            }
+            pts.push(p);
+        }
+        let length = pts.windows(2).map(|w| (w[1] - w[0]).xz_len()).sum();
+        Path {
+            points: pts,
+            length,
+        }
     }
 
-    /// Does the mesh know the ground near both points? When not, "no path" means "unknown"
-    /// and callers should fall back to straight movement.
+    pub fn path_length(&self, from: Vec3, to: Vec3) -> Option<f32> {
+        if let Some(route) = self.graph_route(from, to) {
+            return Some(route.length);
+        }
+        self.0.read().ok()?.find_path(from, to).map(|p| p.length)
+    }
+
+    /// Does the navigation know the ground near both points? When not, "no path" means
+    /// "unknown" and callers should fall back to straight movement.
     pub fn covers(&self, a: Vec3, b: Vec3) -> bool {
+        if let Some(g) = self.graph()
+            && g.locate_near(a, 60.0).is_some()
+            && g.locate_near(b, 60.0).is_some()
+        {
+            return true;
+        }
         self.0.read().is_ok_and(|m| {
             m.nearest_cell(a.x, a.z, 4).is_some() && m.nearest_cell(b.x, b.z, 4).is_some()
         })
@@ -787,5 +863,51 @@ mod tests {
         assert!(d.y.abs() > 0.2, "{d:?}");
         // No neighbour: unchanged.
         assert_eq!(avoid(Vec2::ZERO, Vec2::X, 150.0, 35.0, &[], 2.0), Vec2::X);
+    }
+
+    #[test]
+    fn shared_nav_prefers_the_graph_and_refines_blocked_legs_with_the_grid() {
+        use crate::scene::ZoneRecord;
+        // One zone covering the floor; the wall inside it is unknown to the zone shape.
+        let ident = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut scene = NavScene::default();
+        scene.zones.push(ZoneRecord {
+            id: [1; 20],
+            name: "Z".into(),
+            matrix: ident,
+            points: vec![
+                [-2500.0, 0.0, -2500.0],
+                [2500.0, 0.0, -2500.0],
+                [2500.0, 0.0, 2500.0],
+                [-2500.0, 0.0, 2500.0],
+            ],
+            radius: 0.0,
+            ccw: true,
+            top_tolerance: 150.0,
+            bottom_tolerance: 100.0,
+        });
+        let mut w = CollisionWorld::new();
+        w.insert_chunk(1, floor(3000.0));
+        w.insert_chunk(2, wall_x(0.0, -1500.0, 600.0));
+        let shared = SharedNav::new(baked(&w, 2200.0));
+        let (a, b) = (Vec3::new(-500.0, 0.0, 0.0), Vec3::new(500.0, 0.0, 0.0));
+        // Without a graph: the grid detour.
+        let grid = shared.path(a, b).unwrap();
+        assert!(grid.length > 1600.0);
+        shared.set_graph(Arc::new(NavGraph::build(&scene, &|p| p)));
+        // The graph alone says "straight"; the cheap length query uses it.
+        assert!((shared.path_length(a, b).unwrap() - 1000.0).abs() < 1.0);
+        // The full path is refined around the wall.
+        let refined = shared.path(a, b).unwrap();
+        assert!(refined.length > 1600.0, "{}", refined.length);
+        // Outside every zone the grid answers alone and coverage falls back to it.
+        let outside = Vec3::new(-2800.0, 0.0, 0.0);
+        assert!(shared.covers(a, b));
+        assert!(shared.graph_route(a, outside).is_none());
     }
 }

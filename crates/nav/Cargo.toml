@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 glam = "0.33"
 gothic-physics = { path = "../physics" }
+gothic-formats = { path = "../formats" }
+anyhow.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
