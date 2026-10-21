@@ -64,6 +64,10 @@ pub struct Animator {
     /// Top layer first.
     layers: Vec<Layer>,
     pub overlay: Option<Overlay>,
+    /// Pose overlays the host drives by hand (the aim clips: pitch variants blended by the aim
+    /// angle). Their `time` is set by the host and never advanced here; they are applied after
+    /// `overlay`.
+    pub aim: [Option<Overlay>; 2],
     /// Global playback speed multiplier (the entity's local time scale).
     pub speed: f32,
     pub paused: bool,
@@ -111,6 +115,7 @@ impl Animator {
             facing,
             layers: Vec::with_capacity(MAX_LAYERS),
             overlay: None,
+            aim: [None, None],
             speed: 1.0,
             paused: false,
             root_motion_enabled: true,
@@ -382,9 +387,11 @@ impl Animator {
                     .blend_into(&l.motion.clip, t, w, &mut self.pose);
             }
         }
-        if let Some(o) = &self.overlay
-            && o.weight > 1e-3
-        {
+        for o in std::iter::once(&self.overlay).chain(self.aim.iter()) {
+            let Some(o) = o else { continue };
+            if o.weight <= 1e-3 {
+                continue;
+            }
             let t = o.motion.clip.wrap(o.time);
             for ((slot, p), m) in self.pose.iter_mut().enumerate().zip(o.mask.iter()) {
                 let w = o.weight * m;

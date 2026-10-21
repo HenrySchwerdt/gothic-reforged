@@ -7,6 +7,7 @@ pub mod effect;
 pub mod efm;
 pub mod matadmin;
 pub mod params;
+pub mod precip;
 #[cfg(feature = "render")]
 pub mod plugin;
 pub mod rng;

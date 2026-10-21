@@ -37,6 +37,8 @@ pub mod process;
 pub mod retarget;
 pub mod rig;
 pub mod runtime;
+pub mod stream;
+pub mod stream_synthetic;
 pub mod visual;
 
 pub use face::{FaceRig, LipSyncStart};
@@ -44,6 +46,10 @@ pub use animator::{Animator, DEFAULT_FADE, Motion, Overlay};
 pub use library::{ActorLibrary, AssetStores, Composition};
 pub use locomotion::{Locomotion, LocomotionInput, Stance};
 pub use runtime::{ActorSpawner, AnimationStats, AttachSpec, NpcSpec, WeaponSpec};
+pub use stream::{
+    ActorBundle, ActorStreamPlugin, ActorStreamer, BuildRequest, BuildSource, PendingActor,
+    StreamConfig, StreamFocus, StreamStats,
+};
 
 #[derive(Default)]
 pub struct AnimationPlugin;

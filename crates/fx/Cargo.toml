@@ -13,6 +13,7 @@ render = ["bevy/3d_bevy_render"]
 [dependencies]
 bevy = { workspace = true, features = ["std", "bevy_log"] }
 gothic-formats = { path = "../formats" }
+gothic-environment = { path = "../environment" }
 anyhow.workspace = true
 
 [lints]

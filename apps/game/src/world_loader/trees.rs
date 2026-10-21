@@ -146,7 +146,8 @@ pub fn hash_str(s: &str) -> u64 {
     h
 }
 
-fn geom(id: u64, m: &MeshOut, ao: impl Fn([f32; 3]) -> f32) -> GeomData {
+/// Geometry with baked ambient occlusion in rgb and the SpeedTree wind weight `(y / height)^2` in alpha.
+fn geom(id: u64, m: &MeshOut, ao: impl Fn([f32; 3]) -> f32, height: f32) -> GeomData {
     GeomData {
         id,
         positions: m.positions.clone(),
@@ -158,7 +159,8 @@ fn geom(id: u64, m: &MeshOut, ao: impl Fn([f32; 3]) -> f32) -> GeomData {
             .iter()
             .map(|p| {
                 let a = ao(*p);
-                [a, a, a, 1.0]
+                let w = (p[1] / height.max(1.0)).clamp(0.0, 1.0);
+                [a, a, a, w * w]
             })
             .collect(),
         tangents: vec![[1.0, 0.0, 0.0, 1.0]; m.positions.len()],
@@ -222,8 +224,8 @@ pub fn build(spt: &Spt, composite: &TexData, next_id: &mut impl FnMut() -> u64) 
     for v in 0..VARIANTS as u32 {
         let g = spt_gen::generate(spt, v, opt);
         let ao = shade(&g);
-        let bark = (!g.bark.indices.is_empty()).then(|| geom(next_id(), &g.bark, |_| 1.0));
-        let cards = (!g.cards.indices.is_empty()).then(|| geom(next_id(), &g.cards, ao));
+        let bark = (!g.bark.indices.is_empty()).then(|| geom(next_id(), &g.bark, |_| 1.0, size));
+        let cards = (!g.cards.indices.is_empty()).then(|| geom(next_id(), &g.cards, ao, size));
         near.push((bark, cards));
     }
     let far = if let Some(sil) = sil {
@@ -241,8 +243,8 @@ pub fn build(spt: &Spt, composite: &TexData, next_id: &mut impl FnMut() -> u64) 
             },
         );
         let ao = shade(&g);
-        let bark = (!g.bark.indices.is_empty()).then(|| geom(next_id(), &g.bark, |_| 1.0));
-        (bark, geom(next_id(), &g.cards, ao))
+        let bark = (!g.bark.indices.is_empty()).then(|| geom(next_id(), &g.bark, |_| 1.0, size));
+        (bark, geom(next_id(), &g.cards, ao, size))
     };
     let trunk = spt.trunk_capsule_cm().unwrap_or((size * 0.015, size * 0.3));
     Some(Species {

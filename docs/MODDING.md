@@ -217,3 +217,67 @@ the script vocabulary: `event_from_runtime(&Event) -> Option<ScriptEvent>` and
 `command_to_runtime(&ScriptCommand, |template| npc_record) -> Option<Command>`. `Notice`
 commands are shown by the presentation layer. Tests and tools drive mods with
 `gothic_mods_script::StubCore`, a headless stand-in for the core.
+
+## Mod manager (`apps/modtool`)
+
+`modtool` creates, checks, packages, installs and orders mods (data overlays and script mods).
+The mods folder defaults to `./mods`; pass `--mods DIR` to use another one.
+
+```sh
+modtool new mods/my_mod --data --script     # scaffold mod.toml, patches/, scripts/main.rhai
+modtool validate mods/my_mod                # manifests, patches (applied to an empty base), scripts, file types
+modtool keygen my.secret                    # optional: Ed25519 key pair (prints the public key)
+modtool pack mods/my_mod -o my_mod-0.1.0.grmod [--sign my.secret]
+modtool verify my_mod-0.1.0.grmod [--trust PUBLIC-KEY]
+modtool install my_mod-0.1.0.grmod [--force] [--trust PUBLIC-KEY]... [--require-signature]
+modtool list | enable ID | disable ID | move ID POSITION | uninstall ID
+modtool conflicts                           # who overrides whom, in load order
+```
+
+**Validation** parses `mod.toml` (semver version and dependency requirements, id format),
+loads every patch file and applies it to an empty base, and compiles the scripts.
+- Unknown fields, wrong types, renames, duplicate adds and strings in languages the game does
+  not have are reported.
+- Patches of base-game records can only be checked against the real data, so "no such record"
+  is not reported here.
+- Mods may contain only text, script and common media files (`toml ron rhai md txt json srt
+  png jpg dds ogg wav`). Original resource formats are rejected.
+
+**Packages (`.grmod`)** are zip files:
+- the mod's files;
+- `grmod.toml` (format, id, version, and every file with size and SHA-256);
+- optionally `grmod.sig`, an Ed25519 signature over `grmod.toml`, whose public key is in
+  `grmod.toml` (`signer`).
+
+Packing is deterministic: sorted entries and fixed timestamps.
+
+When opening a package, `modtool` refuses:
+- unsafe paths (`..`, absolute, drive letters);
+- unlisted or missing files, and size or hash mismatches;
+- more than 10 000 files, 64 MiB per file or 512 MiB in total.
+
+**Installing**:
+1. Verify the package. With `--trust` or `--require-signature`, it must be signed by a trusted key.
+2. Extract into `mods/.staging-<id>` and validate the extracted copy.
+3. Replace the installed version. Older or equal versions are refused unless `--force`.
+4. Add the mod to the mod list, enabled.
+
+Dependencies that are missing or have the wrong version are reported. The mod stays installed
+but inactive until they are satisfied.
+
+**Mod list (`mods/modlist.toml`)** keeps the user's order and enabled flags. It is the data
+model of the in-game mod menu: `gothic_modtool::ModList::load(dir)`, `entries()` (id, name,
+version, kind, enabled, position, load index, `Active` / `Disabled` / `Problem` with reasons),
+`set_enabled`, `move_to`, `save`.
+
+The **load order** is a topological order of dependencies and `load.after` / `load.before`.
+Among mods that are free to go either way, the user's order decides. `active_mods()` returns
+the loaded mods in that order for `gothic_mods::apply` and the script host.
+
+**Conflicts** are computed statically from the patch files, without game data. Every field,
+whole record (add or delete) or string language written by more than one active mod is
+listed. The later mod wins:
+
+```text
+CONFLICT item It_Herb field value: zzz overrides aaa
+```

@@ -90,6 +90,7 @@ pub struct SrcAnims {
 }
 
 impl SrcAnims {
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     pub fn from_bytes(d: &[u8]) -> Result<Self, String> {
         let mut at = 0usize;
         let mut take = |n: usize| -> Result<&[u8], String> {

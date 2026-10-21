@@ -115,9 +115,6 @@ pub fn split_list(value: &str) -> Vec<&str> {
     parts
 }
 
-
-/// Deserialize an anomaly kind back to a `&'static str` (kinds are a tiny closed set; each
-/// distinct string is leaked once).
 /// Deserialize an anomaly: the kind is a `&'static str` from a tiny closed set; each distinct
 /// string is leaked once.
 impl<'de> serde::Deserialize<'de> for Anomaly {

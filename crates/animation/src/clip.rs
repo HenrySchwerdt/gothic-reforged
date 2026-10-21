@@ -50,6 +50,16 @@ impl<T: Copy> Track<T> {
         self.times.len()
     }
 
+    /// The track with `f` applied to every key value.
+    pub fn map(&self, f: impl Fn(T) -> T) -> Self {
+        Track {
+            times: self.times.clone(),
+            values: self.values.iter().map(|&v| f(v)).collect(),
+            t0: self.t0,
+            dt: self.dt,
+        }
+    }
+
     /// Key values in time order.
     pub fn values(&self) -> &[T] {
         &self.values
@@ -142,7 +152,15 @@ pub struct Clip {
 }
 
 impl Clip {
+    /// Converts an `.xmot` motion; the result is already mirrored into engine space (see
+    /// [`Clip::mirror_x`]). [`Clip::from_motion_source`] keeps the authored convention.
     pub fn from_motion(name: &str, motion: &Motion) -> Self {
+        let mut clip = Self::from_motion_source(name, motion);
+        clip.mirror_x();
+        clip
+    }
+
+    pub fn from_motion_source(name: &str, motion: &Motion) -> Self {
         let nodes: Vec<ClipNode> = motion
             .nodes
             .iter()
@@ -196,6 +214,17 @@ impl Clip {
             implied_dir: Vec3::ZERO,
             implied_turn: 0.0,
             by_name,
+        }
+    }
+
+    /// Mirrors the clip across the YZ plane (x -> -x): every key is conjugated with the
+    /// reflection, see [`Trs::mirror_x`]. Gothic 3 data is left-handed; the game mirrors X when it
+    /// converts the world to Bevy, so skeletons, meshes and clips are mirrored the same way.
+    pub fn mirror_x(&mut self) {
+        for n in &mut self.nodes {
+            n.rest = n.rest.mirror_x();
+            n.pos = n.pos.map(|v| Vec3::new(-v.x, v.y, v.z));
+            n.rot = n.rot.map(crate::pose::mirror_quat_x);
         }
     }
 

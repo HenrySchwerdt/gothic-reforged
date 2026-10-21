@@ -1,0 +1,53 @@
+name: fuzz
+
+# Parser fuzzing (crates/formats/fuzz, libFuzzer via cargo-fuzz). Short mode (60 s per target)
+# on PRs touching the parsers; 10 minutes per target nightly or on demand.
+on:
+  pull_request:
+    paths:
+      - "crates/formats/**"
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        default: "600"
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [pak, genome, ximg, xcmsh, xlmsh, xact, xmot, xnvmsh, xshmat, xlmp,
+                 template_summary, template_document, world_node, world_props, vegetation,
+                 spt, igl, theme, stringtable, quest, info, gdini, remaster_mesh, dds,
+                 propstream, emfx]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/formats/fuzz -> target
+          shared-key: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: Seed corpus
+        run: cargo run -q -p gothic-formats --example fuzz_seeds -- crates/formats/fuzz/corpus
+      - name: Fuzz
+        working-directory: crates/formats/fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
+        run: >
+          cargo fuzz run -O ${{ matrix.target }} corpus/${{ matrix.target }} --
+          -max_total_time=$SECONDS_PER_TARGET -dict=dict.txt
+          -rss_limit_mb=2048 -malloc_limit_mb=512 -timeout=10
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: crates/formats/fuzz/artifacts/${{ matrix.target }}

@@ -61,3 +61,11 @@ Rust dependencies retain their respective licenses. No original Gothic 3 data is
 New crates.io dependencies, all under permissive licences (MIT and/or Apache-2.0); no copyleft code is linked: `toml`, `ron`, `semver` (`crates/mods`), `rhai` and its transitive crates (`crates/mods-script`), `naga` (dev-dependency of `crates/env-synth`). Their licence texts ship with the crates and can be listed with `cargo license` / `cargo about`.
 
 `ffmpeg` / `ffprobe` (`crates/video`) are **not linked or bundled**: they run as separate processes and are located at runtime (`GOTHIC_FFMPEG`, next to the executable, or `PATH`). If a release package ships ffmpeg binaries, it must include that build's own licence text and source offer (prefer an LGPL build; GPL builds additionally require offering the corresponding source of ffmpeg itself, not of this project). See `docs/VIDEO.md`.
+
+# Added crate dependencies (integrate/cloud-2)
+
+Pulled in via Cargo, not vendored; listed here for licence tracking. Full licence texts ship with each crate.
+
+- `apps/modtool`: `toml` (MIT OR Apache-2.0), `semver` (MIT OR Apache-2.0), `zip` (MIT), `ed25519-dalek` (BSD-3-Clause), `getrandom` (MIT OR Apache-2.0).
+- `crates/formats` (dev-dependency only): `proptest` (MIT OR Apache-2.0).
+- `crates/formats/fuzz` (separate nightly workspace, not part of the default build): `libfuzzer-sys` (MIT OR Apache-2.0 OR NCSA).

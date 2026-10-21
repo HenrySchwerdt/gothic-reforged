@@ -55,6 +55,26 @@ pub fn nlerp(a: Quat, b: Quat, w: f32) -> Quat {
     }
 }
 
+/// Reflection across the YZ plane (x -> -x) applied to a quaternion: the rotation `R` becomes
+/// `M R M` with `M = diag(-1, 1, 1)`, i.e. (x, y, z, w) -> (x, -y, -z, w).
+#[inline]
+pub fn mirror_quat_x(q: Quat) -> Quat {
+    Quat::from_xyzw(q.x, -q.y, -q.z, q.w)
+}
+
+impl Trs {
+    /// Conjugates the transform with the X reflection (`M T M`). Applied to every local
+    /// transform of a skeleton hierarchy it mirrors the whole character across the YZ plane.
+    #[inline]
+    pub fn mirror_x(self) -> Trs {
+        Trs {
+            t: Vec3::new(-self.t.x, self.t.y, self.t.z),
+            r: mirror_quat_x(self.r),
+            s: self.s,
+        }
+    }
+}
+
 /// Sanitised quaternion from file components (x, y, z, w).
 pub fn quat_from_file(q: [f32; 4]) -> Quat {
     let q = Quat::from_xyzw(q[0], q[1], q[2], q[3]);
@@ -106,6 +126,24 @@ mod tests {
         assert_eq!(a.blend(b, 0.0).t, a.t);
         assert!((a.blend(b, 1.0).t - b.t).length() < 1e-6);
         assert!(a.blend(b, 1.0).r.dot(b.r).abs() > 0.9999);
+    }
+
+    #[test]
+    fn mirror_is_conjugation() {
+        let m = Affine3A::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+        let a = Trs {
+            t: Vec3::new(1.0, 2.0, 3.0),
+            r: Quat::from_euler(bevy::math::EulerRot::XYZ, 0.3, -0.7, 1.1),
+            s: Vec3::ONE,
+        };
+        let want = m * a.affine() * m;
+        let got = a.mirror_x().affine();
+        assert!(want.abs_diff_eq(got, 1e-5), "{want:?} vs {got:?}");
+        // Mirroring twice is the identity and a chain composes under the reflection.
+        assert!(a.mirror_x().mirror_x().r.dot(a.r).abs() > 0.99999);
+        let chain = a.affine() * a.affine();
+        let mchain = a.mirror_x().affine() * a.mirror_x().affine();
+        assert!((m * chain * m).abs_diff_eq(mchain, 1e-4));
     }
 
     #[test]
