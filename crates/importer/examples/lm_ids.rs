@@ -23,17 +23,28 @@ fn main() {
             println!("{} {}", id, r.resource);
             shown += 1;
         }
-        let bytes: Vec<u8> = (0..20).map(|i| u8::from_str_radix(&id[i * 2..i * 2 + 2], 16).unwrap()).collect();
+        let bytes: Vec<u8> = (0..20)
+            .map(|i| u8::from_str_radix(&id[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
         for off in [0usize, 4] {
             let g = &bytes[off..off + 16];
             let be: String = g.iter().map(|b| format!("{b:02x}")).collect();
             let mut m = g.to_vec();
-            m[0..4].reverse(); m[4..6].reverse(); m[6..8].reverse();
+            m[0..4].reverse();
+            m[4..6].reverse();
+            m[6..8].reverse();
             let ms: String = m.iter().map(|b| format!("{b:02x}")).collect();
-            if guids.contains(&be) { n[1 + off / 4 * 2] += 1; }
-            if guids.contains(&ms) { n[2 + off / 4 * 2] += 1; }
+            if guids.contains(&be) {
+                n[1 + off / 4 * 2] += 1;
+            }
+            if guids.contains(&ms) {
+                n[2 + off / 4 * 2] += 1;
+            }
         }
         let _ = &mut hit;
     }
-    println!("records {} be0 {} ms0 {} be4 {} ms4 {}", n[0], n[1], n[2], n[3], n[4]);
+    println!(
+        "records {} be0 {} ms0 {} be4 {} ms4 {}",
+        n[0], n[1], n[2], n[3], n[4]
+    );
 }

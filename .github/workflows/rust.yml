@@ -15,9 +15,6 @@ env:
 
 jobs:
   fmt:
-    # Informational until the workspace is rustfmt-clean (the CI-01 PR's formatting churn was
-    # intentionally not merged to avoid conflicts with in-flight work).
-    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
