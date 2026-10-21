@@ -229,6 +229,10 @@ pub fn p4_swim() -> Sc {
                 }
             }
             if m == MovementMode::Swimming {
+                let p = cx.player().ctrl.position;
+                cx.st.n.insert("swim_x".into(), f64::from(p.x));
+                cx.st.n.insert("swim_y".into(), f64::from(p.y));
+                cx.st.n.insert("swim_z".into(), f64::from(p.z));
                 return Poll::Done;
             }
             if (cx.t as u32).is_multiple_of(10) && cx.t.fract() < 0.03 {
@@ -343,6 +347,13 @@ pub fn p4_swim() -> Sc {
         Poll::Wait
     });
     sc.wait(0.5);
+    sc.check("wading clips (Hero_Wade) played in shallow water", |cx| {
+        expect(
+            cx.st.n.contains_key("wade_clip"),
+            "Hero_Wade clip while wading",
+            "never saw a Hero_Wade clip",
+        )
+    });
     sc.check(
         "left the water: PS_Swim ended, the ani state is back to stand",
         |cx| {
@@ -355,5 +366,94 @@ pub fn p4_swim() -> Sc {
             )
         },
     );
+    // Falling into deep water: no damage, `ZS_DiveIn`, swim pose; a very long fall teaches
+    // Perk_Acrobatic (OnMovementModeChanged: S:adbf0, 7.45 s at S:0x10107658).
+    for (tag, h, secs_min) in [("dive", 1500.0f32, 0.0f32), ("long", 11500.0, 7.45)] {
+        let t1 = tag.to_string();
+        sc.act(
+            format!("drop into the sea from {h} cm ({tag})"),
+            move |cx| {
+                let (x, y, z) = (
+                    cx.st.n["swim_x"] as f32,
+                    cx.st.n["swim_y"] as f32,
+                    cx.st.n["swim_z"] as f32,
+                );
+                let hero = cx.core().0.hero;
+                let max = {
+                    let c = cx.core();
+                    c.0.sim.actor(hero).hp_max(&c.0.sim.cfg)
+                };
+                cx.core_mut().0.sim.actors[hero.0 as usize].hp = max;
+                cx.st.n.insert(format!("{t1}_dive_clip"), 0.0);
+                let mut p = cx.world.resource_mut::<crate::walk::Player>();
+                p.ctrl.last_landing = None;
+                p.ctrl.teleport(Vec3::new(x, y + h, z));
+            },
+        );
+        let t2 = tag.to_string();
+        sc.step(format!("until swimming again ({tag})"), move |cx| {
+            let (name, kind) = hero_clip(cx);
+            if name.contains("Hero_Swim")
+                && name.contains("Fall_Hit")
+                && kind == Some(MoveKind::DiveIn)
+            {
+                cx.st.n.insert(format!("{t2}_dive_clip"), 1.0);
+            }
+            if mode(cx) == MovementMode::Swimming && cx.t > 1.0 {
+                if cx.st.n[&format!("{t2}_dive_clip")] < 1.0 && cx.t < 20.0 {
+                    return Poll::Wait;
+                }
+                return Poll::Done;
+            }
+            if cx.t > 40.0 {
+                return Poll::Fail(format!(
+                    "never swam: {:?} {:?}",
+                    mode(cx),
+                    cx.player().ctrl.position
+                ));
+            }
+            Poll::Wait
+        });
+        sc.wait(0.5);
+        let t3 = tag.to_string();
+        sc.check(
+            format!("{tag}: falling into deep water costs no hit points"),
+            move |cx| {
+                let hero = cx.core().0.hero;
+                let max = {
+                    let c = cx.core();
+                    c.0.sim.actor(hero).hp_max(&c.0.sim.cfg)
+                };
+                let _ = &t3;
+                expect(
+                    cx.hero_hp() == max,
+                    format!("hp {}/{max}", cx.hero_hp()),
+                    format!("hp {}/{max}", cx.hero_hp()),
+                )
+            },
+        );
+        let t4 = tag.to_string();
+        sc.check(
+            format!("{tag}: the dive-in clip (Swim pose Fall_Hit) played"),
+            move |cx| {
+                expect(
+                    cx.st.n[&format!("{t4}_dive_clip")] > 0.5,
+                    "ZS_DiveIn clip",
+                    "no Hero_Swim Fall_Hit clip",
+                )
+            },
+        );
+        if secs_min > 0.0 {
+            sc.check(
+                "a fall of more than 7.45 s into water teaches Perk_Acrobatic",
+                |cx| {
+                    let hero = cx.core().0.hero;
+                    let has = cx.core().0.sim.actor(hero).has_perk("perk_acrobatic");
+                    expect(has, "Perk_Acrobatic learned", "perk not learned")
+                },
+            );
+        }
+        sc.shot(&format!("{tag}_in_water"));
+    }
     sc
 }
