@@ -425,9 +425,10 @@ fn shoot_prepare(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
     host.set_current_action(npc, Action::Shoot);
     host.set_look_at(npc, target);
     let count = (host.random(10) + 10) as u32;
-    host.assure_items(npc, "It_Arrow", 0, count);
+    // The templates are `Arrow` and `Bolt` (ZS_Attack_Shoot, S:18ed0).
+    host.assure_items(npc, "Arrow", 0, count);
     if host.slot_use_type(npc, crate::enums::Slot::LeftHand) == UseType::CrossBow {
-        host.assure_items(npc, "It_Bolt", 0, count);
+        host.assure_items(npc, "Bolt", 0, count);
     }
     queue(host, npc, AiCommand::WaitMs { ms: 1000 })
 }

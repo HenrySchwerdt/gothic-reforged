@@ -24,6 +24,7 @@ mod interact;
 mod kit;
 mod layers;
 pub(crate) mod nav;
+mod npc_bows;
 mod npc_moves;
 mod npcs;
 mod objects;

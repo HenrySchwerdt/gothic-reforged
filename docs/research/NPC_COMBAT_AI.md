@@ -76,6 +76,14 @@ something the original does not do and was replaced.
 * Strike reach of an NPC: `GetAttackRange` (S:4e940) without the +50 slack the hero keeps.
 * Bow: after `_AI_Shoot` the actor is busy for the raise clip of the weapon (`sAIPrepareAimInstr(1.0)`,
   S:4a8c5) instead of 1.5 s.
+* Ammunition templates are `Arrow` and `Bolt` (`ZS_Attack_Shoot` S:18ed0 `AssureItems`; the port had `It_Arrow`
+  / `It_Bolt`, which exist nowhere in the data: NPC archers could never shoot).
+* Clip lookup (`npc_moves::npc_move_clip`): the primary-pose token `Pn` of the clip name follows the clip the
+  last move ended in (`GetPrimaryPoseExt`; the script's `primary_pose` is `n + 1`), which alternates the hand
+  of the quick attack. The animation data has no `HackAttack` and no `SimpleWhirl` clips: the source file of
+  `_AI_SimpleWhirl` is `AI_TwirlAttack.cpp`, the two-hander's guard-pose swing is filed as `WhirlAttack`, the
+  dual-wielder's `Stand` swing as `WhirlAttack` (`Hit`, `Recover`); until the engine's action -> clip table is
+  recovered `HackAttack` plays the `WhirlAttack` clips and `SimpleWhirl` tries `WhirlAttack`, `TwirlAttack` [I].
 * Projectile interpolation uses the core's 33 ms step (`shots.rs`, WIRING_GLUE_SCAN D6).
 * Line of sight (G6): `PlayWorld::line_of_sight` asks the collision world (eye to eye, 150 cm [I]) one
   frame later (`los_service`); until answered a line is free. Perception outdoors keeps the "no check in
@@ -112,4 +120,7 @@ something the original does not do and was replaced.
 | `npc_vs_npc` | a raider and a human fight each other: both lose hp, both play attack clips |
 | `shaman_duel` | (existing) the shaman casts at an attacker |
 
-Results of the last run are in the commit message trail and `.local/qa/p2/*/result.txt` (gitignored).
+Last results (release build of the branch, `.local/qa/p2/*.log`, gitignored): `npc_orc1`, `npc_orc2`: clips and
+speeds PASS, damage within 0.07 s of 0.6 x clip / speed (22 hero hits checked), at most two engaged PASS;
+`npc_shaman` PASS (casts 2 -> 35, spell missile on screen for 95 frames); `npc_vs_npc` PASS; `shaman_duel` PASS
+(before: casts 0). `npc_archer` needed the `Arrow` / `Bolt` fix above.

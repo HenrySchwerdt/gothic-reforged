@@ -628,9 +628,9 @@ impl<W: WorldQuery> Sim<W> {
             return self.npc_ready_melee(i);
         };
         let ammo = if bow.use_kind() == Use::CrossBow {
-            "It_Bolt"
+            "Bolt"
         } else {
-            "It_Arrow"
+            "Arrow"
         };
         let ammo_def = self.items.get(ammo).cloned();
         let a = &mut self.actors[i];

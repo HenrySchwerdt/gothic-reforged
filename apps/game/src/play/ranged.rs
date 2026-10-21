@@ -564,7 +564,7 @@ pub struct BowVisual {
 }
 
 /// Candidate actor names of an item template (`It_Bow_Hunting` -> `Bow_Hunting_01`).
-fn actor_candidates(template: &str) -> Vec<String> {
+pub(super) fn actor_candidates(template: &str) -> Vec<String> {
     let rest = template.strip_prefix("It_").unwrap_or(template);
     vec![
         format!("{rest}_01"),

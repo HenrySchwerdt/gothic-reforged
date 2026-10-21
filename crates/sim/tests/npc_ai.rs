@@ -95,7 +95,7 @@ fn an_archer_draws_the_bow_at_range_and_the_sword_up_close() {
     let sword = sim.items.get("It_1H_Sword_01").cloned().unwrap();
     a.equipment.equip(sword);
     a.inventory.insert("It_Bow_Test", 1);
-    a.inventory.insert("It_Arrow", 20);
+    a.inventory.insert("Arrow", 20);
     let id = sim.spawn(a, Pos::flat(1600.0, 0.0));
     sim.world.set_facing(id, std::f32::consts::PI);
     {

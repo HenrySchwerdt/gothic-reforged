@@ -365,9 +365,9 @@ impl<W: WorldQuery> Sim<W> {
                 } else {
                     let ammo = if self.actors[i].equipment.left_use() == crate::item::Use::CrossBow
                     {
-                        "It_Bolt"
+                        "Bolt"
                     } else {
-                        "It_Arrow"
+                        "Arrow"
                     };
                     if self.shoot(id, tid, 2.0, ammo).is_none() {
                         self.actors[i].brain.busy_until_ms = now + 1500;
