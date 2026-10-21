@@ -185,3 +185,72 @@ and clip names of the aim, to be set from the capture of the original (`.local/r
   `trace` feature here.
 * YouTube reference: `yt-dlp` is not installed and was not installed; the only original reference is
   the user's screenshot (`.local/ref/orig-bow-aim-user.png`), compared in `.local/qa/compare_ranged_still.png`.
+
+## P3 open world, night of 2026-10-21/22
+
+Run: `GR_QA_DIR=.local/qa/p3 GR_NOVSYNC=1 gothic-reforged --play --qa <scenario>` (outputs under the gitignored
+`.local/qa/p3/`). New scenarios: `world_census`, `world_routines`, `world_chest`; `walk_to_reddock` now follows the
+original route.
+
+What changed and why (every range / rule has its source):
+
+* **Whole-world interact objects, items, routine points.** `.local/objects_world.json`
+  (`gothic-inspector object-dump --cx 0 --cz 0 --radius 9000000`, 28 776 interactive entities, 23 134 after layer
+  filtering) replaces the Ardea-only export. Layers: the same rule as the characters, the `Enabled` flag of the
+  layer root and entities stored disabled (`gCSector::DoLoadData` 0x10193c40 / `gCSector::OnEnable`); a
+  `SetSectorStatus` switch updates them (`Event::SectorSwitched`). Effect: the work / relax / sleep points
+  (`gCNavigation_PS` ids) of the characters of every town now resolve (they were Ardea-only), chests, loose items
+  and teleporter stones outside Ardea exist; loose item visuals are shown within 30 m and dropped beyond 45 m.
+* **Focus scan** only collects entities inside the mode's largest scan range (`gCFocus_PS::GetCurrentMaxRange`
+  Game:0x1006c1d0, `CollectInteractionEntities`); needed with 23 k objects and every character the hero ever met.
+* **Navigation graph** (`gCNavZone_PS` / `gCNavPath_PS`, `gCNavigationMap::FindWay`) is built from every world
+  document in the background (2 418 zones, 3 041 corridors, 4.2 s on a worker thread) instead of only Ardea's.
+  `FindWay` Ardea -> Reddock: 12 points, 182 m, the hero follows it (with grid steering) in `walk_to_reddock`.
+* **Processing range / residency** unchanged and verified: characters are shown inside the 4000 box around the hero
+  (`eCEntityAdmin::Process` 0x10230a70, `Entity.ROI` 4000 + 250 hysteresis) and their layer is enabled.
+* **Actor prefetch** (`ActorLibrary::start_prefetch`): a worker thread with its own archive handles parses the
+  actors and decodes the textures of the nearest queued characters; the spawn on the main thread takes them.
+  Before: a cold character cost 540 ms main-thread work per 72 bodies (actor parse 218 ms, texture decode 458 ms),
+  worst single body 77-86 ms. After: worst body 10-19 ms, average 0.8-1.8 ms.
+
+Population (`world_census`, 9 places, hero placed at the densest group, all layers at the new-game state):
+
+| Place | in data (box 4000) | shown | appearance failed |
+| --- | ---: | ---: | ---: |
+| Ardea | 57 | 57 | 0 |
+| Reddock | 21 | 21 | 0 |
+| Faring | 59 | 59 | 0 |
+| Kap Dun | 42 | 42 | 0 |
+| Gotha | 23 | 23 | 0 |
+| Montera | 55 | 55 | 0 |
+| Geldern | 44 | 44 | 0 |
+| Silden | 38 | 38 | 0 |
+| Trelis | 45 | 45 | 0 |
+
+World: 10 253 characters in 68 layers, 9 692 in layers enabled at the new game (the rest belong to
+`*_NPC_02` post-story layers and other switched-off sectors).
+
+Frame times (1280x720, unthrottled, release without LTO, other applications running):
+
+| Run | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| walk Ardea -> Reddock (4 012 frames) | 14 ms | 23 ms | 29 ms |
+| idle in Ardea (512 frames, includes the first body builds) | 21-28 ms | 41 ms | 64-81 ms |
+| teleport hops through 9 towns (tiles of 700 m jumps load at once) | 17 ms | 62 ms | 142 ms |
+
+| Scenario | Result |
+| --- | --- |
+| walk_to_reddock | PASS (reached 2 m from the market; earlier blind straight-line walks were wedged in trees / boulders on the slopes, the QA walk now notes wedging and sets the hero 4 m on) |
+| world_routines | PASS: Reddock characters move when the clock is set to noon, 23:00 and 07:00 (0 / 11 / 9 of 21 moved more than 1 m) |
+| world_chest | PASS: chest outside Ardea opens (4 loot lines) |
+| sector_switch, teleport, triggers | PASS (unchanged) |
+
+Known gaps (not fixed here, not guessed):
+* Hero wedging: before the QA recovery, 3 of 5 foot walks ended wedged in tree / boulder collision (movement code,
+  `walk.rs` / P4).
+* Routine catch-up: characters outside the processing range do not think (`Sim::is_processed`); the original rule
+  for the position of a character that re-enters the range was not found in the decompile, so none was invented.
+* Environment time of day does not follow the simulation clock (night looks like noon in `world_routines`).
+* Teleport hops of 700 m load all tiles of the target at once (p99 142 ms); walking does not.
+* Doors: the world has 6 `gCDoor_PS` / `gCMover_PS` entities; the mover state machine is still untested.
+* `gCTouchDamage_PS` `OnTouchDamage` is not ported (698 loose weapons).
