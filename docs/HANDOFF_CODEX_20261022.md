@@ -44,6 +44,27 @@ ignored `.local/physics-raycast-oracle-proposal.rs` (not built/run or added to c
 It enumerates fixture triangles independently, preserving sorted tie normals, inclusive
 max, boundaries/corners, large triangles and remove/reinsert. Review/run before any DDA.
 
+CURRENT22:56UTC: conservative traversal committed60d0812; optimized physics57/57PASS.
+Final log `.local/physics-raycast-dda-tests.log`; two early failed attempts retained under
+`.local/physics-raycast-dda-tests-{initial-compile-error,first-run-failure}.log`.
+GNU viewer build running ONE exec53589, `.local/pc-raycast-dda-build.log`.
+wind_clock owns polling that same job and ALL subsequent game runs, no duplicate builds:
+create immutable raycast-dda EXE, sameEXE Camera A/B -CompareRaycastTraversal,
+then unforced normal magic/bow/melee QA. Root must inspect results before packaging.
+No Desktop delivery or measured performance gain yet. Source/model review finds no
+concrete miss; pathological rays retain legacy expensive rectangular fallback.
+## Active continuation 2026-10-22 22:50 UTC
+
+Physics oracle promoted and committed `f65fccb`: GNU optimized physics unit suite53PASS,
+including6 independent brute-force broadphase oracle cases. Log
+`.local/physics-raycast-oracle-baseline.log`. Production behavior unchanged by that commit.
+Active cheap agents: wind_stability implements conservative full-ray DDA candidate-cell
+selection in physics (no early-out; preserve sorted tie/normal semantics and legacy path);
+water_renderer reviews numeric edge cases read-only; wind_clock prepares same-EXE
+`-CompareRaycastTraversal` benchmark control. No game build or benchmark started yet.
+Next: review candidate+oracle tests, finish one optimized game build, then run same-quality
+legacy/candidate measurement with forced diagnostic picking, and normal combat QA.
+Do not infer a speedup from unit tests; Desktop packages remain unchanged.
 ## Completed bounded atlas diagnosis, 2026-10-22 19:28 UTC
 
 Current source `cd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7` adds an OFF-by-default
