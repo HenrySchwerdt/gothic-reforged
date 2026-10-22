@@ -175,6 +175,14 @@ pub struct Perf {
     started: Instant,
 }
 
+impl Perf {
+    /// Whether a finite benchmark exists, and whether it has moved past warm-up.
+    /// The false phase also covers world loading/readiness before warm-up completes.
+    pub(crate) fn benchmark_measurement_phase(&self) -> Option<bool> {
+        self.bench.as_ref().map(|bench| bench.measuring)
+    }
+}
+
 struct Bench {
     seconds: f32,
     warmup: f32,

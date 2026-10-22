@@ -17,7 +17,8 @@ param(
     [ValidatePattern('^[1-9][0-9]*x[1-9][0-9]*$')]
     [string] $Resolution = '1280x720',
     [switch] $Walk,
-    [switch] $Camera
+    [switch] $Camera,
+    [switch] $CompareIdleAimPick
 )
 
 $ErrorActionPreference = 'Stop'
@@ -144,6 +145,8 @@ $runRows = [System.Collections.Generic.List[object]]::new()
 $runIndex = 0
 $oldResolution = [Environment]::GetEnvironmentVariable('GR_RES', 'Process')
 $hadResolution = $null -ne $oldResolution
+$oldAimAlwaysPick = [Environment]::GetEnvironmentVariable('GR_AIM_ALWAYS_PICK', 'Process')
+$hadAimAlwaysPick = $null -ne $oldAimAlwaysPick
 
 try {
     $env:GR_RES = $Resolution
@@ -151,6 +154,10 @@ try {
         foreach ($variant in @('baseline', 'candidate')) {
             Assert-NoBuildOrGameProcess
             $runIndex++
+            if ($CompareIdleAimPick) {
+                if ($variant -eq 'baseline') { $env:GR_AIM_ALWAYS_PICK = '1' }
+                else { Remove-Item Env:\GR_AIM_ALWAYS_PICK -ErrorAction SilentlyContinue }
+            }
             $exe = if ($variant -eq 'baseline') { $baseline } else { $candidate }
             $runName = 'bench-{0:D2}-{1}-{2}' -f $runIndex, $variant, ([guid]::NewGuid().ToString('N').Substring(0, 8))
             $stdoutPath = Join-Path $outputFull "$runName.stdout.log"
@@ -203,6 +210,7 @@ try {
                 json = (Split-Path -Leaf $jsonDestination)
                 stdoutLog = (Split-Path -Leaf $stdoutPath)
                 stderrLog = (Split-Path -Leaf $stderrPath)
+                grAimAlwaysPick = [Environment]::GetEnvironmentVariable('GR_AIM_ALWAYS_PICK', 'Process')
                 rendererLogReviewRequired = ($rendererDiagnostics.Review.Count -gt 0)
                 rendererLogReviewFindings = @($rendererDiagnostics.Review)
                 startedUtc = $startedAt.ToString('o')
@@ -219,6 +227,8 @@ try {
 finally {
     if ($hadResolution) { [Environment]::SetEnvironmentVariable('GR_RES', $oldResolution, 'Process') }
     else { [Environment]::SetEnvironmentVariable('GR_RES', $null, 'Process') }
+    if ($hadAimAlwaysPick) { [Environment]::SetEnvironmentVariable('GR_AIM_ALWAYS_PICK', $oldAimAlwaysPick, 'Process') }
+    else { [Environment]::SetEnvironmentVariable('GR_AIM_ALWAYS_PICK', $null, 'Process') }
 }
 
 $baselineRuns = @($runRows | Where-Object variant -eq 'baseline')
@@ -250,10 +260,11 @@ $summary = [ordered]@{
     repetitionsPerVariant = $Repetitions
     walk = [bool]$Walk
     camera = [bool]$Camera
+    compareIdleAimPick = [bool]$CompareIdleAimPick
     runtimeRoot = $runtime
     executableSha256 = [ordered]@{ baseline = $baselineHash; candidate = $candidateHash }
     inheritedGrEnvironment = $inheritedGrEnvironment
-    environmentNote = 'GR_RES wurde für beide Varianten auf Resolution gesetzt; alle anderen GR_* Prozessvariablen wurden geerbt und hier dokumentiert.'
+    environmentNote = if ($CompareIdleAimPick) { 'GR_RES wurde für beide Varianten auf Resolution gesetzt. GR_AIM_ALWAYS_PICK wurde im Baseline-Lauf gesetzt und im Candidate-Lauf entfernt; alle übrigen GR_* Prozessvariablen wurden geerbt und dokumentiert.' } else { 'GR_RES wurde für beide Varianten auf Resolution gesetzt; alle anderen GR_* Prozessvariablen wurden geerbt und hier dokumentiert.' }
     order = 'baseline, candidate repeated; runs interleaved A/B/A/B.'
     requiresManualRendererLogReview = [bool]@($runRows | Where-Object { $_.rendererLogReviewRequired }).Count
     baseline = Get-GroupSummary $baselineRuns

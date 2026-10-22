@@ -65,6 +65,138 @@ const FADE_SECS: f32 = 0.2;
 const CROSS_MIN: f32 = 8.0;
 const CROSS_MAX: f32 = 32.0;
 
+fn should_pick(in_aim: bool, reloading: bool, fade_active: bool, legacy_always_pick: bool) -> bool {
+    in_aim || reloading || fade_active || legacy_always_pick
+}
+
+#[derive(Default)]
+struct AimPickPhaseProfile {
+    frames: u64,
+    in_aim_frames: u64,
+    reload_frames: u64,
+    fade_frames: u64,
+    pick_calls: u64,
+    idle_picks_forced: u64,
+    idle_picks_skipped: u64,
+    pick_elapsed: std::time::Duration,
+}
+
+#[derive(Default)]
+struct AimPickProfile {
+    initialized: bool,
+    enabled: bool,
+    legacy_always_pick: bool,
+    pre_measure: AimPickPhaseProfile,
+    measurement: AimPickPhaseProfile,
+}
+
+impl AimPickProfile {
+    fn initialize(&mut self) {
+        if self.initialized {
+            return;
+        }
+        self.initialized = true;
+        self.legacy_always_pick = std::env::var_os("GR_AIM_ALWAYS_PICK").is_some();
+        if std::env::var_os("GR_AIM_PROFILE").is_some() {
+            let args: Vec<_> = std::env::args().collect();
+            self.enabled = args.windows(2).any(|pair| {
+                pair[0] == "--bench"
+                    && pair[1]
+                        .parse::<f32>()
+                        .is_ok_and(|seconds| seconds.is_finite() && seconds > 0.0)
+            });
+        }
+    }
+
+    fn record(
+        &mut self,
+        in_aim: bool,
+        reloading: bool,
+        fade_active: bool,
+        pick_called: bool,
+        pick_elapsed: std::time::Duration,
+        measurement_phase: Option<bool>,
+    ) {
+        let Some(measuring) = measurement_phase else {
+            return;
+        };
+        if !self.enabled {
+            return;
+        }
+        let legacy_always_pick = self.legacy_always_pick;
+        let phase = if measuring {
+            &mut self.measurement
+        } else {
+            &mut self.pre_measure
+        };
+        phase.record(
+            in_aim,
+            reloading,
+            fade_active,
+            pick_called,
+            pick_elapsed,
+            legacy_always_pick,
+        );
+    }
+
+    fn finish(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        let pre = &self.pre_measure;
+        let measured = &self.measurement;
+        eprintln!(
+            "aim-pick profile: pre_measure_frames={} pre_aim={} pre_reload={} pre_fade={} pre_picks={} pre_idle_forced={} pre_idle_skipped={} pre_pick_ms={:.3} measurement_frames={} measurement_aim={} measurement_reload={} measurement_fade={} measurement_picks={} measurement_idle_forced={} measurement_idle_skipped={} measurement_pick_ms={:.3}",
+            pre.frames,
+            pre.in_aim_frames,
+            pre.reload_frames,
+            pre.fade_frames,
+            pre.pick_calls,
+            pre.idle_picks_forced,
+            pre.idle_picks_skipped,
+            pre.pick_elapsed.as_secs_f64() * 1000.0,
+            measured.frames,
+            measured.in_aim_frames,
+            measured.reload_frames,
+            measured.fade_frames,
+            measured.pick_calls,
+            measured.idle_picks_forced,
+            measured.idle_picks_skipped,
+            measured.pick_elapsed.as_secs_f64() * 1000.0,
+        );
+        self.enabled = false;
+    }
+}
+
+impl AimPickPhaseProfile {
+    fn record(
+        &mut self,
+        in_aim: bool,
+        reloading: bool,
+        fade_active: bool,
+        pick_called: bool,
+        pick_elapsed: std::time::Duration,
+        legacy_always_pick: bool,
+    ) {
+        self.frames += 1;
+        self.in_aim_frames += u64::from(in_aim);
+        self.reload_frames += u64::from(reloading);
+        self.fade_frames += u64::from(fade_active);
+        self.pick_calls += u64::from(pick_called);
+        let idle = !in_aim && !reloading && !fade_active;
+        self.idle_picks_forced += u64::from(idle && pick_called && legacy_always_pick);
+        self.idle_picks_skipped += u64::from(idle && !pick_called);
+        self.pick_elapsed += pick_elapsed;
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+struct AimPickDiagnostics<'w, 's> {
+    app_exit: MessageReader<'w, 's, bevy::app::AppExit>,
+    profile: Local<'s, AimPickProfile>,
+    perf: Res<'w, crate::perf::Perf>,
+}
+
 /// The picture of the crosshair (`G3_HUD_CrosssHair.tga`, `FUN_100a6b30`), once the UI atlas that
 /// holds it is loaded.
 #[derive(Component)]
@@ -272,10 +404,22 @@ fn aim_frame(
     mut commands: Commands,
     mut anchors: Query<&mut Transform, (Without<PlayerCamera>, Without<CrosshairTick>)>,
     mut hand_anchor: ResMut<HandAnchor>,
+    mut diagnostics: AimPickDiagnostics,
 ) {
+    diagnostics.profile.initialize();
+    let finishing_bench =
+        diagnostics.profile.enabled && diagnostics.app_exit.read().next().is_some();
     let dt = time.delta_secs().min(0.1);
-    let Ok(cam) = cam.single() else { return };
+    let Ok(cam) = cam.single() else {
+        if finishing_bench {
+            diagnostics.profile.finish();
+        }
+        return;
+    };
     let Ok((hero_e, mut animator, comp, root)) = hero.single_mut() else {
+        if finishing_bench {
+            diagnostics.profile.finish();
+        }
         return;
     };
     let s = hero_state(&core);
@@ -320,6 +464,13 @@ fn aim_frame(
     } else {
         view.since_aim += dt;
     }
+    let fade_active = fade.0 > 0.0;
+    let pick_called = should_pick(
+        in_aim,
+        reloading,
+        fade_active,
+        diagnostics.profile.legacy_always_pick,
+    );
 
     // The glow on the bow while it is drawn (`PS_Ranged_PowerAim`); the shot stops it.
     let glow_key = 0x3_0000_0000 | u64::from(core.0.hero.0);
@@ -360,8 +511,25 @@ fn aim_frame(
 
     // ---- the pick and the aim handed to the simulation ------------------------------------------
     let cam_cm = cam.translation / CM;
-    let pick = pick_point(cam_cm, cam.rotation, &collision.0);
-    view.pick = in_aim.then_some(pick);
+    let pick_started = (diagnostics.profile.enabled && pick_called).then(std::time::Instant::now);
+    let pick = pick_called.then(|| {
+        #[cfg(feature = "trace")]
+        let pick_span = bevy::log::tracing::info_span!("ranged_pick_point").entered();
+        let pick = pick_point(cam_cm, cam.rotation, &collision.0);
+        #[cfg(feature = "trace")]
+        drop(pick_span);
+        pick
+    });
+    let pick_elapsed = pick_started.map_or(std::time::Duration::ZERO, |start| start.elapsed());
+    diagnostics.profile.record(
+        in_aim,
+        reloading,
+        fade_active,
+        pick_called,
+        pick_elapsed,
+        diagnostics.perf.benchmark_measurement_phase(),
+    );
+    view.pick = if in_aim { pick } else { None };
     // The arrow sits in the right hand (`Slot_RightHand_Weapon` of `gCInventorySlot::GetBone`).
     let (bone, _) = gothic_gameplay::inventory::slot::bone(Slot::RightHand, 1);
     let hand_cm = comp
@@ -388,7 +556,7 @@ fn aim_frame(
             .sim
             .set_hero_aim(Some(HeroAim {
                 origin,
-                pick_point: pick.point,
+                pick_point: pick.expect("in_aim always requires a fresh pick").point,
             }));
     } else {
         if core.0.sim.script.magic.hero_aim.is_some() {
@@ -414,7 +582,8 @@ fn aim_frame(
         }
         // `OnGetAimAngle`: the size follows the pick distance (1 near .. 0 far), the window is
         // resized between its minimum and maximum edge.
-        let edge = CROSS_MIN + (CROSS_MAX - CROSS_MIN) * crosshair_size(pick.distance);
+        let crosshair_pick = pick.expect("visible crosshair fade requires a fresh pick");
+        let edge = CROSS_MIN + (CROSS_MAX - CROSS_MIN) * crosshair_size(crosshair_pick.distance);
         for (mut n, _) in &mut cross.pic_nodes {
             n.width = Val::Px(edge);
             n.height = Val::Px(edge);
@@ -428,7 +597,7 @@ fn aim_frame(
                 n.display = Display::None;
             }
         } else {
-            let k = 0.5 + 1.2 * crosshair_size(pick.distance);
+            let k = 0.5 + 1.2 * crosshair_size(crosshair_pick.distance);
             for (mut n, t) in &mut cross.ticks {
                 n.left = Val::Px(CROSS_BOX * 0.5 + t.dx * 14.0 * k - 2.0);
                 n.top = Val::Px(CROSS_BOX * 0.5 + t.dy * 14.0 * k - 2.0);
@@ -443,9 +612,13 @@ fn aim_frame(
             view.clips = [None, None];
             view.pitch.reset();
         }
+        if finishing_bench {
+            diagnostics.profile.finish();
+        }
         return;
     };
-    let aim_sine = hand_cm.map_or(0.0, |h| hero_aim_sine(h, pick.point));
+    let aim_pick = pick.expect("aim or reload animation requires a fresh pick");
+    let aim_sine = hand_cm.map_or(0.0, |h| hero_aim_sine(h, aim_pick.point));
     let blend = view.pitch.update(aim_sine);
     let (left, right) = if view.crossbow {
         ("CrossBow", "Bolt")
@@ -515,6 +688,9 @@ fn aim_frame(
             o.time = t;
             o.weight = weight;
         }
+    }
+    if finishing_bench {
+        diagnostics.profile.finish();
     }
 }
 

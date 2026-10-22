@@ -73,3 +73,40 @@ cargo +stable-x86_64-pc-windows-gnu build --release -j4 -p gothic-reforged --fea
 ```
 
 Run that frozen artifact from the existing Wind runtime at 1280x720 with the wind-probe option chosen by its owner plus `--play --bench 20 --bench-warmup 30 --bench-camera --bench-gpu --bench-name windprobe-trace --trace`; keep unrelated `GR_*` flags unset. The bench JSON is written under runtime `.local/bench/` and, with trace enabled, contains `top_spans_per_frame` entries (`span`, `ms_per_frame`, `calls_per_frame`, `max_ms`); a companion `.local/bench/trace-<unix>.txt` contains the top spans and a systems-only section. These spans are inclusive and summed across threads, so nested totals must not be added as if they were disjoint frame costs. The trace/debug build is diagnostic only; its timings are not a release-performance result. Rebuild without `trace` for final performance comparison.
+## Ranged aim picking
+
+The retained camera-only probe (`.local/profile-wind-probe/trace-1792684619.txt`) measured
+`walk::play::ranged::aim_frame` at 6.476 ms/frame inclusive (max 9.138 ms), versus 8.735 ms for
+the enclosing `Update` schedule. Do not add those inclusive parent/child spans. The trace has no
+subspans inside `aim_frame`, so it does not prove which call dominates.
+
+`aim_frame` computes a 10,000 cm collision pick every frame. That value is only consumed while aiming,
+while a bow reload phase is active, or while the crosshair is fading. The idle path still updates the
+casting-hand anchor and `hero_hand` for spells, clears a stale hero aim, advances draw/fade state, and
+stops or updates clips exactly as before; the optimization skips only the unused pick. The guard uses
+the **pre-update** fade amount so the last visible fade frame still gets a fresh pick. Reload is
+included because `hero_aim_sine` uses the pick during reload even when `view.aiming` is false.
+
+For profiling, `GR_AIM_PROFILE=1` plus finite `--bench <seconds>` emits one bounded summary at
+benchmark exit. It reports aim/reload/fade frames, pick calls, skipped/forced idle picks and
+cumulative query time separately for `pre_measure` and `measurement`. The pre-measure bucket covers
+startup, loading/readiness and warmup; both buckets count only frames where camera and hero are
+present. `Instant` timing is used only with this opt-in profile. Timing A/B runs should leave this
+variable unset. With a `trace` build, the actual query also has a nested `ranged_pick_point` span.
+
+`GR_AIM_ALWAYS_PICK` restores the redundant idle pick without changing `RangedView`, simulation
+aim/hand, crosshair, or animation outputs. `scripts/bench-renderer.ps1 -CompareIdleAimPick` sets it
+for baseline runs and removes it for candidate runs, records the per-run value, and restores the
+caller's process environment in `finally`. The same executable can be supplied for both variants;
+use this to isolate the query cost before comparing code revisions.
+
+Existing gameplay coverage to rerun after any related change:
+
+- `bow_faithful` (`apps/game/src/play/qa/bow.rs`) exercises Aim and PowerAim, the actual shot,
+  Aim_Reload with all three reload clips, and bow pitch blends.
+- `magic_faithful` (`apps/game/src/play/qa/magic.rs`) and `magic_bow`
+  (`apps/game/src/play/qa/ranged.rs`) exercise cast/launch/impact and the magic hand/missile path.
+
+These scenarios cover active aim, reload and spell-hand behavior. They do not verify that idle
+collision picks are skipped or establish a performance gain; use the opt-in profile and same-binary
+A/B harness for that.
