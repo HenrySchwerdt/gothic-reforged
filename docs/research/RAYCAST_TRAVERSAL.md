@@ -97,5 +97,20 @@ accepted only together with `-CompareRaycastTraversal`.
   in every run, visible mesh count 1541–1543, same analytical route and renderer
   settings. Slight pose/visible-count variation remains; this is a small sample,
   not an assertion of perfectly identical simulation states or general FPS gain.
-- Normal unforced comparison and combat validation are in progress. No new
-  Desktop release until those checks and final-package validation complete.
+- First clean normal control: `.local/bench-raycast-dda-range-camera-normal/`.
+  Mean-frame medians 10.1253 versus 10.1212 ms (-0.041%), essentially unchanged;
+  zero idle picks in all four profiles. P95 rows legacy 11.1849/10.9687 ms versus
+  candidate 12.0334/10.9468 ms. An additional identical unforced A/B is underway
+  to check the single candidate tail outlier; do not claim improved normal FPS.
+- Magic and bow QA pass with explicit markers and exit0. **Melee QA FAILS**:
+  power clips empty, then PierceAttack timeout. Evidence
+  `.local/qa/raycast-dda-range-combat/melee_faithful/03_power_attack.png` shows
+  "Du wurdest niedergeschlagen" with surrounding orcs. The watcher heals HP but
+  does not revive a downed hero, and freezes other actors only after the power
+  checks. Earlier successful traces also contain incoming damage. This suggests
+  a fixture exposure, but DDA also serves NPC LOS, so causality remains unproven.
+- A same-EXE startup-legacy melee run is queued after the repeat measurement.
+  QA-only isolation proposal `.local/qa/melee-ai-isolation-proposal.md` is unmerged:
+  preserve selected target AI, pause unrelated actors early; never revive/reset
+  lifecycle or weaken assertions. No new Desktop release until failures are
+  understood and final-package validation completes.
