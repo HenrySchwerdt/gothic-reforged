@@ -356,7 +356,17 @@ fn provoke(sc: &mut Sc, key: &'static str, prefix: &'static str, n: usize) {
 }
 
 /// Hero against `n` raiders of the start: standing still, they come and fight.
+/// `GR_QA_FIGHT_SECS` shortens (or lengthens) the fights: recordings are written at a fixed 30 fps
+/// and slow, 8 s are enough for a clip.
+fn fight_secs(default: f32) -> f32 {
+    std::env::var("GR_QA_FIGHT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 fn raiders(n: usize, secs: f32, name: &'static str) -> Sc {
+    let secs = fight_secs(secs);
     let mut sc = Sc::new(secs + 120.0);
     grab(&mut sc);
     trace(&mut sc, "npcs");
@@ -454,6 +464,25 @@ pub fn npc_orc2() -> Sc {
     sc
 }
 
+/// Three raiders against the hero: the third waits, the fight is never wider than the limit
+/// (`UpdateCombatState` S:14f0: 2 against the player on normal difficulty); the waiting ones go
+/// through `FAI_Passive` (S:4ffb0) instead of swinging.
+pub fn npc_orc3() -> Sc {
+    let mut sc = raiders(3, 40.0, "orc3");
+    sc.check(
+        "never more than two engaged against the player, and two really are (attack tokens)",
+        |cx| {
+            let m = cx.st.n.get("engaged_max").copied().unwrap_or(0.0);
+            expect(
+                (m - 2.0).abs() < 0.1,
+                format!("{m} engaged at most"),
+                format!("{m} engaged at most (expected 2)"),
+            )
+        },
+    );
+    sc
+}
+
 /// Casters: the shaman of the world data against the standing hero.
 pub fn npc_shaman() -> Sc {
     let mut sc = Sc::new(260.0);
@@ -481,7 +510,11 @@ pub fn npc_shaman() -> Sc {
         let m = s.spell_spawned;
         let vis = cx.st.n.get("vis_spell").copied().unwrap_or(0.0);
         let _ = (m, vis);
-        if cx.t > 40.0 { Poll::Done } else { Poll::Wait }
+        if cx.t > fight_secs(40.0) {
+            Poll::Done
+        } else {
+            Poll::Wait
+        }
     });
     sc.shot("shaman_cast");
     rec(&mut sc, false);
@@ -559,7 +592,11 @@ pub fn npc_archer() -> Sc {
             let k = cx.st.n.get("ranged_frames").copied().unwrap_or(0.0);
             cx.st.n.insert("ranged_frames".into(), k + 1.0);
         }
-        if cx.t > 40.0 { Poll::Done } else { Poll::Wait }
+        if cx.t > fight_secs(40.0) {
+            Poll::Done
+        } else {
+            Poll::Wait
+        }
     });
     sc.shot("archer_shoots");
     rec(&mut sc, false);

@@ -65,7 +65,12 @@ pub fn npc_bows(
         Without<NpcActor>,
     >,
     mut failed: Local<HashSet<String>>,
+    mut frame: Local<u32>,
+    mut gizmos: Gizmos,
+    vis_dbg: Query<(&InheritedVisibility, &ViewVisibility, Option<&Children>)>,
 ) {
+    *frame += 1;
+    let debug = std::env::var_os("GR_BOW_DEBUG").is_some() && *frame % 90 == 0;
     let mut want: HashMap<Entity, (String, Use, bool)> = HashMap::new();
     for (e, npc, ..) in &npcs {
         if let Some(b) = bow_of(&core, npc.0) {
@@ -96,6 +101,7 @@ pub fn npc_bows(
                 .into_iter()
                 .min_by_key(String::len)
         }) else {
+            eprintln!("npc bow: no actor for {template}");
             failed.insert(template.clone());
             continue;
         };
@@ -107,17 +113,19 @@ pub fn npc_bows(
                 spawner.commands.entity(e).insert(NpcBowVisual {
                     owner: *owner,
                     template: template.clone(),
-                    actor: name,
+                    actor: name.clone(),
                 });
+                eprintln!("npc bow: {template} shown as actor {name}");
                 made += 1;
             }
-            Err(_) => {
+            Err(e) => {
+                eprintln!("npc bow: actor {name} of {template}: {e:#}");
                 failed.insert(template.clone());
             }
         }
     }
     // Place every bow at the slot bone of its owner.
-    for (_, v, mut tf, mut anim, mut vis) in &mut bows {
+    for (bow_e, v, mut tf, mut anim, mut vis) in &mut bows {
         let Some((_, kind, in_hands)) = want.get(&v.owner) else {
             continue;
         };
@@ -137,11 +145,44 @@ pub fn npc_bows(
             .get(slot)
             .and_then(|&j| owner_anim.joints.get(j as usize))
         else {
+            if std::env::var_os("GR_BOW_DEBUG").is_some() {
+                eprintln!("npc bow: rig of {:?} has no joint {slot}", v.owner);
+            }
             vis.set_if_neq(Visibility::Hidden);
             continue;
         };
         *tf = Transform::from_matrix(Mat4::from(root.affine() * *j));
         vis.set_if_neq(Visibility::Inherited);
+        if debug && let Ok((i, w, c)) = vis_dbg.get(bow_e) {
+            eprintln!(
+                "npc bow vis: inherited {:?} view {:?} children {:?}",
+                i.get(),
+                w.get(),
+                c.map(|c| c.len())
+            );
+        }
+        if std::env::var_os("GR_BOW_GIZMO").is_some() {
+            gizmos.sphere(
+                Isometry3d::from_translation(tf.translation),
+                0.12,
+                Color::srgb(1.0, 0.0, 0.0),
+            );
+            gizmos.line(
+                tf.translation,
+                root.translation(),
+                Color::srgb(1.0, 1.0, 0.0),
+            );
+        }
+        if debug {
+            eprintln!(
+                "npc bow: {} of {:?} slot {slot} at {:?} (owner at {:?}) scale {:?}",
+                v.template,
+                v.owner,
+                tf.translation,
+                root.translation(),
+                tf.scale
+            );
+        }
         let clip = format!("{}_Relax", v.actor);
         if anim.current_name() != Some(clip.as_str()) && spawner.library.has_motion(&clip) {
             let rig = anim.rig.clone();

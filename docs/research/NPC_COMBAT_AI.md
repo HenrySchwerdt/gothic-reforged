@@ -103,6 +103,7 @@ something the original does not do and was replaced.
   those fighters do not hop (the engine rule for a missing clip).
 * No attack-token logic beyond `UpdateCombatState` (S:14f0: 1 fighter, 2 / 3 against the player on
   normal / hard) because the original has no other.
+* NPC bows: `npc_bows` places the bow actor at the slot bone and `npcs.rs` turns an aiming archer a quarter like the hero; the bow-in-hand rendering of archers was not confirmed on screen (bows on backs are), check `GR_BOW_GIZMO=1`.
 * Root motion of a clip moves the NPC through `Command::NpcNudge`; the steering toward the target
   (`EnableCombatMovementFromSPU`) is not ported.
 
@@ -117,6 +118,7 @@ something the original does not do and was replaced.
 | `npc_orc2` | two raiders: at most two engaged at once (`UpdateCombatState`) plus the same swing checks |
 | `npc_shaman` | the shaman holds a spell (weapon mode Magic), casts, missiles fly and hit |
 | `npc_archer` | a bow carrier draws the bow at range, arrows fly |
+| `npc_orc3` | three raiders: never more than two engaged, two really are (`UpdateCombatState`; a fight now starts with `CombatState` 0 instead of 1, which had bypassed it) |
 | `npc_vs_npc` | a raider and a human fight each other: both lose hp, both play attack clips |
 | `shaman_duel` | (existing) the shaman casts at an attacker |
 

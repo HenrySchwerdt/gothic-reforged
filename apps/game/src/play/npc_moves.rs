@@ -86,6 +86,7 @@ pub fn register(app: &mut App) {
                 npc_mover,
                 npc_root_motion,
                 npc_weapon_mounts,
+                super::npc_bows::npc_bows,
             )
                 .chain()
                 .after(super::npcs::sync_npcs),

@@ -254,6 +254,8 @@ pub struct NpcMotion {
     pub ground_at: Vec2,
     pub velocity: Vec3,
     pub fallen: bool,
+    /// 0..1: the body stands side-on while a bow is aimed (see `sync_npcs`).
+    pub aim: f32,
 }
 
 /// A whole-body creature: the skeleton resource is the mesh and no body parts are listed.
@@ -627,6 +629,7 @@ fn spawn_npcs(
                 ground_at: Vec2::new(pos.x, pos.z),
                 velocity: Vec3::ZERO,
                 fallen: false,
+                aim: 0.0,
             },
         ));
         roster.cost.build.add(built);
@@ -731,7 +734,18 @@ pub(super) fn sync_npcs(
         if tf.translation != translation {
             tf.translation = translation;
         }
-        let rotation = Quat::from_rotation_y(m.yaw);
+        // The aim clips leave the body side-on with the left arm along the entity's -X: while a
+        // ranged weapon aims the model turns a quarter so that arm points at the target, as the
+        // hero's does (`hero.rs`, eased in and out).
+        let aiming = actor.drawn
+            && actor.target.is_some()
+            && m.velocity.length() < 60.0
+            && matches!(
+                actor.equipment.weapon_mode(),
+                gothic_sim::item::WeaponMode::Ranged
+            );
+        m.aim += ((if aiming { 1.0 } else { 0.0 }) - m.aim) * (dt * 10.0).min(1.0);
+        let rotation = Quat::from_rotation_y(m.yaw + std::f32::consts::FRAC_PI_2 * m.aim);
         if tf.rotation != rotation {
             tf.rotation = rotation;
         }

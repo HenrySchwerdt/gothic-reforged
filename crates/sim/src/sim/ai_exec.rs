@@ -45,7 +45,6 @@ fn task_for(state: Option<State>) -> Option<Task> {
 impl<W: WorldQuery> Sim<W> {
     /// Put the script state machine of `id` into `state` (the entry of a task).
     pub(super) fn script_enter(&mut self, id: ActorId, state: State) {
-        let combat_state = u32::from(self.actors[id.0 as usize].combat_state_active);
         let s = self.script.npc_mut(id);
         s.task = Some(state);
         s.state = Some(state);
@@ -56,7 +55,10 @@ impl<W: WorldQuery> Sim<W> {
         s.task_cb = Callback::None;
         s.local_cb = Callback::None;
         if state == State::Attack {
-            s.combat_state = combat_state;
+            // A new fight starts passive (`CombatState` 0); `OnAttack` -> `UpdateCombatState`
+            // (S:14f0) lets the fighter step up to the front line when fewer than the allowed
+            // number of NPCs fight the same target (1; 2 or 3 against the player).
+            s.combat_state = 0;
         }
         self.actors[id.0 as usize].brain.goto = None;
     }
