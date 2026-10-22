@@ -4,6 +4,8 @@ import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
 };
+@if(VISIBILITY_RANGE_DITHER)
+import bevy_pbr::render::pbr_functions::visibility_range_dither;
 import bevy_render::globals::Globals;
 import package::walk::shaders::gothic_wind::wind_offset;
 
@@ -126,6 +128,9 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 @if(PREPASS_FRAGMENT)
 @fragment
 fn fragment(in: VertexOutput) -> FragmentOutput {
+@if(VISIBILITY_RANGE_DITHER)
+    visibility_range_dither(in.position, in.visibility_range_dither);
+
     let a = textureSample(tex_a0, samp, in.uv * params.scale_a.xy).a;
     if a < params.misc.z {
         discard;
@@ -136,6 +141,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 @else
 @fragment
 fn fragment(in: VertexOutput) {
+@if(VISIBILITY_RANGE_DITHER)
+    visibility_range_dither(in.position, in.visibility_range_dither);
+
     let a = textureSample(tex_a0, samp, in.uv * params.scale_a.xy).a;
     if a < params.misc.z {
         discard;

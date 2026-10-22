@@ -22,6 +22,8 @@ fn main() -> AnyResult<()> {
     let shader_root = repo.join("apps/game/src/walk/shaders");
     let vertex =
         register_game_shader(&mut cache, &shader_root, "gothic_vertex.wesl", &mut next_id)?;
+    let forward_fragment =
+        register_game_shader(&mut cache, &shader_root, "gothic.wesl", &mut next_id)?;
     let prepass = register_game_shader(
         &mut cache,
         &shader_root,
@@ -45,6 +47,8 @@ fn main() -> AnyResult<()> {
         "VERTEX_TANGENTS",
         "VISIBILITY_RANGE_DITHER",
     ]);
+    let mut forward_without_dither = forward.clone();
+    forward_without_dither.retain(|definition| *definition != "VISIBILITY_RANGE_DITHER");
 
     let prepass_base = [
         "PREPASS_PIPELINE",
@@ -60,6 +64,8 @@ fn main() -> AnyResult<()> {
     // it does not emit a normal-prepass output. This is the historic failing vertex variant.
     let mut prepass_nowind = prepass_base.to_vec();
     prepass_nowind.push("VERTEX_NORMALS");
+    let mut prepass_nowind_dither = prepass_nowind.clone();
+    prepass_nowind_dither.push("VISIBILITY_RANGE_DITHER");
 
     // GothicMaterial::specialize adds the normal input to depth/shadow wind variants and pushes
     // these two defs together when the mesh has a normal attribute.
@@ -106,11 +112,22 @@ fn main() -> AnyResult<()> {
     ]);
 
     let scenarios = [
-        ("forward/color", vertex, forward),
+        ("forward/vertex-wind", vertex, forward.clone()),
+        ("forward/fragment-dither", forward_fragment, forward),
         (
-            "prepass/GR_NOWIND-shadow-alpha",
+            "forward/fragment-no-dither",
+            forward_fragment,
+            forward_without_dither,
+        ),
+        (
+            "prepass/GR_NOWIND-shadow-alpha-no-dither",
             prepass,
             prepass_nowind.clone(),
+        ),
+        (
+            "prepass/GR_NOWIND-shadow-alpha-dither",
+            prepass,
+            prepass_nowind_dither,
         ),
         ("prepass/wind-depth-shadow", prepass, prepass_wind),
         ("prepass/shadow-fragment", prepass, shadow),
@@ -167,7 +184,7 @@ fn main() -> AnyResult<()> {
 }
 
 fn scenarios_len() -> usize {
-    8
+    11
 }
 
 fn pipeline_defs(flags: &[&'static str]) -> Vec<ShaderDefVal> {
@@ -179,6 +196,9 @@ fn pipeline_defs(flags: &[&'static str]) -> Vec<ShaderDefVal> {
         ShaderDefVal::Bool("AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3".into(), true),
         ShaderDefVal::Bool("AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_6".into(), true),
         ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
+        ShaderDefVal::UInt("MAX_DIRECTIONAL_LIGHTS".into(), 10),
+        ShaderDefVal::UInt("MAX_CASCADES_PER_LIGHT".into(), 4),
+        ShaderDefVal::UInt("MAX_RECT_LIGHTS".into(), 8),
     ]);
     defs
 }

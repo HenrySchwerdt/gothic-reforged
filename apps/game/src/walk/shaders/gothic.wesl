@@ -13,6 +13,9 @@ import bevy_pbr::render::{
     pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
 };
 
+@if(VISIBILITY_RANGE_DITHER)
+import bevy_pbr::render::pbr_functions::visibility_range_dither;
+
 struct GothicParams {
     tint_a: vec4<f32>,
     tint_b: vec4<f32>,
@@ -89,6 +92,9 @@ fn ign(p: vec2<f32>) -> f32 {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+@if(VISIBILITY_RANGE_DITHER)
+    visibility_range_dither(in.position, in.visibility_range_dither);
+
     let uv = in.uv;
     let flags = params.flags;
 
