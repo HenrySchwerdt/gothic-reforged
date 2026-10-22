@@ -1,4 +1,4 @@
-# Gothic Reforged - Codex continuation, 2026-10-22 17:45 UTC
+# Gothic Reforged - Codex continuation, 2026-10-22 18:35 UTC
 
 ## Read first / preservation
 
@@ -14,50 +14,82 @@ Full previous journal preserved verbatim .local/HANDOFF-before-perfleaf-release-
 plus .local/HANDOFF-before-2bae7cf-compaction.md and earlier Git history. Some older14:44/14:48
 headings were estimates; actual tool/Git/build UTC timestamps take precedence.
 
-## LATEST delivered PC package - verified
+## LATEST delivered PC package - VERIFIED GrassFix
 
-C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261022-PerfLeaf/GothicReforged.exe
-SHA256 70318dac8d38ed791aa24eba58b38a7e7e1302d2da8c618d4f63dcb0ccd6b371
-Compiled code43043b82229476bb829ff1e9b7157eecc80c0caa. Optimized GNU viewer-only thin-LTO,
-build7m01s, log .local/pc-perf-leaf-parity-v2-build.log; immutable artifact
-.local/artifacts/gothic-reforged-perf-leaf-parity-v2.exe. Only HANDOFF was dirty at packaging;
-build-info explicitly records compiled commit, hash and validation. PRUEFSTAND.txt lists limits.
+C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261022-GrassFix/GothicReforged.exe
+SHA256 95f1fafa733216c30d4e3038642bff697b76b32157b0ba8ffd07597b8f73162c
+Compiled ec313601352feeb23d32b77e180a230837679257. Optimized GNUviewer thin-LTO,6m54s.
+Immutable .local/artifacts/gothic-reforged-foliage-fade.exe; .local/pc-foliage-fade-build.log.
+FinalpackagefromC:/Windows/Temp: magic9/bow15/melee13 explicitPASS, body0deg, cleanrenderer/
+shaderchecks, independentpackagesavesempty. .local/qa/grassfix-package/.
+PrepackagecombatPASS .local/qa/foliage-fade-combat/; normal/NOWINDsmokes grounded360/360 with
+cleanrendererlogs .local/qa/foliage-fade/. Actualoverviewbefore/after confirms HUGEWHITEGRASS
+PATCHESREMOVED inBOTHmodes. Closewalkgrassretained. Smallisolatedwhite/checkerspotsremain.
+Rootinspectednormaloverview+NOWINDwalk, no unmeasuredspeedupclaim. PRUEFSTAND.txt+build-info
+recordsource/hash/evidence/limits. OldPerfLeaf70318,WindFocusb115,etc preservedunchanged.
+OnlyHANDOFF+packageREADMEtemplate were dirty atpackaging; explicitcompiledcommitrecorded.
+ScriptREADME now recommends finite deterministic --bench-camera, not frame-dependentwalk.
 
-Actual final PACKAGE launched from C:/Windows/Temp, runtime-root.txt selects package runtime:
-magic9 PASS (body0.0deg; actual camera99.811826deg; original turn profile200deg/s), bow15 PASS,
-melee13 PASS. Renderer/shader scans clean; independent package saves empty before/after.
-Evidence .local/qa/perf-leaf-package/. Prepackage same3 QA PASS plus normal/GR_NOWIND smokes
-both grounded360/360, clean render logs: .local/qa/perf-leaf-parity-v2/.
-Actual inspected images there: normal-walk.png, nowind-walk.png, magic_faithful/05_holstered.png.
-Old WindFocus b11537..., Wind, water2, Claude packages retained. Earlier Desktop Perf c5c92...
-remains labelled CANDIDATE, not latest release. Do not replace/overwrite old artifacts.
+## LIVE work / Cloud continuation
 
-## LIVE work / next gate
+No activecompiler/game/coder atcheckpoint. Check collaboration.list_agents/processesbeforejobs.
+CodeHEADec31360 plus rootdocs/script updates. DeliveredGrassFiximmutable/current.
+UserjustsaidClaudeCloudcontinuedinPRs/branchesandaskedinspection. Read-onlyreviewdone,
+no merge/cherrypick or remotemessages. FourrecentPRsattachedtothischat and fetched as
+codex-cloud-audit/{foliage-sway,orc-shape-probe,vr-feel,input-unused-mut}; exactheadsrecordedin
+NEW docs/research/CLOUD_PR_REVIEW_20261022.md and .local/research/cloud-pr-audit-20261022.json.
 
-No active compiler/game or coding jobs at package completion. Check collaboration.list_agents
-and processes before new jobs; agents water_renderer, wind_clock, wind_stability are idle.
-Source frozen43043b8 plus root docs update. No new renderer changes authorized yet.
-Heartbeat claude-abwarten-dann-gothic-pc-build-fortsetzen remains ACTIVE every15min. Stay quiet
-when unchanged; disable only full completion/user cancellation. User away; continue scoped
-cheap coders, coordinated builds, checkpoints before quota. No duplicate builds/benchmarks.
+PR71 2a997662... cloud/foliage-sway: relevantremainingleafwobble. PortsemanticchangesintoOUR
+sharedgothic_wind, notoldvertexshader. Narrowfirstcandidate .37/.29 ->.031/.023 spatialphase
+forcardcoherence. Strongerangle-degree/crownamplitude/frequencychanges inferred, needcontrolled
+realGPUcapture. Keepboundedf64clock,current/previousrecords,worldnormals,visibility+fade.
+PR72 ba2d6213... orcshapeprobe: diagnosticONLY,noshapefix; notrunwithdata. UsesbasePAKlikecurrent
+ActorLibrary. Canportasread-onlyexamplelaterifneeded; don'tclaimorcanatomyfixed.
+PR73 557642f0... VRfeel: genericOpenXRhaptics/contacts/bow/twohandimprovements. SeparateQuest
+runtimeNOTwired. Genericvibrate checksrunningbutnotFOCUSED; play_haptics Lastunconditional.
+Dynamicsecondaryhandtrackingneeds test(dampingtargetleaderangularvelocity). Noactualheadset
+proof. Metaofficialdocsconsultedbyreviewer; exactfindingsinreviewdoc. NoPRVRbuildperformedhere.
+PR74 8eb11a74... inputunusedmut safeone-linecandidate. OurCargo.lockalreadyhasportcovrepair+
+40additionallocaldependencylines, soNEVERreplaceentirelockwithcloudversion. NoCloudcodeported.
+AllfourGitHubActions: releaseWindows/Linux,fmt,VRjobs,OpenXR PASS; ordinarycheckjobsFAILED
+workspaceClippy-Dwarnings. Examined#71/#74Windowslogs show42apps/game errors. Combinedcommit
+statusesemptyisNOTallgreen; actualActionsjobschecked. Olderopen#62-66inventoryrecorded,
+includingactorstream#66andopt-inwiring; prioritize#71first. Branchfetchdidnotcheckoutfiles.
 
-NEXT renderer issue is actual WHITE/CHECKER distant LOD/foliage/terrain patches, visible in
-BOTH normal-walk.png and nowind-walk.png. Do NOT claim world-normal fix removed these.
-Read-only water_renderer audit found concrete source issues to verify/fix with matched images:
-1. Gothic forward AND prepass carry visibility_range_dither but neither fragment calls Bevy's
-   visibility_range_dither discard. Bevy standard forward+prepass both do. Near/far LODs can
-   overlap fully: plausible checker/z-fighting; not a color/depth asymmetry by itself.
-2. Gothic forward discards F_FADE foliage by distance; custom prepass ignores F_FADE. Thus
-   invisible distant grass can still write depth. Mirror exact fade semantics/camera data in
-   prepass. This affects depth consumers; alone not proven cause of white color pixels.
-3. Character forward/prepass alpha cutoff matches; no VisibilityRange found for characters.
-Audit is SOURCE EVIDENCE, not final root-cause proof. First review exact Bevy contracts and
-proposal, implement bounded parity changes, checker + meaningful GPU comparisons, THEN new
-release/checks. Keep43043b8 and current Desktop package immutable baseline. No shader edits yet.
+NEXT: safe semanticportofPR71coarseleafphase withcontrolledsame-sceneGPUvalidation, then
+inferredamplitudechangesseparately. Keepcurrentreleasebaseline. Remainingisolatedwhitepatches
+needmaterial/alpha/LODdiagnosisbeforeguesses. Futureperformancebottleneck measuredonly; native
+VR/APK prerequisites+actualheadsetvalidationstillpending. No newrenderchangesauthorizedyet.
+Heartbeatclaude-abwarten-dann-gothic-pc-build-fortsetzenACTIVEevery15min, silentunchanged;
+disableonlyfullcompletion/cancel. Cheapcoders, isolatededits, noduplicatebuilds/measurements.
 
-Other follow-ups: actual measured performance bottleneck beyond idle ray; native VR/APK SDK
-prerequisites and real headset validation; no unsupported VR-ready claims.
+## Renderer follow-up evidence / constraints
 
+8405cef LODvisibilitydither sourcefix mirrorsBevy calls inGothicforwardandbothprepassfragments.
+Shaderchecker now ACTUALforwardfragmentwith/withoutdither (previousforward/coloronlyvertex),
+NOWINDwith/withoutdither,wind/compressed/motion/shadow/normal/missingnormal:11variants+negative
+PASS. .local/shader-check-dither-build2.log. Immutablecandidate0d02e13733c5d8c7c10ed55ba631e8c632480cf2add7e218e049a8926544729b
+.local/artifacts/gothic-reforged-lod-dither.exe,6m55s,normal/NOWINDsmokesPASS .local/qa/lod-dither/.
+WhitegrassfieldsSTILLPRESENTinthisbaseline; ditherwasNOTtheprimarywhitegrasscause.
+
+Foliagefadeec31360 correctsactualcolor/depthdisagreement usingONEpuregothic_visibility helper
+withEXACTexisting3Ddistance/smoothstep/IGNexpression inforward+bothprepassbranches.
+PrepassreusesBevymesh_view_bindings::view, no duplicateUBO. Moduleembedded+retainedandchecker-
+registered. F_FADEONLYsetforFoliage;materialcachekeysinclude kind; bothproducersgo through
+spawn_part ALWAYSaddingNotShadowCaster. Bevyexcludesmarkerfordirectional/point/spot. Thus
+F_FADEmaterialsNEVERenterlightviews; bothactiveviewuniformsareactualmaincamera. Commentswarn
+futurefoliageshadowfeaturemustprovide maincamerapositionbeforeenabling.
+NOnewcamera-global, NO96bytebuffer. Old80bytewind/probelayoutUNCHANGED. Initialview-role/global
+proposalwasNOTimplemented. Bevyhasnogenericmainvsshadowkeydef; doNOTinventonefromDEPTH_PREPASS.
+Releasechecker11variants+negativePASS .local/fade-shader-check-release2.log; GNUviewercheckPASS
+.local/fade-viewer-check.log. Actual95f1...GPUcapture+combat+packagetestsPASSabove.
+
+Readonlyalternativetextureaudit: priorlogsDOexist(earlyagentmisscorrected). Theyshownonfatal
+TonemappingNone/DebandDitherwarningpluscache/navfallbacks,nopertexturewarnings. world_loader::
+texture/walk::texture_imagecansilentlyreturnNone; optionaltexturefallbackwhiteisacandidatemechanism
+forREMAININGartifacts, notproven. GR_DUMP islimitednear40mstaticregion,GR_TREE_LOGpositionsnot
+materials; no generalscreenpixel->materialtool. Don'tclaimmissingtextureswithoutactualdata.
+Charcolor/prepassalphacutoffmatches; nocharVisibilityRange found.
 ## Recent implemented fixes / evidence
 
 Idle aim2bae7cf skips expensive unused pick_point rays only when !in_aim && !reloading &&
