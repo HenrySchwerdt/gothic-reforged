@@ -26,7 +26,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     path::Path,
     sync::{
-        Arc,
+        Arc, OnceLock,
         mpsc::{Receiver, Sender, channel},
     },
     thread,
@@ -37,7 +37,20 @@ pub const TILE_CM: f32 = 2500.0;
 /// Brightness multiplier of the (dark) SpeedTree composite map and bark textures.
 const TREE_LEAF_TINT: f32 = 0.42;
 const TREE_BARK_TINT: f32 = 2.0;
+static SPT_FLIP_ATLAS_V: OnceLock<bool> = OnceLock::new();
 pub type TileKey = (i32, i32);
+
+fn flip_spt_rect_v(rect: &mut [f32; 8]) {
+    for v in [1, 3, 5, 7] {
+        rect[v] = 1.0 - rect[v];
+    }
+}
+
+fn flip_spt_atlas_v_enabled() -> bool {
+    *SPT_FLIP_ATLAS_V.get_or_init(|| {
+        std::env::var("GR_SPT_FLIP_ATLAS_V").is_ok_and(|value| value == "1")
+    })
+}
 
 pub struct TexData {
     pub id: u64,
@@ -1420,7 +1433,20 @@ impl Loader {
         }
         let kind = (|| {
             let slot = self.vfs.resolve_name(&key)?;
-            let spt = Spt::parse(&self.vfs.read(slot).ok()?).ok()?;
+            let mut spt = Spt::parse(&self.vfs.read(slot).ok()?).ok()?;
+            if flip_spt_atlas_v_enabled() {
+                // Experimental whole-atlas V-origin diagnostic. Apply before silhouette
+                // measurement and geometry generation so leaves, fronds, and billboard agree.
+                for leaf in &mut spt.leaves {
+                    flip_spt_rect_v(&mut leaf.rect);
+                }
+                if let Some(rect) = &mut spt.frond_rect {
+                    flip_spt_rect_v(rect);
+                }
+                if let Some(rect) = &mut spt.billboard_rect {
+                    flip_spt_rect_v(rect);
+                }
+            }
             let atlas_stem = stem_of(spt.composite.as_ref()?);
             let atlas = self.texture(&atlas_stem)?;
             let bark_tex = self.texture(&stem_of(&spt.bark));

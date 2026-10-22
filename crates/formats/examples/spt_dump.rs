@@ -34,4 +34,8 @@ fn main() {
         mesh(&g.bark),
         mesh(&g.cards)
     );
+    // Keep the existing JSON schema stable; leaf metadata is an opt-in diagnostic on stderr.
+    if std::env::var_os("GR_SPT_DUMP_LEAVES").is_some() {
+        eprintln!("leaf_records={:#?}", spt.leaves);
+    }
 }
