@@ -70,15 +70,47 @@ impl FixtureWorld {
             (dir.length_squared() - 1.0).abs() < 2e-5,
             "ray must be normalized"
         );
+        let expected = self.brute_raycast(origin, dir, max);
+        let expected_hit = self.brute_raycast_hit(origin, dir, max);
+        let expected_bits = expected.map(f32::to_bits);
+        let expected_hit_bits = expected_hit.map(|(distance, normal)| (distance.to_bits(), normal));
         assert_eq!(
             self.world.raycast(origin, dir, max),
-            self.brute_raycast(origin, dir, max),
+            expected,
             "distance mismatch for origin={origin:?}, dir={dir:?}, max={max}"
         );
         assert_eq!(
             self.world.raycast_hit(origin, dir, max),
-            self.brute_raycast_hit(origin, dir, max),
+            expected_hit,
             "hit/normal mismatch for origin={origin:?}, dir={dir:?}, max={max}"
+        );
+        assert_eq!(
+            self.world
+                .raycast_with_mode(origin, dir, max, true)
+                .map(f32::to_bits),
+            expected_bits,
+            "DDA distance mismatch for origin={origin:?}, dir={dir:?}, max={max}"
+        );
+        assert_eq!(
+            self.world
+                .raycast_hit_with_mode(origin, dir, max, true)
+                .map(|(distance, normal)| (distance.to_bits(), normal)),
+            expected_hit_bits,
+            "DDA hit/normal mismatch for origin={origin:?}, dir={dir:?}, max={max}"
+        );
+        assert_eq!(
+            self.world
+                .raycast_with_mode(origin, dir, max, false)
+                .map(f32::to_bits),
+            expected_bits,
+            "legacy distance mismatch for origin={origin:?}, dir={dir:?}, max={max}"
+        );
+        assert_eq!(
+            self.world
+                .raycast_hit_with_mode(origin, dir, max, false)
+                .map(|(distance, normal)| (distance.to_bits(), normal)),
+            expected_hit_bits,
+            "legacy hit/normal mismatch for origin={origin:?}, dir={dir:?}, max={max}"
         );
     }
 }
@@ -156,6 +188,7 @@ fn grid_raycast_matches_fixture_oracle_for_seeded_hits_and_misses() {
     let mut rng = XorShift64(0x4d59_5df4_d0f3_3173);
     let mut fixture = FixtureWorld::default();
     let mut hit_rays = Vec::new();
+    let mut dda_hit_rays = 0;
 
     for id in 1..=96 {
         let a = rng.vec3(-8_000.0, 8_000.0);
@@ -168,7 +201,16 @@ fn grid_raycast_matches_fixture_oracle_for_seeded_hits_and_misses() {
         let tri = triangle(a, a + e1, a + e2);
         let center = (tri[0] + tri[1] + tri[2]) / 3.0;
         let normal = cross.normalize();
-        let distance = rng.between(300.0, 2_000.0);
+        let distance = rng.between(50_000.0, 90_000.0);
+        if normal.x.abs() > 0.4 && normal.z.abs() > 0.4 {
+            let end = center - normal * 10.0;
+            let origin = center + normal * distance;
+            assert!(
+                super::prefer_ray_dda(origin, end, origin.min(end) - 1.0, origin.max(end) + 1.0),
+                "long seeded hit ray should select DDA"
+            );
+            dda_hit_rays += 1;
+        }
         hit_rays.push((center + normal * distance, -normal, distance + 10.0));
         fixture.insert(id, vec![tri]);
     }
@@ -176,6 +218,10 @@ fn grid_raycast_matches_fixture_oracle_for_seeded_hits_and_misses() {
     assert!(
         hit_rays.len() >= 80,
         "seeded fixture unexpectedly degenerate"
+    );
+    assert!(
+        dda_hit_rays >= 8,
+        "expected multiple seeded hits to select DDA"
     );
     for (origin, dir, max) in hit_rays {
         assert!(fixture.brute_raycast(origin, dir, max).is_some());
@@ -265,6 +311,91 @@ fn diagonal_corner_crossing_and_large_spanning_triangle_are_not_missed() {
 }
 
 #[test]
+fn long_diagonal_dda_matches_legacy_and_oracle_at_grid_corner_hit() {
+    let mut fixture = FixtureWorld::default();
+    fixture.insert(1, quad_xz(0.0, 0.0, 0.0, 80.0));
+    // The ray reaches the exact XZ grid corner at (0, 0), exercising the halo on negative cells.
+    let origin = Vec3::new(-50_000.0, 20_000.0, -50_000.0);
+    let dir = Vec3::new(1.0, -0.4, 1.0).normalize();
+    let max = 100_000.0;
+    let end = origin + dir * max;
+    let lo = origin.min(end) - 1.0;
+    let hi = origin.max(end) + 1.0;
+    assert!(super::prefer_ray_dda(origin, end, lo, hi));
+    let cells = super::ray_dda_cells(origin, end).expect("bounded diagonal traversal");
+    for x in [-1, 0] {
+        for z in [-1, 0] {
+            assert!(cells.contains(&(x, z)), "corner-adjacent cell ({x}, {z})");
+        }
+    }
+    fixture.assert_matches(origin, dir, max);
+    assert!(
+        fixture
+            .world
+            .raycast_with_mode(origin, dir, max, true)
+            .is_some()
+    );
+}
+
+#[test]
+fn dda_halo_covers_negative_and_positive_gridline_endpoints() {
+    for (origin, end, expected) in [
+        (
+            Vec3::new(399.0, 0.0, 399.0),
+            Vec3::new(801.0, 0.0, 801.0),
+            vec![(0, 0), (1, 1), (2, 2)],
+        ),
+        (
+            Vec3::new(-399.0, 0.0, -399.0),
+            Vec3::new(-801.0, 0.0, -801.0),
+            vec![(-1, -1), (-2, -2), (-3, -3)],
+        ),
+    ] {
+        let cells = super::ray_dda_cells(origin, end).expect("bounded diagonal traversal");
+        for (x, z) in expected {
+            for ox in -1..=1 {
+                for oz in -1..=1 {
+                    assert!(cells.contains(&(x + ox, z + oz)));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn dda_is_not_selected_for_axis_parallel_small_or_extreme_segments() {
+    for (origin, end) in [
+        (Vec3::ZERO, Vec3::new(0.0, 100.0, 10_000.0)),
+        (Vec3::ZERO, Vec3::new(10_000.0, 100.0, 0.0)),
+        (Vec3::ZERO, Vec3::new(50_000.0, 0.0, 1.0)),
+        (Vec3::ZERO, Vec3::new(800.0, 100.0, 800.0)),
+        (
+            Vec3::new(-20_000_000.0, 100.0, -20_000_000.0),
+            Vec3::new(20_000_000.0, -100.0, 20_000_000.0),
+        ),
+    ] {
+        let lo = origin.min(end) - 1.0;
+        let hi = origin.max(end) + 1.0;
+        assert!(!super::prefer_ray_dda(origin, end, lo, hi));
+    }
+    assert!(super::ray_dda_cells(Vec3::ZERO, Vec3::new(0.0, 0.0, 10_000.0)).is_none());
+    assert!(super::ray_dda_cells(Vec3::ZERO, Vec3::new(-0.0, 0.0, 10_000.0)).is_none());
+    assert!(super::ray_dda_cells(Vec3::ZERO, Vec3::new(10_000.0, 0.0, -0.0)).is_none());
+    assert!(
+        super::ray_dda_cells(Vec3::ZERO, Vec3::new(7_000_000.0, 0.0, 7_000_000.0)).is_none(),
+        "step cap must bound DDA work"
+    );
+    assert!(
+        super::ray_dda_cells(
+            Vec3::new(-20_000_000.0, 0.0, -20_000_000.0),
+            Vec3::new(20_000_000.0, 0.0, 20_000_000.0)
+        )
+        .is_none(),
+        "extreme coordinates must use legacy fallback"
+    );
+}
+
+#[test]
 fn equal_distance_hit_keeps_lowest_chunk_triangle_order_for_normal() {
     let mut fixture = FixtureWorld::default();
     let z_equals_x = triangle(
@@ -294,6 +425,48 @@ fn equal_distance_hit_keeps_lowest_chunk_triangle_order_for_normal() {
         .cross(z_equals_x[2] - z_equals_x[0])
         .normalize_or_zero();
     assert_eq!(actual.map(|hit| hit.1), Some(expected_normal));
+}
+
+#[test]
+fn equal_distance_long_dda_keeps_legacy_triangle_order_and_normal() {
+    let mut fixture = FixtureWorld::default();
+    let x_plane = triangle(
+        Vec3::new(0.0, -100.0, -100.0),
+        Vec3::new(0.0, -100.0, 100.0),
+        Vec3::new(0.0, 200.0, 0.0),
+    );
+    let z_plane = triangle(
+        Vec3::new(-100.0, -100.0, 0.0),
+        Vec3::new(100.0, -100.0, 0.0),
+        Vec3::new(0.0, 200.0, 0.0),
+    );
+    fixture.insert(2, vec![z_plane]);
+    fixture.insert(1, vec![x_plane]);
+
+    let origin = Vec3::new(-50_000.0, 0.0, -50_000.0);
+    let dir = Vec3::new(1.0, 0.0, 1.0).normalize();
+    let max = 100_000.0;
+    let end = origin + dir * max;
+    assert!(super::prefer_ray_dda(
+        origin,
+        end,
+        origin.min(end) - 1.0,
+        origin.max(end) + 1.0
+    ));
+    let x_hit = ray_triangle(origin, dir, &x_plane).expect("x plane ray hit");
+    let z_hit = ray_triangle(origin, dir, &z_plane).expect("z plane ray hit");
+    assert_eq!(x_hit, z_hit, "fixture must be an exact distance tie");
+    fixture.assert_matches(origin, dir, max);
+    let hit = fixture
+        .world
+        .raycast_hit_with_mode(origin, dir, max, true)
+        .unwrap();
+    assert_eq!(hit.0, x_hit);
+    assert_eq!(
+        hit.1,
+        Vec3::NEG_X,
+        "lowest chunk id must keep its oriented normal"
+    );
 }
 
 #[test]
