@@ -51,6 +51,24 @@ fn stamina(cx: &Cx) -> i32 {
 /// Records every state change and every clip start with the scenario time.
 fn trace(sc: &mut Sc) {
     sc.watch(|cx| {
+        // Observe a downed hero once, before the existing HP recovery can change the value.
+        // This is diagnostic only: it does not clear the down state or change the result.
+        if cx.play().hero_down && !cx.st.store.contains_key("hero_down_first") {
+            let hp = cx.hero_hp();
+            let target = tgt_id(cx);
+            let freeze_others = cx.st.n.get("freeze_others").copied() == Some(1.0);
+            let stage = match (target.is_some(), freeze_others) {
+                (false, _) => "before target selection",
+                (true, false) => "selected target active before guard stage",
+                (true, true) => "guard stage freeze active",
+            };
+            let note = format!(
+                "hero_down observed at {:.2}s: hp {hp}, target {target:?}, stage {stage}",
+                cx.now
+            );
+            cx.st.store.insert("hero_down_first".into(), note.clone());
+            cx.note(note);
+        }
         // Setup, not under test: the raider fights back, the hero must survive the scenario.
         {
             let hero = cx.core().0.hero;
@@ -69,6 +87,32 @@ fn trace(sc: &mut Sc) {
                 if a.id != hero {
                     a.ai_controlled = false;
                 }
+            }
+        }
+        // Keep the selected opponent active, but stop unrelated start-area actors from
+        // interrupting the hero-input assertions. Before selection, leave everyone untouched.
+        if let Some(target) = tgt_id(cx) {
+            let hero = cx.core().0.hero;
+            for a in cx.core_mut().0.sim.actors.iter_mut() {
+                if a.id != hero && a.id != target {
+                    a.ai_controlled = false;
+                }
+            }
+            if !cx.st.store.contains_key("actor_isolation_note") {
+                let actors = &cx.core().0.sim.actors;
+                let target_active = actors
+                    .iter()
+                    .find(|actor| actor.id == target)
+                    .is_some_and(|actor| actor.ai_controlled);
+                let unrelated_active = actors
+                    .iter()
+                    .filter(|actor| actor.id != hero && actor.id != target && actor.ai_controlled)
+                    .count();
+                let note = format!(
+                    "melee QA actor isolation: target {target:?} active={target_active}, unrelated active={unrelated_active}"
+                );
+                cx.st.store.insert("actor_isolation_note".into(), note.clone());
+                cx.note(note);
             }
         }
         // The lowest stamina since a payment was announced (regeneration runs while it is paid).

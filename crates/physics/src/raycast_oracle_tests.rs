@@ -80,6 +80,11 @@ impl FixtureWorld {
             "distance mismatch for origin={origin:?}, dir={dir:?}, max={max}"
         );
         assert_eq!(
+            self.world.raycast_accelerated(origin, dir, max),
+            expected,
+            "public accelerated distance mismatch for origin={origin:?}, dir={dir:?}, max={max}"
+        );
+        assert_eq!(
             self.world.raycast_hit(origin, dir, max),
             expected_hit,
             "hit/normal mismatch for origin={origin:?}, dir={dir:?}, max={max}"

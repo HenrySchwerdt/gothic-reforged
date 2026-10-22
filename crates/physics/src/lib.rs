@@ -280,8 +280,16 @@ impl CollisionWorld {
         }
     }
 
-    /// Nearest hit distance along a normalised direction (double-sided).
+    /// Nearest hit distance along a normalised direction (double-sided), using the legacy
+    /// rectangle broadphase.
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        self.raycast_with_mode(origin, dir, max, false)
+    }
+
+    /// Nearest hit distance along a normalised direction (double-sided), opting into the
+    /// conservative XZ DDA broadphase for long diagonal rays. Set `GR_RAYCAST_LEGACY=1` before
+    /// process start to force the legacy broadphase for A/B comparison.
+    pub fn raycast_accelerated(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         self.raycast_with_mode(origin, dir, max, !raycast_legacy_enabled())
     }
 
@@ -328,7 +336,7 @@ impl CollisionWorld {
 
     /// Nearest hit along a normalised direction with the (up-facing) triangle normal.
     pub fn raycast_hit(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
-        self.raycast_hit_with_mode(origin, dir, max, !raycast_legacy_enabled())
+        self.raycast_hit_with_mode(origin, dir, max, false)
     }
 
     fn raycast_hit_with_mode(

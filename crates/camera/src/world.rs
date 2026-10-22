@@ -36,6 +36,36 @@ impl CameraWorld for NoWorld {
 
 impl CameraWorld for gothic_physics::CollisionWorld {
     fn ray_nearest(&self, from: Vec3, dir: Vec3, len: f32) -> Option<f32> {
-        self.raycast(from, dir, len)
+        self.raycast_accelerated(from, dir, len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CameraWorld;
+    use glam::Vec3;
+    use gothic_physics::{CollisionWorld, Tri};
+
+    #[test]
+    fn collision_world_camera_ray_hits_expected_distance_and_respects_range() {
+        let mut world = CollisionWorld::new();
+        let origin = Vec3::new(-5_000.0, 1_000.0, -5_000.0);
+        let dir = Vec3::new(1.0, -0.1, 1.0).normalize();
+        let center = origin + dir * 5_000.0;
+        let right = dir.cross(Vec3::Y).normalize();
+        let up = dir.cross(right).normalize();
+        let triangle: Tri = [
+            center - right * 100.0 - up * 100.0,
+            center + right * 100.0 - up * 100.0,
+            center + up * 200.0,
+        ];
+        world.insert_chunk(1, vec![triangle]);
+
+        let hit = world
+            .ray_nearest(origin, dir, 10_000.0)
+            .expect("camera ray should hit the fixture triangle");
+        assert!((hit - 5_000.0).abs() < 0.01, "unexpected hit distance {hit}");
+        assert_eq!(world.ray_nearest(origin, dir, 4_990.0), None);
+        assert_eq!(world.ray_nearest(origin, -dir, 10_000.0), None);
     }
 }
