@@ -53,9 +53,10 @@ impl HapticPulse {
         Self::new(hand, 0.6 + 0.4 * s, 0.06, 320.0)
     }
 
-    /// A weapon got stuck in a body: a dull, longer thud.
+    /// A weapon got stuck in a body: a dull, longer thud (strong enough to take over from the
+    /// hit pulse of the same stab).
     pub fn stuck(hand: Hand) -> Self {
-        Self::new(hand, 0.7, 0.12, 80.0)
+        Self::new(hand, 0.9, 0.12, 80.0)
     }
 
     /// Pulling a stuck weapon out.

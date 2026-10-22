@@ -19,6 +19,13 @@
 //!   is hundreds of times lighter in rotation than a sword, which leaves the grip joint to be
 //!   solved between wildly different bodies (VRExpansion and others give the hand a virtual
 //!   inertia for the same reason).
+//! * Props collide with bodies: a blade stops at a body instead of passing through it (the
+//!   melee layer only turns a qualifying stab into a joint and lets that blade through, see
+//!   [`prop_layers`]). Weapons get low friction and a little restitution so blade on blade
+//!   slides and rings off instead of sticking.
+//! * [`PhysicsHand::stagger`] weakens the arm for a moment (a blocked or parried swing): the
+//!   force and torque limits drop to [`STAGGER_STRENGTH`] and ramp back, so the deflection the
+//!   contact gave the weapon is not cancelled by the drive in the next step.
 //! * A hand that is stuck far from its target (behind geometry) or got teleported snaps back.
 use crate::grab::{Candidate, GripPoint, choose_grab, object_pose_for_hand};
 use crate::pd::{PdGains, angular_torque, arm_limits, inertia_about, linear_force};
@@ -59,6 +66,8 @@ pub struct PhysicsHand {
     pub held: Option<HeldBy>,
     /// Seconds the hand has been far from its target.
     pub stuck_for: f32,
+    /// Seconds of weakened arm left (see [`PhysicsHand::stagger`]).
+    pub staggered: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,9 +90,33 @@ impl PhysicsHand {
             angular: PdGains::HAND_ANGULAR,
             held: None,
             stuck_for: 0.0,
+            staggered: 0.0,
+        }
+    }
+
+    /// Weaken this arm for `seconds` (the last [`STAGGER_RAMP`] of them ramping back).
+    pub fn stagger(&mut self, seconds: f32) {
+        if seconds.is_finite() {
+            self.staggered = self.staggered.max(seconds.min(2.0));
+        }
+    }
+
+    /// Current fraction of the arm limits (1 when not staggered).
+    pub fn strength_scale(&self) -> f32 {
+        if self.staggered <= 0.0 {
+            1.0
+        } else if self.staggered >= STAGGER_RAMP {
+            STAGGER_STRENGTH
+        } else {
+            STAGGER_STRENGTH + (1.0 - STAGGER_STRENGTH) * (1.0 - self.staggered / STAGGER_RAMP)
         }
     }
 }
+
+/// Arm limits while staggered, as a fraction.
+pub const STAGGER_STRENGTH: f32 = 0.3;
+/// Seconds over which a stagger ramps back to full strength.
+pub const STAGGER_RAMP: f32 = 0.2;
 
 /// Something hands can pick up.
 #[derive(Component, Debug, Clone)]
@@ -168,7 +201,7 @@ impl Plugin for VrPhysicsPlugin {
             .add_systems(FixedUpdate, grab_release.in_set(HandSet::Grab))
             .add_systems(
                 FixedUpdate,
-                (snap_stuck_hands, drive_hands)
+                (tick_stagger, snap_stuck_hands, drive_hands)
                     .chain()
                     .in_set(HandSet::Drive),
             );
@@ -201,6 +234,22 @@ pub fn hand_bundle(hand: Hand, at: Vec3) -> impl Bundle {
     )
 }
 
+/// Collision layers of a prop. `through_bodies` lets it pass bodies (a blade stuck in a wound,
+/// for a moment after it came out).
+pub fn prop_layers(through_bodies: bool) -> CollisionLayers {
+    if through_bodies {
+        CollisionLayers::new(
+            VrLayer::Prop,
+            [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
+        )
+    } else {
+        CollisionLayers::new(
+            VrLayer::Prop,
+            [VrLayer::World, VrLayer::Hand, VrLayer::Prop, VrLayer::Body],
+        )
+    }
+}
+
 /// Spawn a prop as a dynamic rigid body with a compound collider.
 pub fn spawn_prop(commands: &mut Commands, spec: &PropSpec, pose: Pose) -> Entity {
     let shapes: Vec<(Vec3, Quat, Collider)> = spec
@@ -227,12 +276,7 @@ pub fn spawn_prop(commands: &mut Commands, spec: &PropSpec, pose: Pose) -> Entit
         RigidBody::Dynamic,
         Collider::compound(shapes),
         ColliderDensity(spec.density()),
-        // Props pass through bodies: weapon-vs-body contacts are resolved by the melee
-        // contact model (damage, bite, stab joints), not by rigid collision.
-        CollisionLayers::new(
-            VrLayer::Prop,
-            [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
-        ),
+        prop_layers(false),
         Transform::from_translation(pose.position).with_rotation(pose.rotation),
         Name::new(format!("{:?}", spec.kind)),
     ));
@@ -241,6 +285,13 @@ pub fn spawn_prop(commands: &mut Commands, spec: &PropSpec, pose: Pose) -> Entit
         PropKind::Arrow | PropKind::Sword | PropKind::TwoHandedSword
     ) {
         e.insert(SweptCcd::default());
+    }
+    if matches!(
+        spec.kind,
+        PropKind::Sword | PropKind::TwoHandedSword | PropKind::Axe | PropKind::Mace
+    ) {
+        // Steel on steel: slides and rings off a little.
+        e.insert((Friction::new(0.3), Restitution::new(0.15)));
     }
     e.id()
 }
@@ -522,6 +573,15 @@ fn snap_stuck_hands(
     }
 }
 
+fn tick_stagger(time: Res<Time>, mut hands: Query<&mut PhysicsHand>) {
+    let dt = time.delta_secs();
+    for mut h in &mut hands {
+        if h.staggered > 0.0 {
+            h.staggered = (h.staggered - dt).max(0.0);
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn drive_hands(
     time: Res<Time>,
@@ -542,8 +602,13 @@ fn drive_hands(
     >,
 ) {
     let dt = time.delta_secs();
-    let limits = arm_limits(strength.0);
+    let full = arm_limits(strength.0);
     for (hand_e, hand) in &hands {
+        let k = hand.strength_scale();
+        let limits = crate::pd::ArmLimits {
+            max_force: full.max_force * k,
+            max_torque: full.max_torque * k,
+        };
         let Some((mut target, target_vel, target_ang)) = target_of(&targets, hand.hand) else {
             continue;
         };

@@ -57,6 +57,7 @@ fn run(
             wielder,
             prev: attacker[i - 1],
             cur: attacker[i],
+            before: None,
             profile: &profile,
         }];
         if let Some(d) = defender {
@@ -65,6 +66,7 @@ fn run(
                 wielder: Some(DUMMY),
                 prev: d[(i - 1).min(d.len() - 1)],
                 cur: d[i.min(d.len() - 1)],
+                before: None,
                 profile: &sword,
             });
         }
