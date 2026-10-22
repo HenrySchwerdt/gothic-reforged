@@ -869,7 +869,7 @@ mod tests {
 
     #[test]
     fn releasing_the_key_chains_the_moves_by_state_and_time() {
-        let mut state = |s: &'static str, t: f32, one: bool| {
+        let state = |s: &'static str, t: f32, one: bool| {
             let mut c = melee_ctx(s, t);
             c.melee.left_one_hander_or_torch = one;
             left(&mut PlayerInput::default(), &c, 20).1
