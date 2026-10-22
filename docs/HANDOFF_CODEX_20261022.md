@@ -1,4 +1,47 @@
-# Gothic Reforged - Codex continuation, 2026-10-22 18:35 UTC
+# Gothic Reforged - Codex continuation, 2026-10-22
+
+## Latest continuation: leaf-phase candidate (after Cloud PR review)
+
+Compiled source `543db4549efe7dd1bb7eaf56788a171ca95f3bda` ports only PR71's
+spatial leaf phase coefficients `(0.37, 0.29) -> (0.031, 0.023)` into our shared
+`gothic_wind.wesl`. Wind amplitude, temporal frequency, bounded clock, previous-frame
+records, 80-byte buffer, normal handling and visibility/fade contracts are unchanged.
+The coefficient norm is 12.2 times smaller; this bounds spatial phase spread for a
+given vertex separation, not frame jitter or visual quality. No actual card extents
+were measured. Details: `docs/research/LEAF_PHASE_COHERENCE.md`.
+
+Optimized GNU viewer release built successfully in 8m17s. Immutable candidate:
+`.local/artifacts/gothic-reforged-leaf-phase.exe`, SHA256
+`0134ceb9c06d0f77bfca10fdf62726c56841500cdde0b9c179ffd6cd08381f52`.
+Build log: `.local/pc-leaf-phase-build.log`. Existing release shader checker passed
+11 variants plus its expected negative fixture: `.local/leaf-phase-shader-check.log`.
+Actual candidate combat QA passed magic9/bow15/melee13, body trace PASS, exits0,
+clean fatal renderer checks, saves empty: `.local/qa/leaf-phase-combat/`.
+
+Actual baseline and candidate smoke runs both exited0, grounded360/360, clean
+renderer logs. Four repeated fixed-camera screenshots each are retained under
+`.local/qa/leaf-phase/{baseline,candidate}-leaf{0,1,2,3}.png`, plus walk/overview.
+Camera metres `(38.83,55.5,28.5)`, yaw0, pitch0.12, targeting loaded apple tree
+at centimetres `(3883,5156,2109)`. Root inspected baseline leaf0 and candidate
+leaf0/leaf3: sparse foliage persists; no claim that jitter is cured. Wind advances
+normally and capture timestamps/phases are not matched, so these are qualitative
+render checks, not an exact temporal A/B or a performance benchmark.
+
+Desktop test candidate: `C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261022-LeafPhase/`.
+Final package QA from C:/Windows/Temp PASSED magic9/bow15/melee13, each exit0 with
+explicit QA RESULT PASS and clean renderer/shader/validation checks. EXE hash unchanged,
+package saves empty before/after, no Temp save directory created. Evidence:
+`.local/qa/leaf-phase-package/`. GrassFix below remains the prior verified release.
+No active compiler, game or coder remains at this checkpoint, 2026-10-22 19:01 UTC.
+
+Next: assess leaf motion with controlled time and actual card geometry before
+porting PR71's inferred angle/amplitude/frequency changes. Sparse tree crowns and
+remaining isolated white/checker spots still require causal investigation.
+No other Cloud changes merged. Check live agents/processes before any new jobs.
+Previous full handoff preserved `.local/HANDOFF-before-leaf-phase-candidate.md`.
+
+The sections below retain the earlier 18:35 UTC checkpoint. The continuation above
+takes precedence where its later candidate state differs.
 
 ## Read first / preservation
 
@@ -14,7 +57,7 @@ Full previous journal preserved verbatim .local/HANDOFF-before-perfleaf-release-
 plus .local/HANDOFF-before-2bae7cf-compaction.md and earlier Git history. Some older14:44/14:48
 headings were estimates; actual tool/Git/build UTC timestamps take precedence.
 
-## LATEST delivered PC package - VERIFIED GrassFix
+## Prior delivered PC package - VERIFIED GrassFix
 
 C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261022-GrassFix/GothicReforged.exe
 SHA256 95f1fafa733216c30d4e3038642bff697b76b32157b0ba8ffd07597b8f73162c
