@@ -294,6 +294,7 @@ fn handle_events(
                         });
                     }
                     PlayerEvent::Refused(r) => {
+                        eprintln!("play: interaction refused: {r:?}");
                         // A refused start never began, so no object is in use.
                         if !inter.holding_pose && inter.window.is_none() {
                             inter.active = None;

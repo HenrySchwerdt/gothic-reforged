@@ -14,6 +14,7 @@ mod barks;
 mod cam;
 mod controls;
 mod data;
+mod doors;
 mod er_pack;
 mod events;
 mod fx;
@@ -505,6 +506,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     shots::register(app);
     uibridge::register(app);
     objects::register(app);
+    doors::register(app);
+    app.add_systems(Update, publish_sim_hour.before(crate::walk::update_camera));
     saves::register(app);
     interact::register(app);
     windows::register(app);
@@ -558,4 +561,9 @@ pub(crate) fn angle_delta(from: f32, to: f32) -> f32 {
 /// Bevy yaw that makes an entity face the horizontal direction `d` (x, z).
 pub(crate) fn yaw_of_dir(dx: f32, dz: f32) -> f32 {
     (-dx).atan2(-dz)
+}
+
+/// The environment's time of day is the simulation clock's.
+fn publish_sim_hour(core: Res<CoreRes>, mut commands: Commands) {
+    commands.insert_resource(crate::walk::env::SimHour(core.0.sim.clock.hour_of_day()));
 }

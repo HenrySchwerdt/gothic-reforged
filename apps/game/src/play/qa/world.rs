@@ -441,17 +441,22 @@ pub fn walk_to_reddock() -> Sc {
             cx.st.n.insert("wedge_z".into(), f64::from(hero.z));
             cx.st.n.insert("wedge_t".into(), f64::from(cx.t));
         } else if f64::from(cx.t) - cx.st.n.get("wedge_t").copied().unwrap_or(0.0) > 6.0 {
-            let target = pts.get(next).copied().unwrap_or(goal);
-            let dir = Vec3::new(target.x - hero.x, 0.0, target.z - hero.z).normalize_or_zero();
-            cx.note(format!(
-                "WEDGED at ({:.0}, {:.0}, {:.0}) cm heading for waypoint {next}: set 4 m on",
-                hero.x, hero.y, hero.z
-            ));
+            {
+                let probe = {
+                    let p = cx.player();
+                    let col = cx.world.resource::<crate::walk::Collision>();
+                    p.ctrl.debug_probe(&col.0)
+                };
+                cx.note(format!("WEDGE PROBE {probe}"));
+            }
             let n = cx.st.n.entry("wedges".into()).or_insert(0.0);
             *n += 1.0;
-            place_hero(cx, hero + dir * 400.0 + Vec3::Y * 150.0);
-            cx.st.n.insert("wedge_t".into(), f64::from(cx.t));
-            return Poll::Wait;
+            cx.key_up(KeyCode::KeyW);
+            return Poll::Fail(format!(
+                "hero wedged at ({:.0}, {:.0}, {:.0}) cm for 6 s heading for waypoint {next}",
+                hero.x, hero.y, hero.z
+            ));
+
         }
         // Skip waypoints already passed; head for the next one, the goal last.
         while next < pts.len() && Vec2::new(hero.x - pts[next].x, hero.z - pts[next].z).length() < 250.0 {
@@ -838,6 +843,28 @@ pub fn world_census() -> Sc {
                     .count();
                 (want, r.live.len(), r.queue.len(), failed)
             };
+            {
+                let r = cx.world.resource::<Roster>();
+                let mut near: Vec<(f32, String)> = r
+                    .live
+                    .iter()
+                    .map(|i| &r.cands[*i as usize])
+                    .map(|c| {
+                        (
+                            (c.pos_cm - hero).length(),
+                            format!(
+                                "{} {:?}",
+                                c.record.name,
+                                c.look.as_ref().map(|l| &l.visual.body_parts)
+                            ),
+                        )
+                    })
+                    .collect();
+                near.sort_by(|a, b| a.0.total_cmp(&b.0));
+                for (d, n) in near.iter().take(3) {
+                    cx.note(format!("NEAR {city} {d:.0} cm: {n}"));
+                }
+            }
             let actors = cx.core().0.sim.actors.len();
             cx.note(format!(
                 "CENSUS {city}: data {want} in range, shown {live}, queued {queued}, appearance failed {failed}, core actors {actors}"
@@ -848,6 +875,15 @@ pub fn world_census() -> Sc {
     }
     sc.act("stop the frame clock", |cx| {
         cx.st.n.insert("ft_on".into(), 0.0);
+    });
+    sc.check("no actor or item material falls back to white", |cx| {
+        let list = gothic_animation::library::untextured();
+        cx.note(format!("untextured materials: {list:?}"));
+        expect(
+            list.is_empty(),
+            "all materials textured".to_string(),
+            format!("{} untextured: {list:?}", list.len()),
+        )
     });
     sc.check(
         "shown equals the data in range (minus unresolved looks) at every place",
@@ -924,6 +960,12 @@ pub fn world_routines() -> Sc {
             }
             let with_points = cx.world.resource::<crate::walk::play::objects::WorldObjects>().with_points;
             cx.st.n.insert(format!("moved_{label}"), f64::from(moved));
+            let env_h = cx.world.resource::<crate::walk::env::OrigEnv>().day_time * 24.0;
+            let sim_h = cx.core().0.sim.clock.hour_of_day();
+            cx.note(format!("TIME {label}: environment {env_h:.2} h, simulation {sim_h:.2} h"));
+            let mut d = (env_h - sim_h).abs();
+            d = d.min(24.0 - d);
+            cx.st.n.insert(format!("envdiff_{label}"), f64::from(d));
             cx.note(format!(
                 "ROUTINE {label}: {moved} of {} Reddock-area characters moved > 1 m, {far} > 15 m; characters with routine points so far {with_points}",
                 map.len()
@@ -931,6 +973,26 @@ pub fn world_routines() -> Sc {
         });
         sc.shot(label);
     }
+    sc.check(
+        "the environment's time of day follows the simulation clock",
+        |cx| {
+            let worst = ["noon", "night", "morning"]
+                .iter()
+                .map(|l| {
+                    cx.st
+                        .n
+                        .get(&format!("envdiff_{l}"))
+                        .copied()
+                        .unwrap_or(99.0)
+                })
+                .fold(0.0f64, f64::max);
+            expect(
+                worst < 0.1,
+                format!("worst difference {worst:.3} h"),
+                format!("worst difference {worst:.3} h"),
+            )
+        },
+    );
     sc.check("the schedule moves characters outside Ardea", |cx| {
         let total: f64 = ["noon", "night", "morning"]
             .iter()
@@ -1026,4 +1088,144 @@ pub fn world_chest() -> Sc {
     sc.act("Esc", |cx| cx.tap(KeyCode::Escape));
     sc.wait(1.0);
     sc
+}
+
+/// A door outside Ardea: the Geldern door entity with its key. The door body is shown and solid
+/// while closed, the use key opens it (open motion, no collision), the second use closes it.
+pub fn world_doors() -> Sc {
+    use super::more::{Goal, approach};
+    use crate::walk::play::doors::Doors;
+    use std::sync::Arc;
+    let mut sc = Sc::new(300.0);
+    grab(&mut sc);
+    sc.act(
+        "setup: stand 20 m from the Geldern door, with its key",
+        |cx| {
+            let at = {
+                let w = cx
+                    .world
+                    .resource::<crate::walk::play::objects::WorldObjects>();
+                w.list
+                    .iter()
+                    .find(|o| o.def.name.contains("Door_Geldern"))
+                    .map(|o| o.pos_cm)
+                    .unwrap_or(Vec3::ZERO)
+            };
+            super::scenarios::grant(cx, "It_Key_Geldern", 1);
+            let heading = {
+                let w = cx
+                    .world
+                    .resource::<crate::walk::play::objects::WorldObjects>();
+                w.list
+                    .iter()
+                    .find(|o| o.def.name.contains("Door_Geldern"))
+                    .map_or(0.0, |o| o.def.heading)
+            };
+            // 3 m in front of the door's local +Z, a little above the ground.
+            let front = Quat::from_rotation_y(-heading) * Vec3::new(0.0, 0.0, 300.0);
+            place_hero(cx, at + front + Vec3::Y * 150.0);
+        },
+    );
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.until("the door body exists", 60.0, |cx| {
+        let w = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
+        let d = cx.world.resource::<Doors>();
+        w.list
+            .iter()
+            .enumerate()
+            .any(|(i, o)| o.def.name.contains("Door_Geldern") && d.is_shown(i) && d.is_solid(i))
+    });
+    sc.shot("closed");
+    let goal: Goal = Arc::new(|cx| {
+        cx.world
+            .resource::<crate::walk::play::objects::WorldObjects>()
+            .list
+            .iter()
+            .find(|o| o.def.name.contains("Door_Geldern"))
+            .map(|o| o.pos_cm)
+    });
+    approach(
+        &mut sc,
+        "door",
+        goal,
+        150.0,
+        -0.1,
+        door_focused(),
+    );
+    sc.act("use the door", |cx| cx.use_key());
+    sc.until("the door opened", 15.0, |cx| {
+        cx.world.resource::<Doors>().played.iter().any(|p| p.1)
+    });
+    sc.wait(2.0);
+    sc.shot("open");
+    sc.check("open door: motion played and no longer solid", |cx| {
+        let w = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
+        let d = cx.world.resource::<Doors>();
+        let i = w
+            .list
+            .iter()
+            .position(|o| o.def.name.contains("Door_Geldern"))
+            .unwrap_or(0);
+        expect(
+            !d.is_solid(i) && d.is_shown(i),
+            "open and passable".to_string(),
+            format!("solid {} shown {}", d.is_solid(i), d.is_shown(i)),
+        )
+    });
+    sc.wait(4.0);
+    sc.act("use the door again (the confirm key on the door entity)", |cx| {
+        let e = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>()
+            .list
+            .iter()
+            .find(|o| o.def.name.contains("Door_Geldern"))
+            .and_then(|o| o.entity)
+            .unwrap_or(0);
+        cx.note("setup: the focus was taken by a book next to the door; the confirm goes to the door entity".to_string());
+        cx.world
+            .write_message(gothic_runtime::CoreCommand(gothic_runtime::Command::Confirm {
+                focus: e,
+            }));
+    });
+    sc.wait(2.0);
+    sc.act("what the interaction logged", |cx| {
+        let log: Vec<String> = cx.inter().log.iter().rev().take(8).cloned().collect();
+        cx.note(format!("interaction log (newest first): {log:?}"));
+    });
+    sc.until("the door closed", 15.0, |cx| {
+        cx.world.resource::<Doors>().played.iter().any(|p| !p.1)
+    });
+    sc.wait(1.5);
+    sc.check("closed again: solid", |cx| {
+        let w = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
+        let d = cx.world.resource::<Doors>();
+        let i = w
+            .list
+            .iter()
+            .position(|o| o.def.name.contains("Door_Geldern"))
+            .unwrap_or(0);
+        expect(d.is_solid(i), "solid".to_string(), "not solid".to_string())
+    });
+    sc
+}
+
+/// The focus is the Geldern door (and not a book or a barrel next to it).
+fn door_focused() -> std::sync::Arc<dyn Fn(&mut Cx) -> bool + Send + Sync> {
+    std::sync::Arc::new(|cx| {
+        let Some(crate::walk::play::Target::Object(i)) = cx.play().target else {
+            return false;
+        };
+        cx.world
+            .resource::<crate::walk::play::objects::WorldObjects>()
+            .list
+            .get(i)
+            .is_some_and(|o| o.def.name.contains("Door_Geldern"))
+    })
 }

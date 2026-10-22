@@ -144,7 +144,13 @@ static PROF: [(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64); 5] =
         std::sync::atomic::AtomicU64::new(0),
     )
 }; 5];
-const PROF_NAMES: [&str; 5] = ["actor parse", "texture", "material file", "clip", "mesh build"];
+const PROF_NAMES: [&str; 5] = [
+    "actor parse",
+    "texture",
+    "material file",
+    "clip",
+    "mesh build",
+];
 
 struct Prof(usize, std::time::Instant);
 impl Prof {
@@ -155,9 +161,27 @@ impl Prof {
 impl Drop for Prof {
     fn drop(&mut self) {
         use std::sync::atomic::Ordering::Relaxed;
-        PROF[self.0].0.fetch_add(self.1.elapsed().as_nanos() as u64, Relaxed);
+        PROF[self.0]
+            .0
+            .fetch_add(self.1.elapsed().as_nanos() as u64, Relaxed);
         PROF[self.0].1.fetch_add(1, Relaxed);
     }
+}
+
+static UNTEXTURED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn note_untextured(what: String) {
+    if let Ok(mut v) = UNTEXTURED.lock()
+        && !v.contains(&what)
+    {
+        v.push(what);
+    }
+}
+
+/// Materials of loaded actors / items that ended up without a diffuse texture (white fallback),
+/// as `<file>: <material> (<why>)`. QA asserts this stays empty.
+pub fn untextured() -> Vec<String> {
+    UNTEXTURED.lock().map(|v| v.clone()).unwrap_or_default()
 }
 
 /// `(what, total ms, calls)` of the cold library paths since start.
@@ -521,6 +545,28 @@ impl ActorLibrary {
         };
         let bytes = self.image_pak.read_payload(at).ok()?;
         let ximg = Ximg::parse(&bytes).ok()?;
+        if std::env::var_os("GR_MATDEBUG").is_some()
+            && let Some(m0) = ximg.mips().first()
+        {
+            let step = if &ximg.fourcc == b"DXT1" { 8 } else { 16 };
+            let off = if step == 8 { 0 } else { 8 };
+            let (mut sum, mut n) = (0.0f64, 0.0f64);
+            for b in m0.chunks_exact(step) {
+                for k in 0..2 {
+                    let c = u16::from_le_bytes([b[off + 2 * k], b[off + 2 * k + 1]]);
+                    let (r, g, bl) = ((c >> 11) & 31, (c >> 5) & 63, c & 31);
+                    sum += (f64::from(r) / 31.0 + f64::from(g) / 63.0 + f64::from(bl) / 31.0) / 3.0;
+                    n += 1.0;
+                }
+            }
+            eprintln!(
+                "matdebug: texture {key} {}x{} {} mean {:.2}",
+                ximg.width,
+                ximg.height,
+                String::from_utf8_lossy(&ximg.fourcc),
+                sum / n.max(1.0)
+            );
+        }
         let image = texture_image(&ximg);
         if image.is_none() {
             eprintln!("animation: texture {key} has an unsupported format");
@@ -534,6 +580,29 @@ impl ActorLibrary {
         let at = *self.material_index.get(&file.to_lowercase())?;
         let bytes = self.material_pak.read_payload(at).ok()?;
         let parsed = Xshmat::parse(&bytes).ok()?;
+        if std::env::var_os("GR_MATDEBUG").is_some() {
+            let g = gothic_formats::xshmat::graph::MaterialGraph::parse(&bytes)
+                .ok()
+                .and_then(|g| g.surface());
+            let layers: Vec<String> = g
+                .iter()
+                .flat_map(|r| &r.layers)
+                .map(|l| {
+                    format!(
+                        "{:?} tint {:?}",
+                        l.textures
+                            .iter()
+                            .map(|t| t.path.as_str())
+                            .collect::<Vec<_>>(),
+                        l.tint
+                    )
+                })
+                .collect();
+            eprintln!(
+                "matdebug: file {file}: diffuse {:?} graph layers {layers:?}",
+                parsed.diffuse().map(|d| d.stem().to_string())
+            );
+        }
         Some((
             parsed.diffuse().map(|d| d.stem().to_string()),
             parsed
@@ -607,7 +676,14 @@ impl ActorLibrary {
             self.image_index
                 .contains_key(&format!("{}.ximg", s.to_lowercase()))
         });
+        if std::env::var_os("GR_MATDEBUG").is_some() {
+            eprintln!(
+                "matdebug: {path} material {:?} -> stem {stem:?} blend {blend:?}",
+                material.name
+            );
+        }
         if stem.is_none() || !resolves {
+            note_untextured(format!("{path}: {} (stem {stem:?})", material.name));
             eprintln!(
                 "animation: material {:?} of {path}: no resolvable texture (stem {:?})",
                 material.name, stem
@@ -778,6 +854,11 @@ impl ActorLibrary {
                         let h = if sub.material == 0
                             || sub.material as usize >= actor.materials.len()
                         {
+                            note_untextured(format!(
+                                "{path}: submesh material index {} of {} materials",
+                                sub.material,
+                                actor.materials.len()
+                            ));
                             self.shared_material(None, None, stores)
                         } else {
                             self.actor_material(&actor, sub.material as usize, &path, skin, stores)
@@ -1080,6 +1161,16 @@ impl ActorLibrary {
             let (mut stem, blend) = self.material_file(&file).unwrap_or((None, None));
             if let (Some(base), Some(sw)) = (stem.as_deref(), switch) {
                 stem = Some(self.switch_stem(base, sw));
+            }
+            if std::env::var_os("GR_MATDEBUG").is_some() {
+                eprintln!("matdebug: static {name} material {file} -> stem {stem:?}");
+            }
+            let resolves = stem.as_ref().is_some_and(|s| {
+                self.image_index
+                    .contains_key(&format!("{}.ximg", s.to_lowercase()))
+            });
+            if !resolves {
+                note_untextured(format!("{name}: {file} (stem {stem:?})"));
             }
             let material = self.shared_material(stem, blend, stores);
             meshes.push(PartMesh {

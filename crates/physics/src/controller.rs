@@ -964,6 +964,36 @@ impl CharacterController {
 
     /// Move by an external displacement (character pushing) respecting walls; stays on the
     /// ground when it was on the ground.
+    /// Diagnostics for a character that does not move: state, ground under it and how far a
+    /// copy gets in eight directions in one second of full input.
+    pub fn debug_probe(&self, world: &CollisionWorld) -> String {
+        let g = self.sense(
+            world,
+            self.position,
+            self.config.step_height,
+            self.config.step_height + 1.0,
+        );
+        let mut out = format!(
+            "mode {:?} grounded {} speed {:.0} slope_scale {:.2} ground {:?} ",
+            self.mode,
+            self.grounded,
+            self.speed,
+            self.slope_scale,
+            g.map(|g| (g.y, g.angle_deg()))
+        );
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::TAU / 8.0;
+            let mut c = self.clone();
+            let wish = Vec3::new(a.cos(), 0.0, a.sin());
+            for _ in 0..30 {
+                c.step(world, wish, false, 1.0 / 30.0);
+            }
+            let d = (c.position - self.position).with_y(0.0).length();
+            out.push_str(&format!("[{k}:{d:.0}] "));
+        }
+        out
+    }
+
     pub fn nudge(&mut self, world: &CollisionWorld, delta: Vec3) {
         let start = self.position;
         let mut p = start + Vec3::new(delta.x, 0.0, delta.z);
