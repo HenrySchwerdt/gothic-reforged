@@ -1,5 +1,11 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+Quota guard checked2026-10-22 19:30UTC: 5h96% used, weekly15%; reset22:08:55UTC
+(2026-10-23 00:08:55 Europe/Berlin). All agents completed; no compiler/game running;
+checkout clean before this note. Preserve remaining4% for user input/failures. Until
+reset, do only compact usage/time checks on unchanged heartbeats, no new expensive jobs.
+After actual reset, resume the NEXT evidence task below. Automation remains active.
+
 ## Completed bounded atlas diagnosis, 2026-10-22 19:28 UTC
 
 Current source `cd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7` adds an OFF-by-default
