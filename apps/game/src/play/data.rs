@@ -11,6 +11,8 @@ use std::path::Path;
 /// One interactive world entity: a use-able object, a routine point or a loose item.
 #[derive(Debug, Clone)]
 pub struct WorldObjectDef {
+    /// Asset references of the entity (`G3_Door_01.FXA`).
+    pub assets: Vec<String>,
     /// Lower-case path of the world document (sector layer) that holds the entity.
     pub document: String,
     /// Source id of the entity (hex), the key routine points refer to.
@@ -139,6 +141,12 @@ pub fn load_objects(path: &Path) -> Vec<WorldObjectDef> {
             })
             .collect();
         out.push(WorldObjectDef {
+            assets: o["assets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|a| a.as_str().map(str::to_string))
+                .collect(),
             document: o["document"].as_str().unwrap_or("").to_ascii_lowercase(),
             id: o["id"].as_str().unwrap_or("").to_string(),
             name: o["name"].as_str().unwrap_or("").to_string(),

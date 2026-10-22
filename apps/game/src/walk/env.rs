@@ -162,11 +162,27 @@ impl OrigEnv {
     }
 }
 
+/// Hour of the day of the simulation clock (play mode); the environment follows it, so the
+/// light, sky and weather match the routines' time (`GetRoutineTime`).
+#[derive(Resource)]
+pub struct SimHour(pub f32);
+
+fn follow_sim_clock(hour: Option<Res<SimHour>>, mut env: ResMut<OrigEnv>) {
+    if let Some(h) = hour {
+        env.day_time = (h.0 / 24.0).rem_euclid(1.0);
+        // 12 game seconds per real second [CA 11.2]: the weather evolves with the same clock.
+        env.speed = 12.0 / 86_400.0;
+    }
+}
+
 pub struct EnvPlugin;
 
 impl Plugin for EnvPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (env_request, env_update, env_shot).chain());
+        app.add_systems(
+            Update,
+            (env_request, follow_sim_clock, env_update, env_shot).chain(),
+        );
     }
 }
 
