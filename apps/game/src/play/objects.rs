@@ -31,11 +31,21 @@ pub struct ObjEntry {
     /// The mesh shown for a loose item.
     pub visual: Option<Entity>,
     pub visual_tried: bool,
+    /// Index into [`WorldObjects::docs`]: the sector layer the entity is stored in.
+    pub doc: u32,
+}
+
+/// A world document (sector layer) that holds interact objects or loose items.
+pub struct ObjDoc {
+    pub path: String,
+    /// Layer exists now (`Enabled` of its root, switched by `SetSectorStatus`).
+    pub on: bool,
 }
 
 #[derive(Resource, Default)]
 pub struct WorldObjects {
     pub list: Vec<ObjEntry>,
+    pub docs: Vec<ObjDoc>,
     pub by_entity: HashMap<u32, usize>,
     by_guid: HashMap<String, usize>,
     pub treasure: Treasure,
@@ -53,10 +63,21 @@ pub struct WorldObjects {
 }
 
 impl WorldObjects {
-    /// Read the exports (missing files simply leave the world without objects).
-    pub fn load() -> Self {
+    /// The entity definitions of the world export: the whole world when `objects_world.json`
+    /// exists (`gothic-inspector object-dump --radius 9000000`), else the area around Ardea.
+    pub fn load_defs() -> Vec<WorldObjectDef> {
+        let world = Path::new(".local/objects_world.json");
+        load_objects(if world.exists() {
+            world
+        } else {
+            Path::new(".local/objects.json")
+        })
+    }
+
+    /// Build the world objects: entities stored with their own `Enabled = false` do not exist,
+    /// the others belong to the layer of their document (same rule as the characters).
+    pub fn build(defs: Vec<WorldObjectDef>, flags: &super::layers::LayerFlags) -> Self {
         let origin = Origin(ORIGIN);
-        let defs = load_objects(Path::new(".local/objects.json"));
         let mut w = Self {
             treasure: Treasure::load(Path::new(".local/treasure.json")),
             item_mesh: load_item_meshes(Path::new(".local/items.json")),
@@ -64,7 +85,18 @@ impl WorldObjects {
             recipes: load_recipes(Path::new(".local/recipes.json")),
             ..Default::default()
         };
+        let mut doc_index: HashMap<String, u32> = HashMap::new();
         for def in defs {
+            if flags.entity_disabled(&def.document, &def.name) {
+                continue;
+            }
+            let doc = *doc_index.entry(def.document.clone()).or_insert_with(|| {
+                w.docs.push(ObjDoc {
+                    path: def.document.clone(),
+                    on: flags.root_enabled(&def.document),
+                });
+                (w.docs.len() - 1) as u32
+            });
             let pos_cm = origin.point(Vec3::from(def.position));
             w.by_guid.insert(def.id.clone(), w.list.len());
             w.list.push(ObjEntry {
@@ -74,9 +106,17 @@ impl WorldObjects {
                 taken: false,
                 visual: None,
                 visual_tried: false,
+                doc,
             });
         }
         w
+    }
+
+    /// Does the layer of entry `i` exist at this story state?
+    pub fn layer_on(&self, i: usize) -> bool {
+        self.list
+            .get(i)
+            .is_some_and(|e| self.docs[e.doc as usize].on)
     }
 
     pub fn index_of_entity(&self, entity: u32) -> Option<usize> {
@@ -97,8 +137,15 @@ impl WorldObjects {
 }
 
 pub fn register(app: &mut App) {
-    app.add_systems(Startup, send_content)
-        .add_systems(Update, (take_registrations, spawn_item_visuals, route_npcs));
+    app.add_systems(Startup, send_content).add_systems(
+        Update,
+        (
+            take_registrations,
+            object_layers,
+            spawn_item_visuals,
+            route_npcs,
+        ),
+    );
 }
 
 /// Items of the item database by name (case-insensitive).
@@ -197,25 +244,70 @@ fn take_registrations(mut events: MessageReader<CoreEvent>, mut objects: ResMut<
     }
 }
 
-/// Loose items are shown with the mesh of their item template (a few at a time, near the hero).
+/// A sector switch changes which object layers exist.
+fn object_layers(
+    mut events: MessageReader<CoreEvent>,
+    mut objects: ResMut<WorldObjects>,
+    core: Res<CoreRes>,
+) {
+    if !events
+        .read()
+        .any(|e| matches!(e.0, Event::SectorSwitched { .. }))
+    {
+        return;
+    }
+    for d in &mut objects.docs {
+        d.on = core.0.document_enabled(&d.path);
+    }
+}
+
+/// Loose items are shown with the mesh of their item template while the hero is within
+/// `SHOW_ITEMS` of them (a few at a time) and dropped again beyond `DROP_ITEMS`; the world holds
+/// tens of thousands of them, so the list is only scanned a few times per second.
+const SHOW_ITEMS: f32 = 3000.0;
+const DROP_ITEMS: f32 = 4500.0;
+
 fn spawn_item_visuals(
     mut objects: ResMut<WorldObjects>,
     player: Res<Player>,
+    time: Res<Time>,
     mut spawner: ActorSpawner,
+    mut last: Local<f32>,
 ) {
+    let now = time.elapsed_secs();
+    if now - *last < 0.25 {
+        return;
+    }
+    *last = now;
     let hero = player.ctrl.position;
     let mut budget = 4;
     let WorldObjects {
-        list, item_mesh, ..
+        list,
+        docs,
+        item_mesh,
+        ..
     } = &mut *objects;
     for e in list.iter_mut() {
-        if budget == 0 {
-            break;
-        }
-        if !e.def.is_item || e.visual_tried || e.taken || e.entity.is_none() {
+        if !e.def.is_item || e.taken || e.entity.is_none() {
             continue;
         }
-        if Vec2::new(e.pos_cm.x - hero.x, e.pos_cm.z - hero.z).length() > 3000.0 {
+        if !docs[e.doc as usize].on {
+            if let Some(v) = e.visual.take() {
+                spawner.commands.entity(v).despawn();
+                e.visual_tried = false;
+            }
+            continue;
+        }
+        let d = (e.pos_cm.x - hero.x).abs().max((e.pos_cm.z - hero.z).abs());
+        if let Some(v) = e.visual {
+            if d > DROP_ITEMS {
+                spawner.commands.entity(v).despawn();
+                e.visual = None;
+                e.visual_tried = false;
+            }
+            continue;
+        }
+        if budget == 0 || e.visual_tried || d > SHOW_ITEMS {
             continue;
         }
         e.visual_tried = true;

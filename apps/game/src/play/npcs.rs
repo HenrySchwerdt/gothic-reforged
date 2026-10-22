@@ -128,6 +128,7 @@ pub fn select_roster(file: &NpcFile, looks: &Looks, flags: &super::layers::Layer
             visual: None,
             actor: None,
             failed: false,
+            prefetch_at: None,
         });
     }
     separate(&mut r.cands, &r.docs);
@@ -429,6 +430,7 @@ fn scan_candidates(
     player: Res<crate::walk::Player>,
     core: Res<CoreRes>,
     state: Res<super::PlayState>,
+    library: Res<ActorLibrary>,
     mut events: MessageReader<gothic_runtime::CoreEvent>,
     mut commands: Commands,
 ) {
@@ -506,6 +508,18 @@ fn scan_candidates(
     want.sort_by(|a, b| a.0.total_cmp(&b.0));
     roster.queue = want.into_iter().map(|w| w.1).collect();
     roster.total = roster.spawned + roster.queue.len();
+    // Hand the nearest bodies' parts to the background decoder (actor parse + texture decode)
+    // so the spawn on the main thread finds them ready.
+    let ahead: Vec<u32> = roster.queue.iter().take(24).copied().collect();
+    for i in ahead {
+        if roster.cands[i as usize].prefetch_at.is_some() {
+            continue;
+        }
+        roster.cands[i as usize].prefetch_at = Some(now);
+        if let Ok(spec) = assemble(&library, &roster.cands[i as usize]) {
+            library.prefetch_parts(&spec.parts);
+        }
+    }
     roster.cost.scan.add(t0.elapsed());
 }
 
@@ -534,6 +548,14 @@ fn spawn_npcs(
     let mut qi = 0;
     while qi < roster.queue.len() && budget > 0 && started.elapsed().as_micros() < 3_000 {
         let ci = roster.queue[qi] as usize;
+        // Wait for the background decoder (at most 1.5 s) instead of decoding on this thread.
+        if let Some(t) = roster.cands[ci].prefetch_at
+            && spawner.library.prefetch_pending() > 0
+            && now - t < 1.5
+        {
+            qi += 1;
+            continue;
+        }
         let home = roster.cands[ci].pos_now(&core);
         let cell = stream.settings.cell_at(home);
         if !collision.0.has_chunk(tile_chunk_id((cell.x, cell.z))) {

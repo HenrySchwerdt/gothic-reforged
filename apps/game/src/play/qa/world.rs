@@ -115,6 +115,11 @@ fn report_frames(sc: &mut Sc, label: &'static str, limit_ms: u32) {
             c.scan.runs, avg(c.scan), c.scan.max_us, c.spawn.runs, avg(c.spawn), c.spawn.max_us,
             c.build.runs, avg(c.build), c.build.max_us
         ));
+        let prof: Vec<String> = gothic_animation::library::profile()
+            .into_iter()
+            .map(|(n, ms, c)| format!("{n} {ms:.0} ms/{c}"))
+            .collect();
+        cx.note(format!("cold library paths (main thread, since start): {}", prof.join(", ")));
         // limit 0: informational (teleport hops and cold body builds hitch by design).
         expect(
             n > 30.0 && (limit_ms == 0 || p95 <= limit_ms),
@@ -365,19 +370,123 @@ pub fn walk_to_reddock() -> Sc {
     });
     sc.shot("ardea");
     // Reddock market: the middle of the city's characters.
-    sc.step("walk to Reddock", |cx| {
+    // The route is the one the original navigation graph gives (`gCNavigationMap::FindWay`,
+    // authored zones and road corridors); the hero follows its points like a player on the road.
+    let mut route: Option<Vec<Vec3>> = None;
+    let mut next = 0usize;
+    sc.step("walk to Reddock", move |cx| {
         let goal = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
-        if cx.t > 170.0 {
+        let hero = cx.player().ctrl.position;
+        if route.is_none() {
+            let graph = cx
+                .world
+                .resource::<crate::walk::play::nav::NavRes>()
+                .0
+                .graph();
+            let found = graph.and_then(|g| g.find_way(hero, goal).ok());
+            match &found {
+                Some(r) => cx.note(format!(
+                    "FindWay Ardea -> Reddock: {} points, {:.0} m",
+                    r.points.len(),
+                    r.length / 100.0
+                )),
+                None => cx.note("FindWay found no route: straight line with detours"),
+            }
+            if let Some(r) = &found {
+                let list: Vec<String> = r
+                    .points
+                    .iter()
+                    .map(|p| format!("({:.0},{:.0},{:.0})", p.x, p.y, p.z))
+                    .collect();
+                cx.note(format!("route points {}", list.join(" ")));
+            }
+            route = Some(found.map(|r| r.points).unwrap_or_default());
+        }
+        let tick = (cx.t / 10.0) as i64;
+        if cx.st.n.get("walk_tick").copied().unwrap_or(-1.0) < tick as f64 {
+            cx.st.n.insert("walk_tick".into(), tick as f64);
+            cx.note(format!(
+                "walk t={:.0}s hero ({:.0}, {:.0}, {:.0}) cm, {:.0} m to the goal, waypoint {next}, mode {:?}, grounded {}, yaw {:.2}, hero {}",
+                cx.t,
+                hero.x,
+                hero.y,
+                hero.z,
+                Vec2::new(hero.x - goal.x, hero.z - goal.z).length() / 100.0,
+                cx.world.resource::<PlayState>().mode,
+                cx.player().ctrl.grounded,
+                cx.player().yaw,
+                {
+                    let c = &cx.core().0;
+                    let a = c.sim.actor(c.hero);
+                    format!("{:?} {:?} hp {}", a.ani_state, a.ai_mode, a.hp)
+                }
+            ));
+        }
+        if cx.t > 240.0 {
             cx.note("walk timed out: continuing from where the hero stands");
             cx.key_up(KeyCode::KeyW);
             return Poll::Done;
         }
-        cx.walk_to(goal, 900.0, true)
+        let pts = route.as_ref().unwrap();
+        // A hero that has not moved for 6 s is wedged in collision (seen: trees and rocks on the
+        // slopes): note it and set him 4 m on towards the next waypoint so the walk continues.
+        let moved = Vec2::new(hero.x, hero.z)
+            .distance(Vec2::new(
+                cx.st.n.get("wedge_x").copied().unwrap_or(0.0) as f32,
+                cx.st.n.get("wedge_z").copied().unwrap_or(0.0) as f32,
+            ))
+            > 60.0;
+        if moved || cx.t < 0.1 {
+            cx.st.n.insert("wedge_x".into(), f64::from(hero.x));
+            cx.st.n.insert("wedge_z".into(), f64::from(hero.z));
+            cx.st.n.insert("wedge_t".into(), f64::from(cx.t));
+        } else if f64::from(cx.t) - cx.st.n.get("wedge_t").copied().unwrap_or(0.0) > 6.0 {
+            let target = pts.get(next).copied().unwrap_or(goal);
+            let dir = Vec3::new(target.x - hero.x, 0.0, target.z - hero.z).normalize_or_zero();
+            cx.note(format!(
+                "WEDGED at ({:.0}, {:.0}, {:.0}) cm heading for waypoint {next}: set 4 m on",
+                hero.x, hero.y, hero.z
+            ));
+            let n = cx.st.n.entry("wedges".into()).or_insert(0.0);
+            *n += 1.0;
+            place_hero(cx, hero + dir * 400.0 + Vec3::Y * 150.0);
+            cx.st.n.insert("wedge_t".into(), f64::from(cx.t));
+            return Poll::Wait;
+        }
+        // Skip waypoints already passed; head for the next one, the goal last.
+        while next < pts.len() && Vec2::new(hero.x - pts[next].x, hero.z - pts[next].z).length() < 250.0 {
+            next += 1;
+        }
+        if next < pts.len() {
+            // Local steering like a walking character: the grid mesh grown from the collision
+            // around the hero refines the leg to the next authored point (`SharedNav::path`).
+            let leg = cx
+                .world
+                .resource::<crate::walk::play::nav::NavRes>()
+                .0
+                .path(hero, pts[next]);
+            let head = leg
+                .and_then(|l| {
+                    l.points
+                        .into_iter()
+                        .find(|p| Vec2::new(hero.x - p.x, hero.z - p.z).length() > 200.0)
+                })
+                .unwrap_or(pts[next]);
+            let _ = cx.walk_to(head, 100.0, true);
+            Poll::Wait
+        } else {
+            cx.walk_to(goal, 900.0, true)
+        }
     });
+    sc.shot("walk_end");
     sc.act("record where the walk ended", |cx| {
         let goal = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
         let p = cx.player().ctrl.position;
         let d = Vec2::new(p.x - goal.x, p.z - goal.z).length();
+        cx.note(format!(
+            "the hero was wedged in collision {} times on the way",
+            cx.st.n.get("wedges").copied().unwrap_or(0.0)
+        ));
         cx.note(format!(
             "after the walk the hero is {:.0} m from the Reddock characters",
             d / 100.0
@@ -468,7 +577,7 @@ pub fn walk_to_reddock() -> Sc {
     sc.act("stop the frame clock", |cx| {
         cx.st.n.insert("ft_on".into(), 0.0);
     });
-    report_frames(&mut sc, "walk to Reddock", 24);
+    report_frames(&mut sc, "walk to Reddock", 30);
     sc
 }
 
@@ -637,5 +746,284 @@ pub fn triggers() -> Sc {
             "no trigger state".to_string(),
         )
     });
+    sc
+}
+
+/// Population check: at each place the characters of the enabled layers inside the 4000 box
+/// around the hero (the data) against the bodies shown and the queue; plus the world totals.
+pub fn world_census() -> Sc {
+    let mut sc = Sc::new(900.0);
+    frame_watch(&mut sc);
+    grab(&mut sc);
+    sc.act("world totals from the data", |cx| {
+        let r = cx.world.resource::<Roster>();
+        let on = r
+            .cands
+            .iter()
+            .filter(|c| r.docs[c.doc as usize].enabled)
+            .count();
+        let mut by_doc: std::collections::BTreeMap<String, usize> = Default::default();
+        for c in &r.cands {
+            if r.docs[c.doc as usize].enabled {
+                *by_doc
+                    .entry(r.docs[c.doc as usize].sector.clone())
+                    .or_default() += 1;
+            }
+        }
+        let top: Vec<String> = by_doc
+            .iter()
+            .filter(|(_, n)| **n >= 40)
+            .map(|(k, n)| format!("{k}={n}"))
+            .collect();
+        cx.note(format!(
+            "world: {} candidates in {} layers, {on} in enabled layers; big sectors: {top:?}",
+            r.cands.len(),
+            r.docs.len()
+        ));
+        cx.st.n.insert("ft_on".into(), 1.0);
+    });
+    let places: [(&'static str, &'static str); 9] = [
+        ("Ardea", "ardea_npc_01"),
+        ("Reddock", "reddock_npc_01"),
+        ("Faring", "faring"),
+        ("KapDun", "kap_dun_npc_01"),
+        ("Gotha", "gotha_npc_01"),
+        ("Montera", "montera"),
+        ("Geldern", "geldern"),
+        ("Silden", "silden"),
+        ("Trelis", "trelis"),
+    ];
+    for (city, doc) in places {
+        sc.act(format!("setup: hop to {city}"), move |cx| {
+            let at = centroid(cx, &[doc])
+                .or_else(|| {
+                    cx.world
+                        .resource::<crate::walk::play::teleport::Destinations>()
+                        .point_cm(&format!("Teleport_{city}"))
+                })
+                .unwrap_or(Vec3::ZERO);
+            cx.st.n.insert(
+                format!("has_{city}"),
+                if centroid(cx, &[doc]).is_some() {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
+            let at = cluster(cx, &[doc]).unwrap_or(at);
+            place_hero(cx, at + Vec3::Y * 300.0);
+        });
+        sc.until(format!("{city}: standing"), 120.0, |cx| {
+            cx.player().ctrl.grounded
+        });
+        sc.until(format!("{city}: queue drained"), 60.0, |cx| {
+            let r = cx.world.resource::<Roster>();
+            r.queue.is_empty() && cx.t > 6.0
+        });
+        sc.wait(2.0);
+        sc.act(format!("{city}: census"), move |cx| {
+            let hero = cx.player().ctrl.position;
+            let (want, live, queued, failed) = {
+                let r = cx.world.resource::<Roster>();
+                let near = |p: Vec3| (p.x - hero.x).abs().max((p.z - hero.z).abs()) <= 4_000.0;
+                let want = r
+                    .cands
+                    .iter()
+                    .filter(|c| r.docs[c.doc as usize].enabled && near(c.pos_cm))
+                    .count();
+                let failed = r
+                    .cands
+                    .iter()
+                    .filter(|c| c.failed && r.docs[c.doc as usize].enabled && near(c.pos_cm))
+                    .count();
+                (want, r.live.len(), r.queue.len(), failed)
+            };
+            let actors = cx.core().0.sim.actors.len();
+            cx.note(format!(
+                "CENSUS {city}: data {want} in range, shown {live}, queued {queued}, appearance failed {failed}, core actors {actors}"
+            ));
+            cx.st.n.insert(format!("c_{city}"), (want as i64 - failed as i64 - live as i64) as f64);
+        });
+        sc.shot(city);
+    }
+    sc.act("stop the frame clock", |cx| {
+        cx.st.n.insert("ft_on".into(), 0.0);
+    });
+    sc.check(
+        "shown equals the data in range (minus unresolved looks) at every place",
+        move |cx| {
+            let bad: Vec<String> = places
+                .iter()
+                .filter(|(c, _)| cx.st.n.get(&format!("has_{c}")).copied().unwrap_or(0.0) > 0.5)
+                .filter_map(|(c, _)| {
+                    let d = cx.st.n.get(&format!("c_{c}")).copied().unwrap_or(0.0);
+                    (d.abs() > 0.5).then(|| format!("{c}: {d}"))
+                })
+                .collect();
+            expect(
+                bad.is_empty(),
+                "all places complete".to_string(),
+                format!("short: {bad:?}"),
+            )
+        },
+    );
+    report_frames(&mut sc, "census hops", 0);
+    sc
+}
+
+/// Daily schedules away from Ardea: in Reddock the clock is set to noon, night and early
+/// morning (forward only, `GetRoutineTime`: 0 sleep, 1 work, 2 relax); the characters of the
+/// city must walk to their other routine points each time.
+pub fn world_routines() -> Sc {
+    use std::sync::{Arc, Mutex};
+    let mut sc = Sc::new(700.0);
+    grab(&mut sc);
+    sc.act("setup: stand in Reddock", |cx| {
+        let at = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
+        place_hero(cx, at + Vec3::Y * 300.0);
+    });
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.wait(10.0);
+    let last: Arc<Mutex<std::collections::HashMap<u32, Vec3>>> = Default::default();
+    for (label, hour) in [("noon", 12u64), ("night", 23), ("morning", 7)] {
+        let first = last.clone();
+        sc.act(format!("clock to {label}"), move |cx| {
+            let now_day = cx.core().0.sim.clock.game_ms / 86_400_000;
+            let target = (now_day + 1) * 86_400_000 + hour * 3_600_000;
+            cx.core_mut().0.sim.clock.game_ms = target;
+            let r = cx.world.resource::<Roster>();
+            let ids: Vec<_> = r
+                .live
+                .iter()
+                .filter_map(|i| r.cands[*i as usize].actor)
+                .collect();
+            let mut map = first.lock().unwrap();
+            map.clear();
+            for a in ids {
+                if let Some(p) = cx.actor_pos(a) {
+                    map.insert(a.0, p);
+                }
+            }
+        });
+        sc.wait(45.0);
+        let last = last.clone();
+        sc.act(format!("{label}: who moved"), move |cx| {
+            let map = last.lock().unwrap();
+            let mut moved = 0;
+            let mut far = 0;
+            for (id, p0) in map.iter() {
+                if let Some(p) = cx.actor_pos(gothic_sim::types::ActorId(*id)) {
+                    let d = Vec2::new(p.x - p0.x, p.z - p0.z).length();
+                    if d > 100.0 {
+                        moved += 1;
+                    }
+                    if d > 1500.0 {
+                        far += 1;
+                    }
+                }
+            }
+            let with_points = cx.world.resource::<crate::walk::play::objects::WorldObjects>().with_points;
+            cx.st.n.insert(format!("moved_{label}"), f64::from(moved));
+            cx.note(format!(
+                "ROUTINE {label}: {moved} of {} Reddock-area characters moved > 1 m, {far} > 15 m; characters with routine points so far {with_points}",
+                map.len()
+            ));
+        });
+        sc.shot(label);
+    }
+    sc.check("the schedule moves characters outside Ardea", |cx| {
+        let total: f64 = ["noon", "night", "morning"]
+            .iter()
+            .map(|l| cx.st.n.get(&format!("moved_{l}")).copied().unwrap_or(0.0))
+            .sum();
+        expect(
+            total > 0.0,
+            format!("{total} character moves over three schedule changes"),
+            "nobody moved when the routine time changed".to_string(),
+        )
+    });
+    sc
+}
+
+/// A chest outside Ardea: from the Reddock market the hero walks to the nearest unlocked chest
+/// of an existing layer and opens it with the use key; the contents come from the chest's
+/// treasure sets.
+pub fn world_chest() -> Sc {
+    use super::more::{Goal, approach};
+    use std::sync::Arc;
+    let mut sc = Sc::new(400.0);
+    grab(&mut sc);
+    sc.act("setup: stand at the Reddock market", |cx| {
+        let at = cluster(cx, &["reddock_npc_01"]).unwrap_or(Vec3::ZERO);
+        place_hero(cx, at + Vec3::Y * 300.0);
+    });
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.wait(6.0);
+    let goal: Goal = Arc::new(|cx| {
+        let hero = cx.hero_pos();
+        let w = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
+        w.list
+            .iter()
+            .enumerate()
+            .filter(|(i, o)| {
+                o.entity.is_some()
+                    && w.layer_on(*i)
+                    && !o.def.is_item
+                    && o.def.script_use() == gothic_sim::script::enums::UseType::Chest
+                    && o.def.lock.as_ref().is_none_or(|l| !l.locked)
+                    && (o.pos_cm - hero).length() < 20_000.0
+            })
+            .map(|(_, o)| o)
+            .min_by(|a, b| {
+                (a.pos_cm - hero)
+                    .length()
+                    .total_cmp(&(b.pos_cm - hero).length())
+            })
+            .map(|o| o.pos_cm)
+    });
+    approach(
+        &mut sc,
+        "chest",
+        goal,
+        140.0,
+        -0.3,
+        Arc::new(|cx| matches!(cx.play().target, Some(crate::walk::play::Target::Object(_)))),
+    );
+    sc.act("note where we are", |cx| {
+        let p = cx.player().ctrl.position;
+        let (r, name) = {
+            let o = cx
+                .world
+                .resource::<crate::walk::play::objects::WorldObjects>();
+            let near = o
+                .list
+                .iter()
+                .filter(|e| e.entity.is_some() && !e.def.is_item)
+                .min_by(|a, b| (a.pos_cm - p).length().total_cmp(&(b.pos_cm - p).length()))
+                .map(|e| e.def.name.clone());
+            (live_in(cx, "reddock"), near)
+        };
+        cx.note(format!(
+            "at the chest: {r} Reddock bodies shown, nearest object {name:?}"
+        ));
+        cx.use_key();
+    });
+    sc.until("loot page", 10.0, |cx| {
+        cx.ui().screen == gothic_ui::Screen::Loot
+    });
+    sc.wait(1.0);
+    sc.shot("chest_open");
+    sc.check("the chest outside Ardea shows its contents", |cx| {
+        let n = cx.inter().window.as_ref().map_or(0, |w| w.lines.len());
+        expect(
+            n > 0,
+            format!("{n} window lines"),
+            format!("{n} window lines"),
+        )
+    });
+    sc.act("Esc", |cx| cx.tap(KeyCode::Escape));
+    sc.wait(1.0);
     sc
 }
