@@ -160,9 +160,8 @@ fn prefer_ray_dda(origin: Vec3, end: Vec3, lo: Vec3, hi: Vec3) -> bool {
         return false;
     }
     let area = width.saturating_mul(depth);
-    let path_bound = ((dx as f64 / GRID as f64).ceil()
-        + (dz as f64 / GRID as f64).ceil()
-        + 3.0) as u64;
+    let path_bound =
+        ((dx as f64 / GRID as f64).ceil() + (dz as f64 / GRID as f64).ceil() + 3.0) as u64;
     let halo_bound = path_bound.saturating_mul(9);
     area > 64 && area > halo_bound.saturating_mul(2)
 }
@@ -245,13 +244,7 @@ impl CollisionWorld {
         }
     }
 
-    fn query_ray_with_mode(
-        &self,
-        origin: Vec3,
-        end: Vec3,
-        use_dda: bool,
-        out: &mut Vec<Tri>,
-    ) {
+    fn query_ray_with_mode(&self, origin: Vec3, end: Vec3, use_dda: bool, out: &mut Vec<Tri>) {
         let lo = origin.min(end) - 1.0;
         let hi = origin.max(end) + 1.0;
         let cells = if use_dda && prefer_ray_dda(origin, end, lo, hi) {
