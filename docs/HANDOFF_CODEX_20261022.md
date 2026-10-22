@@ -1,6 +1,6 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
-## In-progress atlas diagnosis, 2026-10-22 19:17 UTC
+## Completed bounded atlas diagnosis, 2026-10-22 19:28 UTC
 
 Current source `cd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7` adds an OFF-by-default
 `GR_SPT_FLIP_ATLAS_V=1` experiment: remap leaf/frond/billboard V before silhouette
@@ -12,11 +12,15 @@ GNU optimized game build FINISHED successfully in8m12s, session22722 closed; log
 `.local/artifacts/gothic-reforged-atlas-origin.exe`, SHA256
 `f60cea222be15bd6a7bd7b4585be0ff23eb789a4a9a9804ba41c1458323f3d39`.
 Compiled sourcecd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7; later changes only docs.
-wind_stability is running TWO sequential flag-off/on NOWIND smoke comparisons,
-apple/aspen/oak fixed views, evidence prefixes `.local/qa/tree-diagnostic/atlas-{off,on}`.
-No compiler remains. Do not start another game until that agent finishes. This is an
-experimental geometry and UV treatment, not proof of original-engine parity. Do not
-package as a proven fix or make the flag default without further corroboration.
+TWO sequential flag-off/on NOWIND smoke comparisons finished successfully: each exit0,
+grounded360/360, clean fatal renderer/shader checks, saves empty. Fixed apple/aspen/oak
+viewpoints, evidence prefixes `.local/qa/tree-diagnostic/atlas-{off,on}`. Root inspected
+on-apple, on-oak and off-oak; agent inspected matching off/on apple/oak. Apple changes
+from sparse branches to dense green clusters; the oak-view scene becomes thinner when
+flipped. Density is not a fidelity oracle and this multi-tree view does not isolate an
+individual oak's material. Default stays OFF: no all-species UV rule established.
+No active compiler, game or coding agent remains. This diagnostic was NOT packaged or
+delivered as a production fix. Latest LeafPhase/GrassFix packages remain unchanged.
 
 Evidence completed since last candidate:
 - Existing `spt_dump` rebuilt; default variant0 apple generates400 independent quads,
@@ -39,6 +43,12 @@ Evidence completed since last candidate:
   exit0, grounded360/360, clean fatal renderer scan. Thus wind is not required for sparse crown.
 
 Latest delivered LeafPhase and prior GrassFix remain unchanged and verified below.
+NEXT after quota permits: verify original intended per-record UV conventions and source
+sprite identities using multiple species, including fronds and billboard transitions;
+avoid simply choosing denser output or hardcoding an apple-only exception. The all-rect
+flip also changes silhouette calibration, so isolate raw sprite mapping from generated
+crown shape in further controlled evidence. Leaf temporal capture remains unimplemented;
+existing clock buffer checks and qualitative images do not establish jitter is solved.
 Quota checkpoint at19:23UTC: 5h window92% used, reset2026-10-22T22:08:55Z; weekly14%.
 User explicitly requests conserving quota across the day. Finish the bounded active
 capture, document it, then check current usage before new expensive work. If >=95%,

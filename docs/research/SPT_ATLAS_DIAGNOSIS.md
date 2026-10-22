@@ -47,6 +47,33 @@ These examples use the existing parsers and add no dependencies or new asset for
 Numerical atlas reproduction: `C:/Python312/python.exe .local/qa/tree-diagnostic/atlas_metrics.py`.
 It reads the fresh, VFS-matched DDS and the retained PNG, writing only JSON metrics.
 
+## Actual flag-off/on renderer comparison
+
+Optimized diagnostic source `cd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7` built in8m12s.
+Immutable `.local/artifacts/gothic-reforged-atlas-origin.exe` SHA256
+`f60cea222be15bd6a7bd7b4585be0ff23eb789a4a9a9804ba41c1458323f3d39`.
+Both finite smoke runs used GR_NOWIND=1, GR_RES=1280x720, and the same GrassFix runtime.
+The V flag was unset for off and exactly1 for on, restored afterward. No concurrent
+compiler or game ran. Each exited0, grounded360/360, clean fatal renderer/shader scan;
+runtime saves stayed empty. No performance or combat-parity measurement was attempted.
+
+```text
+EXE --walk --smoke --screenshot PREFIX --shots "apple:38.83,55.5,28.5,0,0.12;aspen:46.31,54.5,12.89,0,0.05;oak:250,54,22.33,0,0.12"
+```
+
+Evidence `.local/qa/tree-diagnostic/atlas-{off,on}-{apple,aspen,oak,walk,overview}.png`
+and matching smoke logs. At the apple viewpoint the central sparse branch-like crown
+becomes dense green clusters with the flag. At the oak viewpoint the scene becomes
+visibly thinner with more branches showing. The view includes multiple trees, so it
+does not isolate each species or establish an individual oak's mapping. Root inspected
+on-apple/on-oak/off-oak, and the QA agent inspected both apple/oak pairs.
+
+This confirms the atlas interpretation strongly affects rendered foliage; it does not
+establish that globally flipping V reproduces the original game. Denser foliage alone
+is not a fidelity criterion. The default remains off and no diagnostic package replaces
+the delivered LeafPhase or GrassFix releases. Further work needs original intended sprite
+identities, multiple species including fronds, and separate calibration/mapping evidence.
+
 VFS match logs, leaf records, the fresh base DDS and numerical summaries live under
 ignored `.local/qa/tree-diagnostic/`. The previously exported atlas thumbnail remains
 read-only at `C:/Users/PowerTower/dev/gothic-reforged/.local/scratch/`.
