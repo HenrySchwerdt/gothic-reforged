@@ -80,5 +80,22 @@ accepted only together with `-CompareRaycastTraversal`.
   values, including deliberately empty ones; remove variables originally absent.
   Benchmark preflight now rejects any probe variable, failure logs reject probe
   FAIL, and the script restores absence using `Remove-Item`.
-- No new Desktop release. Revised range heuristic and clean-environment runtime
-  verification pending.
+- Revised source `e5a93e4`: actual camera-range selection, 59/59 optimized physics
+  tests including explicit nonempty hits, log
+  `.local/physics-raycast-dda-range-hit-tests.log`. Viewer build 8m39s, immutable
+  `.local/artifacts/gothic-reforged-raycast-dda-range.exe`, SHA256
+  `426a2da54b6f7af640f4ae640351823ac1f99b5302f363250fec5307d1098c6d`.
+- Clean forced comparison `.local/bench-raycast-dda-range-camera/summary.json`:
+  same executable, 2 runs/variant, 1280x720, 30s warmup + 20s samples.
+  Median run-average frame time 11.2491 ms legacy versus 10.3318 ms candidate
+  (-8.15%); median run p95 12.6293 versus 11.1218 ms. Query CPU time per call
+  6.5865/6.6908 ms legacy versus 3.9767/3.9718 ms candidate (about 40% less).
+  All measured frames make forced idle picks; this is a diagnostic workload.
+  Only `GR_AIM_PROFILE=1` is inherited after child-process cleanup verification;
+  all four logs are free of probe failures and renderer review flags.
+- Root independently checked raw profiles and camera metadata: 12,752 entities
+  in every run, visible mesh count 1541–1543, same analytical route and renderer
+  settings. Slight pose/visible-count variation remains; this is a small sample,
+  not an assertion of perfectly identical simulation states or general FPS gain.
+- Normal unforced comparison and combat validation are in progress. No new
+  Desktop release until those checks and final-package validation complete.
