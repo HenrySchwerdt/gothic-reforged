@@ -165,6 +165,18 @@ pub struct XrHand {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct XrEyeCamera(pub Eye);
 
+/// Ask for a controller vibration (see [`crate::haptics`]).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct HapticMessage(pub crate::haptics::HapticPulse);
+
+/// Merged haptics: the mixer and, for tests and the desktop fallback, the pulses played.
+#[derive(Resource, Default)]
+pub struct HapticOut {
+    pub mixer: crate::haptics::HapticMixer,
+    /// Every pulse started so far (kept short: the last 64).
+    pub played: Vec<crate::haptics::HapticPulse>,
+}
+
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VrSet {
     Backend,
@@ -197,6 +209,9 @@ impl Plugin for VrPlugin {
             .init_resource::<VrCommands>()
             .init_resource::<VrDisplay>()
             .add_message::<CoreCommand>()
+            .add_message::<HapticMessage>()
+            .init_resource::<HapticOut>()
+            .add_systems(Last, play_haptics)
             .configure_sets(
                 Update,
                 (
@@ -285,6 +300,35 @@ fn openxr_frame(
         Ok(None) => {}
         Err(e) => warn!("OpenXR frame: {e}"),
     }
+}
+
+/// Merge the frame's haptic requests and hand them to the backend.
+fn play_haptics(
+    time: Res<Time<Real>>,
+    mut reader: MessageReader<HapticMessage>,
+    mut out: ResMut<HapticOut>,
+    #[cfg(feature = "openxr")] mut xr: Option<NonSendMut<crate::openxr::OpenXrInput>>,
+) {
+    let now = time.elapsed_secs();
+    let out = &mut *out;
+    for HapticMessage(p) in reader.read() {
+        out.mixer.push(*p, now);
+    }
+    let started = out.mixer.take(now);
+    if started.is_empty() {
+        return;
+    }
+    #[cfg(feature = "openxr")]
+    if let Some(xr) = xr.as_mut() {
+        for p in &started {
+            if let Err(e) = xr.vibrate(p) {
+                warn!("OpenXR haptics: {e}");
+            }
+        }
+    }
+    out.played.extend(started);
+    let excess = out.played.len().saturating_sub(64);
+    out.played.drain(..excess);
 }
 
 fn spawn_tracked_entities(mut commands: Commands) {
