@@ -159,6 +159,8 @@ pub struct XrHand {
     pub tracked: bool,
     /// World-space velocity, m/s.
     pub velocity: Vec3,
+    /// World-space angular velocity (scaled axis), rad/s.
+    pub angular_velocity: Vec3,
 }
 
 /// An eye camera of the rig.
@@ -343,6 +345,7 @@ fn spawn_tracked_entities(mut commands: Commands) {
                 hand,
                 tracked: false,
                 velocity: Vec3::ZERO,
+                angular_velocity: Vec3::ZERO,
             },
             Transform::default(),
             Name::new(format!("XrHand{hand:?}")),
@@ -498,14 +501,24 @@ fn sync_tracked(
         *t = pose_to_transform(&head);
     }
     let dt = time.delta_secs();
+    // Runtime velocities are in tracking space; the play space only turns them.
+    let space = to_world(&Pose::IDENTITY).rotation;
     for (mut t, mut h) in &mut hands {
         match input.0.hand_pose(h.hand) {
             Some(p) => {
                 let w = to_world(&p);
-                h.velocity = if h.tracked && dt > 0.0 {
-                    (w.position - t.translation) / dt
-                } else {
-                    Vec3::ZERO
+                let c = input.0.current.hand(h.hand);
+                h.velocity = match c.linear_velocity {
+                    Some(v) => space * v,
+                    None if h.tracked && dt > 0.0 => (w.position - t.translation) / dt,
+                    None => Vec3::ZERO,
+                };
+                h.angular_velocity = match c.angular_velocity {
+                    Some(v) => space * v,
+                    None if h.tracked && dt > 0.0 => {
+                        crate::input::rotation_between(t.rotation, w.rotation) / dt
+                    }
+                    None => Vec3::ZERO,
                 };
                 h.tracked = true;
                 *t = pose_to_transform(&w);
@@ -513,6 +526,7 @@ fn sync_tracked(
             None => {
                 h.tracked = false;
                 h.velocity = Vec3::ZERO;
+                h.angular_velocity = Vec3::ZERO;
             }
         }
     }

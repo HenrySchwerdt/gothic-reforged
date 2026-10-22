@@ -541,6 +541,16 @@ mod backend {
                                 vel.linear_velocity.z,
                             )
                         }),
+                    angular_velocity: vel
+                        .velocity_flags
+                        .contains(xr::SpaceVelocityFlags::ANGULAR_VALID)
+                        .then(|| {
+                            Vec3::new(
+                                vel.angular_velocity.x,
+                                vel.angular_velocity.y,
+                                vel.angular_velocity.z,
+                            )
+                        }),
                     trigger: f(a.trigger.state(&self.session, sub)),
                     grip: f(a.squeeze.state(&self.session, sub)),
                     thumbstick: stick,
