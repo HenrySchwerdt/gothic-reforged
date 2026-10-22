@@ -167,6 +167,12 @@ fn main() {
         ("host_fpv_grip.png", Vec3::new(0.0, 1.7, 0.0), Vec3::new(0.15, 1.15, -0.65)),
     ];
     for (file, from, to) in shots {
+        let layers = if matches!(file, "host_third_front.png" | "host_third_back.png") {
+            RenderLayers::layer(0).with(1)
+        } else {
+            // Keep first-person shots' player-head exclusion; the orc is visible on layer 0.
+            RenderLayers::layer(0)
+        };
         if file == "host_fpv_grip.png" {
             // Fingers curled (grip = trigger = 1) around the sword held in the right hand.
             apply_hero(&mut app, [[1.0, 1.0], [1.0, 1.0]]);
@@ -180,9 +186,10 @@ fn main() {
             tf = Transform::from_translation(from).looking_at(to, Vec3::Y);
         }
         {
-            let mut q = app.world_mut().query_filtered::<&mut Transform, With<ShotCam>>();
-            for mut t in q.iter_mut(app.world_mut()) {
+            let mut q = app.world_mut().query_filtered::<(&mut Transform, &mut RenderLayers), With<ShotCam>>();
+            for (mut t, mut camera_layers) in q.iter_mut(app.world_mut()) {
                 *t = tf;
+                *camera_layers = layers.clone();
             }
         }
         for _ in 0..if file == "host_fpv.png" { 60 } else { 6 } {

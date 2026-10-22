@@ -91,6 +91,24 @@ not live controller input or the headset compositor. Manager separately ran XR h
 3passed; earlier statements that these tests were not run are superseded by this result.
 ## Host avatar screenshots: missing head
 
-The headless appearance in `host_third_front.png` is explained by render-layer setup. `apps/quest/examples/host_shots.rs:65` assigns its screenshot camera only layer 0, while `apps/quest/src/actor.rs:182` puts any `hide_from_eyes` part on layer 1 only; the host fixture spawns the hero head with that option at `host_shots.rs:221`. The head asset itself was present in the same Ardea pack: the successful `hero_check` path calls `spawn_part(...).expect("hero head")` at `hero_check.rs:50`.
+The headless appearance in `host_third_front.png` is explained by render-layer setup. the original `host_shots` version assigned its screenshot camera only layer 0 (initialization remains at `apps/quest/examples/host_shots.rs:65`), while `apps/quest/src/actor.rs:182` puts any `hide_from_eyes` part on layer 1 only; the host fixture spawns the hero head with that option at `host_shots.rs:221`. The head asset itself was present in the same Ardea pack: the successful `hero_check` path calls `spawn_part(...).expect("hero head")` at `hero_check.rs:50`.
 
-This makes the screenshot a fixture camera-mask omission for a third-person view, not evidence of a missing head asset or a Quest runtime failure. The hide-from-eyes behavior is intended for the player's eye cameras. The runtime Quest eye cameras are spawned without a `RenderLayers` component in `crates/xr-quest/src/lib.rs:265-274` (default layer 0), while the optional mirror camera explicitly includes layers 0 and 1 in `apps/quest/src/hero.rs:90-97`. Thus source configuration supports the expected first-person hide / mirror-visible split. The host third-person shots reuse the first-person mask and therefore cannot validate a complete third-person avatar. No code or runtime conclusion was changed; actual on-headset visibility remains unverified.
+This explains the original headless screenshot as a fixture camera-mask omission, not evidence of a missing head asset or a Quest runtime failure. The hide-from-eyes behavior is intended for the player's eye cameras. The runtime Quest eye cameras are spawned without a `RenderLayers` component in `crates/xr-quest/src/lib.rs:265-274` (default layer 0), while the optional mirror camera explicitly includes layers 0 and 1 in `apps/quest/src/hero.rs:90-97`. This is consistent with hiding the player head from their own eye view while allowing it in the mirror. The host screenshot fixture mask has since been corrected below. Actual on-headset visibility remains unverified.
+
+### Host screenshot mask follow-up
+
+The fixture-only visibility mismatch is fixed in `apps/quest/examples/host_shots.rs`: third-person front/back cameras now include layers 0 and 1, while FPV, FPV-grip, and orc shots remain on layer 0. The canonical `examples` tree was copied to `.local/qmine-codex/examples` and its SHA-256 path/hash inventory matches exactly; `host_shots.rs` SHA-256 is `82C97BE5B35712D0B93A386EF6B0A20BDE9ECFBEA0D02C91CFB89C9162E064C4`. This only changes the host screenshot harness. No build or recapture was run here. The manager should rebuild/run `host_shots`, confirm the hero head appears in both third-person images, and confirm FPV remains head-free and the orc shot remains unchanged. This does not verify headset rendering.
+
+### Host screenshot mask build and visual check
+
+The isolated host example was rebuilt after fixing a RenderLayers move error by cloning the small layer-mask value inside the camera query. The retry succeeded in 7m23s with the requested stable GNU host target, --release -j2 --locked. The build log includes the first failed attempt and successful retry: .local/quest-host-shots-layer-build.log. The resulting executable is $exe (SHA-256 $exeHash). Running it from D:/gr-wt/codex-renderer exited 0 and saved all five screenshots; run log: .local/quest-host-shots-layer-run.log.
+
+Visual inspection confirms the hero head appears in both third-person screenshots (.local/quest/host_third_front.png, .local/quest/host_third_back.png), remains excluded in the first-person view (.local/quest/host_fpv.png), and the Orc head remains visible (.local/quest/host_orc.png). The curled grip image was regenerated at .local/quest/host_fpv_grip.png. SHA-256 values:
+
+host_third_front.png SHA-256=C08FF0CE54A450F61DC30055A8EE8FE22863AD11C458C6B8EBCDC9C5D5ECAF6A
+host_third_back.png SHA-256=AFB95DA602546060A6A0D2BBA48E04F9FF6B7A082D5DE31FDEE966C82B8A5C46
+host_fpv.png SHA-256=16EDB2994F9D092DE186F0D4BCF6B09EC26FBDE38DCA71A4AC0DEDFDE37E95A3
+host_orc.png SHA-256=07831D0E2088FC3618FBB1423FEB7F017D7A435F342D9252834295A950F622D0
+host_fpv_grip.png SHA-256=64D2EB67D36B63462102E5A6BA5C36D130333BAF733AE8FA49BB33265B426310
+
+This verifies the host fixture's layer selection only. It supplies no new headset-runtime evidence.
