@@ -925,6 +925,8 @@ fn surface_material(
     if kind == PartKind::Foliage {
         // The vertex alpha of ground cover is the wind weight, not a layer blend.
         flags &= !F_VBLEND;
+        // Keep the distance fade in both forward and prepass fragments. If foliage ever casts
+        // shadows, those passes need the main-camera position instead of the light-view position.
         flags |= F_FADE;
         params.misc.x = FOLIAGE_FADE.0;
         params.misc.y = FOLIAGE_FADE.1;
@@ -1271,6 +1273,8 @@ fn spawn_part(
         part.kind,
         PartKind::Foliage | PartKind::Tree | PartKind::TreeFar
     ) {
+        // F_FADE foliage relies on this exclusion: shadow views use a light position, not the
+        // main-camera position. Revisit the fade uniform before enabling foliage shadows.
         e.insert(NotShadowCaster);
     }
     // SpeedTree LOD: full geometry near, whole-tree billboard far, dither cross-fade between.

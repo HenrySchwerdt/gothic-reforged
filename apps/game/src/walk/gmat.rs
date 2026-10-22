@@ -25,6 +25,7 @@ static GOTHIC_PREPASS_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_PREPASS_VS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_VS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_WIND: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_VISIBILITY: OnceLock<Handle<Shader>> = OnceLock::new();
 static SKY_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static WATER_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static WIND_CLOCK_BUFFER: OnceLock<Handle<ShaderBuffer>> = OnceLock::new();
@@ -65,12 +66,14 @@ impl Plugin for GothicMaterialsPlugin {
         embedded_asset!(app, "shaders/gothic_prepass.wesl");
         embedded_asset!(app, "shaders/gothic_vertex.wesl");
         embedded_asset!(app, "shaders/gothic_wind.wesl");
+        embedded_asset!(app, "shaders/gothic_visibility.wesl");
         embedded_asset!(app, "shaders/sky.wesl");
         embedded_asset!(app, "shaders/water.wesl");
         // `gothic_prepass.wesl` is also used as its fragment shader when `GR_NOWIND=1`, and its
         // top-level WESL import still needs to resolve even when the custom vertex entry is off.
         // Load and retain the module before either importing Gothic shader is requested.
         let _ = GOTHIC_WIND.set(load_embedded_asset!(app, "shaders/gothic_wind.wesl"));
+        let _ = GOTHIC_VISIBILITY.set(load_embedded_asset!(app, "shaders/gothic_visibility.wesl"));
         let _ = GOTHIC_FS.set(load_embedded_asset!(app, "shaders/gothic.wesl"));
         let _ = GOTHIC_PREPASS_FS.set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
         // `GR_NOWIND=1` keeps Bevy's own vertex stage (wind off, for A/B comparisons).

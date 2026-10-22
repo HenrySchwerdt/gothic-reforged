@@ -31,6 +31,7 @@ fn main() -> AnyResult<()> {
         &mut next_id,
     )?;
     register_game_shader(&mut cache, &shader_root, "gothic_wind.wesl", &mut next_id)?;
+    register_game_shader(&mut cache, &shader_root, "gothic_visibility.wesl", &mut next_id)?;
 
     let base_mesh = [
         "MESH_PIPELINE",

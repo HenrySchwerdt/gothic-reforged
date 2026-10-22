@@ -12,6 +12,7 @@ import bevy_pbr::render::{
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, calculate_view},
     pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
 };
+import package::walk::shaders::gothic_visibility::foliage_fade_discards;
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
@@ -86,10 +87,6 @@ fn animate_uv(p: vec2<f32>, scroll: vec4<f32>, rot: vec4<f32>) -> vec2<f32> {
     return q + scroll.zw + fract(scroll.xy * globals.time);
 }
 
-fn ign(p: vec2<f32>) -> f32 {
-    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
-}
-
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
 @if(VISIBILITY_RANGE_DITHER)
@@ -123,9 +120,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         discard;
     }
     if (flags & F_FADE) != 0u {
-        let dist = distance(in.world_position.xyz, view.world_position.xyz);
-        let fade = 1.0 - smoothstep(params.misc.x, params.misc.y, dist);
-        if fade < ign(in.position.xy) {
+        if foliage_fade_discards(
+            in.world_position.xyz,
+            view.world_position.xyz,
+            params.misc.xy,
+            in.position.xy,
+        ) {
             discard;
         }
     }
