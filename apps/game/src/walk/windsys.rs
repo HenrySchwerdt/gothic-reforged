@@ -1,5 +1,5 @@
-//! Wind systems: the grass response (`Render.GrassResponseRange/Intensity` of `ge3.INI`) needs the
-//! hero position in every ground-cover material; bounded shared phases feed the GPU wind shader.
+//! Wind systems: the grass response (`Render.GrassResponseRange/Intensity` of `ge3.INI`) uses the
+//! hero position from the shared clock buffer; bounded shared phases feed the GPU wind shader.
 use super::{CM, Player, gmat};
 use bevy::prelude::*;
 
@@ -16,14 +16,14 @@ fn advance_wind_clock(
     mut frame: ResMut<gmat::WindClockFrame>,
     mut clock: Local<gothic_environment::wind_clock::WindClock>,
 ) {
-    frame.values = clock.advance(time.delta_secs_f64(), gmat::wind_env().clock);
+    let values = clock.advance(time.delta_secs_f64(), gmat::wind_env().clock);
+    frame.values[..values.len()].copy_from_slice(&values);
 }
 
-/// Write the hero position into the vegetation materials (only those: touching an asset
-/// re-prepares its bind group).
+/// Write the shared grass-response focus into the clock buffer.
 fn grass_focus(
     player: Res<Player>,
-    mut materials: ResMut<Assets<gmat::GothicMaterial>>,
+    mut frame: ResMut<gmat::WindClockFrame>,
     mut last: Local<Option<Vec3>>,
 ) {
     if std::env::var_os("GR_NOGRASSFOCUS").is_some() {
@@ -34,17 +34,11 @@ fn grass_focus(
         return;
     }
     *last = Some(pos);
+    frame.values[16..20].copy_from_slice(&pos.extend(1.0).to_array());
     if std::env::var_os("GR_WINDLOG").is_some() {
         eprintln!(
             "grass focus update {pos:?}, {} wind materials",
             gmat::wind_materials().len()
         );
-    }
-    for id in gmat::wind_materials() {
-        if let Some(mut m) = materials.get_mut(id)
-            && m.params.wind_mat.x == gmat::WindMode::Vegetation as i32 as f32
-        {
-            m.params.player = pos.extend(1.0);
-        }
     }
 }

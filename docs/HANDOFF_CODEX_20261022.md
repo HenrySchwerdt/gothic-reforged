@@ -162,3 +162,22 @@ previous Wind release12.0353ms vs shared-clock candidate12.0263ms (-0.075%). p95
 13.3983/13.0837ms;GPU3.4099/3.4224ms. Essentially equal; no speedup claim. Raw JSONs and
 summary own .local/bench-wind-clock, manual-renderer-log-review=false.
 Final package/play QA pending. Earlier Desktop releases remain unchanged.
+## Clock/combat checkpoint — 2026-10-22 14:15 Berlin
+
+Clock source13cead4 packaged separately at Desktop/GothicReforged-Codex-20261022-WindClock.
+Initial arbitrary-cwd melee_faithful FAILED (own .local/pc-package-wind-clock-melee.log):
+normal attack succeeded, held-left PowerAttack and later Pierce failed. Exit0 did not imply PASS.
+Preserve that failure. Controlled replay with immutable wind-prepass5 and wind-clock artifacts,
+same WindClock/runtime cwd and GR_RES1280x720, then passed BOTH variants. Logs own
+.local/qa/clock-combat-compare-1/{baseline,clock}.log. No cause proven and no combat changes
+made; input/focus/timing remains an investigation, not an established clock regression.
+GR_INPUT_DEBUG emits mapped edges plus grabbed/blocked, but cannot expose every filtered raw
+mouse event. Next debug replay must wait for ongoing targeted compiler work to finish.
+Current verified user-facing package remains Desktop/GothicReforged-Codex-20261022-Wind.
+Clock folder is a candidate; do not claim robust packaged combat validation from a retry alone.
+
+Uncommitted grass-focus prototype owned by wind_stability: 80-byte shared frame buffer stores
+focus in fifth vec4, no per-material mutation/iteration; pure environment clock API stays16 floats.
+No release artifact contains it yet. Agent now runs fast shader checker and viewer cargo-check;
+no full release build or runtime authorized concurrently. Verify live material count in a separate
+functional GR_WINDLOG run and matched moving workload A/B before any performance claim.

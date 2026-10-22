@@ -32,7 +32,8 @@ static WIND_CLOCK_BUFFER: OnceLock<Handle<ShaderBuffer>> = OnceLock::new();
 #[extract_app(RenderApp)]
 pub struct WindClockFrame {
     pub buffer: Handle<ShaderBuffer>,
-    pub values: [f32; 16],
+    /// Four oscillator records from the environment clock, followed by the shared grass focus.
+    pub values: [f32; 20],
 }
 
 pub struct GothicMaterialsPlugin;
@@ -457,13 +458,13 @@ pub struct GothicMaterial {
 }
 
 fn create_wind_clock_buffer(mut buffers: ResMut<Assets<ShaderBuffer>>, mut commands: Commands) {
-    // Four vec4s hold current and previous-frame bounded phases/gust. The buffer
-    // identity is stable for every Gothic material and every frame.
-    let handle = buffers.add(ShaderBuffer::with_size(64, RenderAssetUsages::default()));
+    // Four vec4s hold current and previous-frame bounded phases/gust; the fifth holds the
+    // shared grass focus. The buffer identity is stable for every Gothic material and frame.
+    let handle = buffers.add(ShaderBuffer::with_size(80, RenderAssetUsages::default()));
     let _ = WIND_CLOCK_BUFFER.set(handle.clone());
     commands.insert_resource(WindClockFrame {
         buffer: handle,
-        values: [0.0; 16],
+        values: [0.0; 20],
     });
 }
 

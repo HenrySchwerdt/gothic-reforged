@@ -72,7 +72,8 @@ a `PrepareResources` render system writes it once per frame. Per-material assets
 not mutated for the clock. Color/depth/shadow paths consume the current record, while motion-vector
 prepass consumes the saved previous record. Frequencies were verified shared: `WindEnv::new`
 derives vegetation rates from `VegetationWind::original()` and SpeedTree values from the single
-world wind packet; material-specific values are mode, height, leaf size and grass focus. This
+world wind packet; material-specific values are mode, height and leaf size, with grass focus shared
+through the app clock buffer. This
 supersedes the earlier proposal to extend Bevy `GlobalsUniform`; no engine patch or extra view bind
 group is needed.
 
@@ -120,3 +121,21 @@ previous Wind release12.0353ms vs shared-clock candidate12.0263ms (-0.075%). p95
 13.3983/13.0837ms;GPU3.4099/3.4224ms. Essentially equal; no speedup claim. Raw JSONs and
 summary own .local/bench-wind-clock, manual-renderer-log-review=false.
 Final package/play QA pending. Earlier Desktop releases remain unchanged.
+
+## Shared grass-focus prototype — source only
+
+The app-side `WindClockFrame` now appends one focus `vec4` to the 16 phase/gust floats returned
+by `WindClock::advance`; the shared storage buffer grows from 64 to 80 bytes. `grass_focus` keeps
+the existing `observer_cm(&player) * CM` conversion, active `w=1`, `GR_NOGRASSFOCUS` gate, and
+2 cm movement threshold, but updates the shared frame instead of mutating each vegetation
+material asset. The shader reads this shared focus only for vegetation mode. Current and previous
+prepass displacement use the same current focus, as before. `GothicParams.player` remains in the
+uniform layout for this prototype but is no longer read by the wind shader.
+
+Newly streamed vegetation materials now use the latest shared focus immediately. Previously, a
+material created between focus updates retained the default inactive focus until the next movement
+crossed the 2 cm threshold; this small initialization difference is intentional. The live count
+of registered wind-material assets is not recorded in the saved clock smoke logs. `GR_WINDLOG`
+prints that registry count when focus updates, and it counts unique cached material assets rather
+than visible grass instances. This prototype has no matched moving-walk performance result yet;
+the source-level reduction in asset mutations is a hypothesis, not a speedup claim.

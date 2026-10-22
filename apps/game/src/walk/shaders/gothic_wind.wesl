@@ -1,9 +1,9 @@
 // Shared deformation for Gothic color and depth/shadow prepass vertex stages.
 const TAU: f32 = 6.28318530718;
 
-// Each pair is one bounded clock sample: x/y vegetation radians, z tree cycles,
-// w leaf-rock cycles; the second vec4 contains leaf-rustle cycles and gust strength.
-@group(3) @binding(8) var<storage, read> wind_clock: array<vec4<f32>, 4>;
+// [0]/[1] are current bounded phases/gust, [2]/[3] previous phases/gust;
+// [4] is the shared grass focus (world metres, w = active).
+@group(3) @binding(8) var<storage, read> wind_clock: array<vec4<f32>, 5>;
 
 fn hash11(x: f32) -> f32 {
     return fract(sin(x * 127.1 + 311.7) * 43758.5453);
@@ -19,7 +19,6 @@ fn wind_offset(
     wind_mat: vec4<f32>,
     veg: vec4<f32>,
     veg_amp: vec4<f32>,
-    player: vec4<f32>,
     wind: array<vec4<f32>, 7>,
     previous: bool,
 ) -> vec3<f32> {
@@ -34,6 +33,7 @@ fn wind_offset(
         gust_and_rustle = wind_clock[3];
     }
     if mode < 1.5 {
+        let player = wind_clock[4];
         // ge_vegetation.fx "APPLAY WIND" (cm formulas evaluated on world centimetres).
         let x = wp.x * 100.0;
         let z = wp.z * 100.0;

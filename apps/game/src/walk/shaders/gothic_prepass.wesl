@@ -71,7 +71,6 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
         params.wind_mat,
         params.veg,
         params.veg_amp,
-        params.player,
         params.wind,
         false,
     );
@@ -99,7 +98,6 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
         params.wind_mat,
         params.veg,
         params.veg_amp,
-        params.player,
         params.wind,
         true,
     );
