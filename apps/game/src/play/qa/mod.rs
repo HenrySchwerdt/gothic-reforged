@@ -33,6 +33,7 @@ mod more2;
 mod more3;
 mod moves;
 mod moves2;
+mod npc_ai;
 mod ranged;
 mod scenarios;
 mod world;
@@ -242,8 +243,10 @@ pub fn register(app: &mut App, scenario: &str) {
         );
         std::process::exit(2);
     };
-    // `GR_QA_OUT` moves the output directory (parallel agents must not wipe each other).
-    let base = std::env::var("GR_QA_OUT").unwrap_or_else(|_| ".local/qa".into());
+    // `GR_QA_OUT` / `GR_QA_DIR` move the output directory (parallel agents must not wipe each other).
+    let base = std::env::var("GR_QA_OUT")
+        .or_else(|_| std::env::var("GR_QA_DIR"))
+        .unwrap_or_else(|_| ".local/qa".into());
     let dir = PathBuf::from(format!("{base}/{scenario}"));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);

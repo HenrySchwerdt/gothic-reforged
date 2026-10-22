@@ -1,7 +1,8 @@
 //! `WorldQuery` for the game host: actor positions live here (the ECS reads them back for
 //! presentation), movement follows the navmesh (A* paths, local avoidance, no overlap with other
 //! characters) when one is attached and falls back to straight lines where the mesh does not
-//! know the ground; line of sight is the original's "outdoors, no check" rule.
+//! know the ground; line of sight is asked of the host's collision world (a frame later, free
+//! until answered) and the original's "outdoors, no check" rule stays for perception.
 use glam::{Vec2, Vec3};
 use gothic_nav::{PathFollower, SharedNav, avoid};
 use gothic_sim::types::ActorId;
@@ -20,6 +21,42 @@ struct Follow {
     follower: PathFollower,
 }
 
+/// Cells of the line-of-sight cache in cm.
+const LOS_CELL: f32 = 100.0;
+
+/// A free-line query the sim asked and the host has not answered yet.
+pub type LosQuery = (Pos, Pos);
+
+#[derive(Debug, Default)]
+struct LosInner {
+    /// Answers by quantised end points: `true` is a free line.
+    answers: BTreeMap<[i32; 6], bool>,
+    /// Questions waiting for the host's collision world.
+    pending: Vec<LosQuery>,
+}
+
+/// `eCEntity::IsFreeLOS` as the sim sees it: the game host answers each question with a ray cast
+/// against the level geometry one frame later ([`PlayWorld::take_los_queries`],
+/// [`PlayWorld::answer_los`]); until then a line counts as free. Interior mutability because the
+/// sim asks through `&self`.
+#[derive(Debug, Default)]
+pub struct LosCache(std::sync::Mutex<LosInner>);
+
+impl Clone for LosCache {
+    fn clone(&self) -> Self {
+        let g = self.0.lock().expect("los cache");
+        Self(std::sync::Mutex::new(LosInner {
+            answers: g.answers.clone(),
+            pending: g.pending.clone(),
+        }))
+    }
+}
+
+fn los_key(from: Pos, to: Pos) -> [i32; 6] {
+    let q = |v: f32| (v / LOS_CELL).floor() as i32;
+    [q(from.x), q(from.y), q(from.z), q(to.x), q(to.y), q(to.z)]
+}
+
 /// Actor placement shared between the core and the presentation. Units: centimetres,
 /// `y` up; the yaw convention is [`Pos::yaw_to`].
 #[derive(Debug, Clone, Default)]
@@ -28,9 +65,26 @@ pub struct PlayWorld {
     /// Navigation mesh shared with the host (grown from the collision world).
     pub nav: Option<SharedNav>,
     follows: BTreeMap<ActorId, Follow>,
+    /// Line-of-sight answers of the host's collision world.
+    pub los: LosCache,
 }
 
 impl PlayWorld {
+    /// The questions asked since the last call (the host answers them with
+    /// [`PlayWorld::answer_los`]).
+    pub fn take_los_queries(&self) -> Vec<LosQuery> {
+        std::mem::take(&mut self.los.0.lock().expect("los cache").pending)
+    }
+
+    /// The host's answer for a question: `free` is whether the segment hits no geometry.
+    pub fn answer_los(&self, from: Pos, to: Pos, free: bool) {
+        let mut g = self.los.0.lock().expect("los cache");
+        if g.answers.len() > 4096 {
+            g.answers.clear();
+        }
+        g.answers.insert(los_key(from, to), free);
+    }
+
     fn straight(&mut self, id: ActorId, target: Pos, max_dist: f32) -> f32 {
         let Some((pos, yaw)) = self.actors.get_mut(&id) else {
             return 0.0;
@@ -138,7 +192,15 @@ impl WorldQuery for PlayWorld {
     fn facing(&self, id: ActorId) -> f32 {
         self.actors.get(&id).map_or(0.0, |a| a.1)
     }
-    fn line_of_sight(&self, _from: Pos, _to: Pos) -> bool {
+    fn line_of_sight(&self, from: Pos, to: Pos) -> bool {
+        let key = los_key(from, to);
+        let mut g = self.los.0.lock().expect("los cache");
+        if let Some(free) = g.answers.get(&key) {
+            return *free;
+        }
+        if g.pending.len() < 64 {
+            g.pending.push((from, to));
+        }
         true
     }
     fn move_towards(&mut self, id: ActorId, target: Pos, max_dist: f32) -> f32 {

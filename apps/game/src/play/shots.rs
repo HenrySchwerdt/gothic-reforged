@@ -17,8 +17,9 @@ use gothic_sim::sim::EventKind;
 use std::collections::HashMap;
 
 const CM: f32 = 0.01;
-/// Duration of a simulation step in seconds (interpolation of the drawn position).
-const TICK: f32 = 0.05;
+/// Duration of a simulation step in seconds (interpolation of the drawn position): the core
+/// steps with `tick_ms = 1000 / TICK_HZ` truncated (`core.rs`), not the 50 ms of `SimConfig`.
+const TICK: f32 = ((1000.0 / gothic_runtime::TICK_HZ as f32) as u32) as f32 / 1000.0;
 /// Chest height above the feet for a target effect (cm).
 const CHEST: f32 = 130.0;
 

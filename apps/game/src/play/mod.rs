@@ -25,6 +25,8 @@ mod kit;
 pub(crate) mod move_states;
 mod layers;
 pub(crate) mod nav;
+mod npc_bows;
+mod npc_moves;
 mod npcs;
 mod objects;
 mod pose;

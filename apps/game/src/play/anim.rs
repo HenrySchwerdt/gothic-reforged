@@ -119,12 +119,6 @@ pub fn queue_steps(queue: &mut OverlayQueue, steps: &[(&'static str, &'static st
     queue.0.extend(steps.iter().copied());
 }
 
-/// Queues a swing (raise, strike, recover).
-pub fn queue_swing(queue: &mut OverlayQueue) {
-    queue.0.clear();
-    queue.0.extend([("Attack", "Raise"), ("Attack", "Hit")]);
-}
-
 pub fn queue_stumble(queue: &mut OverlayQueue) {
     queue.0.clear();
     queue.0.push_back(("QuickStumble", "Hit"));

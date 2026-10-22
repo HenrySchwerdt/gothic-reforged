@@ -601,11 +601,14 @@ fn shot_animations(
                     continue;
                 };
                 if *spell {
-                    // The caster's raise already ran; the missile leaves, hit and recover follow.
-                    super::anim::queue_steps(
-                        &mut queue,
-                        &[("Cast", "Raise"), ("Cast", "Hit"), ("Cast", "Recover")],
-                    );
+                    // The hero's raise already ran; the missile leaves, hit and recover follow.
+                    // NPC casters play their clips as script instructions (`npc_moves`).
+                    if *owner == hero_id {
+                        super::anim::queue_steps(
+                            &mut queue,
+                            &[("Cast", "Hit"), ("Cast", "Recover")],
+                        );
+                    }
                 } else if *owner == hero_id {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Recover")]);
                 } else {
@@ -636,7 +639,7 @@ pub struct BowVisual {
 const BOW_IN_HAND_TURN: Quat = Quat::from_xyzw(0.0, 0.0, 1.0, 0.0);
 
 /// Candidate actor names of an item template (`It_Bow_Hunting` -> `Bow_Hunting_01`).
-fn actor_candidates(template: &str) -> Vec<String> {
+pub(super) fn actor_candidates(template: &str) -> Vec<String> {
     let rest = template.strip_prefix("It_").unwrap_or(template);
     vec![
         format!("{rest}_01"),

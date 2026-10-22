@@ -8,6 +8,7 @@ pub mod moves;
 pub mod range;
 pub mod react;
 pub mod select;
+pub mod weapon;
 
 use crate::host::{EntityId, ScriptHost};
 use crate::routine::state::{Callback, State};
