@@ -151,8 +151,20 @@ fn trace(sc: &mut Sc) {
 
 /// Turn the camera toward the raider until the error is small.
 fn turn_to(sc: &mut Sc, label: &str, yaw_add: f32) {
+    let trace_body = label == "turn the camera by 100 degrees";
     sc.step(label.to_string(), move |cx| {
         if cx.t < 0.05 {
+            if trace_body && !cx.st.n.contains_key("magic_body_trace_started") {
+                cx.st.n.insert("magic_body_trace_started".into(), 1.0);
+                if let Some(trace) = cx
+                    .world
+                    .resource_mut::<crate::walk::Player>()
+                    .magic_body_trace
+                    .as_mut()
+                {
+                    trace.begin();
+                }
+            }
             let yaw = cx.player().yaw;
             cx.st.n.insert("turn_from".into(), f64::from(yaw));
         }
@@ -250,8 +262,64 @@ pub fn magic_faithful() -> Sc {
     sc.wait(1.0);
     sc.check("the body follows the camera in PS_Magic_Loop", |cx| {
         let err = cx.st.n.get("yaw_err").copied().unwrap_or(9.9);
+        let passed = err.to_degrees() < 10.0;
+        if cx.player().magic_body_trace.is_some() {
+            let (
+                heading,
+                player_yaw,
+                command,
+                fly,
+                placed,
+                face,
+                velocity,
+                mode,
+                turn_speed,
+                turn_accel,
+                turn_decel,
+            ) = {
+                let player = cx.player();
+                (
+                    player.ctrl.heading,
+                    player.yaw,
+                    player.command,
+                    player.fly,
+                    player.placed,
+                    player.face.map(|face| (-face.x).atan2(-face.z)),
+                    player.ctrl.turn.velocity_deg,
+                    player.ctrl.machine.mode(),
+                    player.ctrl.config.turn_speed_max_deg,
+                    player.ctrl.config.turn_accel_deg,
+                    player.ctrl.config.turn_decel_deg,
+                )
+            };
+            let hero_yaw_post_sync = cx.play().hero_yaw;
+            let (alignment, constraint) = cx.core().0.sim.hero_alignment();
+            let script_modes = cx.core().0.sim.hero_script_modes();
+            let camera_yaw_post_camera = {
+                let mut camera = cx
+                    .world
+                    .query_filtered::<&Transform, With<crate::walk::PlayerCamera>>();
+                camera.single(cx.world).ok().map(|transform| {
+                    transform.rotation.to_euler(EulerRot::YXZ).0
+                })
+            };
+            let snapshot = format!(
+                "phase=post_wait_assert qa_time={:.3}s result={} yaw_error_deg={:.3} controller_heading_post_sync={heading:.6} hero_yaw_post_sync={hero_yaw_post_sync:.6} player_yaw={player_yaw:.6} player_command={command} fly={fly} placed={placed} camera_yaw_post_camera={camera_yaw_post_camera:?} face_target_yaw={face:?} turn_velocity_deg_s={velocity:.3} mode={mode:?} loaded_turn_profile_deg_s={turn_speed:.3} accel_deg_s2={turn_accel:.3} decel_deg_s2={turn_decel:.3} alignment={alignment:?} constraint_deg={constraint:.3} script_modes={script_modes:?}",
+                cx.now,
+                if passed { "PASS" } else { "FAIL" },
+                err.to_degrees(),
+            );
+            if let Some(trace) = cx
+                .world
+                .resource_mut::<crate::walk::Player>()
+                .magic_body_trace
+                .as_mut()
+            {
+                eprint!("{}", trace.finish(snapshot));
+            }
+        }
         expect(
-            err.to_degrees() < 10.0,
+            passed,
             format!("body-camera error {:.1} deg", err.to_degrees()),
             format!("error {err}"),
         )

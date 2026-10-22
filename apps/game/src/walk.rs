@@ -196,6 +196,78 @@ struct Player {
     scripted_dive: Option<f32>,
     /// Water surface height at the hero from the world's water zones (cm), `None` = use the sea.
     scripted_water: Option<Option<f32>>,
+    /// Opt-in trace for diagnosing the `magic_faithful` body-follow QA assertion.
+    magic_body_trace: Option<MagicBodyTrace>,
+}
+
+/// Bounded, deferred diagnostics for one scripted magic body-follow turn.
+struct MagicBodyTrace {
+    started: Option<Instant>,
+    last_sample: Option<Instant>,
+    movement_dt: f32,
+    rows: VecDeque<String>,
+}
+
+impl MagicBodyTrace {
+    const CAPACITY: usize = 256;
+    const MIN_SAMPLE_PERIOD: std::time::Duration = std::time::Duration::from_nanos(16_666_667);
+
+    fn new() -> Self {
+        Self {
+            started: None,
+            last_sample: None,
+            movement_dt: 0.0,
+            rows: VecDeque::with_capacity(Self::CAPACITY),
+        }
+    }
+
+    fn begin(&mut self) {
+        self.rows.clear();
+        self.started = Some(Instant::now());
+        self.last_sample = None;
+        self.movement_dt = 0.0;
+    }
+
+    fn record(&mut self, make_row: impl FnOnce() -> String) {
+        let now = Instant::now();
+        let Some(started) = self.started else { return };
+        if self
+            .last_sample
+            .is_some_and(|last| now.duration_since(last) < Self::MIN_SAMPLE_PERIOD)
+        {
+            return;
+        }
+        if self.rows.len() == Self::CAPACITY {
+            self.rows.pop_front();
+        }
+        self.rows.push_back(format!(
+            "wall_s={:.4} {}",
+            started.elapsed().as_secs_f64(),
+            make_row()
+        ));
+        self.last_sample = Some(now);
+    }
+
+    fn finish(&mut self, snapshot: String) -> String {
+        let mut dump = format!("GR_MAGIC_BODY_TRACE: {snapshot}\n");
+        for row in &self.rows {
+            dump.push_str("  ");
+            dump.push_str(row);
+            dump.push('\n');
+        }
+        self.started = None;
+        self.last_sample = None;
+        self.rows.clear();
+        dump
+    }
+}
+
+impl Player {
+    fn record_magic_body_trace(&mut self, make_row: impl FnOnce() -> String) {
+        if let Some(trace) = self.magic_body_trace.as_mut() {
+            trace.record(make_row);
+        }
+    }
 }
 
 #[derive(Component)]
@@ -265,6 +337,10 @@ pub fn run(args: &[String]) -> Result<()> {
         })
         .unwrap_or((4000.0, 4000.0));
     let smoke = args.iter().any(|a| a == "--smoke");
+    let magic_body_trace_enabled = std::env::var("GR_MAGIC_BODY_TRACE").is_ok_and(|v| v == "1")
+        && args
+            .windows(2)
+            .any(|pair| pair[0] == "--qa" && pair[1] == "magic_faithful");
     let prefix = arg("--screenshot").unwrap_or_else(|| ".local/ardea".into());
     let shots = arg("--shots").map(|s| parse_shots(&s)).unwrap_or_default();
     let handle: LoaderHandle = spawn_loader(data_dir.clone().into(), Origin(ORIGIN));
@@ -351,6 +427,7 @@ pub fn run(args: &[String]) -> Result<()> {
         report: Default::default(),
         scripted_dive: None,
         scripted_water: None,
+        magic_body_trace: magic_body_trace_enabled.then(MagicBodyTrace::new),
         command: false,
         face: None,
     })
@@ -1439,6 +1516,22 @@ fn player_motion(
     mut player: ResMut<Player>,
 ) {
     let dt = time.delta_secs().min(0.1);
+    let trace_motion = player
+        .magic_body_trace
+        .as_ref()
+        .is_some_and(|trace| trace.started.is_some());
+    let camera_yaw_pre_motion = player.yaw;
+    let heading_pre = trace_motion.then_some(player.ctrl.heading);
+    let turn_velocity_pre = trace_motion.then_some(player.ctrl.turn.velocity_deg);
+    let mode_pre = trace_motion.then(|| player.ctrl.machine.mode());
+    let target_yaw = trace_motion.then(|| player.face.map(|face| (-face.x).atan2(-face.z)));
+    let mouse_delta = mouse.delta;
+    let command = player.command;
+    let cursor_mouse_gate = trace_motion
+        && !command
+        && cursor
+            .single()
+            .is_ok_and(|options| options.grab_mode != CursorGrabMode::None);
     if !player.command
         && cursor
             .single()
@@ -1468,6 +1561,14 @@ fn player_motion(
     }
     let sprint = keys.pressed(KeyCode::ShiftLeft);
     if player.fly {
+        if trace_motion {
+            player.record_magic_body_trace(|| {
+                format!(
+                    "early_return=fly command={command} cursor_mouse_gate={cursor_mouse_gate} dt_raw={:.6} dt_used={dt:.6}",
+                    time.delta_secs()
+                )
+            });
+        }
         let look = Quat::from_euler(EulerRot::YXZ, player.yaw, player.pitch, 0.0);
         let mut dir = Vec3::ZERO;
         {
@@ -1498,6 +1599,14 @@ fn player_motion(
     let tile_ready = collision.0.has_chunk(tile_chunk_id((tile.x, tile.z)));
     if !player.placed {
         if !tile_ready {
+            if trace_motion {
+                player.record_magic_body_trace(|| {
+                    format!(
+                        "early_return=tile_not_ready_before_placement command={command} cursor_mouse_gate={cursor_mouse_gate} tile=({}, {}) dt_raw={:.6} dt_used={dt:.6}",
+                        tile.x, tile.z, time.delta_secs()
+                    )
+                });
+            }
             return;
         }
         let p = player.ctrl.position;
@@ -1508,10 +1617,26 @@ fn player_motion(
             player.ctrl.position.y = y + 5.0;
             player.placed = true;
         } else {
+            if trace_motion {
+                player.record_magic_body_trace(|| {
+                    format!(
+                        "early_return=ground_not_found command={command} cursor_mouse_gate={cursor_mouse_gate} tile=({}, {}) tile_ready={tile_ready} dt_raw={:.6} dt_used={dt:.6}",
+                        tile.x, tile.z, time.delta_secs()
+                    )
+                });
+            }
             return;
         }
     }
     if !tile_ready {
+        if trace_motion {
+            player.record_magic_body_trace(|| {
+                format!(
+                    "early_return=tile_not_ready command={command} cursor_mouse_gate={cursor_mouse_gate} tile=({}, {}) tile_ready={tile_ready} dt_raw={:.6} dt_used={dt:.6}",
+                    tile.x, tile.z, time.delta_secs()
+                )
+            });
+        }
         return; // never integrate gravity into a void
     }
     // Speeds come from the PC_Hero movement template (Run 400 cm/s, Sprint 600 cm/s), with the
@@ -1557,6 +1682,24 @@ fn player_motion(
             ..Default::default()
         };
         let report = player.ctrl.step_command(&collision.0, &cmd, dt);
+        let heading_post = player.ctrl.heading;
+        let turn_velocity_post = player.ctrl.turn.velocity_deg;
+        let mode_post = player.ctrl.machine.mode();
+        let camera_yaw_after_mouse = player.yaw;
+        let position_post = player.ctrl.position;
+        let placed_post = player.placed;
+        if let Some(trace) = player.magic_body_trace.as_mut() {
+            if trace.started.is_some() {
+                trace.movement_dt += dt;
+                let movement_dt = trace.movement_dt;
+                trace.record(|| format!(
+                    "dt_raw={:.6} dt_used={dt:.6} movement_dt_total={movement_dt:.6} command={command} cursor_mouse_gate={cursor_mouse_gate} fly=false placed={placed_post} tile_ready={tile_ready} mouse=({:.2},{:.2}) camera_yaw_pre={camera_yaw_pre_motion:.6} camera_yaw_after_mouse={camera_yaw_after_mouse:.6} target_yaw={:?} heading_pre={:.6} heading_post={heading_post:.6} turn_velocity_pre={:.3} turn_velocity_post={turn_velocity_post:.3} mode_pre={:?} mode_post={mode_post:?} position_cm=({:.2},{:.2},{:.2})",
+                    time.delta_secs(), mouse_delta.x, mouse_delta.y, target_yaw.flatten(),
+                    heading_pre.unwrap_or_default(), turn_velocity_pre.unwrap_or_default(),
+                    mode_pre, position_post.x, position_post.y, position_post.z,
+                ));
+            }
+        }
         // Keep the earliest unconsumed landing / take-off: the movement layer drains them.
         let prev = player.report;
         player.report = gothic_physics::StepReport {
