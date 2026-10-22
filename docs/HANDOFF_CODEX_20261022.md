@@ -6,7 +6,7 @@ Work only in `D:/gr-wt/codex-renderer`, branch `codex/renderer-stability`.
 At 13:33, build5 passed both actual normal/GR_NOWIND smokes without shader or renderer errors,
 with grounded360/360 each. Packaged gameplay melee_faithful QA passed from Windows/Temp.
 The functional moving benchmark recorded readiness, poses and13one-second samples correctly.
-No active build/game job remains. Wind source commitedd3b55 is now verified for these paths.
+The prior milestone source edd3b55 is verified for these paths; a subsequent clock build is active (see latest checkpoint below).
 Failed wind builds1–4 are retained as diagnostic artifacts and must never be delivered.
 Latest package: `C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261022-Wind/GothicReforged.exe`.
 SHA256 `e638e428f27585fa7c75dd0228c99bd853dc2a86ee975a3884bb64aa05ad41ad`.
@@ -57,9 +57,8 @@ uses prepass Globals at group0/binding1 and adds existing normals only to custom
 NORMAL_PREPASS_OR_DEFERRED_PREPASS and VERTEX_NORMALS guards use explicit braced blocks.
 Build3 normal smoke passed, but GR_NOWIND failed; build4 exposed the previously unbraced guard.
 Source correction passes8 WESL/Naga variants and rejects the historical unbraced assignment.
-Build5 passed both normal and GR_NOWIND runtime smokes without shader/renderer errors. WIND_STABILITY.md documents exact scope/limitations.
-Hourly continuity is still open: proposed shared ShaderBuffer with bounded CPU-f64 phases/gust,
-once-per-frame RenderQueue write, no per-material asset mutation or engine fork. Not implemented.
+Build5 passed both normal and GR_NOWIND runtime smokes without shader/renderer errors. WIND_STABILITY.md documents scope and current evidence.
+Shared bounded wind clock source is implemented in `crates/environment/src/wind_clock.rs`, bound through one stable 64-byte ShaderBuffer record with current and previous frame samples, and uploaded once in PrepareResources. Environment release tests pass28/28; viewer cargo check passes; standalone WESL/Naga checker passes its eight supported variants. These checks do not prove GPU buffer layout/binding or long-run visual continuity. Actual GPU smoke remains required before delivery.
 
 XR/Quest: focus/action activation and complete pose validity gate input; preserve inactive last-valid
 poses and neutralize inactive scalar/button/stick input. Aim pointer requires active aim. Quest combat
@@ -123,11 +122,7 @@ bench-ready.json and .local/pc-package-wind-melee.log; final package runtime/.lo
 contains actual gameplay images. Independent package saves remain empty. Build-info records dirty
 handoff documentation only; executable source matches edd3b55. Previous packages untouched.
 
-Next implement shared bounded-phase WindClock via one stable ShaderBuffer, using documented design.
-Confirm vegetation frequencies are world-global or encode appropriate groups; do not assume all
-per-material values match. Preserve source-derived wind behavior, test hour/day transitions and
-same-frame shadow/depth consumption; validate with checker then actual GPU. Do not mutate every
-material per frame or fork Bevy unnecessarily. Measured CPU bottleneck/performance hypotheses are
+Next validate the shared wind clock on the GPU in an actual runtime smoke: hour boundary, branch/leaf motion, current-frame depth/shadow, and previous-frame motion vectors. Confirm the prepared GPU buffer identity remains stable and shader bindings are accepted. The shared frequency audit is complete: `WindEnv` supplies the same vegetation and SpeedTree rates to all wind materials; per-material values are mode, height, card size, and grass focus. Do not claim visual or gameplay parity from CPU/build checks alone. Do not mutate every material per frame or fork Bevy. Measured CPU bottleneck/performance hypotheses are
 in PERFORMANCE_ACTIONS.md. Preserve quality and compare matched routes, not aggregate old walk data.
 No new APK until local SDK prerequisites are provided/prepared; no headless result proves on-headset UX.
 Continue through existing heartbeat with scoped cheap coders and coordinated builds. Current release
@@ -137,3 +132,33 @@ tree and leaf rates come from the shared WindEnv packet and is implementing the 
 clock. No full game release build is authorized until manager coordination; targeted tests/checker
 are allowed. Do not duplicate its source changes/builds. User-facing Desktop release above remains
 frozen at edd3b55. The next clock work is not included in that EXE.
+## Latest clock checkpoint — 13:49
+
+Clock source is frozen pending actual GPU validation. Pure environment clock module now stores
+bounded f64 phases and f64 elapsed gust timing, retains legacy per-slot hash values, and copies
+the exact last emitted sample into previous-frame data even across configuration changes.
+Shared64byte ShaderBuffer uploads once per frame; static/zero-weight vertices return before
+storage reads. Environment release28/28, viewer cargo-check and shader checker8variants PASS.
+CPU tests inspect encoded f32 sin/cos for all5oscillators at hour/day boundaries, rate changes,
+previous-record preservation and nonzero legacy gust samples near actual day-adjacent slots.
+Logs own .local/wind-clock-{environment-tests,viewer-check,shader-check}.log.
+
+water_renderer now owns full .local/pc-wind-clock-build.log. No concurrent performance tests.
+After build, manager must run both normal+GR_NOWIND GPU smokes, check stable buffer behavior
+and measure unchanged scene before any new Desktop package. No visual hour/day GPU proof yet.
+Do not claim numerical tests are a long-running GPU session. Current Desktop Wind release stays
+unchanged. Initial broad cargo-fmt side effects were byte-restored for11unrelated files and
+verified zero staged/content diff; only intentional clock source/manifests/docs remain dirty.
+## Clock manager validation — 14:05
+
+Thin release candidate built8m18s, SHA25658c7554a9b6f3b4f425371ad3706853f450bf89daafdd6ac19391cf3b950fde0.
+Actual normal and GR_NOWIND --walk --smoke runs PASS with no shader/renderer/import errors,
+and grounded360/360 in both tests. Manager inspected actual normal-walk.png. Evidence in
+own .local/qa/wind-clock/{normal,nowind}.log and images. This validates current GPU bindings
+and rendering path; no hour-long GPU session or direct buffer-identity instrumentation run.
+
+Controlled idle A/B/A/B,1280x720,30s warmup+20s sample,2runs per variant, compilers quiet:
+previous Wind release12.0353ms vs shared-clock candidate12.0263ms (-0.075%). p95medians
+13.3983/13.0837ms;GPU3.4099/3.4224ms. Essentially equal; no speedup claim. Raw JSONs and
+summary own .local/bench-wind-clock, manual-renderer-log-review=false.
+Final package/play QA pending. Earlier Desktop releases remain unchanged.

@@ -695,6 +695,7 @@ fn surface_material(
                         tint_a: Vec4::new(0.55, 0.55, 0.5, 1.0),
                         ..default()
                     },
+                    wind_clock: gmat::wind_clock_buffer(),
                     a0: None,
                     a1: None,
                     b0: None,
@@ -820,6 +821,7 @@ fn surface_material(
     };
     let handle = materials.add(GothicMaterial {
         params,
+        wind_clock: gmat::wind_clock_buffer(),
         a0,
         a1,
         b0,

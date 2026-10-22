@@ -73,7 +73,7 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
         params.veg_amp,
         params.player,
         params.wind,
-        globals.time,
+        false,
     );
     wp = vec4<f32>(wp.xyz + off, wp.w);
     out.world_position = wp;
@@ -101,7 +101,7 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
         params.veg_amp,
         params.player,
         params.wind,
-        globals.time - globals.delta_time,
+        true,
     );
     previous_wp = vec4<f32>(previous_wp.xyz + previous_off, previous_wp.w);
     out.previous_world_position = previous_wp;

@@ -1,6 +1,5 @@
 //! Wind systems: the grass response (`Render.GrassResponseRange/Intensity` of `ge3.INI`) needs the
-//! hero position in every ground-cover material; the wave itself runs on the GPU from the global
-//! time (see `shaders/gothic_vertex.wesl`).
+//! hero position in every ground-cover material; bounded shared phases feed the GPU wind shader.
 use super::{CM, Player, gmat};
 use bevy::prelude::*;
 
@@ -8,8 +7,16 @@ pub struct WindPlugin;
 
 impl Plugin for WindPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, grass_focus);
+        app.add_systems(Update, (advance_wind_clock, grass_focus));
     }
+}
+
+fn advance_wind_clock(
+    time: Res<Time>,
+    mut frame: ResMut<gmat::WindClockFrame>,
+    mut clock: Local<gothic_environment::wind_clock::WindClock>,
+) {
+    frame.values = clock.advance(time.delta_secs_f64(), gmat::wind_env().clock);
 }
 
 /// Write the hero position into the vegetation materials (only those: touching an asset

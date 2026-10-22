@@ -10,6 +10,7 @@
 pub mod precip;
 pub mod sky;
 pub mod wind;
+pub mod wind_clock;
 use gothic_formats::weather::{WeatherData, WeatherState};
 
 /// L0 / L1 real spherical-harmonic constants (floats at Engine.dll:0x10426c94 / 0x10426c98).

@@ -3821,6 +3821,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "bytemuck",
  "gothic-animation",
  "gothic-audio",
  "gothic-camera",

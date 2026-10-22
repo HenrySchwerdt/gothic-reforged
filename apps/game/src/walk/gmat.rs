@@ -1,12 +1,19 @@
 //! Gothic surface, sky and water materials (custom WESL shaders, see `shaders/`).
 use bevy::{
-    asset::{embedded_asset, load_embedded_asset},
+    asset::{RenderAssetUsages, embedded_asset, load_embedded_asset},
     mesh::{Mesh, MeshVertexBufferLayoutRef},
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
         AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    },
+    render::{
+        Render, RenderApp, RenderSystems,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::RenderAssets,
+        renderer::RenderQueue,
+        storage::{GpuShaderBuffer, ShaderBuffer},
     },
     shader::{Shader, ShaderDefVal, ShaderRef},
 };
@@ -19,6 +26,14 @@ static GOTHIC_VS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_WIND: OnceLock<Handle<Shader>> = OnceLock::new();
 static SKY_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static WATER_FS: OnceLock<Handle<Shader>> = OnceLock::new();
+static WIND_CLOCK_BUFFER: OnceLock<Handle<ShaderBuffer>> = OnceLock::new();
+
+#[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
+pub struct WindClockFrame {
+    pub buffer: Handle<ShaderBuffer>,
+    pub values: [f32; 16],
+}
 
 pub struct GothicMaterialsPlugin;
 
@@ -39,8 +54,7 @@ impl Plugin for GothicMaterialsPlugin {
         // `GR_NOWIND=1` keeps Bevy's own vertex stage (wind off, for A/B comparisons).
         if std::env::var_os("GR_NOWIND").is_none() {
             let _ = GOTHIC_VS.set(load_embedded_asset!(app, "shaders/gothic_vertex.wesl"));
-            let _ = GOTHIC_PREPASS_VS
-                .set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
+            let _ = GOTHIC_PREPASS_VS.set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
         }
         let _ = SKY_FS.set(load_embedded_asset!(app, "shaders/sky.wesl"));
         let _ = WATER_FS.set(load_embedded_asset!(app, "shaders/water.wesl"));
@@ -49,6 +63,14 @@ impl Plugin for GothicMaterialsPlugin {
         let _ = CHAR_FS.set(load_embedded_asset!(app, "shaders/char.wesl"));
         let _ = CHAR_PREPASS_FS.set(load_embedded_asset!(app, "shaders/char_prepass.wesl"));
         app.add_systems(Update, convert_standard);
+        app.add_systems(Startup, create_wind_clock_buffer);
+        app.add_plugins(ExtractResourcePlugin::<WindClockFrame>::default());
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(
+                Render,
+                upload_wind_clock.in_set(RenderSystems::PrepareResources),
+            );
+        }
         app.add_plugins((
             MaterialPlugin::<CharMaterial>::default(),
             MaterialPlugin::<GothicMaterial>::default(),
@@ -175,6 +197,7 @@ pub struct WindEnv {
     pub wind: [Vec4; 7],
     pub veg: Vec4,
     pub veg_amp: Vec4,
+    pub clock: gothic_environment::wind_clock::WindClockConfig,
 }
 
 impl WindEnv {
@@ -191,6 +214,7 @@ impl WindEnv {
         }
         Self {
             wind: pack_speedtree_wind(tree),
+            clock: gothic_environment::wind_clock::WindClockConfig::new(tree, v),
             veg: Vec4::new(
                 v.wave_number[0],
                 v.wave_number[1],
@@ -413,6 +437,8 @@ impl From<&GothicMaterial> for GothicKey {
 pub struct GothicMaterial {
     #[uniform(0)]
     pub params: GothicParams,
+    #[storage(8, read_only)]
+    pub wind_clock: Handle<ShaderBuffer>,
     #[texture(1)]
     #[sampler(2)]
     pub a0: Option<Handle<Image>>,
@@ -428,6 +454,35 @@ pub struct GothicMaterial {
     pub nb: Option<Handle<Image>>,
     pub alpha_mode: AlphaMode,
     pub two_sided: bool,
+}
+
+fn create_wind_clock_buffer(mut buffers: ResMut<Assets<ShaderBuffer>>, mut commands: Commands) {
+    // Four vec4s hold current and previous-frame bounded phases/gust. The buffer
+    // identity is stable for every Gothic material and every frame.
+    let handle = buffers.add(ShaderBuffer::with_size(64, RenderAssetUsages::default()));
+    let _ = WIND_CLOCK_BUFFER.set(handle.clone());
+    commands.insert_resource(WindClockFrame {
+        buffer: handle,
+        values: [0.0; 16],
+    });
+}
+
+fn upload_wind_clock(
+    frame: Res<WindClockFrame>,
+    buffers: Res<RenderAssets<GpuShaderBuffer>>,
+    queue: Res<RenderQueue>,
+) {
+    let Some(buffer) = buffers.get(&frame.buffer) else {
+        return;
+    };
+    queue.write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(&frame.values));
+}
+
+pub fn wind_clock_buffer() -> Handle<ShaderBuffer> {
+    WIND_CLOCK_BUFFER
+        .get()
+        .expect("wind clock buffer is initialized during Startup")
+        .clone()
 }
 
 impl Material for GothicMaterial {

@@ -35,6 +35,7 @@ gothic-combat-souls = { path = "../../crates/combat-souls", features = ["plugin"
 gothic-fx = { path = "../../crates/fx", features = ["render"], optional = true }
 gothic-portcov = { path = "../../crates/portcov" }
 anyhow.workspace = true
+bytemuck.workspace = true
 serde_json.workspace = true
 
 [lints]

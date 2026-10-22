@@ -72,7 +72,7 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
         params.veg_amp,
         params.player,
         params.wind,
-        globals.time,
+        false,
     );
     wp = vec4<f32>(wp.xyz + off, wp.w);
     out.world_position = wp;

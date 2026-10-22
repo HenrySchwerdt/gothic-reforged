@@ -59,48 +59,35 @@ accumulator or a separate unwrapped wind-time uniform, with a shared render-view
 not addressed by this focused pass-parity change. The 10/50-hour cases above remain CPU stress
 references, not GPU runtime samples.
 
-## Follow-up: shared wind clock without engine changes
+## Shared bounded clock implementation
 
-After the current color/depth/shadow shader path passes runtime pipeline and silhouette checks, the
-preferred clock implementation is one shared Bevy 0.20 `ShaderBuffer` asset, not a Bevy engine
-fork or per-material updates. `bevy_render::storage::ShaderBuffer` is the asset-side type and
-`GpuShaderBuffer` is its prepared render-world counterpart. Add one `#[storage(8, read_only)]`
-handle to `GothicMaterial`, create the fixed-size asset once, and give the same handle to every
-Gothic material. In a render-world system in `RenderSystems::PrepareResources`, resolve its
-`GpuShaderBuffer` from `RenderAssets` and call `RenderQueue::write_buffer` once per frame. Bevy
-prepares assets before `PrepareResources` and bind groups after it. Keep the asset and GPU buffer
-size/identity fixed and do not mutate `Assets<ShaderBuffer>` after initial preparation; direct
-content writes retain the buffer identity and do not invalidate cached material bind groups.
+The hourly phase reset is addressed in source with one shared Bevy 0.20 `ShaderBuffer` asset,
+without a Bevy engine fork or per-material updates. A fixed 64-byte record contains bounded
+vegetation radians, tree/leaf cycle fractions and gust strength for both the current and previous
+frame. `crates/environment/src/wind_clock.rs` integrates shared rates with f64 delta time, wraps
+phases, and computes gust strength from f64 elapsed time. It retains the existing `hash11` sequence;
+integer slot selection avoids large-time division/cancellation and slot IDs remain exactly
+representable through the day-long test window. The same handle is bound to every `GothicMaterial`;
+a `PrepareResources` render system writes it once per frame. Per-material assets and bind groups are
+not mutated for the clock. Color/depth/shadow paths consume the current record, while motion-vector
+prepass consumes the saved previous record. Frequencies were verified shared: `WindEnv::new`
+derives vegetation rates from `VegetationWind::original()` and SpeedTree values from the single
+world wind packet; material-specific values are mode, height, leaf size and grass focus. This
+supersedes the earlier proposal to extend Bevy `GlobalsUniform`; no engine patch or extra view bind
+group is needed.
 
-Local Bevy 0.20 authority is the Cargo source at
-`%USERPROFILE%\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bevy_render-0.20.0\src\`:
-`storage.rs` defines `ShaderBuffer`, `GpuShaderBuffer`, and `RenderChangedShaderBuffers` (including
-the content-only/no-bind-group-invalidation contract); `render_asset.rs` registers and prepares
-`RenderAssets`; `lib.rs` defines and orders `RenderSystems::PrepareAssets`, `PrepareResources`, and
-`PrepareBindGroups`; `renderer\mod.rs` exposes `RenderQueue` (whose wrapped `wgpu::Queue` provides
-`write_buffer`). This repository's `crates\environment\src\wind.rs` `WindEnv` is the source of shared wind rates and
-gust parameters; app-side phase accumulation belongs with its update path, while the GPU upload
-and shared material handle belong in `apps\game\src\walk\gmat.rs` (or a narrowly
-scoped adjacent render module if that file becomes unwieldy).
+The environment release suite passes 28 tests, including encoded f32 shader-phase sin/cos checks for
+all five oscillators across 3600 seconds and 24 hours, a rate/gust configuration change with exact
+previous-record preservation, legacy gust comparisons at early and day-adjacent slots with nonzero
+envelopes, and smooth gust samples at hour/day boundaries. The shader skips storage-record reads for
+zero-weight or non-wind vertices. The standalone checker passes eight WESL/Naga variants, including
+motion vectors, but does not validate GPU binding/layout. Viewer `cargo check` passes. Actual GPU
+binding, fixed prepared-buffer identity, and visual continuity through color, depth, shadow and
+motion-vector passes still require a runtime smoke before delivery. This storage binding requires
+at least one vertex-stage storage-buffer slot; if a WebGL2 target is added, provide a fallback or
+explicitly reject unsupported devices.
 
-The shared record should contain bounded cycle fractions for the two vegetation phases, tree sway,
-leaf rocking and leaf rustling, plus the current gust strength. Maintain phases in an app-side f64
-clock by integrating the current global frequencies with `delta_secs_f64()` and wrapping each phase
-to `[0, 1)`. Compute gust strength on the CPU from f64 elapsed time and integer-hashed gust slots;
-the shader then reads the shared record once per vertex and never multiplies an unbounded elapsed
-time by a frequency. The current `WindEnv` frequencies and gust parameters are shared across Gothic
-materials, so this record is view-global in practice. This design supersedes the earlier proposal to
-extend Bevy `GlobalsUniform`; no Bevy engine patch or extra view bind group is needed.
-
-Validate phase encoding with synthetic times immediately before and after 3600 seconds and 24
-hours, plus long-running phase samples and gust-slot transitions. Then inject those records through
-the render upload path and verify adjacent GPU frames across the hour boundary for branch, leaf,
-depth-prepass and shadow continuity. Confirm the prepared GPU buffer identity stays fixed and no
-material assets or bind groups are rebuilt per frame. This storage binding requires at least one
-vertex-stage storage-buffer slot; provide a fallback or reject unsupported devices explicitly if a
-WebGL2 target is added.
-
-Manager validation: the environment release test suite passed all 24 tests, including the actual-offset gust-boundary regression. This is CPU evidence; GPU hour-wrap and prepass silhouette parity remain open.
+Before this change, the environment release suite passed 24 tests including the actual-offset gust-boundary regression. Current clock validation is CPU/source evidence; GPU hour-wrap and prepass silhouette parity remain open.
 
 ## Manager runtime validation — build5
 
@@ -119,3 +106,17 @@ Same1280x720 scene, no compilers,2runs each,30s warmup/20s sample. Essentially e
 claimed speedup. Final guard fix leaves the exercised normal-wind condition unchanged.
 Standalone checker passes8representative variants and rejects the historical unbraced normal
 assignment. GPU pipeline-layout proof remains supplied by these actual runtime smokes.
+
+## Clock manager validation — 14:05
+
+Thin release candidate built8m18s, SHA25658c7554a9b6f3b4f425371ad3706853f450bf89daafdd6ac19391cf3b950fde0.
+Actual normal and GR_NOWIND --walk --smoke runs PASS with no shader/renderer/import errors,
+and grounded360/360 in both tests. Manager inspected actual normal-walk.png. Evidence in
+own .local/qa/wind-clock/{normal,nowind}.log and images. This validates current GPU bindings
+and rendering path; no hour-long GPU session or direct buffer-identity instrumentation run.
+
+Controlled idle A/B/A/B,1280x720,30s warmup+20s sample,2runs per variant, compilers quiet:
+previous Wind release12.0353ms vs shared-clock candidate12.0263ms (-0.075%). p95medians
+13.3983/13.0837ms;GPU3.4099/3.4224ms. Essentially equal; no speedup claim. Raw JSONs and
+summary own .local/bench-wind-clock, manual-renderer-log-review=false.
+Final package/play QA pending. Earlier Desktop releases remain unchanged.
