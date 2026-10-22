@@ -28,9 +28,11 @@ impl Plugin for WindPlugin {
 fn advance_wind_clock(
     time: Res<Time>,
     bench: Res<crate::perf::BenchWorld>,
+    wind_shot: Option<Res<super::WindShotControl>>,
     mut frame: ResMut<gmat::WindClockFrame>,
     mut clock: Local<gothic_environment::wind_clock::WindClock>,
     mut probe: Local<WindClockProbeState>,
+    mut shot: Local<WindShotClockState>,
 ) {
     if !probe.checked {
         probe.checked = true;
@@ -46,6 +48,34 @@ fn advance_wind_clock(
         finished: probe.finished,
         ..default()
     };
+
+    if let Some(control) = wind_shot.as_deref()
+        && let Some(index) = control.selected
+    {
+        if shot.applied_index != Some(index) {
+            let elapsed = control.times[index];
+            let previous_elapsed = super::wind_shots::previous_sample_time(elapsed);
+            let mut synthetic = gothic_environment::wind_clock::WindClock::default();
+            // Seed the prior render sample, then advance one 60 Hz step to the requested sample.
+            // Only the two oscillator records are replaced; grass focus remains camera-driven.
+            synthetic.advance(previous_elapsed, config);
+            let values = synthetic.advance(elapsed - previous_elapsed, config);
+            frame.values[..16].copy_from_slice(&values);
+            shot.values = Some(values);
+            *clock = synthetic;
+            shot.applied_index = Some(index);
+            eprintln!(
+                "wind-shot selected: shot {} requested synthetic elapsed {:.9}s; current={:?}; previous={:?}",
+                index + 1,
+                elapsed,
+                &values[..8],
+                &values[8..16]
+            );
+        } else if let Some(values) = shot.values {
+            frame.values[..16].copy_from_slice(&values);
+        }
+        return;
+    }
 
     if let Some(start) = probe.start_seconds
         && !probe.finished
@@ -110,6 +140,12 @@ fn advance_wind_clock(
 
     let values = clock.advance(dt, config);
     frame.values[..values.len()].copy_from_slice(&values);
+}
+
+#[derive(Default)]
+struct WindShotClockState {
+    applied_index: Option<usize>,
+    values: Option<[f32; 16]>,
 }
 
 #[derive(Default)]

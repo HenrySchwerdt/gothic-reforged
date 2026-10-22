@@ -8,6 +8,7 @@ mod gmat;
 mod play;
 mod post;
 mod precip;
+mod wind_shots;
 mod windsys;
 
 use crate::world_loader::{
@@ -288,6 +289,16 @@ struct Smoke {
     shot_index: usize,
 }
 
+#[derive(Resource)]
+struct WindShotControl {
+    times: Vec<f64>,
+    selected: Option<usize>,
+    capture_requested: Option<usize>,
+    captured: Option<usize>,
+    startup_started_at_real_seconds: Option<f64>,
+    selected_at_real_seconds: Option<f64>,
+}
+
 /// Extra screenshot viewpoint: name, position in metres relative to the origin (mirrored
 /// space, Y up), yaw and pitch in radians.
 struct Shot {
@@ -343,6 +354,14 @@ pub fn run(args: &[String]) -> Result<()> {
             .any(|pair| pair[0] == "--qa" && pair[1] == "magic_faithful");
     let prefix = arg("--screenshot").unwrap_or_else(|| ".local/ardea".into());
     let shots = arg("--shots").map(|s| parse_shots(&s)).unwrap_or_default();
+    let wind_shot_times = wind_shots::parse_wind_shot_times(
+        args,
+        shots.len(),
+        smoke,
+        std::env::var_os("GR_NOWIND").is_some(),
+        std::env::var_os("GR_WIND_CLOCK_PROBE_START").is_some(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let handle: LoaderHandle = spawn_loader(data_dir.clone().into(), Origin(ORIGIN));
     // The grid keeps at least `radius` tiles resident in every direction (the prefetch
     // rectangle is 0.4 x far plus one 10 000-unit cell).
@@ -482,6 +501,16 @@ pub fn run(args: &[String]) -> Result<()> {
     );
     if play::requested(args) {
         play::install(&mut app, args)?;
+    }
+    if let Some(times) = wind_shot_times {
+        app.insert_resource(WindShotControl {
+            times,
+            selected: None,
+            capture_requested: None,
+            captured: None,
+            startup_started_at_real_seconds: None,
+            selected_at_real_seconds: None,
+        });
     }
     app.add_plugins(crate::perf::PerfPlugin {
         args: args.to_vec(),
@@ -1814,11 +1843,27 @@ fn smoke_script(
     stream: Res<Stream>,
     veg: Res<VegStream>,
     time: Res<Time>,
+    real_time: Res<Time<Real>>,
     meshes: Query<&ViewVisibility, With<Mesh3d>>,
     diags: Res<bevy::diagnostic::DiagnosticsStore>,
+    wind_clock: Res<gmat::WindClockFrame>,
+    mut wind_shot: Option<ResMut<WindShotControl>>,
 ) {
     if !smoke.enabled {
         return;
+    }
+    if let Some(control) = wind_shot.as_deref_mut() {
+        let now = real_time.elapsed_secs_f64();
+        let started = *control
+            .startup_started_at_real_seconds
+            .get_or_insert(now);
+        if control.selected.is_none() && now - started >= 240.0 {
+            eprintln!(
+                "wind-shot FAIL: initial smoke/streaming stages did not select the first sample within 240 seconds"
+            );
+            commands.write_message(AppExit::error());
+            return;
+        }
     }
     smoke.frames += 1;
     let loaded_all = stream.ready
@@ -1946,10 +1991,38 @@ fn smoke_script(
             }
         }
         5 => {
+            if wind_shot
+                .as_deref()
+                .and_then(|control| control.selected_at_real_seconds)
+                .is_some_and(|started| real_time.elapsed_secs_f64() - started >= 240.0)
+            {
+                eprintln!(
+                    "wind-shot FAIL: shot {} did not reach capture completion within 240 seconds",
+                    smoke.shot_index + 1
+                );
+                commands.write_message(AppExit::error());
+                return;
+            }
             let i = smoke.shot_index;
             if i >= smoke.shots.len() {
                 if smoke.frames > 130 {
                     commands.write_message(AppExit::Success);
+                }
+            } else if wind_shot
+                .as_deref()
+                .is_some_and(|control| control.capture_requested == Some(i))
+            {
+                if wind_shot
+                    .as_deref()
+                    .is_some_and(|control| control.captured == Some(i))
+                {
+                    let control = wind_shot.as_deref_mut().expect("controlled wind shot");
+                    control.capture_requested = None;
+                    control.captured = None;
+                    control.selected_at_real_seconds = None;
+                    smoke.shot_index += 1;
+                    smoke.frames = 0;
+                    smoke.stable = 0;
                 }
             } else if smoke.frames == 1 {
                 let (pos, yaw, pitch) =
@@ -1958,14 +2031,44 @@ fn smoke_script(
                 player.fly_pos = pos / CM;
                 player.yaw = yaw;
                 player.pitch = pitch;
+                if let Some(wind_shot) = wind_shot.as_deref_mut() {
+                    wind_shot.selected = Some(i);
+                    wind_shot.selected_at_real_seconds = Some(real_time.elapsed_secs_f64());
+                }
             } else if smoke.frames > 60 && smoke.stable > 60 {
                 let name = format!("{}-{}.png", smoke.prefix, smoke.shots[i].name);
-                shoot(&mut commands, name);
-                smoke.shot_index += 1;
-                smoke.frames = 100;
-                smoke.stable = 0;
-                if smoke.shot_index < smoke.shots.len() {
-                    smoke.frames = 0;
+                if let Some(wind_shot) = wind_shot.as_deref() {
+                    let requested = wind_shot.times[i];
+                    eprintln!(
+                        "wind-shot capture: {} at requested synthetic elapsed {:.9}s; current={:?}; previous={:?}",
+                        name,
+                        requested,
+                        &wind_clock.values[..8],
+                        &wind_clock.values[8..16]
+                    );
+                }
+                if let Some(control) = wind_shot.as_deref_mut() {
+                    use bevy::render::view::screenshot::{
+                        Screenshot, ScreenshotCaptured, save_to_disk,
+                    };
+                    control.capture_requested = Some(i);
+                    control.captured = None;
+                    let mut save = save_to_disk(name);
+                    commands.spawn(Screenshot::primary_window()).observe(
+                        move |captured: On<ScreenshotCaptured>,
+                              mut control: ResMut<WindShotControl>| {
+                            save(captured);
+                            control.captured = Some(i);
+                        },
+                    );
+                } else {
+                    shoot(&mut commands, name);
+                    smoke.shot_index += 1;
+                    smoke.frames = 100;
+                    smoke.stable = 0;
+                    if smoke.shot_index < smoke.shots.len() {
+                        smoke.frames = 0;
+                    }
                 }
             }
         }
