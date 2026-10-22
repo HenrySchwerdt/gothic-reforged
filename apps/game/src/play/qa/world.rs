@@ -383,6 +383,25 @@ pub fn walk_to_reddock() -> Sc {
             d / 100.0
         ));
         cx.st.n.insert("walk_left".into(), f64::from(d));
+        let ms = cx.world.resource::<crate::walk::play::move_states::MoveStates>();
+        let summary = format!(
+            "movement modes during the walk: {} (heavy landings {}, slides {}, mode changes {})",
+            ms.mode_summary(),
+            ms.heavy_lands,
+            ms.slides,
+            ms.forwarded
+        );
+        cx.note(summary);
+        let pl = cx.player();
+        let dbg = format!(
+            "end state: pos {:?} mode {:?} grounded {} water {:?} scripted_water {:?}",
+            pl.ctrl.position,
+            pl.ctrl.machine.mode(),
+            pl.ctrl.grounded,
+            pl.ctrl.water_level,
+            pl.scripted_water
+        );
+        cx.note(dbg);
     });
     sc.check("the hero reached Reddock on foot", |cx| {
         let d = cx.st.n["walk_left"];

@@ -71,6 +71,19 @@ pub struct MoveStates {
     pub slides: u32,
     pub dive_ins: u32,
     pub slide_jumps: u32,
+    /// Seconds spent per movement mode (`gECharMovementMode` value), for the QA reports.
+    pub mode_secs: std::collections::BTreeMap<u8, f32>,
+}
+
+impl MoveStates {
+    /// `mode=seconds` list of the time spent in each movement mode.
+    pub fn mode_summary(&self) -> String {
+        self.mode_secs
+            .iter()
+            .map(|(m, s)| format!("{m}={s:.1}s"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Before the controller step: the hero stands still while `ZS_HeavyLand` plays and while a
@@ -113,7 +126,9 @@ fn before_motion(
     if let Ok((loco, posed)) = hero.single() {
         let heavy = loco.key.kind == MoveKind::HeavyLand;
         // `PS_Interact`: `StopMovement`, then the use; held poses end on a movement key.
-        let timed_use = posed.is_some_and(|p| !p.is_releasing()) && !inter.holding_pose;
+        let timed_use = inter.active.is_some()
+            && posed.is_some_and(|p| !p.is_releasing())
+            && !inter.holding_pose;
         if heavy || timed_use {
             player.scripted_wish = Some(Vec3::ZERO);
             player.scripted_jump = Some(false);
@@ -173,6 +188,7 @@ fn after_motion(
         }));
     }
     let mode = player.ctrl.machine.mode();
+    *ms.mode_secs.entry(mode.raw()).or_insert(0.0) += time.delta_secs();
     // `PS_Swim_Loop` (S:af8e0) has no weapon handling: nothing is drawn while swimming.
     if matches!(mode, MovementMode::Swimming | MovementMode::Diving) && state.drawn {
         state.drawn = false;
