@@ -22,6 +22,7 @@ mod hero_moves;
 mod hud;
 mod interact;
 mod kit;
+pub(crate) mod move_states;
 mod layers;
 pub(crate) mod nav;
 mod npcs;

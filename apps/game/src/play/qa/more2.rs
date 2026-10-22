@@ -208,7 +208,8 @@ pub fn swim() -> Sc {
         "setup: teleport to the slope above the south coast of Ardea (play space)",
         |cx| {
             let mut p = cx.world.resource_mut::<crate::walk::Player>();
-            p.ctrl.position = Vec3::new(6400.0, 15_000.0, -12_500.0);
+            // 190 cm above the beach: a 15 000 cm drop kills the hero (fall damage, S:adbf0).
+            p.ctrl.position = Vec3::new(6400.0, 190.0, -12_500.0);
             p.ctrl.vertical_speed = 0.0;
             p.yaw = 0.0;
         },

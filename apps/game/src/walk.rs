@@ -124,6 +124,47 @@ struct Stream {
 #[derive(Resource)]
 struct Collision(CollisionWorld);
 
+/// Water surfaces of the loaded tiles (`gCWaterZone_PS` carriers: the lake / river / ocean
+/// meshes), world-space triangles per tile, for the hero's water level.
+#[derive(Resource, Default)]
+struct WaterSurfaces {
+    tiles: std::collections::HashMap<u64, Vec<[Vec3; 3]>>,
+}
+
+impl WaterSurfaces {
+    /// Highest water surface (cm) over the point whose height is within `up` above and `down`
+    /// below `p.y`, searched in the tile of `cell` and its neighbours.
+    fn level_at(&self, cell: (i32, i32), p: Vec3, up: f32, down: f32) -> Option<f32> {
+        let mut best: Option<f32> = None;
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                let Some(tris) = self.tiles.get(&tile_chunk_id((cell.0 + dx, cell.1 + dz)))
+                else {
+                    continue;
+                };
+                for t in tris {
+                    let (a, b, c) = (t[0], t[1], t[2]);
+                    // Barycentric test in the horizontal plane.
+                    let d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                    if d.abs() < 1.0e-6 {
+                        continue;
+                    }
+                    let u = ((b.z - c.z) * (p.x - c.x) + (c.x - b.x) * (p.z - c.z)) / d;
+                    let v = ((c.z - a.z) * (p.x - c.x) + (a.x - c.x) * (p.z - c.z)) / d;
+                    if u < 0.0 || v < 0.0 || u + v > 1.0 {
+                        continue;
+                    }
+                    let y = u * a.y + v * b.y + (1.0 - u - v) * c.y;
+                    if y <= p.y + up && y >= p.y - down {
+                        best = Some(best.map_or(y, |m: f32| m.max(y)));
+                    }
+                }
+            }
+        }
+        best
+    }
+}
+
 #[derive(Resource)]
 struct Player {
     ctrl: CharacterController,
@@ -144,6 +185,13 @@ struct Player {
     command: bool,
     /// Direction the hero turns to instead of the wish direction (dialog, lock-on, aiming).
     face: Option<Vec3>,
+    /// What the last controller step reported (landing, take-off, slide start); the play mode's
+    /// movement-state layer (`play/move_states.rs`) consumes it.
+    report: gothic_physics::StepReport,
+    /// Dive input while swimming (-1 down .. 1 up, `MoveCommand::vertical`), from the play layer.
+    scripted_dive: Option<f32>,
+    /// Water surface height at the hero from the world's water zones (cm), `None` = use the sea.
+    scripted_water: Option<Option<f32>>,
 }
 
 #[derive(Component)]
@@ -280,6 +328,7 @@ pub fn run(args: &[String]) -> Result<()> {
         last_activity: 0,
     })
     .insert_resource(Collision(CollisionWorld::new()))
+    .init_resource::<WaterSurfaces>()
     .insert_resource(Caches::default())
     .insert_resource(Player {
         ctrl: CharacterController::new(
@@ -295,6 +344,9 @@ pub fn run(args: &[String]) -> Result<()> {
         scripted_wish: None,
         scripted_gait: None,
         scripted_jump: None,
+        report: Default::default(),
+        scripted_dive: None,
+        scripted_water: None,
         command: false,
         face: None,
     })
@@ -540,6 +592,7 @@ fn stream_tiles(
     mut stream: ResMut<Stream>,
     player: Res<Player>,
     mut collision: ResMut<Collision>,
+    mut water: ResMut<WaterSurfaces>,
     mut commands: Commands,
 ) {
     stream.last_activity += 1;
@@ -556,6 +609,7 @@ fn stream_tiles(
         stream.in_flight.remove(&key);
         stream.pending.retain(|p| p.payload.key != key);
         collision.0.remove_chunk(tile_chunk_id(key));
+        water.tiles.remove(&tile_chunk_id(key));
         if let Some(entities) = stream.spawned.remove(&key) {
             for e in entities {
                 commands.entity(e).despawn();
@@ -1063,6 +1117,7 @@ fn spawn_pending(
     mut commands: Commands,
     mut stream: ResMut<Stream>,
     mut collision: ResMut<Collision>,
+    mut water: ResMut<WaterSurfaces>,
     mut gpu: Gpu,
 ) {
     let start = Instant::now();
@@ -1077,6 +1132,33 @@ fn spawn_pending(
             collision
                 .0
                 .insert_chunk(tile_chunk_id(front.payload.key), tris);
+            // Water meshes (lakes, rivers; the sea plane is handled by the sea level) give the
+            // hero's water level.
+            let sea_cm = gpu.caches.sea_y.map(|y| y * 100.0);
+            let mut surf: Vec<[Vec3; 3]> = Vec::new();
+            for part in front
+                .payload
+                .parts
+                .iter()
+                .filter(|p| p.kind == PartKind::Water && p.lod.is_none_or(|l| l.stage == 0))
+            {
+                let g = &part.geom;
+                for t in g.indices.chunks_exact(3) {
+                    let at = |i: u32| {
+                        part.transform
+                            .transform_point3(Vec3::from(g.positions[i as usize]))
+                    };
+                    let tri = [at(t[0]), at(t[1]), at(t[2])];
+                    let mid = (tri[0].y + tri[1].y + tri[2].y) / 3.0;
+                    if sea_cm.is_some_and(|s| (mid - s).abs() < 30.0) {
+                        continue;
+                    }
+                    surf.push(tri);
+                }
+            }
+            if !surf.is_empty() {
+                water.tiles.insert(tile_chunk_id(front.payload.key), surf);
+            }
             front.collision_done = true;
             if front.payload.terrain_collision_from_nav {
                 stream.triangles_nav += n;
@@ -1347,10 +1429,14 @@ fn player_motion(
             right: local.x.max(0.0),
         };
         let wish = gothic_physics::movement::wish_direction(forward, right, &keys_axes);
-        let water_level = caches
-            .sea_y
-            .map(|y| y * 100.0)
-            .filter(|y| player.ctrl.position.y < y + 400.0);
+        let water_level = match player.scripted_water {
+            Some(w) => w,
+            None => caches
+                .sea_y
+                .map(|y| y * 100.0)
+                .filter(|y| player.ctrl.position.y < y + 400.0),
+        };
+        let dive = player.scripted_dive;
         player.ctrl.player_controlled = true;
         let cmd = gothic_physics::MoveCommand {
             wish,
@@ -1358,9 +1444,18 @@ fn player_motion(
             jump,
             face: player.face,
             water_level,
+            dive: dive.is_some_and(|v| v != 0.0),
+            vertical: dive.unwrap_or(0.0),
             ..Default::default()
         };
-        player.ctrl.step_command(&collision.0, &cmd, dt);
+        let report = player.ctrl.step_command(&collision.0, &cmd, dt);
+        // Keep the earliest unconsumed landing / take-off: the movement layer drains them.
+        let prev = player.report;
+        player.report = gothic_physics::StepReport {
+            landed: report.landed.or(prev.landed),
+            took_off: report.took_off || prev.took_off,
+            started_sliding: report.started_sliding || prev.started_sliding,
+        };
         return;
     }
     player.ctrl.facing = Some(Vec2::new(forward.x, forward.z));
