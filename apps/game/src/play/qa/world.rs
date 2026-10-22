@@ -12,6 +12,14 @@ fn grab(sc: &mut Sc) {
     sc.act("grab the mouse", |cx| {
         cx.cursor_to(Vec2::new(640.0, 360.0));
         cx.mouse_click(MouseButton::Left);
+        // `GR_QA_REC=1` (with `--record DIR`) films the world scenarios from here on.
+        if std::env::var("GR_QA_REC").is_ok()
+            && let Some(mut r) = cx
+                .world
+                .get_resource_mut::<crate::walk::play::record::Recorder>()
+        {
+            r.active = true;
+        }
     });
     sc.wait(0.4);
 }
