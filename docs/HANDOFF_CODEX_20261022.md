@@ -7,12 +7,16 @@ Current source `cd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7` adds an OFF-by-default
 measurement and generation. Do not enable by default without multiple-species evidence.
 Read `docs/research/SPT_ATLAS_DIAGNOSIS.md`. No released package changed.
 
-ONE GNU optimized game build is running, exec session **22722**, log
-`.local/qa/tree-diagnostic/atlas-origin-game-build.log`. Resume/poll it; DO NOT start
-a duplicate build or game/benchmark under compiler load. After success, preserve an
-immutable diagnostic EXE under .local/artifacts with source/hash, then run sequential
-flag-off/on NOWIND fixed apple camera smoke captures. This is an experimental geometry
-and UV treatment, not proof of original-engine parity. Do not package as a proven fix.
+GNU optimized game build FINISHED successfully in8m12s, session22722 closed; log
+`.local/qa/tree-diagnostic/atlas-origin-game-build.log`. Immutable diagnostic EXE
+`.local/artifacts/gothic-reforged-atlas-origin.exe`, SHA256
+`f60cea222be15bd6a7bd7b4585be0ff23eb789a4a9a9804ba41c1458323f3d39`.
+Compiled sourcecd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7; later changes only docs.
+wind_stability is running TWO sequential flag-off/on NOWIND smoke comparisons,
+apple/aspen/oak fixed views, evidence prefixes `.local/qa/tree-diagnostic/atlas-{off,on}`.
+No compiler remains. Do not start another game until that agent finishes. This is an
+experimental geometry and UV treatment, not proof of original-engine parity. Do not
+package as a proven fix or make the flag default without further corroboration.
 
 Evidence completed since last candidate:
 - Existing `spt_dump` rebuilt; default variant0 apple generates400 independent quads,
@@ -34,8 +38,12 @@ Evidence completed since last candidate:
 - Same apple camera with GR_NOWIND remains sparse: own `.local/qa/tree-diagnostic/nowind-*`,
   exit0, grounded360/360, clean fatal renderer scan. Thus wind is not required for sparse crown.
 
-No active coding agent/game at this checkpoint; the single compiler job above is active.
 Latest delivered LeafPhase and prior GrassFix remain unchanged and verified below.
+Quota checkpoint at19:23UTC: 5h window92% used, reset2026-10-22T22:08:55Z; weekly14%.
+User explicitly requests conserving quota across the day. Finish the bounded active
+capture, document it, then check current usage before new expensive work. If >=95%,
+reserve remaining capacity for user messages/failure handling; defer new builds/agents/
+RE until the actual reset, with silent unchanged heartbeats. Automation remains active.
 
 ## Latest continuation: leaf-phase candidate (after Cloud PR review)
 
