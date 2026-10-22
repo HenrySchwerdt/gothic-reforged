@@ -1,10 +1,31 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
 Quota reset VERIFIED2026-10-22 22:15UTC: 5h0% used, weekly16%; next reset03:15:16UTC.
-Resumed bounded work: wind_clock implements opt-in fixed wind-time smoke screenshots
-(walk.rs/windsys.rs/new pure helper; no shader changes), water_renderer inspects original
-leaf shader UV handling in Materials.pak. No compiler/game started yet. Check actual
-agents/processes before builds. Automation remains active; retain >=5% quota reserve.
+Resumed bounded work: controlled-wind screenshot implementation is committed2a82eb6
+(walk.rs/windsys.rs/new pure helper; no shader changes). ONE optimized GNU viewer build
+is RUNNING in exec session93271; log `.local/pc-wind-shots-build.log`. Poll that session,
+do not duplicate it or launch games/benchmarks under compiler load. After success preserve
+an immutable diagnostic EXE/source/hash, validate malformed CLI exits, run actual matching-
+pose wind shots around hour/day boundaries, compare selection/capture records and files,
+then normal-mode combat QA. No new delivery or jitter-fix claim until actual validation.
+Helper tests5/5 pass (exact-source standalone harness); startup and per-shot deadlines240s
+use Time<Real>, capture waits for ScreenshotCaptured, Bevy Time/simulation untouched.
+See `docs/research/WIND_SHOT_CAPTURE.md`. Automation active; retain >=5% quota reserve.
+
+Native UV evidence: original leaf/global HLSL extracted create-new under own ignored
+`.local/qa/tree-diagnostic/`, no code committed. Fixed UV path passes through, but generated
+XFX_PS_DIFFUSE expression remains unknown. Separate leaf textures absent in bounded
+readable-archive inventory, not proof absent in unsupported archives/loose files.
+Engine ABI candidates mapped in `docs/research/SPT_NATIVE_UV_EVIDENCE.md`; no fresh native
+decompilation or original runtime. water_renderer currently checks existing compiled
+leaf shader cache evidence; do not launch a second REA native import.
+
+Performance next: expensive in-aim ray query still gathers all XZ rectangle cells, sorts/
+deduplicates candidates. Prior measured idle gate already shipped. SupercoverDDA proposal
+requires oracle and boundary/tie tests before optimization. wind_stability prepared ONLY
+ignored `.local/physics-raycast-oracle-proposal.rs` (not built/run or added to crate).
+It enumerates fixture triangles independently, preserving sorted tie normals, inclusive
+max, boundaries/corners, large triangles and remove/reinsert. Review/run before any DDA.
 
 ## Completed bounded atlas diagnosis, 2026-10-22 19:28 UTC
 
