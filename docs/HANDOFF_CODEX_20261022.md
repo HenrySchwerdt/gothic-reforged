@@ -1,5 +1,13 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+SCOPED BUILD FINISHED: parent93562actualexit0,8m50s, compiled3e5cbdb, no compiler.
+wind_clock NOW sole runner using env-safe `.local/camera-raycast-runner.ps1`.
+Createsnew camera-raycast immutable EXE/hash, FIRSTmelee13 (+targetactive/unrelated0
+andfinalnotdown), thenmagic9/bow15, thenforced4/normal4freshsameEXEbenchmarks.
+AnyQA failure stops beforebench. Root mustreviewbeforepackaging. Scriptcountschecked
+againstprioractualacceptedlogs; don'tmixmelee13/magic9/bow15. ExistingDesktopuntouched.
+NPC LOS scheduling audit: queuedcap64, optimistictrue/cache, Update-drainafterfixed30Hz
+mayconfoundchangedcadence; NOprovenraymismatch. See RAYCAST_TRAVERSAL.md. NoAI changes.
 ## Latest active state — 2026-10-22 23:44 UTC
 
 SOURCE3e5cbdb: acceleration now CAMERA-ONLY via explicit raycast_accelerated.
