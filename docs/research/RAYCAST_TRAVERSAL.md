@@ -37,9 +37,20 @@ shipping. Check actual screenshots where visual behavior could differ. Existing
 Desktop packages remain unchanged until a replacement is explicitly packaged
 and validated from its final location.
 
+For the unforced control, use a second new output directory and add
+`-UnforcedRaycastComparison` to the command above. This removes the forced-pick
+flag in both variants, while still changing only ray traversal. The switch is
+accepted only together with `-CompareRaycastTraversal`.
+
 ## Evidence
 
 - Baseline oracle commit `f65fccb`: 53 optimized physics unit tests pass, including
   six independently enumerated fixture cases. Log:
   `.local/physics-raycast-oracle-baseline.log`.
-- Candidate implementation, runtime measurements and delivery status: pending.
+- Candidate source commit `60d0812`: 57 optimized physics tests pass, including
+  seeded long rays and a long-distance normal tie that explicitly select DDA.
+  Log `.local/physics-raycast-dda-tests.log`; early failed attempts retained
+  separately. Independent source review found no concrete miss.
+- The step limit bounds the new traversal only. A rejected extreme ray keeps
+  the existing rectangle fallback, which can itself be expensive.
+- Optimized viewer build, runtime measurements and delivery status: pending.

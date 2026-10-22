@@ -19,13 +19,15 @@ param(
     [switch] $Walk,
     [switch] $Camera,
     [switch] $CompareIdleAimPick,
-    [switch] $CompareRaycastTraversal
+    [switch] $CompareRaycastTraversal,
+    [switch] $UnforcedRaycastComparison
 )
 
 $ErrorActionPreference = 'Stop'
 
 if ($Walk -and $Camera) { throw 'Use only one moving workload: -Walk or -Camera.' }
 if ($CompareIdleAimPick -and $CompareRaycastTraversal) { throw 'Use only one comparison mode: -CompareIdleAimPick or -CompareRaycastTraversal.' }
+if ($UnforcedRaycastComparison -and -not $CompareRaycastTraversal) { throw '-UnforcedRaycastComparison requires -CompareRaycastTraversal.' }
 
 function Get-FullExistingPath([string] $Path, [string] $Description) {
     $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
@@ -162,7 +164,8 @@ try {
                 if ($variant -eq 'baseline') { $env:GR_AIM_ALWAYS_PICK = '1' }
                 else { Remove-Item Env:\GR_AIM_ALWAYS_PICK -ErrorAction SilentlyContinue }
             } elseif ($CompareRaycastTraversal) {
-                $env:GR_AIM_ALWAYS_PICK = '1'
+                if ($UnforcedRaycastComparison) { Remove-Item Env:\GR_AIM_ALWAYS_PICK -ErrorAction SilentlyContinue }
+                else { $env:GR_AIM_ALWAYS_PICK = '1' }
                 if ($variant -eq 'baseline') { $env:GR_RAYCAST_LEGACY = '1' }
                 else { Remove-Item Env:\GR_RAYCAST_LEGACY -ErrorAction SilentlyContinue }
             }
@@ -273,16 +276,17 @@ $summary = [ordered]@{
     camera = [bool]$Camera
     compareIdleAimPick = [bool]$CompareIdleAimPick
     compareRaycastTraversal = [bool]$CompareRaycastTraversal
+    unforcedRaycastComparison = [bool]$UnforcedRaycastComparison
     runtimeRoot = $runtime
     executableSha256 = [ordered]@{ baseline = $baselineHash; candidate = $candidateHash }
     inheritedGrEnvironment = $inheritedGrEnvironment
-    environmentNote = if ($CompareIdleAimPick) { 'GR_RES wurde für beide Varianten auf Resolution gesetzt. GR_AIM_ALWAYS_PICK wurde im Baseline-Lauf gesetzt und im Candidate-Lauf entfernt; alle übrigen GR_* Prozessvariablen wurden geerbt und dokumentiert.' } elseif ($CompareRaycastTraversal) { 'GR_RES wurde für beide Varianten auf Resolution gesetzt; GR_AIM_ALWAYS_PICK=1 erzwingt den Raycast-Workload in beiden Varianten. GR_RAYCAST_LEGACY=1 wählt den Baseline-Traversal, im Candidate ist die Variable entfernt. Dies ist ein diagnostischer Traversal-A/B-Vergleich und keine allgemeine FPS-Aussage; übrige GR_* Prozessvariablen wurden geerbt und dokumentiert.' } else { 'GR_RES wurde für beide Varianten auf Resolution gesetzt; alle anderen GR_* Prozessvariablen wurden geerbt und hier dokumentiert.' }
+    environmentNote = if ($CompareIdleAimPick) { 'GR_RES wurde für beide Varianten auf Resolution gesetzt. GR_AIM_ALWAYS_PICK wurde im Baseline-Lauf gesetzt und im Candidate-Lauf entfernt; alle übrigen GR_* Prozessvariablen wurden geerbt und dokumentiert.' } elseif ($CompareRaycastTraversal -and $UnforcedRaycastComparison) { 'GR_RES wurde für beide Varianten auf Resolution gesetzt; GR_AIM_ALWAYS_PICK wurde in beiden Varianten entfernt, sodass der Pick workload normal entscheidet. GR_RAYCAST_LEGACY=1 wählt den Baseline-Traversal; im Candidate ist die Variable entfernt. Dies vergleicht normale unforced Kameraausführung mit gleichem Traversal-A/B-Schalter; übrige GR_* Prozessvariablen wurden geerbt und dokumentiert.' } elseif ($CompareRaycastTraversal) { 'GR_RES wurde für beide Varianten auf Resolution gesetzt; GR_AIM_ALWAYS_PICK=1 erzwingt den Raycast-Workload in beiden Varianten. GR_RAYCAST_LEGACY=1 wählt den Baseline-Traversal, im Candidate ist die Variable entfernt. Dies ist ein diagnostischer Traversal-A/B-Vergleich und keine allgemeine FPS-Aussage; übrige GR_* Prozessvariablen wurden geerbt und dokumentiert.' } else { 'GR_RES wurde für beide Varianten auf Resolution gesetzt; alle anderen GR_* Prozessvariablen wurden geerbt und hier dokumentiert.' }
     order = 'baseline, candidate repeated; runs interleaved A/B/A/B.'
     requiresManualRendererLogReview = [bool]@($runRows | Where-Object { $_.rendererLogReviewRequired }).Count
     baseline = Get-GroupSummary $baselineRuns
     candidate = Get-GroupSummary $candidateRuns
     medianRunAvgChangePercent = $medianChangePct
-    interpretation = if (@($runRows | Where-Object { $_.rendererLogReviewRequired }).Count -gt 0) { 'Deskriptiver Vergleich; Renderer-/Shader-Importwarnungen erfordern manuelle Logprüfung vor Timing-Aussagen.' } elseif ($CompareRaycastTraversal) { 'Diagnostischer Traversalvergleich bei erzwungenem Pick-Workload; keine allgemeine FPS-Aussage. Normale unforced Gameplay-Validierung bleibt separat erforderlich.' } else { 'Deskriptiver Vergleich der Run-Mediane; wenige Wiederholungen liefern keine hohe statistische Sicherheit.' }
+    interpretation = if (@($runRows | Where-Object { $_.rendererLogReviewRequired }).Count -gt 0) { 'Deskriptiver Vergleich; Renderer-/Shader-Importwarnungen erfordern manuelle Logprüfung vor Timing-Aussagen.' } elseif ($CompareRaycastTraversal -and $UnforcedRaycastComparison) { 'Deskriptiver Vergleich normaler unforced Kameraausführung mit Traversal-A/B; wenige Wiederholungen liefern keine hohe statistische Sicherheit.' } elseif ($CompareRaycastTraversal) { 'Diagnostischer Traversalvergleich bei erzwungenem Pick-Workload; keine allgemeine FPS-Aussage. Normale unforced Gameplay-Validierung bleibt separat erforderlich.' } else { 'Deskriptiver Vergleich der Run-Mediane; wenige Wiederholungen liefern keine hohe statistische Sicherheit.' }
     runs = $runRows.ToArray()
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputFull 'summary.json') -Encoding utf8
