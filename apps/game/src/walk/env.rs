@@ -379,6 +379,18 @@ fn env_update(
             .collect();
         let sel = lights::select(c.to_array(), 12.0, cand, CHAR_LIGHTS);
         if sel != env.char_lights {
+            if std::env::var_os("GR_ENV_LOG").is_some() {
+                for l in &sel {
+                    eprintln!(
+                        "CHARLIGHT cam={:?} pos={:?} col={:?} range_m={:.1} d={:.1}",
+                        c,
+                        l.position,
+                        l.color,
+                        l.range,
+                        (Vec3::from(l.position) - c).length()
+                    );
+                }
+            }
             let mut pos = [Vec4::ZERO; CHAR_LIGHTS];
             let mut col = [Vec4::ZERO; CHAR_LIGHTS];
             for (i, l) in sel.iter().enumerate() {

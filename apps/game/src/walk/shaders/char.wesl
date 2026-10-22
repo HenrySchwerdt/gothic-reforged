@@ -18,8 +18,8 @@ struct CharParams {
     sun: vec4<f32>,
     sh: array<vec4<f32>, 4>,
     // static point lights: xyz position, w = 1 / range^2; colour x2 in light_cols
-    lights: array<vec4<f32>, 6>,
-    light_cols: array<vec4<f32>, 6>,
+    lights: array<vec4<f32>, 3>,
+    light_cols: array<vec4<f32>, 3>,
 };
 @group(3) @binding(0) var<uniform> params: CharParams;
 @group(3) @binding(1) var tex: texture_2d<f32>;
@@ -75,7 +75,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     light = light + params.sun.rgb * max(dot(n, sun_l), 0.0) * shadow;
 
     // Static point lights (the original's per-object packet: position, colour x 2, 1 / range^2).
-    for (var i = 0u; i < 6u; i = i + 1u) {
+    for (var i = 0u; i < 3u; i = i + 1u) {
         let lc = params.light_cols[i].rgb;
         if lc.r + lc.g + lc.b > 0.0 {
             let d = params.lights[i].xyz - in.world_position.xyz;

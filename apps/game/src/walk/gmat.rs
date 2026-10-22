@@ -294,8 +294,11 @@ pub fn char_lights() -> ([Vec4; CHAR_LIGHTS], [Vec4; CHAR_LIGHTS]) {
 pub fn push_char_lights(
     chars: &mut Assets<CharMaterial>,
     lights: [Vec4; CHAR_LIGHTS],
-    cols: [Vec4; CHAR_LIGHTS],
+    mut cols: [Vec4; CHAR_LIGHTS],
 ) {
+    if std::env::var_os("GR_NOCLIGHTS").is_some() {
+        cols = [Vec4::ZERO; CHAR_LIGHTS];
+    }
     *char_lights_cell()
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = (lights, cols);
@@ -568,7 +571,7 @@ pub struct CharParams {
 }
 
 /// Static lights evaluated per character fragment.
-pub const CHAR_LIGHTS: usize = 6;
+pub const CHAR_LIGHTS: usize = 3;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct CharMaterial {
