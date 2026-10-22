@@ -48,15 +48,16 @@ fn vertex(vertex_no_morph: Vertex) -> VertexOutput {
 @if(VERTEX_COLORS)
     weight = vertex.color.a;
 
+// The custom wind depth/shadow layout supplies Vertex.normal with both defines; transform it
+// even when the pass has no normal output, so leaf flutter matches the color pass.
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS) {
-    wnormal = vertex.normal;
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(
+    wnormal = mesh_functions::mesh_normal_local_to_world(
         vertex.normal,
         vertex_no_morph.instance_index
     );
 }
-@elif(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
-    out.world_normal = vec3<f32>(0.0, 1.0, 0.0);
+@if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
+    out.world_normal = wnormal;
 }
 
     var wp = mesh_functions::mesh_position_local_to_world(
