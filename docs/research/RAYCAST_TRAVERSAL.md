@@ -59,6 +59,15 @@ optimization is withdrawn. Do not re-enable it on synthetic tests alone: require
 comparison of real-world LOS rays within one loaded world and inspect any mismatch.
 All original logs/screenshots are retained; no claim of a proven DDA numeric bug.
 
+Read-only scheduling audit found another possible confound, not a proven cause:
+`npcs::los_service` drains pending LOS in Update without a time budget; runtime
+`PlayWorld::line_of_sight` returns cached answers or optimistic true and caps the
+pending vector at 64 without deduplication. AI runs at fixed 30 Hz, while an
+Update may follow multiple fixed ticks. Changed frame cadence can therefore
+change answer age/queue pressure even if ray answers match. Trace fixed ticks per
+Update, queued/answered/dropped requests and answer age before altering that
+service. `spawn_npcs` has a separate presentation budget, not a Sim AI budget.
+
 The QA fixture independently isolates the selected opponent before the attack
 checks, pauses unrelated NPC AI, preserves the target's existing AI until the
 original guard-stage freeze, and logs target/unrelated activity plus the first
