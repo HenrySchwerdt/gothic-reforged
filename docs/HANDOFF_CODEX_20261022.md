@@ -1,5 +1,29 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+## Latest active state — 2026-10-22 23:14 UTC
+
+Revised physics traversal source `e5a93e4`, optimized physics59/59PASS with real
+10,000cm aim-camera regression and explicit nonempty hit checks. Final log
+`.local/physics-raycast-dda-range-hit-tests.log`. First heuristic did not select
+DDA at the actual camera range; corrected overlap bound now selects that footprint.
+
+IMPORTANT: FIRST runtime experiment INVALID as normal-quality performance evidence.
+`.local/bench-raycast-dda-camera` four forced runs + incomplete `...camera-normal`
+retain failed evidence: all probeFAIL, inherited GR_NOWIND/probe variables EMPTY.
+On this host .NET SetEnvironmentVariable(name,$null,'Process') leaves empty child
+variables; use Remove-Item Env:\NAME for absence. Proof `.local/bench-raycast-dda-env-child-check.log`.
+First frame11.228 vs11.298ms and ~6.6ms/query are descriptive only; no speedup claim.
+Benchmark script now rejects any probe variable, treats probeFAIL as fatal, restores
+absence with Remove-Item and detects suffixed immutable artifact game processes.
+
+ONE revised GNU viewer build RUNNING: parent exec7207, log
+`.local/pc-raycast-dda-range-build.log`; compiled sourcee5a93e4. Root owns definitive
+session exit check. wind_clock prepares only cleaned runner/env proof, no runtime yet.
+On parent exit0: create-new immutable `...raycast-dda-range.exe`; new forced and
+unforced Camera A/B dirs `.local/bench-raycast-dda-range-camera{,-normal}`, then normal
+magic/bow/melee. No concurrent compiler/game/bench; root must review before packaging.
+Existing Desktop releases unchanged; primary/Claude/original/saves preserved.
+
 Quota reset VERIFIED2026-10-22 22:15UTC: 5h0% used, weekly16%; next reset03:15:16UTC.
 Resumed bounded work: controlled-wind screenshot implementation is committed2a82eb6
 (walk.rs/windsys.rs/new pure helper; no shader changes). Optimized GNU viewer build
