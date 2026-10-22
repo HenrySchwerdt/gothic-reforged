@@ -9,7 +9,7 @@
 //! skipped.
 
 use super::{CollisionWorld, GRID, Tri, ray_triangle};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use std::collections::BTreeMap;
 
 #[derive(Default)]
@@ -120,6 +120,23 @@ fn triangle(a: Vec3, b: Vec3, c: Vec3) -> Tri {
     assert!(tri.iter().all(|p| p.is_finite()));
     assert!((b - a).cross(c - a).length_squared() > 1e-6);
     tri
+}
+
+fn ray_target_triangle(center: Vec3, dir: Vec3) -> Tri {
+    let right = dir.cross(Vec3::Y).normalize();
+    let up = dir.cross(right).normalize();
+    triangle(
+        center - right * 100.0 - up * 100.0,
+        center + right * 100.0 - up * 100.0,
+        center + up * 200.0,
+    )
+}
+
+fn ray_rectangle_cell_count(origin: Vec3, end: Vec3) -> u64 {
+    let lo = origin.min(end) - 1.0;
+    let hi = origin.max(end) + 1.0;
+    (super::cell(hi.x).abs_diff(super::cell(lo.x)) as u64 + 1)
+        .saturating_mul(super::cell(hi.z).abs_diff(super::cell(lo.z)) as u64 + 1)
 }
 
 fn quad_xz(y: f32, cx: f32, cz: f32, half: f32) -> Vec<Tri> {
@@ -335,6 +352,59 @@ fn long_diagonal_dda_matches_legacy_and_oracle_at_grid_corner_hit() {
             .raycast_with_mode(origin, dir, max, true)
             .is_some()
     );
+}
+
+#[test]
+fn default_pick_range_diagonal_matches_legacy_and_oracle() {
+    let origin = Vec3::new(-5_000.0, 1_000.0, -5_000.0);
+    let dir = Vec3::new(1.0, -0.1, 1.0).normalize();
+    let max = 10_000.0;
+    let end = origin + dir * max;
+    let area = ray_rectangle_cell_count(origin, end);
+    let cells = super::ray_dda_cells(origin, end).expect("bounded default-range traversal");
+    assert!(super::prefer_ray_dda(
+        origin,
+        end,
+        origin.min(end) - 1.0,
+        origin.max(end) + 1.0
+    ));
+    assert!(
+        (cells.len() as u64) < area,
+        "DDA cells {}/rectangle {area}",
+        cells.len()
+    );
+
+    let mut fixture = FixtureWorld::default();
+    fixture.insert(1, vec![ray_target_triangle(origin + dir * 5_000.0, dir)]);
+    assert!(fixture.brute_raycast(origin, dir, max).is_some());
+    fixture.assert_matches(origin, dir, max);
+}
+
+#[test]
+fn actual_aim_camera_pick_range_uses_dda_and_matches_oracle() {
+    let rotation = Quat::from_xyzw(-0.15314464, 0.83887678, 0.30089217, 0.42696187);
+    let origin = Vec3::new(45.200893, 53.970318, 7.260711) * 100.0;
+    let dir = rotation * Vec3::NEG_Z;
+    let max = 10_000.0;
+    let end = origin + dir * max;
+    let area = ray_rectangle_cell_count(origin, end);
+    let cells = super::ray_dda_cells(origin, end).expect("bounded camera pick traversal");
+    assert!(super::prefer_ray_dda(
+        origin,
+        end,
+        origin.min(end) - 1.0,
+        origin.max(end) + 1.0
+    ));
+    assert!(
+        (cells.len() as u64) < area,
+        "DDA cells {}/rectangle {area}",
+        cells.len()
+    );
+
+    let mut fixture = FixtureWorld::default();
+    fixture.insert(1, vec![ray_target_triangle(origin + dir * 5_000.0, dir)]);
+    assert!(fixture.brute_raycast(origin, dir, max).is_some());
+    fixture.assert_matches(origin, dir, max);
 }
 
 #[test]

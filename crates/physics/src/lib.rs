@@ -160,10 +160,14 @@ fn prefer_ray_dda(origin: Vec3, end: Vec3, lo: Vec3, hi: Vec3) -> bool {
         return false;
     }
     let area = width.saturating_mul(depth);
-    let path_bound =
-        ((dx as f64 / GRID as f64).ceil() + (dz as f64 / GRID as f64).ceil() + 3.0) as u64;
-    let halo_bound = path_bound.saturating_mul(9);
-    area > 64 && area > halo_bound.saturating_mul(2)
+    let x_steps = (dx as f64 / GRID as f64).ceil() as u64;
+    let z_steps = (dz as f64 / GRID as f64).ceil() as u64;
+    // Each axis crossing adds at most three new cells to the union of 3x3 halos; a
+    // diagonal crossing adds at most five while consuming two axis steps. Add two
+    // endpoint crossings to cover exact grid-boundary starts/ends conservatively.
+    let axis_steps = x_steps.saturating_add(z_steps).saturating_add(2);
+    let halo_bound = axis_steps.saturating_mul(3).saturating_add(9);
+    area > 64 && area > halo_bound
 }
 
 impl CollisionWorld {

@@ -57,14 +57,28 @@ accepted only together with `-CompareRaycastTraversal`.
   `.local/artifacts/gothic-reforged-raycast-dda.exe`, SHA256
   `58889185fa3c2d477ac6ff3e61ef6ee4a1ee84a16abea56afb1dfbbee6cc0d2c`.
 - First forced camera comparison: `.local/bench-raycast-dda-camera/summary.json`.
+  **INVALID as normal-quality performance evidence:** wrapper cleanup left
+  `GR_NOWIND` and `GR_WIND_CLOCK_PROBE_START` present with empty values. All four
+  stderr logs contain `wind-clock probe FAIL`. Keep these raw files as a failed
+  experiment; the following numbers are descriptive only.
   Two runs per variant, same executable, 1280x720, 30s warmup and 20s samples.
   Median run-average frame time 11.2279 ms legacy versus 11.2983 ms candidate
   (+0.63%); query timing stays approximately 6.6 ms per call. **No gain shown.**
-  Renderer diagnostics clean; both variants force one idle pick per frame.
+  Renderer-only checks passed but missed the probe failure; both variants force
+  one idle pick per frame. Do not promote this result into a speedup claim.
 - The initial selection heuristic estimates nine independent halo cells for
   every path step, then demands another factor of two. Neighboring halos overlap
   heavily. It therefore rejects the actual `PICK_RANGE = 10_000 cm` camera ray.
   The first implementation's 50,000–90,000 cm tests did not catch this workload
   mismatch. A revised heuristic and explicit real-range camera test are pending.
-- The unfinished unforced first-build control is retained separately if present;
-  do not confuse partial runs with completed A/B evidence. No new Desktop release.
+- The unfinished unforced first-build baseline has the same probe failure and is
+  invalid. No candidate was launched; no completed normal A/B or combat QA yet.
+- Environment cleanup must use `Remove-Item Env:\NAME` for absent variables.
+  On this host, .NET `SetEnvironmentVariable(name, $null, 'Process')` leaves an
+  empty variable visible in a real child process. Repro/proof:
+  `.local/bench-raycast-dda-env-child-check.log`. Snapshot and restore existing
+  values, including deliberately empty ones; remove variables originally absent.
+  Benchmark preflight now rejects any probe variable, failure logs reject probe
+  FAIL, and the script restores absence using `Remove-Item`.
+- No new Desktop release. Revised range heuristic and clean-environment runtime
+  verification pending.

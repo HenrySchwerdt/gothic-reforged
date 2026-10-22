@@ -28,6 +28,7 @@ $ErrorActionPreference = 'Stop'
 if ($Walk -and $Camera) { throw 'Use only one moving workload: -Walk or -Camera.' }
 if ($CompareIdleAimPick -and $CompareRaycastTraversal) { throw 'Use only one comparison mode: -CompareIdleAimPick or -CompareRaycastTraversal.' }
 if ($UnforcedRaycastComparison -and -not $CompareRaycastTraversal) { throw '-UnforcedRaycastComparison requires -CompareRaycastTraversal.' }
+if (Test-Path Env:\GR_WIND_CLOCK_PROBE_START) { throw 'Remove GR_WIND_CLOCK_PROBE_START before benchmarking; even an empty value enables the diagnostic probe path.' }
 
 function Get-FullExistingPath([string] $Path, [string] $Description) {
     $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
@@ -74,10 +75,11 @@ function Get-RendererLogDiagnostics([string[]] $LogPaths) {
             $rendererError = $lineText -match '(?i)\b(?:ERROR|FATAL|PANIC)\b.{0,160}\b(?:bevy_render|wgpu|renderer|render[_ ](?:device|pipeline|graph)|shader|naga|wesl)\b|\b(?:bevy_render|wgpu|renderer|render[_ ](?:device|pipeline|graph)|shader|naga|wesl)\b.{0,160}\b(?:ERROR|FATAL|PANIC)\b'
             $validationError = $lineText -match '(?i)\b(?:ValidationRenderError|RenderValidationError|Validation Error)\b'
             $shaderFailure = $lineText -match $shaderFailurePattern
+            $probeFailure = $lineText -match '(?i)wind-clock probe FAIL:'
             $entry = "${logPath}: $lineText"
             if ($warningLine -and $unresolvedImport) {
                 $review.Add($entry)
-            } elseif ($validationError -or $rendererError -or $shaderFailure -or $unresolvedImport) {
+            } elseif ($validationError -or $rendererError -or $shaderFailure -or $unresolvedImport -or $probeFailure) {
                 $fatal.Add($entry)
             }
         }
@@ -238,11 +240,11 @@ try {
 }
 finally {
     if ($hadResolution) { [Environment]::SetEnvironmentVariable('GR_RES', $oldResolution, 'Process') }
-    else { [Environment]::SetEnvironmentVariable('GR_RES', $null, 'Process') }
+    else { Remove-Item Env:\GR_RES -ErrorAction SilentlyContinue }
     if ($hadAimAlwaysPick) { [Environment]::SetEnvironmentVariable('GR_AIM_ALWAYS_PICK', $oldAimAlwaysPick, 'Process') }
-    else { [Environment]::SetEnvironmentVariable('GR_AIM_ALWAYS_PICK', $null, 'Process') }
+    else { Remove-Item Env:\GR_AIM_ALWAYS_PICK -ErrorAction SilentlyContinue }
     if ($hadRaycastLegacy) { [Environment]::SetEnvironmentVariable('GR_RAYCAST_LEGACY', $oldRaycastLegacy, 'Process') }
-    else { [Environment]::SetEnvironmentVariable('GR_RAYCAST_LEGACY', $null, 'Process') }
+    else { Remove-Item Env:\GR_RAYCAST_LEGACY -ErrorAction SilentlyContinue }
 }
 
 $baselineRuns = @($runRows | Where-Object variant -eq 'baseline')
