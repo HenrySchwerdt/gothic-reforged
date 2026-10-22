@@ -18,6 +18,29 @@ use serde::Serialize;
 const MAX_NODES: usize = 256;
 const ACCESSOR: [u8; 6] = [1, 0, 1, 1, 0, 1];
 
+/// Check that a named class is present as a bounded, framed object, not merely as a string-table
+/// entry. This is used for semantic shader classification where strings alone are weak evidence.
+pub(super) fn contains_object_class(body: &[u8], table: Option<&[&[u8]]>, expected: &[u8]) -> bool {
+    let scanner = Scanner {
+        body,
+        table,
+        out: super::Xshmat::default(),
+        seen_class: true,
+    };
+    let mut at = 0usize;
+    while at + 8 < body.len() {
+        if body[at..at + 6] == ACCESSOR
+            && let Some((name, after)) = scanner.string_at(at + 6)
+            && name == expected
+            && scanner.read_object(after + 5).is_some()
+        {
+            return true;
+        }
+        at += 1;
+    }
+    false
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Node {
     Sampler {
@@ -492,6 +515,26 @@ impl MaterialGraph {
             recipe.vertex_blend = false;
         }
         Some(recipe)
+    }
+}
+
+#[cfg(test)]
+mod class_tests {
+    use super::*;
+
+    #[test]
+    fn class_requires_a_valid_framed_object() {
+        let table: &[&[u8]] = &[b"eCShaderWater"];
+        assert!(!contains_object_class(b"eCShaderWater", Some(table), b"eCShaderWater"));
+
+        let mut body = ACCESSOR.to_vec();
+        body.extend((0u16).to_le_bytes()); // index of class name
+        body.extend([0; 5]);
+        body.extend(0x53u16.to_le_bytes()); // current object version
+        body.extend(6u32.to_le_bytes()); // six-byte object header
+        body.extend(30u16.to_le_bytes()); // property-container version
+        body.extend(0u32.to_le_bytes()); // zero properties
+        assert!(contains_object_class(&body, Some(table), b"eCShaderWater"));
     }
 }
 

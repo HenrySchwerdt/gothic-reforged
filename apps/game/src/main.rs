@@ -10,6 +10,10 @@ mod walk;
 mod world_loader;
 
 fn main() -> anyhow::Result<()> {
+    // Desktop releases carry this small, local-machine configuration beside the EXE. Resolve
+    // it before any assets or saves are opened, since Explorer chooses an arbitrary cwd.
+    #[cfg(feature = "viewer")]
+    configure_runtime_root()?;
     #[cfg(feature = "ui-demo")]
     if std::env::args().any(|a| a == "--ui-demo") {
         return gothic_ui::demo::run(&std::env::args().collect::<Vec<_>>());
@@ -20,7 +24,11 @@ fn main() -> anyhow::Result<()> {
     }
     #[cfg(feature = "viewer")]
     {
-        let args: Vec<String> = std::env::args().collect();
+        let mut args: Vec<String> = std::env::args().collect();
+        // Double-click launches the game. Explicit --viewer still selects the asset viewer.
+        if args.len() == 1 {
+            args.push("--play".into());
+        }
         if args.iter().any(|a| a == "--walk" || a == "--play") {
             perf::early_init(&args);
             return walk::run(&args);
@@ -45,4 +53,26 @@ fn main() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(feature = "viewer")]
+fn configure_runtime_root() -> anyhow::Result<()> {
+    use anyhow::{Context, ensure};
+    let exe = std::env::current_exe().context("resolve game executable")?;
+    let config = exe.with_file_name("runtime-root.txt");
+    let root = match std::fs::read_to_string(&config) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("read runtime-root.txt beside the game EXE"),
+    };
+    let root = root.trim();
+    ensure!(!root.is_empty(), "runtime-root.txt is empty");
+    let root = exe.parent().context("game EXE has no directory")?.join(root);
+    ensure!(
+        root.join(".local/items.json").is_file() && root.join(".local/npcs.json").is_file(),
+        "runtime-root.txt must point to a Gothic Reforged runtime with .local/items.json and .local/npcs.json: {}",
+        root.display()
+    );
+    std::env::set_current_dir(&root)
+        .with_context(|| format!("open runtime directory {}", root.display()))
 }

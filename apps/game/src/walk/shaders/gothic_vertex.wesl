@@ -99,11 +99,14 @@ fn wind_offset(wp: vec3<f32>, normal: vec3<f32>, weight: f32, m: mat4x4<f32>, t:
         return off;
     }
     // SpeedTree: sway along the wind direction, weight = (y / H)^2 stored in the vertex alpha.
+    let base_s = clamp(params.wind[0].x, 0.0, 1.0);
     let s = clamp(params.wind[0].x + gust(t), 0.0, 1.0);
     let seed = hash11(m[3].x * 0.137 + m[3].z * 0.173);
     let height = params.wind_mat.y * 0.01 * length(m[1].xyz);
     let bend = sin(params.wind[1].z * mix(params.wind[2].x, params.wind[2].y, s) * pow(max(s, 0.0001), params.wind[1].w));
-    let hz = clamp(mix(params.wind[3].x, params.wind[3].y, s) / 100.0, 0.1, 4.0);
+    // Keep oscillator phase rate stable as gust strength changes. Using hz(s) * elapsed_time
+    // makes its derivative depend on elapsed_time and creates increasingly severe phase jitter.
+    let hz = clamp(mix(params.wind[3].x, params.wind[3].y, base_s) / 100.0, 0.1, 4.0);
     let osc = 0.75 + 0.25 * sin(TAU * (hz * t + seed));
     let vib = sin(mix(params.wind[2].z, params.wind[2].w, s)) * sin(TAU * (hz * 3.0 * t + seed * 7.0));
     let lim = 0.35 * height * weight;
@@ -117,8 +120,8 @@ fn wind_offset(wp: vec3<f32>, normal: vec3<f32>, weight: f32, m: mat4x4<f32>, t:
             * mix(params.wind[4].z, params.wind[4].w, k);
         let rust = mix(params.wind[5].x, params.wind[5].y, k) / max(params.wind[5].y, 0.001)
             * mix(params.wind[5].z, params.wind[5].w, k);
-        let f_rock = mix(params.wind[6].x, params.wind[6].y, s) / 100.0;
-        let f_rust = mix(params.wind[6].z, params.wind[6].w, s) / 100.0;
+        let f_rock = mix(params.wind[6].x, params.wind[6].y, base_s) / 100.0;
+        let f_rust = mix(params.wind[6].z, params.wind[6].w, base_s) / 100.0;
         let ph = fract(dot(wp.xz, vec2<f32>(0.37, 0.29)) + seed);
         let flutter = params.wind_mat.z * 0.5
             * (rock * sin(TAU * (f_rock * t + ph)) + rust * sin(TAU * (f_rust * t + ph * 3.0)));

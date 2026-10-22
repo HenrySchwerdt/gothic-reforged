@@ -8,6 +8,8 @@
 //! `eCIlluminationAdmin::GetDynamicStaticLightData` (0x100e5620), `eCVegetation_PS` handlers
 //! (0x1027e8a0 / 0x1027eda0) and `eCDirectionalLight_PS::UpdateShadowMaps` (0x100e8630).
 
+pub mod water;
+
 pub mod lod {
     //! Level-of-detail rules.
 

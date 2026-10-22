@@ -46,6 +46,9 @@ impl TextureRef {
 pub struct Xshmat {
     /// Samplers in file order.
     pub textures: Vec<TextureRef>,
+    /// `eCShaderWater` found as a bounded object class in the material tree. This identifies the
+    /// authored shader family; it does not imply a visible surface by itself.
+    pub water_shader: bool,
     /// Raw `BlendMode` enum value (eEShaderMaterialBlendMode); symbolic names unverified.
     pub blend_mode: Option<u32>,
     /// Raw `MaskReference` byte (alpha-test reference).
@@ -83,6 +86,8 @@ impl Xshmat {
             seen_class: false,
         };
         scanner.check_class()?;
+        scanner.out.water_shader =
+            graph::contains_object_class(body, scanner.table, b"eCShaderWater");
         scanner.scan()?;
         scanner.out.assign_roles();
         Ok(scanner.out)
@@ -372,6 +377,29 @@ mod tests {
         let m = Xshmat::parse(&b)?;
         assert_eq!(m.textures[0].role, TextureRole::Diffuse);
         assert_eq!(m.textures[1].role, TextureRole::Other);
+        Ok(())
+    }
+
+    #[test]
+    fn identifies_exact_water_shader_without_inventing_a_sampler() -> Result<()> {
+        let mut depth_material = vec![1, 0, 1, 1, 0, 1];
+        raw_string(&mut depth_material, b"eCResourceShaderMaterial_PS");
+        depth_material.extend([1, 0, 1, 1, 0, 1]);
+        raw_string(&mut depth_material, b"eCShaderWater");
+        depth_material.extend([0; 5]);
+        depth_material.extend(0x53u16.to_le_bytes());
+        depth_material.extend(6u32.to_le_bytes());
+        depth_material.extend(30u16.to_le_bytes());
+        depth_material.extend(0u32.to_le_bytes());
+        let parsed = Xshmat::parse(&depth_material)?;
+        assert!(parsed.water_shader);
+        assert!(parsed.diffuse().is_none());
+        assert!(parsed.texture(TextureRole::Normal).is_none());
+
+        let mut unrelated = vec![1, 0, 1, 1, 0, 1];
+        raw_string(&mut unrelated, b"eCResourceShaderMaterial_PS");
+        raw_string(&mut unrelated, b"eCShaderWaterLike");
+        assert!(!Xshmat::parse(&unrelated)?.water_shader);
         Ok(())
     }
 }

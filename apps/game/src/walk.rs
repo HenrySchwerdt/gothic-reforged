@@ -18,6 +18,7 @@ use anyhow::Result;
 use bevy::{
     asset::RenderAssetUsages,
     camera::Exposure,
+    core_pipeline::prepass::DepthPrepass,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     input::mouse::AccumulatedMouseMotion,
     light::{CascadeShadowConfigBuilder, NotShadowCaster},
@@ -442,6 +443,7 @@ fn setup(
     let cam = commands
         .spawn((
             Camera3d::default(),
+            DepthPrepass,
             Projection::Perspective(PerspectiveProjection {
                 fov: 70f32.to_radians(),
                 near: 0.05,
@@ -862,7 +864,8 @@ fn water_material(
             shallow: Vec4::new(0.12, 0.34, 0.38, 1.0),
             sky: Vec4::new(0.45, 0.62, 0.86, 1.0),
             sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
-            misc: Vec4::new(0.5, NORMAL_Y_SIGN, 0.72, 0.0),
+            // The final component is the screen-space scene-depth softening band (metres).
+            misc: Vec4::new(0.5, NORMAL_Y_SIGN, 0.72, 3.0),
         },
         n0,
         n1,
@@ -956,8 +959,51 @@ fn spawn_part(
         || part
             .material
             .as_ref()
-            .is_some_and(|m| m.kind == MatKind::Water);
+            .is_some_and(|m| m.kind.is_water());
     if is_water {
+        if std::env::var_os("GR_WATER_AUDIT").is_some() {
+            let area_m2 = part
+                .geom
+                .indices
+                .chunks_exact(3)
+                .map(|tri| {
+                    let at = |i: u32| {
+                        transform.transform_point(Vec3::from(part.geom.positions[i as usize]))
+                    };
+                    let a = at(tri[0]);
+                    let b = at(tri[1]);
+                    let c = at(tri[2]);
+                    ((b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x)).abs() * 0.5
+                })
+                .sum::<f32>();
+            let (min_vertex_y_m, max_vertex_y_m) = part
+                .geom
+                .positions
+                .iter()
+                .map(|p| transform.transform_point(Vec3::from(*p)).y)
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), y| {
+                    (lo.min(y), hi.max(y))
+                });
+            let (resource, entity_id) = part
+                .source
+                .as_ref()
+                .map_or(("<unknown>", "<unknown>"), |s| {
+                    (s.resource.as_ref(), s.entity_id.as_ref())
+                });
+            let material_name = part
+                .material
+                .as_ref()
+                .map_or("<unknown>", |m| m.name.as_str());
+            let ocean_y_m = part.ocean_plane_y_m;
+            eprintln!(
+                "WATER_SOURCE resource={resource} entity={entity_id} material={material_name} ocean={} ocean_plane_y_m={ocean_y_m:?} y_m={:.3} vertex_y_range_m={min_vertex_y_m:.3}..{max_vertex_y_m:.3} area_xz_m2={area_m2:.1} triangles={}",
+                part.source
+                    .as_ref()
+                    .is_some_and(|s| crate::world_loader::is_confirmed_ocean_resource(&s.resource)),
+                transform.translation.y,
+                part.geom.indices.len() / 3,
+            );
+        }
         let material = water_material(
             &part.material,
             &mut gpu.caches,
@@ -965,9 +1011,12 @@ fn spawn_part(
             &mut gpu.images,
             gpu.sun.0,
         );
-        let sea = *gpu.caches.sea_y.get_or_insert(transform.translation.y);
-        // Sea-level tile water is replaced by the single camera-following ocean plane.
-        let visibility = if (transform.translation.y - sea).abs() < 0.3 {
+        let ocean_y = part.ocean_plane_y_m;
+        let sea = ocean_y.map(|y| *gpu.caches.sea_y.get_or_insert(y));
+        // Only a source-confirmed, planar ocean part at the selected ocean height is replaced.
+        let visibility = if profile_hidden(PartKind::Water)
+            || ocean_y.zip(sea).is_some_and(|(y, sea)| (y - sea).abs() <= 0.01)
+        {
             Visibility::Hidden
         } else {
             Visibility::Inherited
@@ -1132,9 +1181,7 @@ fn spawn_pending(
             collision
                 .0
                 .insert_chunk(tile_chunk_id(front.payload.key), tris);
-            // Water meshes (lakes, rivers; the sea plane is handled by the sea level) give the
-            // hero's water level.
-            let sea_cm = gpu.caches.sea_y.map(|y| y * 100.0);
+            // Lakes/rivers remain mesh-backed; only confirmed planar ocean parts use the sea plane.
             let mut surf: Vec<[Vec3; 3]> = Vec::new();
             for part in front
                 .payload
@@ -1143,17 +1190,20 @@ fn spawn_pending(
                 .filter(|p| p.kind == PartKind::Water && p.lod.is_none_or(|l| l.stage == 0))
             {
                 let g = &part.geom;
+                let ocean_y = part.ocean_plane_y_m;
+                let sea_y = ocean_y.map(|y| *gpu.caches.sea_y.get_or_insert(y));
+                let replaced_by_plane = ocean_y
+                    .zip(sea_y)
+                    .is_some_and(|(y, sea)| (y - sea).abs() <= 0.01);
                 for t in g.indices.chunks_exact(3) {
+                    if replaced_by_plane {
+                        continue;
+                    }
                     let at = |i: u32| {
                         part.transform
                             .transform_point3(Vec3::from(g.positions[i as usize]))
                     };
-                    let tri = [at(t[0]), at(t[1]), at(t[2])];
-                    let mid = (tri[0].y + tri[1].y + tri[2].y) / 3.0;
-                    if sea_cm.is_some_and(|s| (mid - s).abs() < 30.0) {
-                        continue;
-                    }
-                    surf.push(tri);
+                    surf.push([at(t[0]), at(t[1]), at(t[2])]);
                 }
             }
             if !surf.is_empty() {
@@ -1255,6 +1305,9 @@ fn ocean_follow(
     camera: Query<&Transform, (With<PlayerCamera>, Without<Ocean>)>,
     mut ocean: Query<&mut Transform, With<Ocean>>,
 ) {
+    if profile_hidden(PartKind::Water) {
+        return;
+    }
     let Ok(cam) = camera.single() else { return };
     if let Ok(mut t) = ocean.single_mut() {
         t.translation.x = cam.translation.x;

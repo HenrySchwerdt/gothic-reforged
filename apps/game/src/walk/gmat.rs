@@ -437,7 +437,7 @@ impl Material for GothicMaterial {
             .get()
             .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
-    // The shadow/depth prepass has no `globals` binding: shadows of swaying geometry stay static.
+    // The custom shadow/depth prepass still uses a static vertex path.
     fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
     }

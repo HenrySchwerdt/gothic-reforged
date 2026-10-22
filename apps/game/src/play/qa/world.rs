@@ -1223,7 +1223,7 @@ pub fn world_doors() -> Sc {
         &mut sc,
         "door",
         goal,
-        150.0,
+        90.0,
         -0.1,
         door_focused(),
     );

@@ -94,10 +94,10 @@ fn main() -> Result<()> {
                 .collect();
             serde_json::to_writer_pretty(std::io::stdout().lock(), &entries)?;
         }
-        "mesh-info" | "world-info" => {
+        "mesh-info" | "world-info" | "material-info" => {
             ensure!(
                 args.len() == 3,
-                "mesh-info/world-info requires ARCHIVE MEMBER"
+                "mesh-info/world-info/material-info requires ARCHIVE MEMBER"
             );
             let mut pak = PakArchive::open(&args[1])?;
             let member = normalize_path(args[2].to_str().context("member must be Unicode")?)?;
@@ -110,6 +110,9 @@ fn main() -> Result<()> {
             if command == "mesh-info" {
                 let mesh = gothic_formats::xcmsh::Xcmsh::parse(&bytes)?;
                 serde_json::to_writer_pretty(std::io::stdout().lock(), &mesh)?;
+            } else if command == "material-info" {
+                let material = gothic_formats::xshmat::Xshmat::parse(&bytes)?;
+                serde_json::to_writer_pretty(std::io::stdout().lock(), &material)?;
             } else {
                 let world = gothic_formats::world_node::WorldDocument::parse(&bytes)?;
                 serde_json::to_writer_pretty(std::io::stdout().lock(), &world)?;
