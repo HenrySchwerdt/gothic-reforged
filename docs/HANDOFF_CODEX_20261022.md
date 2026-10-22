@@ -270,3 +270,72 @@ within1%. Resolve sampling timestamp differences against analytical expected pos
 Alternative: same-feature trace builds both variants with --trace; existing spans are inclusive
 CPU. Current executables lack trace feature and bench script does not pass --trace. No trace
 profiles yet. Never equate fewer source writes or descriptive3.69% with measured causal speedup.
+
+## Continuation checkpoint — actual clock 2026-10-22 14:38 Berlin
+
+Previous headings14:44/14:48 were estimated labels and are incorrect wall-clock times; sequence
+and actual tool/git/build-info timestamps take precedence. Verified WindFocus package remains
+latest and unchanged. No compiler/runtime active at entry, branch clean.
+
+Agent water_renderer now owns benchmark-only deterministic camera route implementation in
+perf.rs/walk.rs/bench-renderer.ps1 plus narrow tests/docs, no full build/runtime authorized yet.
+Flag --bench-camera (finite --bench required; reject --bench-walk combination), label explicitly
+renderer/focus isolation, do not change normal gameplay/quality. Expected vsactual timestamped
+pose metadata must account for sample jitter. Existing immutable old clock executable does NOT
+support this new flag, so cannot be used as route baseline. Manager must review matched-baseline
+strategy before any new A/B. No code overlays/checkout/restore authorized to agents.
+
+## Camera workload source checkpoint — 2026-10-22 (see git/tool UTC for exact time)
+
+Committed3c8982997ad435252e19a0d10bf791e5826721b6: explicit finite --bench-camera route,
+-Camera script switch mutually exclusive with-Walk, 2m radius/4m max displacement/10s loop.
+Camera-only fly route hides hero, skips player physics. Ready+warmup gate, anchored actualcamera,
+fixed rotation, requested-vs-applied trajectory timestamps and expected/actual sample metadata.
+Normal focus schedule retained via mutually exclusive conditions; camera focus follows pose chain.
+Review caught/fixed YXZ tuple extraction and new-time/old-pose snapshot mismatch before commit.
+GNU release check passed (.local/bench-camera-check-final.log). Exact contiguous source test
+extraction linked matching cached GNU glam,4/4 math/flag tests passed; provenance/hash in
+.local/camera-bench-extraction-provenance-final.txt, output camera-bench-exact-tests-run-p2.log.
+No actual camera GPU run yet. Existing old binaries do NOT implement --bench-camera.
+
+Agent wind_stability now owns sequential EXPERIMENT under new own.local source snapshot from
+3c89829 (no active checkout overlays). Audit dependency paths first; no unreviewed vendor links.
+Build immutable camera-focus, then short finite actual camera functional run in existing Wind/runtime
+and check metadata expected/actual residuals/render logs. Only after functional pass, reverse apply
+five-codefile focus delta13cead4..93655de inside snapshot with check+hash manifests; preserve camera
+instrumentation/scheduling. On conflicts STOP, no force. Build camera-oldfocus same sourcepath/target.
+No full A/B authorized until manager reviews. No packages or original/foreign source mutation.
+Inspect agent/session before any new jobs. Current delivered WindFocus b11537... remains verified.
+
+## Camera functional GPU proof — 2026-10-22 (tool clock exact)
+
+Snapshot3c89829 extracted874 trackedfiles, manifest .local/camera-bench-snapshot-manifest.sha256;
+all internal path dependencies resolved, no vendor links needed. Focus snapshot build session10346
+completed exit0, immutable camera-focus.exe SHA256
+3dc6270f00a03e2e0e16746aa975abb52f57be426045bb2894bfc1de80b793b1.
+Log .local/camera-focus-snapshot-build.log. Actual --play --bench-camera --bench4 --bench-warmup2
+from Wind/runtime completed, no render/shader/import errors. Camera flag true;4.0054s measured.
+Route end actual/expected position+rotation equal;1Hz max position residual3.82e-6m, rotation0.
+Log .local/qa/camera-focus-functional.log; runtime .local/bench/camera-focus-functional-1792674166.json.
+Mode label no_physics means PLAYER/controller physics bypass only; NPC/simulation not proven off.
+Agent wind_stability next performs checked reversefocus patch inside snapshot only and oldfocus
+build, retaining source manifests and immutable artifacts. No full A/B yet, no package updates.
+Current delivered WindFocus remains b11537...; active checkout sources never overlaid.
+
+## Quota-safe continuation — 2026-10-22, actual entry after15:08 Berlin
+
+Root5h quota98% used; reset17:22 Berlin. NO loss of source or package: delivered WindFocus
+unchanged b11537..., own committed camera instrumentation3c89829. No active checkout overlays.
+Agent wind_stability owns oldfocus snapshot build session93896, log
+.local/camera-oldfocus-snapshot-build.log. Reverse patch inside disposable snapshot was verified
+exactly five focus files, retaining new camera scheduling; old manifest hash8c9bcf894ae335316f0d01e8a6c7dbc99d625b412d49727c8f91e792bee99cd3.
+Agent must persist exact snapshot path and perfile manifest comparison; perf.rs/walk.rs identical.
+
+Conditional authorization given: once oldfocus build+manifest pass, short actual oldfocus camera
+functional, same Wind/runtime/1280x720/no other GRflags, confirm renderer clean and pose residuals.
+Then complete A/B/A/B -Camera, baselinecamera-oldfocus vs camera-focus, warmup30/sample20/reps2,
+fresh .local/bench-grass-focus-camera. No concurrentcompiler/runtime. Agent appends exact
+sessions/results/paths/limitations here AND PENDING. Stop/document failures, no blind retries.
+No new packaging/source changes authorized. Compare anchor/rotation, analytic residuals and
+entity/visible counts before conclusions; no unproven speedup. Manager reviews afterquotareset.
+Existing heartbeat active; do not duplicate. Check agent/jobs first before anything new.
