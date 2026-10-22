@@ -152,8 +152,10 @@ fn trace(sc: &mut Sc) {
 /// Turn the camera toward the raider until the error is small.
 fn turn_to(sc: &mut Sc, label: &str, yaw_add: f32) {
     let trace_body = label == "turn the camera by 100 degrees";
+    let mut turn = None;
+    let mut last_t = None;
     sc.step(label.to_string(), move |cx| {
-        if cx.t < 0.05 {
+        if turn.is_none() {
             if trace_body && !cx.st.n.contains_key("magic_body_trace_started") {
                 cx.st.n.insert("magic_body_trace_started".into(), 1.0);
                 if let Some(trace) = cx
@@ -166,14 +168,23 @@ fn turn_to(sc: &mut Sc, label: &str, yaw_add: f32) {
                 }
             }
             let yaw = cx.player().yaw;
-            cx.st.n.insert("turn_from".into(), f64::from(yaw));
+            turn = Some(gothic_camera::aim::ScriptedYawTurn::new(yaw, yaw_add));
+            last_t = Some(cx.now);
         }
-        let yaw0 = cx.st.n["turn_from"] as f32;
-        let to = yaw0 + yaw_add;
-        let hero = cx.hero_pos();
-        let dir = Vec3::new(-to.sin(), 0.0, -to.cos());
-        let err = cx.aim_at(hero + dir * 1000.0, -0.05);
-        if err < 0.02 {
+
+        let yaw = cx.player().yaw;
+        let dt = last_t.map_or(0.0, |t| (cx.now - t).clamp(0.0, 0.1));
+        last_t = Some(cx.now);
+        let gain = cx
+            .world
+            .resource::<crate::walk::play::cam::PlayCam>()
+            .state
+            .yaw_input_gain();
+        let (counts, settled) = turn.as_mut().unwrap().update(yaw, dt, gain);
+        if counts != 0.0 {
+            cx.mouse_motion(Vec2::new(counts, 0.0));
+        }
+        if settled {
             Poll::Done
         } else if cx.t > 4.0 {
             Poll::Fail("camera did not settle".into())

@@ -11,6 +11,65 @@ use glam::{Quat, Vec3};
 use crate::math::ease;
 use crate::world::CameraWorld;
 
+/// Closed-loop yaw controller for finite camera gestures (QA/replay tools).
+///
+/// It converts a desired angular velocity to mouse counts using the active camera gain, then
+/// checks the actual yaw and its measured velocity. The camera's normal input smoothing remains
+/// in charge of motion; this type only supplies bounded feedback.
+#[derive(Debug, Clone)]
+pub struct ScriptedYawTurn {
+    target_yaw: f32,
+    previous_yaw: f32,
+    settled_secs: f32,
+}
+
+impl ScriptedYawTurn {
+    /// Capture one target relative to the yaw at the start of a gesture.
+    pub fn new(start_yaw: f32, yaw_delta: f32) -> Self {
+        Self {
+            target_yaw: wrap_yaw(start_yaw + yaw_delta),
+            previous_yaw: wrap_yaw(start_yaw),
+            settled_secs: 0.0,
+        }
+    }
+
+    /// Return mouse counts for this frame and whether yaw/error stayed settled for 150 ms.
+    /// `gain` is the active camera's radians-per-count value after sensitivity and preset scaling.
+    pub fn update(&mut self, yaw: f32, dt: f32, gain: f32) -> (f32, bool) {
+        let dt = dt.clamp(0.0, 0.1);
+        if dt <= 0.0 || gain <= 0.0 {
+            return (0.0, false);
+        }
+
+        let yaw = wrap_yaw(yaw);
+        let error = angle_delta(yaw, self.target_yaw);
+        let velocity = angle_delta(self.previous_yaw, yaw) / dt;
+        self.previous_yaw = yaw;
+
+        if error.abs() <= 0.5_f32.to_radians() && velocity.abs() <= 2.0_f32.to_radians() {
+            self.settled_secs += dt;
+        } else {
+            self.settled_secs = 0.0;
+        }
+        if self.settled_secs >= 0.15 {
+            return (0.0, true);
+        }
+
+        // A damped proportional velocity request counters residual camera coast. The speed cap
+        // keeps large scripted turns finite; counts scale with dt for frame-rate independence.
+        let desired_velocity = (4.0 * error - 1.4 * velocity).clamp(-1.5, 1.5);
+        (-desired_velocity * dt / gain, false)
+    }
+}
+
+fn wrap_yaw(yaw: f32) -> f32 {
+    (yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+fn angle_delta(from: f32, to: f32) -> f32 {
+    wrap_yaw(to - from)
+}
+
 /// How far the pick ray reaches when nothing is hit, cm [I]: the far clipping plane of the
 /// highest view distance option (`DistanceHigh` 10000).
 pub const PICK_RANGE: f32 = 10_000.0;
@@ -63,6 +122,119 @@ mod tests {
     use crate::preset::{CameraMode, PresetTable};
     use crate::state::{CameraInput, CameraState, HeroView};
     use crate::world::NoWorld;
+
+    fn run_scripted_turn(
+        dts: &[f32],
+        start_deg: f32,
+        delta_deg: f32,
+        mode: CameraMode,
+    ) -> (f32, f32) {
+        let config = CameraConfig::default();
+        let mut cam = CameraState::new(config.clone(), PresetTable::default());
+        let hero = HeroView::default();
+        cam.set_mode(mode, false);
+        cam.update(
+            &CameraInput {
+                dt: 1.0 / 60.0,
+                hero,
+                ..CameraInput::default()
+            },
+            &NoWorld,
+        );
+        cam.set_orbit(start_deg.to_radians(), 0.0);
+        let start = cam.view_yaw();
+        let target = wrap_yaw(start + delta_deg.to_radians());
+        let mut turn = ScriptedYawTurn::new(start, delta_deg.to_radians());
+        let mut settled_at = None;
+        let mut elapsed = 0.0;
+        let mut counts = 0.0;
+
+        for frame in 0..2400 {
+            let dt = dts[frame % dts.len()];
+            cam.update(
+                &CameraInput {
+                    dt,
+                    hero,
+                    look: glam::Vec2::new(counts, 0.0),
+                    ..CameraInput::default()
+                },
+                &NoWorld,
+            );
+            elapsed += dt;
+            let yaw = cam.view_yaw();
+            let (next_counts, settled) = turn.update(yaw, dt, cam.yaw_input_gain());
+            if settled {
+                settled_at = Some(elapsed);
+                break;
+            }
+            counts = next_counts;
+        }
+
+        let settled_at = settled_at.expect("scripted camera turn settles within 4 seconds");
+        assert!(settled_at <= 4.0, "settled after {settled_at}s");
+        let final_yaw = cam.view_yaw();
+        assert!(
+            angle_delta(final_yaw, target).abs() <= 0.5_f32.to_radians(),
+            "final error {} degrees",
+            angle_delta(final_yaw, target).to_degrees()
+        );
+
+        // Match QA's existing one-second wait after the turn, with no further input.
+        let mut velocity = 0.0;
+        let mut waited = 0.0;
+        let mut wait_frame = 0;
+        while waited < 1.0 {
+            let dt = dts[wait_frame % dts.len()];
+            let previous = cam.view_yaw();
+            cam.update(
+                &CameraInput {
+                    dt,
+                    hero,
+                    ..CameraInput::default()
+                },
+                &NoWorld,
+            );
+            velocity = angle_delta(previous, cam.view_yaw()) / dt;
+            waited += dt;
+            wait_frame += 1;
+        }
+        assert!(
+            angle_delta(cam.view_yaw(), target).abs() <= 0.5_f32.to_radians(),
+            "one-second wait drifted {} degrees",
+            angle_delta(cam.view_yaw(), target).to_degrees()
+        );
+        assert!(
+            velocity.abs() <= 2.0_f32.to_radians(),
+            "wait velocity {velocity}"
+        );
+        assert_eq!(cam.config, config, "gesture must preserve camera settings");
+        (cam.view_yaw(), velocity)
+    }
+
+    #[test]
+    fn scripted_yaw_turn_is_settled_and_frame_rate_stable() {
+        let schedules = [
+            vec![1.0 / 30.0],
+            vec![1.0 / 60.0],
+            vec![1.0 / 120.0],
+            vec![0.009, 0.031, 0.017, 0.026, 0.013, 0.024],
+        ];
+        for mode in [CameraMode::Normal, CameraMode::Magic] {
+            for dts in &schedules {
+                let (yaw, _) = run_scripted_turn(dts, 0.0, 100.0, mode);
+                assert!((angle_delta(0.0, yaw).to_degrees() - 100.0_f32).abs() < 0.5);
+            }
+        }
+    }
+
+    #[test]
+    fn scripted_yaw_turn_handles_opposite_direction_and_angle_wrap() {
+        let schedules = [vec![1.0 / 30.0], vec![0.013, 0.027, 0.021, 0.019]];
+        for dts in &schedules {
+            run_scripted_turn(dts, 170.0, 30.0, CameraMode::Magic);
+            run_scripted_turn(dts, -170.0, -35.0, CameraMode::Magic);
+        }
+    }
 
     struct Wall(f32);
     impl CameraWorld for Wall {

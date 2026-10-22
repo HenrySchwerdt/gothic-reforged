@@ -814,4 +814,10 @@ impl CameraState {
     pub fn view_yaw(&self) -> f32 {
         self.yaw + self.look_back_yaw
     }
+
+    /// Active horizontal mouse-look gain in radians per count after camera mode and options.
+    /// Used by finite scripted controls that still travel through normal camera input filtering.
+    pub fn yaw_input_gain(&self) -> f32 {
+        self.config.radians_per_count * self.preset().velo_trans * 2.0 * self.config.sensitivity[0]
+    }
 }
