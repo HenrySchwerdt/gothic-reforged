@@ -51,7 +51,7 @@ function Get-Percentile([double[]] $Values, [double] $Percentile) {
 }
 
 function Assert-NoBuildOrGameProcess {
-    $busyNames = @('cargo', 'rustc', 'gothic-reforged', 'GothicReforged')
+    $busyNames = @('cargo', 'rustc', 'gothic-reforged*', 'GothicReforged*')
     $busy = @(Get-Process -Name $busyNames -ErrorAction SilentlyContinue)
     if ($busy.Count -gt 0) {
         $details = ($busy | ForEach-Object { "$($_.ProcessName) (PID $($_.Id))" }) -join ', '
