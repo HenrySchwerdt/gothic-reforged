@@ -73,7 +73,8 @@ fn wind_offset(
             * mix(wind[4].z, wind[4].w, k);
         let rust = mix(wind[5].x, wind[5].y, k) / max(wind[5].y, 0.001)
             * mix(wind[5].z, wind[5].w, k);
-        let ph = fract(dot(wp.xz, vec2<f32>(0.37, 0.29)) + seed);
+        // Keep phase variation within a card small; coefficients are cycles per world metre.
+        let ph = fract(dot(wp.xz, vec2<f32>(0.031, 0.023)) + seed);
         let flutter = wind_mat.z * 0.5
             * (rock * sin(TAU * (phases.w + ph))
                 + rust * sin(TAU * (gust_and_rustle.x + ph * 3.0)));
