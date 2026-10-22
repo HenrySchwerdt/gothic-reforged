@@ -63,6 +63,50 @@ struct Bench {
     walk: bool,
     measuring: bool,
     measure_start: Option<Instant>,
+    ready_since: Option<Instant>,
+    route_start: Option<Instant>,
+    route_start_state: Option<BenchSnapshot>,
+    route_end_state: Option<BenchSnapshot>,
+    route_trace: Vec<(f32, BenchSnapshot)>,
+    run_id: u128,
+    readiness_wait_started: Instant,
+}
+
+/// Readiness and pose data supplied by the world update chain for moving benchmarks.
+#[derive(Resource, Default)]
+pub(crate) struct BenchWorld {
+    pub(crate) enabled: bool,
+    pub(crate) settled: bool,
+    pub(crate) stable_frames: u32,
+    pub(crate) player_position_cm: [f32; 3],
+    pub(crate) player_yaw_rad: f32,
+    pub(crate) camera_position_m: [f32; 3],
+    pub(crate) camera_rotation_xyzw: [f32; 4],
+}
+
+#[derive(Clone, Copy)]
+struct BenchSnapshot {
+    player_position_cm: [f32; 3],
+    player_yaw_rad: f32,
+    camera_position_m: [f32; 3],
+    camera_rotation_xyzw: [f32; 4],
+    entities: usize,
+    visible_meshes: usize,
+    stable_frames: u32,
+}
+
+impl BenchWorld {
+    fn snapshot(&self, entities: usize, visible_meshes: usize) -> BenchSnapshot {
+        BenchSnapshot {
+            player_position_cm: self.player_position_cm,
+            player_yaw_rad: self.player_yaw_rad,
+            camera_position_m: self.camera_position_m,
+            camera_rotation_xyzw: self.camera_rotation_xyzw,
+            entities,
+            visible_meshes,
+            stable_frames: self.stable_frames,
+        }
+    }
 }
 
 #[derive(Component)]
@@ -83,8 +127,18 @@ impl Plugin for PerfPlugin {
             walk: self.args.iter().any(|a| a == "--bench-walk"),
             measuring: false,
             measure_start: None,
+            ready_since: None,
+            route_start: None,
+            route_start_state: None,
+            route_end_state: None,
+            route_trace: Vec::new(),
+            run_id: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis()),
+            readiness_wait_started: Instant::now(),
         });
         let gpu = self.args.iter().any(|a| a == "--bench-gpu");
+        let bench_walk_enabled = bench.as_ref().is_some_and(|b| b.walk);
         if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
             app.add_plugins(FrameTimeDiagnosticsPlugin::default());
         }
@@ -109,6 +163,10 @@ impl Plugin for PerfPlugin {
             entities: 0,
             visible: 0,
             started: Instant::now(),
+        })
+        .insert_resource(BenchWorld {
+            enabled: bench_walk_enabled,
+            ..default()
         })
         .add_systems(Startup, spawn_overlay)
         .add_systems(PostStartup, shadow_preset)
@@ -276,13 +334,15 @@ fn gpu_ms(store: &DiagnosticsStore) -> Option<f32> {
 fn update_overlay(
     time: Res<Time<Real>>,
     mut p: ResMut<Perf>,
+    world: Res<BenchWorld>,
     store: Res<DiagnosticsStore>,
     visible: Query<&ViewVisibility>,
     mut text: Query<&mut Text, With<OverlayText>>,
 ) {
     p.text_timer += time.delta_secs();
     let measuring = p.bench.as_ref().is_some_and(|b| b.measuring);
-    if (!p.overlay_on && !measuring) || p.text_timer < 0.25 {
+    let walk_context = world.settled && p.bench.as_ref().is_some_and(|b| b.walk);
+    if (!p.overlay_on && !measuring && !walk_context) || p.text_timer < 0.25 {
         return;
     }
     p.text_timer = 0.0;
@@ -291,7 +351,9 @@ fn update_overlay(
         .and_then(|d| d.value())
         .unwrap_or(0.0) as usize;
     p.visible = visible.iter().filter(|v| v.get()).count();
-    let gpu = gpu_ms(&store);
+    let gpu = (p.overlay_on || measuring)
+        .then(|| gpu_ms(&store))
+        .flatten();
     if measuring && let Some(g) = gpu {
         p.gpu_samples.push(g);
     }
@@ -324,18 +386,18 @@ fn update_overlay(
     }
 }
 
-/// Scripted walking for `--bench-walk`: forward for 5 s, back for 5 s.
+/// Scripted walking for `--bench-walk`: forward for 5 s, back for 5 s from route start.
 fn bench_walk(mut keys: ResMut<ButtonInput<KeyCode>>, p: Res<Perf>) {
     let Some(b) = &p.bench else { return };
     if !b.walk {
         return;
     }
-    let t = p.started.elapsed().as_secs_f32();
-    // Start after the warm-up begins so the world is loaded; the cadence is deterministic.
-    let phase = ((t - b.warmup * 0.5).max(0.0) / 5.0) as u32 % 2;
-    if t < b.warmup * 0.5 {
+    let Some(route_start) = b.route_start else {
+        keys.release(KeyCode::KeyW);
+        keys.release(KeyCode::KeyS);
         return;
-    }
+    };
+    let phase = (route_start.elapsed().as_secs_f32() / 5.0) as u32 % 2;
     if phase == 0 {
         keys.release(KeyCode::KeyS);
         keys.press(KeyCode::KeyW);
@@ -345,29 +407,86 @@ fn bench_walk(mut keys: ResMut<ButtonInput<KeyCode>>, p: Res<Perf>) {
     }
 }
 
-fn bench_drive(mut p: ResMut<Perf>, mut exit: MessageWriter<AppExit>) {
+fn walk_sample_due(bench: &Bench, elapsed: f32) -> bool {
+    bench.walk && elapsed.floor() as usize >= bench.route_trace.len()
+}
+
+fn bench_drive(mut p: ResMut<Perf>, world: Res<BenchWorld>, mut exit: MessageWriter<AppExit>) {
     let elapsed = p.started.elapsed().as_secs_f32();
+    let started = p.started;
+    let entities = p.entities;
+    let visible = p.visible;
     let Some(b) = p.bench.as_mut() else { return };
     if !b.measuring {
-        if elapsed >= b.warmup {
+        // A walk run waits for actual settled world/player readiness, then applies the same
+        // warm-up duration. Idle benchmarks retain their original startup-relative timing.
+        let measure_at = if b.walk {
+            if world.settled {
+                b.readiness_wait_started = Instant::now();
+                let ready_since = *b.ready_since.get_or_insert_with(Instant::now);
+                if ready_since.elapsed().as_secs_f32() >= b.warmup {
+                    let now = Instant::now();
+                    b.route_start.get_or_insert(now);
+                    b.route_start_state
+                        .get_or_insert_with(|| world.snapshot(entities, visible));
+                    Some(now)
+                } else {
+                    None
+                }
+            } else {
+                b.ready_since = None;
+                None
+            }
+        } else if elapsed >= b.warmup {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        if let Some(start) = measure_at {
             b.measuring = true;
-            b.measure_start = Some(Instant::now());
+            b.measure_start = Some(start);
             #[cfg(feature = "trace")]
             trace::reset();
             eprintln!(
-                "perf: warm-up done after {elapsed:.1} s, measuring {} s",
-                b.seconds
+                "perf: warm-up done after {elapsed:.1} s, measuring {} s{}",
+                b.seconds,
+                if b.walk { " (world settled)" } else { "" },
             );
+        } else if b.walk
+            && !world.settled
+            && b.readiness_wait_started.elapsed().as_secs_f32() >= 300.0
+        {
+            eprintln!(
+                "perf: --bench-walk timed out after {:.1} s waiting for settled streaming and placed player (stable frames {})",
+                b.readiness_wait_started.elapsed().as_secs_f32(),
+                world.stable_frames
+            );
+            exit.write(AppExit::error());
         }
         return;
     }
     let ran = b.measure_start.map_or(0.0, |s| s.elapsed().as_secs_f32());
+    if walk_sample_due(b, ran) {
+        b.route_trace.push((ran, world.snapshot(entities, visible)));
+    }
     if ran < b.seconds {
         return;
     }
     let name = b.name.clone();
     let seconds = ran;
     let walk = b.walk;
+    if walk {
+        b.route_end_state = Some(world.snapshot(entities, visible));
+    }
+    let run_id = b.run_id;
+    let warmup_after_ready = walk.then_some(b.warmup);
+    let ready_wait = b
+        .ready_since
+        .map(|ready| ready.duration_since(started).as_secs_f32());
+    let route_seconds = b.route_start.map(|start| start.elapsed().as_secs_f32());
+    let route_start_state = b.route_start_state;
+    let route_end_state = b.route_end_state;
+    let route_trace = b.route_trace.clone();
     let mut sorted = p.all_frames.clone();
     sorted.sort_by(f32::total_cmp);
     let mut main = p.all_main.clone();
@@ -381,6 +500,39 @@ fn bench_drive(mut p: ResMut<Perf>, mut exit: MessageWriter<AppExit>) {
     let mut json = serde_json::json!({
         "name": name,
         "walk": walk,
+        "sample_id": format!("{}-{run_id}", name),
+        "walk_route": walk.then_some("forward_5s_back_5s"),
+        "world_ready_wait_seconds": ready_wait,
+        "warmup_after_ready_seconds": warmup_after_ready,
+        "world_stable_frames_at_end": world.stable_frames,
+        "route_elapsed_seconds_at_end": route_seconds,
+        "route_start": route_start_state.map(|s| serde_json::json!({
+            "player_position_cm": s.player_position_cm,
+            "player_yaw_rad": s.player_yaw_rad,
+            "camera_position_m": s.camera_position_m,
+            "camera_rotation_xyzw": s.camera_rotation_xyzw,
+            "entities": s.entities,
+            "visible_meshes": s.visible_meshes,
+            "stable_frames": s.stable_frames,
+        })),
+        "route_end": route_end_state.map(|s| serde_json::json!({
+            "player_position_cm": s.player_position_cm,
+            "player_yaw_rad": s.player_yaw_rad,
+            "camera_position_m": s.camera_position_m,
+            "camera_rotation_xyzw": s.camera_rotation_xyzw,
+            "entities": s.entities,
+            "visible_meshes": s.visible_meshes,
+            "stable_frames": s.stable_frames,
+        })),
+        "route_trace_1hz": route_trace.iter().map(|(time, s)| serde_json::json!({
+            "seconds": time,
+            "player_position_cm": s.player_position_cm,
+            "player_yaw_rad": s.player_yaw_rad,
+            "camera_position_m": s.camera_position_m,
+            "camera_rotation_xyzw": s.camera_rotation_xyzw,
+            "entities": s.entities,
+            "visible_meshes": s.visible_meshes,
+        })).collect::<Vec<_>>(),
         "seconds": seconds,
         "frames": sorted.len(),
         "avg_ms": avg,

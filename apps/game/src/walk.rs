@@ -392,6 +392,7 @@ pub fn run(args: &[String]) -> Result<()> {
             input_mode,
             player_motion,
             update_camera,
+            capture_bench_world,
             smoke_script,
             hud,
         )
@@ -1569,6 +1570,40 @@ fn update_camera(
         };
     }
     let _ = &mut player;
+}
+
+/// Establish a repeatable readiness gate for `--bench-walk` without changing play-mode loading.
+/// This mirrors the existing smoke-run settled condition and requires the real player placement.
+fn capture_bench_world(
+    stream: Res<Stream>,
+    veg: Res<VegStream>,
+    player: Res<Player>,
+    mut bench: ResMut<crate::perf::BenchWorld>,
+    camera: Query<&Transform, With<PlayerCamera>>,
+    mut stable_frames: Local<u32>,
+) {
+    if !bench.enabled {
+        return;
+    }
+    let loaded_all = stream.ready
+        && stream.in_flight.is_empty()
+        && stream.pending.is_empty()
+        && veg.in_flight.is_empty()
+        && veg.pending.is_empty()
+        && player.placed;
+    if loaded_all && stream.last_activity > 5 {
+        *stable_frames = stable_frames.saturating_add(1);
+    } else {
+        *stable_frames = 0;
+    }
+    bench.stable_frames = *stable_frames;
+    bench.settled = *stable_frames > 90;
+    bench.player_position_cm = player.ctrl.position.to_array();
+    bench.player_yaw_rad = player.yaw;
+    if let Ok(transform) = camera.single() {
+        bench.camera_position_m = transform.translation.to_array();
+        bench.camera_rotation_xyzw = transform.rotation.to_array();
+    }
 }
 
 fn smoke_script(
