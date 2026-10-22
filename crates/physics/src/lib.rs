@@ -15,6 +15,9 @@ pub mod profile;
 pub mod ragdoll;
 pub mod relax;
 
+#[cfg(test)]
+mod raycast_oracle_tests;
+
 pub use controller::{CharacterController, Gait, Landing, MoveCommand, MoveMode, StepReport};
 pub use movement::{ModeChange, MovementMode};
 pub use profile::{ControllerConfig, MovementProfile, fall_damage};
