@@ -53,4 +53,18 @@ accepted only together with `-CompareRaycastTraversal`.
   separately. Independent source review found no concrete miss.
 - The step limit bounds the new traversal only. A rejected extreme ray keeps
   the existing rectangle fallback, which can itself be expensive.
-- Optimized viewer build, runtime measurements and delivery status: pending.
+- First optimized viewer build completed in 9m06s, source `60d0812`, immutable
+  `.local/artifacts/gothic-reforged-raycast-dda.exe`, SHA256
+  `58889185fa3c2d477ac6ff3e61ef6ee4a1ee84a16abea56afb1dfbbee6cc0d2c`.
+- First forced camera comparison: `.local/bench-raycast-dda-camera/summary.json`.
+  Two runs per variant, same executable, 1280x720, 30s warmup and 20s samples.
+  Median run-average frame time 11.2279 ms legacy versus 11.2983 ms candidate
+  (+0.63%); query timing stays approximately 6.6 ms per call. **No gain shown.**
+  Renderer diagnostics clean; both variants force one idle pick per frame.
+- The initial selection heuristic estimates nine independent halo cells for
+  every path step, then demands another factor of two. Neighboring halos overlap
+  heavily. It therefore rejects the actual `PICK_RANGE = 10_000 cm` camera ray.
+  The first implementation's 50,000–90,000 cm tests did not catch this workload
+  mismatch. A revised heuristic and explicit real-range camera test are pending.
+- The unfinished unforced first-build control is retained separately if present;
+  do not confuse partial runs with completed A/B evidence. No new Desktop release.
