@@ -1,5 +1,42 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+## In-progress atlas diagnosis, 2026-10-22 19:17 UTC
+
+Current source `cd4288a7b3a0a0ed9f174275e7ed3461ec00d4b7` adds an OFF-by-default
+`GR_SPT_FLIP_ATLAS_V=1` experiment: remap leaf/frond/billboard V before silhouette
+measurement and generation. Do not enable by default without multiple-species evidence.
+Read `docs/research/SPT_ATLAS_DIAGNOSIS.md`. No released package changed.
+
+ONE GNU optimized game build is running, exec session **22722**, log
+`.local/qa/tree-diagnostic/atlas-origin-game-build.log`. Resume/poll it; DO NOT start
+a duplicate build or game/benchmark under compiler load. After success, preserve an
+immutable diagnostic EXE under .local/artifacts with source/hash, then run sequential
+flag-off/on NOWIND fixed apple camera smoke captures. This is an experimental geometry
+and UV treatment, not proof of original-engine parity. Do not package as a proven fix.
+
+Evidence completed since last candidate:
+- Existing `spt_dump` rebuilt; default variant0 apple generates400 independent quads,
+  vertex layout checked, diagonals101.83..103.40cm. These are NOT runtime silhouette-
+  calibrated meshes. Dump and numerical summary: `.local/qa/tree-diagnostic/`.
+- `GR_SPT_DUMP_LEAVES=1` now prints exact leaf metadata on stderr without changing JSON.
+  Apple leaf BulfordHollyLeaves_RT_1.tga points at upper-left cell. RedOak and PinOak/
+  EuropeanAspen metadata also retained. No asset bytes committed.
+- New read-only `vfs_match` compares selected overlay payload against saved reference
+  (XIMG is rewrapped for DDS comparison). Both actual apple SPT and Composite01 match;
+  intentional mismatching reference returns MATCH false and nonzero. Selected archives
+  speedtrees.pak and _compiledimage.pak. Build/run logs retained.
+- Exact texture DDS re-exported from base to own ignored evidence; SHA matches prior
+  export006f39c4226a17c6564bd67af83f574cbe7cac45c48e3dc47912963515b382c5.
+- Original DDS2048 vs old flattened PNG512 orientation checked numerically: same-
+  orientation blue-composited meanRGBerror<.71/channel; flipped8.68/16.10/34.26.
+  Alpha>=110 coverage4.89% upper-left (bare-tree motif) vs36.21% lower-left (leaf cluster).
+  This is an atlas-origin candidate, not a confirmed all-species V-flip rule.
+- Same apple camera with GR_NOWIND remains sparse: own `.local/qa/tree-diagnostic/nowind-*`,
+  exit0, grounded360/360, clean fatal renderer scan. Thus wind is not required for sparse crown.
+
+No active coding agent/game at this checkpoint; the single compiler job above is active.
+Latest delivered LeafPhase and prior GrassFix remain unchanged and verified below.
+
 ## Latest continuation: leaf-phase candidate (after Cloud PR review)
 
 Compiled source `543db4549efe7dd1bb7eaf56788a171ca95f3bda` ports only PR71's
