@@ -2,10 +2,12 @@
 
 The previous ray broadphase enumerates every XZ cell in the segment's bounding
 rectangle. Long diagonal aim rays can visit many cells far from the segment.
-The candidate visits segment cells with a conservative one-cell halo, then keeps
+The camera opt-in candidate visits segment cells with a conservative one-cell halo, then keeps
 the existing triangle AABB filter, sorted triangle identities and narrow phase.
 It does not stop at the first hit. Vertical, thin and small queries keep the
-rectangle path, as do unsupported numeric ranges. Capsule queries are unchanged.
+rectangle path, as do unsupported numeric ranges. Ordinary `raycast`, `raycast_hit`
+and capsule queries retain the reference behavior. Only the camera trait calls
+the explicit `raycast_accelerated` API; NPC line-of-sight uses ordinary `raycast`.
 
 `GR_RAYCAST_LEGACY=1` selects the rectangle implementation for a process. This
 allows comparisons using one executable, with identical renderer settings.
@@ -43,6 +45,25 @@ flag in both variants, while still changing only ray traversal. The switch is
 accepted only together with `-CompareRaycastTraversal`.
 
 ## Evidence
+
+Current source **`3e5cbdb`** scopes the optimization to camera queries after the
+global prototype's melee failures. Physics59 + camera25 + camera integration13 +
+movement integration14 tests pass (111 total), final log
+`.local/physics-camera-raycast-scoped-tests-camera-regression.log`.
+The game build and a fresh QA-first/runtime comparison are pending. Prototype
+measurements below do not certify the current scoped executable.
+
+Global prototype outcomes: two default melee runs failed with downed hero, while
+one startup-legacy run passed. The difference is unresolved, so global NPC LOS
+optimization is withdrawn. Do not re-enable it on synthetic tests alone: require
+comparison of real-world LOS rays within one loaded world and inspect any mismatch.
+All original logs/screenshots are retained; no claim of a proven DDA numeric bug.
+
+The QA fixture independently isolates the selected opponent before the attack
+checks, pauses unrelated NPC AI, preserves the target's existing AI until the
+original guard-stage freeze, and logs target/unrelated activity plus the first
+hero-down event. It does not revive the hero, alter health recovery, change game
+mechanics or weaken existing assertions. Runtime validation is still required.
 
 - Baseline oracle commit `f65fccb`: 53 optimized physics unit tests pass, including
   six independently enumerated fixture cases. Log:
