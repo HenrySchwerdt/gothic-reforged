@@ -234,3 +234,39 @@ Identical route starts but endpoint horizontal difference~0.66m; final visible m
 matched route or same-feature tracing is needed to attribute gains. All renderer log guards clean.
 Next create distinct Desktop WindFocus package and run packaged melee_faithful before delivery;
 retain initial clock QA failure and prior good releases. No focus package delivered at this note.
+
+## Latest VERIFIED Desktop milestone — 2026-10-22 14:48 Berlin
+
+NEW separate package Desktop/GothicReforged-Codex-20261022-WindFocus/GothicReforged.exe,
+SHA256b11537c354934be159de02849122dab43ac8fd57ad2466df518fb5a8f341f972.
+Game source93655de06d2ad1e22499d721ad7649e3a73de7a3; packaging metadata additionally records
+d208696 HEAD, clean source; later commits are script/docs only. build-info has explicit executable
+source commit and explanation. Normal+GR_NOWIND smokes PASS; final packaged melee_faithful PASS
+from C:/Windows/Temp with GR_INPUT_DEBUG and1280x720. Manager inspected package's actual
+runtime/.local/qa/melee_faithful/05_holstered.png. Independent saves empty. PRUEFSTAND.txt
+records tested scope, unresolved first clock hold failure and descriptive-only timing caveat.
+Old packages preserved. This package supersedes Wind as latest tested milestone, not full port.
+
+No build/runtime currently running after session38381 completed. wind_stability completed;
+water_renderer has read-only precise route/trace proposal pending, no source edit permission.
+Next: matched benchmark trajectory or same-feature trace to establish causal CPU/material benefit;
+current route differs0.66m, so3.69% lower descriptive timings are NOT proven optimization.
+Hour/day encoded CPU tests passed but no long-duration GPU session. VR native/head fixture previous
+work preserved; no new APK/headset validation. Preserve first clock failure logs and initial
+benchmark-null-exit partial output. Existing heartbeat remains active; do not duplicate automation.
+
+## Next performance experiment proposal (read-only review; not implemented)
+
+Existing --bench-walk injects W/S every5s but integrates frame-dependent collision physics;
+streaming observes previous pose, then motion, camera, capture. Do not force-match these timings.
+Proposed separate benchmark-only camera route: after readiness and warmup, capture anchor/yaw;
+compute positions analytically from elapsed time on a small closed path within a resident tile.
+Preserve ordinary play and existing walk route. A fly/kinematic camera hides hero/avoids physics,
+so label it renderer/focus isolation, not whole-game movement parity. Direct ctrl.position still
+incurs physics and needs careful system order with focus/camera capture. Verify trajectory AND
+streaming order, not just equal endpoints. Suggested comparability tolerances (provisional, not
+validated acceptance rules): start1cm/0.001rad, 1Hz poses5cm/0.005rad, same entities, visible count
+within1%. Resolve sampling timestamp differences against analytical expected position.
+Alternative: same-feature trace builds both variants with --trace; existing spans are inclusive
+CPU. Current executables lack trace feature and bench script does not pass --trace. No trace
+profiles yet. Never equate fewer source writes or descriptive3.69% with measured causal speedup.
