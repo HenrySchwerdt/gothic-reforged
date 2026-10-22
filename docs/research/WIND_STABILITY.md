@@ -25,4 +25,4 @@ parity. Wrapped GPU time can also cause a phase discontinuity at each hour bound
 fixed frequency; avoiding that needs a bounded phase accumulator or a separate unwrapped wind-time
 uniform and is outside this focused fix.
 
-The regression test was updated but not run under the coordinated build/cache restriction.
+Manager validation: the environment release test suite passed all 24 tests, including the actual-offset gust-boundary regression. This is CPU evidence; GPU hour-wrap and prepass silhouette parity remain open.

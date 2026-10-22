@@ -87,3 +87,6 @@ Both visual paths now honor it without changing water physics. Source Seamesh an
 water overlaps remain candidates for further inspection; their roles are not inferred merely
 from their elevations. The corrected candidate still needs its new coast screenshots and
 controlled performance comparison; the first candidate is not the final water result.
+
+
+Final candidate validation: thin release built; actual matched codex-coast-fixed-low.png and codex-coast-fixed-shore.png in primary .local/qa show the triangles/bright strip removed. No shader errors; walking grounded360/360. Final Desktop package melee_faithful QA PASS. Controlled A/B performance is recorded separately in the handoff when complete.

@@ -61,3 +61,36 @@ The later Quest build log `.local/quest-host-build.log` failed with `E0432: unre
 The runtime bridge review found a separate NPC-hit context gap: `new_orc` creates Sim actors without a Sim target, while `do_logical_damage` reads the attacker's current target. A physical `HitMessage` already identifies the actual victim, so the bridge now supplies that victim as the target for non-player hits before calling the Script damage pipeline. This adapts collision context; it does not change combat rules. Synthetic tests cover hero-to-orc, orc-to-hero with no preloaded target, and repeated hits. They verify each `HitOutcome::hp_lost` equals the visible and Sim-side HP delta, preventing missing synchronization or double subtraction.
 
 The Quest source also uses `self.sim.cfg` for NPC construction after moving config ownership into Sim. The targeted host test command completed successfully (2 passed, 0 failed): `cargo +stable-x86_64-pc-windows-gnu test --manifest-path .local/qmine-codex/Cargo.toml --release --target x86_64-pc-windows-gnu -j2 --lib --locked`, using the prepared `quest-env.sh` and host target directory; full output is in `.local/quest-host-tests.log`. This is a host lib-test result, not an Android Quest build. The manager must still build the actual stand-alone Quest workspace after staging this change.
+
+## Quest Android release lib build (verified 2026-10-22)
+
+Canonical apps/quest/src and examples were hash-synchronized into standalone .local/qmine-codex.
+Source integration base was 36fef36; the actual migrated source is preserved in commit434ee3a.
+Exact source inventories: .local/quest-android-build.meta.txt. Standalone manifest/lock and
+isolated vendor-codex copy were retained.
+
+Command: cargo +stable-x86_64-pc-windows-gnu build --manifest-path .local/qmine-codex/Cargo.toml
+--release --target aarch64-linux-android -j2 --lib --locked, after sourcing primary
+.local/quest-env.sh; CARGO_TARGET_DIR points to primary .local/target-quest and
+RUST_MIN_STACK=67108864. Build succeeded in4m08s, seven warnings/zero errors.
+Log: .local/quest-android-build.log. Output:
+C:/Users/PowerTower/dev/gothic-reforged/.local/target-quest/aarch64-linux-android/release/libgothic_quest.so
+(104687840 bytes), SHA256 3b720252047aa76d1b319ce02b4fabb467caa5c96e60fd5204eedc0576a58968.
+NDK llvm-readelf confirmed ELF64/AArch64 shared object and libc++_shared.so dependency.
+
+No APK packaged, no deployment/device operation: expected SDK path and bounded additional
+searches of primary .local/tools, .local/tools2, Program Files/Android, Meta Spatial Editor,
+and AppData/Local/meta-xr-operator found no aapt2, zipalign, apksigner or android.jar. NDK alone
+does not supply APK packaging tools. The previous installed Quest app remains untouched.
+Actual worn-headset validation remains open.
+
+Fresh host hero_check exited0 with grip/palm/blade/hand-rotation sweep checks PASS; full log
+.local/vr-hero-final.log. Host example build finished in13m12s; host_shots then exited0 and
+saved five actual PNGs under own .local/quest/host_*.png. These validate the host fixture,
+not live controller input or the headset compositor. Manager separately ran XR helper tests:
+3passed; earlier statements that these tests were not run are superseded by this result.
+## Host avatar screenshots: missing head
+
+The headless appearance in `host_third_front.png` is explained by render-layer setup. `apps/quest/examples/host_shots.rs:65` assigns its screenshot camera only layer 0, while `apps/quest/src/actor.rs:182` puts any `hide_from_eyes` part on layer 1 only; the host fixture spawns the hero head with that option at `host_shots.rs:221`. The head asset itself was present in the same Ardea pack: the successful `hero_check` path calls `spawn_part(...).expect("hero head")` at `hero_check.rs:50`.
+
+This makes the screenshot a fixture camera-mask omission for a third-person view, not evidence of a missing head asset or a Quest runtime failure. The hide-from-eyes behavior is intended for the player's eye cameras. The runtime Quest eye cameras are spawned without a `RenderLayers` component in `crates/xr-quest/src/lib.rs:265-274` (default layer 0), while the optional mirror camera explicitly includes layers 0 and 1 in `apps/quest/src/hero.rs:90-97`. Thus source configuration supports the expected first-person hide / mirror-visible split. The host third-person shots reuse the first-person mask and therefore cannot validate a complete third-person avatar. No code or runtime conclusion was changed; actual on-headset visibility remains unverified.
