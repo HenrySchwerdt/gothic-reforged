@@ -16,6 +16,69 @@ fn grab(sc: &mut Sc) {
     sc.wait(0.4);
 }
 
+
+/// Fraction of pure-white pixels inside the hero's screen box (torso and head): a character that
+/// is shaded like the original (`char.wesl`, ge_default.fx light sum into an 8-bit target) keeps
+/// its bright skin and steel textures below white. Reports through a check `no clipped character
+/// pixels (<tag>)`: at most 5 % of the sampled pixels may be 253..255 in all three channels.
+fn clip_probe(sc: &mut Sc, tag: &'static str) {
+    use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+    use std::sync::{Arc, Mutex};
+    let out: Arc<Mutex<Option<(u32, u32)>>> = Arc::new(Mutex::new(None));
+    let o2 = out.clone();
+    sc.act(&format!("sample the hero's pixels ({tag})"), move |cx| {
+        let hero = cx.player().ctrl.position;
+        let mut q = cx
+            .world
+            .query_filtered::<(&Camera, &GlobalTransform), With<Camera3d>>();
+        let Some((cam, gt)) = q.iter(cx.world).next() else {
+            return;
+        };
+        let at = |dy: f32| cam.world_to_viewport(gt, (hero + Vec3::Y * dy) * 0.01).ok();
+        let (Some(feet), Some(head)) = (at(20.0), at(170.0)) else {
+            return;
+        };
+        let vp = cam.logical_viewport_size().unwrap_or(Vec2::new(1280.0, 720.0));
+        let h = (feet.y - head.y).abs();
+        let c = (feet + head) * 0.5;
+        let (x0, x1) = (c.x - 0.22 * h, c.x + 0.22 * h);
+        let (y0, y1) = (head.y.min(feet.y), head.y.max(feet.y));
+        let o3 = o2.clone();
+        cx.world
+            .spawn(Screenshot::primary_window())
+            .observe(move |cap: On<ScreenshotCaptured>| {
+                let img = &cap.image;
+                let k = img.width() as f32 / vp.x;
+                let (mut n, mut white) = (0u32, 0u32);
+                let (xa, xb) = ((x0 * k).max(0.0) as u32, (x1 * k).min(img.width() as f32 - 1.0) as u32);
+                let (ya, yb) = ((y0 * k).max(0.0) as u32, (y1 * k).min(img.height() as f32 - 1.0) as u32);
+                for y in ya..=yb {
+                    for x in xa..=xb {
+                        if let Ok(col) = img.get_color_at(x, y) {
+                            let c = col.to_srgba();
+                            n += 1;
+                            if c.red >= 0.99 && c.green >= 0.99 && c.blue >= 0.99 {
+                                white += 1;
+                            }
+                        }
+                    }
+                }
+                *o3.lock().unwrap() = Some((n, white));
+            });
+    });
+    sc.wait(1.0);
+    sc.check(&format!("no clipped character pixels ({tag})"), move |cx| {
+        match *out.lock().unwrap() {
+            Some((n, w)) if n > 0 => {
+                let f = f64::from(w) / f64::from(n);
+                cx.note(format!("clip probe {tag}: {w} of {n} pixels pure white ({:.2} %)", f * 100.0));
+                expect(f <= 0.05, format!("{:.2} % white", f * 100.0), format!("{:.2} % pure white", f * 100.0))
+            }
+            _ => expect(false, String::new(), "no hero box on screen".to_string()),
+        }
+    });
+}
+
 /// Bodies shown now whose document path contains `needle`.
 fn live_in(cx: &Cx, needle: &str) -> usize {
     let r = cx.world.resource::<Roster>();
@@ -560,6 +623,7 @@ pub fn walk_to_reddock() -> Sc {
     });
     sc.wait(1.0);
     sc.shot("reddock_market");
+    clip_probe(&mut sc, "reddock market");
     sc.act("stop the frame clock", |cx| {
         cx.st.n.insert("ft_on".into(), 0.0);
     });
