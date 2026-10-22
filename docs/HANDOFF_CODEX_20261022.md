@@ -181,3 +181,56 @@ focus in fifth vec4, no per-material mutation/iteration; pure environment clock 
 No release artifact contains it yet. Agent now runs fast shader checker and viewer cargo-check;
 no full release build or runtime authorized concurrently. Verify live material count in a separate
 functional GR_WINDLOG run and matched moving workload A/B before any performance claim.
+
+## Active focus build — 2026-10-22 14:20 Berlin
+
+Source frozen/committed93655de. Shader checker8variants+negative and viewer cargo-check PASS,
+logs .local/grass-focus-{shader-check,viewer-check}.log. Separate baseline functional moving run
+with GR_WINDLOG observes72 registered wind materials (not vegetation-only mutation count), log
+.local/grass-focus-count-baseline.log; logging timings explicitly excluded from benchmarks.
+Debug melee comparison with packaged EXEs from C:/Windows/Temp passed baseline AND clock;
+logs .local/qa/clock-combat-debug-1. Initial clock hold failure remains unresolved/nonreproduced.
+
+Agent /root/wind_stability owns full release build session79843, .local/pc-grass-focus-build.log.
+Authorized sequential pipeline: immutable .local/artifacts/gothic-reforged-grass-focus.exe;
+normal+GR_NOWIND actual smokes in .local/qa/grass-focus (no fatal logs, grounded360/360);
+then scripts/bench-renderer.ps1 against immutable wind-clock artifact, same WindClock/runtime,
+-Walk -WarmupSeconds30 -Seconds20 -Repetitions2 -Resolution1280x720, .local/bench-grass-focus-walk.
+Clear diagnostic/quality GR_* flags. No duplicate compiler/runtime jobs. Stop on smoke failure.
+Root must inspect screenshots and route/count metadata before conclusions or packaging. No
+new focus package delivered. Current verified release still Desktop/...-Wind, e638e428...
+Quota78%5h used at14:17; reset17:22 Berlin. Conserve manager analysis and redundant polling.
+
+## Grass GPU checkpoint — 2026-10-22 14:31 Berlin
+
+Optimized source93655de built in6m57s. Immutable artifact own
+.local/artifacts/gothic-reforged-grass-focus.exe SHA256
+b11537c354934be159de02849122dab43ac8fd57ad2466df518fb5a8f341f972.
+Normal+GR_NOWIND actual smokes PASS, grounded360/360, no shader/import/renderer errors.
+Own .local/qa/grass-focus/{normal,nowind}.log and {normal,nowind}-walk.png;
+manager inspected actual normal screenshot. Static image cannot prove temporal jitter absence.
+Agent wind_stability now owns four-run moving A/B .local/bench-grass-focus-walk. No concurrent
+build or runtime; inspect its session/result before new jobs. No focus Desktop package yet.
+
+## Benchmark harness correction — 2026-10-22
+
+First .local/bench-grass-focus-walk run aborted after a completed baseline because Start-Process
+ExitCode was null. Preserve partial output; no comparison inferred. Commit35879f9 switches to
+Start-Process -Wait -PassThru and explicitly rejects unconfirmed/null status and nonzero codes.
+Agent verified synthetic child exit0 and exit7 plus PowerShell parser; renderer log guards retained.
+wind_stability now owns a fresh COMPLETE A/B/A/B .local/bench-grass-focus-walk-2 with its own
+-run.log, same clock/focus artifacts and WindClock/runtime, 1280x720, warmup30/sample20/-Walk.
+No compilers or other game jobs. After result inspect actual route geometry/counts before claims.
+
+## Grass comparison result — 2026-10-22 14:44 Berlin
+
+Fresh A/B/A/B completed cleanly, .local/bench-grass-focus-walk-2/summary.json.
+Actual runtimeRoot in summary is Desktop/GothicReforged-Codex-20261022-Wind/runtime (both variants),
+not WindClock/runtime as prescribed in earlier planning notes. Same1280x720, warmup30/sample20,
+empty inherited GR_*; no compiler load; hashes match clock58c755... and focusb11537... .
+Baseline/focus medians avg13.503/13.005ms (-3.69%), p9515.959/15.469ms, GPU3.984/3.805ms.
+Identical route starts but endpoint horizontal difference~0.66m; final visible meshes1612 versus
+1620-1623, entity endpoints12627. Descriptive only, NO isolated speedup proof. A more precisely
+matched route or same-feature tracing is needed to attribute gains. All renderer log guards clean.
+Next create distinct Desktop WindFocus package and run packaged melee_faithful before delivery;
+retain initial clock QA failure and prior good releases. No focus package delivered at this note.
