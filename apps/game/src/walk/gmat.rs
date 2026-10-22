@@ -1,20 +1,22 @@
 //! Gothic surface, sky and water materials (custom WESL shaders, see `shaders/`).
 use bevy::{
     asset::{embedded_asset, load_embedded_asset},
-    mesh::MeshVertexBufferLayoutRef,
+    mesh::{Mesh, MeshVertexBufferLayoutRef},
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
         AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     },
-    shader::{Shader, ShaderRef},
+    shader::{Shader, ShaderDefVal, ShaderRef},
 };
 use std::sync::OnceLock;
 
 static GOTHIC_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_PREPASS_FS: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_PREPASS_VS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_VS: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_WIND: OnceLock<Handle<Shader>> = OnceLock::new();
 static SKY_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static WATER_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 
@@ -25,13 +27,20 @@ impl Plugin for GothicMaterialsPlugin {
         embedded_asset!(app, "shaders/gothic.wesl");
         embedded_asset!(app, "shaders/gothic_prepass.wesl");
         embedded_asset!(app, "shaders/gothic_vertex.wesl");
+        embedded_asset!(app, "shaders/gothic_wind.wesl");
         embedded_asset!(app, "shaders/sky.wesl");
         embedded_asset!(app, "shaders/water.wesl");
+        // `gothic_prepass.wesl` is also used as its fragment shader when `GR_NOWIND=1`, and its
+        // top-level WESL import still needs to resolve even when the custom vertex entry is off.
+        // Load and retain the module before either importing Gothic shader is requested.
+        let _ = GOTHIC_WIND.set(load_embedded_asset!(app, "shaders/gothic_wind.wesl"));
         let _ = GOTHIC_FS.set(load_embedded_asset!(app, "shaders/gothic.wesl"));
         let _ = GOTHIC_PREPASS_FS.set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
         // `GR_NOWIND=1` keeps Bevy's own vertex stage (wind off, for A/B comparisons).
         if std::env::var_os("GR_NOWIND").is_none() {
             let _ = GOTHIC_VS.set(load_embedded_asset!(app, "shaders/gothic_vertex.wesl"));
+            let _ = GOTHIC_PREPASS_VS
+                .set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
         }
         let _ = SKY_FS.set(load_embedded_asset!(app, "shaders/sky.wesl"));
         let _ = WATER_FS.set(load_embedded_asset!(app, "shaders/water.wesl"));
@@ -432,19 +441,23 @@ impl Material for GothicMaterial {
             .get()
             .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
+    fn prepass_vertex_shader() -> ShaderRef {
+        GOTHIC_PREPASS_VS
+            .get()
+            .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
+    }
     fn vertex_shader() -> ShaderRef {
         GOTHIC_VS
             .get()
             .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
-    // The custom shadow/depth prepass still uses a static vertex path.
     fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
     }
     fn specialize(
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = if key.bind_group_data.two_sided {
@@ -452,6 +465,59 @@ impl Material for GothicMaterial {
         } else {
             Some(Face::Back)
         };
+
+        // Bevy omits normals from depth-only and shadow prepass vertex layouts. Our wind
+        // deformation needs the same normal as the color pass for leaf flutter, so add the
+        // existing mesh attribute only to the custom prepass vertex pipeline. This is a
+        // pipeline fetch change; it does not duplicate mesh data or affect forward layouts.
+        let is_prepass_pipeline = descriptor
+            .vertex
+            .shader_defs
+            .contains(&ShaderDefVal::from("PREPASS_PIPELINE"));
+        let needs_extra_normal = GOTHIC_PREPASS_VS.get().is_some()
+            && is_prepass_pipeline
+            && !key.mesh_key.intersects(
+                bevy::pbr::MeshPipelineKey::NORMAL_PREPASS
+                    | bevy::pbr::MeshPipelineKey::DEFERRED_PREPASS,
+            );
+        if needs_extra_normal && layout.0.contains(Mesh::ATTRIBUTE_NORMAL) {
+            let normal_attribute = layout
+                .0
+                .get_layout(&[Mesh::ATTRIBUTE_NORMAL.at_shader_location(3)])?
+                .attributes[0];
+            if let Some(vertex_buffer) = descriptor.vertex.buffers.first_mut() {
+                vertex_buffer.attributes.push(normal_attribute);
+                vertex_buffer
+                    .attributes
+                    .sort_by_key(|attribute| attribute.shader_location);
+                descriptor
+                    .vertex
+                    .shader_defs
+                    .push("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into());
+                descriptor.vertex.shader_defs.push("VERTEX_NORMALS".into());
+                if let Some(fragment) = descriptor.fragment.as_mut() {
+                    fragment
+                        .shader_defs
+                        .push("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into());
+                    fragment.shader_defs.push("VERTEX_NORMALS".into());
+                }
+                if layout
+                    .0
+                    .get_attribute_compression()
+                    .contains(bevy::mesh::MeshAttributeCompressionFlags::COMPRESS_NORMAL)
+                {
+                    descriptor
+                        .vertex
+                        .shader_defs
+                        .push("VERTEX_NORMALS_COMPRESSED".into());
+                    if let Some(fragment) = descriptor.fragment.as_mut() {
+                        fragment
+                            .shader_defs
+                            .push("VERTEX_NORMALS_COMPRESSED".into());
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
