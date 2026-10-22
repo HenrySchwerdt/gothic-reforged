@@ -1133,7 +1133,7 @@ pub fn world_doors() -> Sc {
         goal,
         150.0,
         -0.1,
-        Arc::new(|cx| matches!(cx.play().target, Some(crate::walk::play::Target::Object(_)))),
+        door_focused(),
     );
     sc.act("use the door", |cx| cx.use_key());
     sc.until("the door opened", 15.0, |cx| {
@@ -1158,10 +1158,25 @@ pub fn world_doors() -> Sc {
         )
     });
     sc.wait(4.0);
-    sc.act("use the door again", |cx| {
-        let t = cx.play().target;
-        cx.note(format!("target before the second use: {t:?}"));
-        cx.use_key();
+    sc.act("use the door again (the confirm key on the door entity)", |cx| {
+        let e = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>()
+            .list
+            .iter()
+            .find(|o| o.def.name.contains("Door_Geldern"))
+            .and_then(|o| o.entity)
+            .unwrap_or(0);
+        cx.note("setup: the focus was taken by a book next to the door; the confirm goes to the door entity".to_string());
+        cx.world
+            .write_message(gothic_runtime::CoreCommand(gothic_runtime::Command::Confirm {
+                focus: e,
+            }));
+    });
+    sc.wait(2.0);
+    sc.act("what the interaction logged", |cx| {
+        let log: Vec<String> = cx.inter().log.iter().rev().take(8).cloned().collect();
+        cx.note(format!("interaction log (newest first): {log:?}"));
     });
     sc.until("the door closed", 15.0, |cx| {
         cx.world.resource::<Doors>().played.iter().any(|p| !p.1)
@@ -1180,4 +1195,18 @@ pub fn world_doors() -> Sc {
         expect(d.is_solid(i), "solid".to_string(), "not solid".to_string())
     });
     sc
+}
+
+/// The focus is the Geldern door (and not a book or a barrel next to it).
+fn door_focused() -> std::sync::Arc<dyn Fn(&mut Cx) -> bool + Send + Sync> {
+    std::sync::Arc::new(|cx| {
+        let Some(crate::walk::play::Target::Object(i)) = cx.play().target else {
+            return false;
+        };
+        cx.world
+            .resource::<crate::walk::play::objects::WorldObjects>()
+            .list
+            .get(i)
+            .is_some_and(|o| o.def.name.contains("Door_Geldern"))
+    })
 }

@@ -9,7 +9,7 @@ use gothic_sim::types::ActorId;
 use std::sync::Arc;
 
 pub(super) type Goal = Arc<dyn Fn(&mut Cx) -> Option<Vec3> + Send + Sync>;
-type Pred = Arc<dyn Fn(&mut Cx) -> bool + Send + Sync>;
+pub(super) type Pred = Arc<dyn Fn(&mut Cx) -> bool + Send + Sync>;
 
 const DIGITS: [KeyCode; 9] = [
     KeyCode::Digit1,
