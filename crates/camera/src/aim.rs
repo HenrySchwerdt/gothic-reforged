@@ -11,54 +11,78 @@ use glam::{Quat, Vec3};
 use crate::math::ease;
 use crate::world::CameraWorld;
 
-/// Closed-loop yaw controller for finite camera gestures (QA/replay tools).
+/// Closed-loop two-axis controller for finite camera gestures (QA/replay tools).
 ///
-/// It converts a desired angular velocity to mouse counts using the active camera gain, then
-/// checks the actual yaw and its measured velocity. The camera's normal input smoothing remains
-/// in charge of motion; this type only supplies bounded feedback.
+/// It converts desired angular velocities to mouse counts using active camera gains, then checks
+/// actual yaw and pitch plus their measured velocities. The camera's normal input smoothing
+/// remains in charge of motion; this type only supplies bounded feedback.
 #[derive(Debug, Clone)]
-pub struct ScriptedYawTurn {
+pub struct ScriptedCameraTurn {
     target_yaw: f32,
+    target_pitch: f32,
     previous_yaw: f32,
+    previous_pitch: f32,
     settled_secs: f32,
 }
 
-impl ScriptedYawTurn {
-    /// Capture one target relative to the yaw at the start of a gesture.
-    pub fn new(start_yaw: f32, yaw_delta: f32) -> Self {
+impl ScriptedCameraTurn {
+    /// Capture yaw relative to its initial value and an absolute pitch target.
+    pub fn new(start_yaw: f32, yaw_delta: f32, start_pitch: f32, target_pitch: f32) -> Self {
         Self {
             target_yaw: wrap_yaw(start_yaw + yaw_delta),
+            target_pitch,
             previous_yaw: wrap_yaw(start_yaw),
+            previous_pitch: start_pitch,
             settled_secs: 0.0,
         }
     }
 
-    /// Return mouse counts for this frame and whether yaw/error stayed settled for 150 ms.
-    /// `gain` is the active camera's radians-per-count value after sensitivity and preset scaling.
-    pub fn update(&mut self, yaw: f32, dt: f32, gain: f32) -> (f32, bool) {
+    /// Return X/Y mouse counts and whether both axes stayed settled for 150 ms.
+    /// Gains are the active camera's radians-per-count after sensitivity/preset scaling.
+    pub fn update(
+        &mut self,
+        yaw: f32,
+        pitch: f32,
+        dt: f32,
+        yaw_gain: f32,
+        pitch_gain: f32,
+    ) -> (glam::Vec2, bool) {
         let dt = dt.clamp(0.0, 0.1);
-        if dt <= 0.0 || gain <= 0.0 {
-            return (0.0, false);
+        if dt <= 0.0 || yaw_gain <= 0.0 || pitch_gain <= 0.0 {
+            return (glam::Vec2::ZERO, false);
         }
 
         let yaw = wrap_yaw(yaw);
         let error = angle_delta(yaw, self.target_yaw);
-        let velocity = angle_delta(self.previous_yaw, yaw) / dt;
+        let yaw_velocity = angle_delta(self.previous_yaw, yaw) / dt;
+        let pitch_error = self.target_pitch - pitch;
+        let pitch_velocity = (pitch - self.previous_pitch) / dt;
         self.previous_yaw = yaw;
+        self.previous_pitch = pitch;
 
-        if error.abs() <= 0.5_f32.to_radians() && velocity.abs() <= 2.0_f32.to_radians() {
+        let settled_limit = 0.5_f32.to_radians();
+        let velocity_limit = 2.0_f32.to_radians();
+        if error.abs() <= settled_limit
+            && yaw_velocity.abs() <= velocity_limit
+            && pitch_error.abs() <= settled_limit
+            && pitch_velocity.abs() <= velocity_limit
+        {
             self.settled_secs += dt;
         } else {
             self.settled_secs = 0.0;
         }
         if self.settled_secs >= 0.15 {
-            return (0.0, true);
+            return (glam::Vec2::ZERO, true);
         }
 
         // A damped proportional velocity request counters residual camera coast. The speed cap
         // keeps large scripted turns finite; counts scale with dt for frame-rate independence.
-        let desired_velocity = (4.0 * error - 1.4 * velocity).clamp(-1.5, 1.5);
-        (-desired_velocity * dt / gain, false)
+        let desired_yaw_velocity = (4.0 * error - 1.4 * yaw_velocity).clamp(-1.5, 1.5);
+        let desired_pitch_velocity = (4.0 * pitch_error - 1.4 * pitch_velocity).clamp(-1.5, 1.5);
+        let yaw_counts = -desired_yaw_velocity * dt / yaw_gain;
+        // Mouse Y turns the player pitch opposite the camera elevation, hence the same sign as X.
+        let pitch_counts = -desired_pitch_velocity * dt / pitch_gain;
+        (glam::Vec2::new(yaw_counts, pitch_counts), false)
     }
 }
 
@@ -68,6 +92,25 @@ fn wrap_yaw(yaw: f32) -> f32 {
 
 fn angle_delta(from: f32, to: f32) -> f32 {
     wrap_yaw(to - from)
+}
+
+/// Error-diffuses fractional scripted motion into integer mouse counts.
+///
+/// The game input boundary rounds accumulated mouse motion to whole counts each frame. Keeping
+/// the residual here lets small QA corrections accumulate without changing that boundary.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MouseCountAccumulator {
+    residual: glam::Vec2,
+}
+
+impl MouseCountAccumulator {
+    /// Convert requested X/Y counts to integer-valued floats suitable for `MouseMotion`.
+    pub fn quantize(&mut self, requested: glam::Vec2) -> glam::Vec2 {
+        let total = requested + self.residual;
+        let rounded = total.round();
+        self.residual = total - rounded;
+        rounded
+    }
 }
 
 /// How far the pick ray reaches when nothing is hit, cm [I]: the far clipping plane of the
@@ -127,8 +170,9 @@ mod tests {
         dts: &[f32],
         start_deg: f32,
         delta_deg: f32,
+        start_pitch: f32,
         mode: CameraMode,
-    ) -> (f32, f32) {
+    ) -> (f32, f32, f32, f32) {
         let config = CameraConfig::default();
         let mut cam = CameraState::new(config.clone(), PresetTable::default());
         let hero = HeroView::default();
@@ -141,36 +185,62 @@ mod tests {
             },
             &NoWorld,
         );
-        cam.set_orbit(start_deg.to_radians(), 0.0);
+        cam.set_orbit(start_deg.to_radians(), -start_pitch);
+        let seed_dt = dts[0];
+        cam.update(
+            &CameraInput {
+                dt: seed_dt,
+                hero,
+                look: glam::Vec2::new(-3.0, 15.0),
+                ..CameraInput::default()
+            },
+            &NoWorld,
+        );
         let start = cam.view_yaw();
         let target = wrap_yaw(start + delta_deg.to_radians());
-        let mut turn = ScriptedYawTurn::new(start, delta_deg.to_radians());
+        let start_pitch = -cam.orbit_degrees().1.to_radians();
+        let mut turn = ScriptedCameraTurn::new(start, delta_deg.to_radians(), start_pitch, -0.05);
+        let mut quantizer = MouseCountAccumulator::default();
         let mut settled_at = None;
         let mut elapsed = 0.0;
-        let mut counts = 0.0;
+        let mut counts = glam::Vec2::ZERO;
+        let mut last_errors = (f32::NAN, f32::NAN);
 
         for frame in 0..2400 {
             let dt = dts[frame % dts.len()];
+            // Match controls::gather_input: accumulated MouseMotion is rounded to i32 counts.
+            let raw_counts = [counts.x.round() as i32, counts.y.round() as i32];
             cam.update(
                 &CameraInput {
                     dt,
                     hero,
-                    look: glam::Vec2::new(counts, 0.0),
+                    look: glam::Vec2::new(raw_counts[0] as f32, raw_counts[1] as f32),
                     ..CameraInput::default()
                 },
                 &NoWorld,
             );
             elapsed += dt;
             let yaw = cam.view_yaw();
-            let (next_counts, settled) = turn.update(yaw, dt, cam.yaw_input_gain());
+            let pitch = -cam.orbit_degrees().1.to_radians();
+            let (next_counts, settled) =
+                turn.update(yaw, pitch, dt, cam.yaw_input_gain(), cam.pitch_input_gain());
+            last_errors = (angle_delta(yaw, target), -0.05 - pitch);
+            let next_counts = quantizer.quantize(next_counts);
             if settled {
+                counts = next_counts;
                 settled_at = Some(elapsed);
                 break;
             }
             counts = next_counts;
         }
 
-        let settled_at = settled_at.expect("scripted camera turn settles within 4 seconds");
+        let settled_at = settled_at.unwrap_or_else(|| {
+            panic!(
+                "scripted camera turn did not settle within test budget; elapsed={elapsed:.3}s yaw_error_deg={:.3} pitch_error_deg={:.3}",
+                last_errors.0.to_degrees(),
+                last_errors.1.to_degrees()
+            )
+        });
         assert!(settled_at <= 4.0, "settled after {settled_at}s");
         let final_yaw = cam.view_yaw();
         assert!(
@@ -181,20 +251,26 @@ mod tests {
 
         // Match QA's existing one-second wait after the turn, with no further input.
         let mut velocity = 0.0;
+        let mut pitch_velocity = 0.0;
         let mut waited = 0.0;
         let mut wait_frame = 0;
         while waited < 1.0 {
             let dt = dts[wait_frame % dts.len()];
             let previous = cam.view_yaw();
+            let previous_pitch = -cam.orbit_degrees().1.to_radians();
+            let raw_counts = [counts.x.round() as i32, counts.y.round() as i32];
             cam.update(
                 &CameraInput {
                     dt,
                     hero,
+                    look: glam::Vec2::new(raw_counts[0] as f32, raw_counts[1] as f32),
                     ..CameraInput::default()
                 },
                 &NoWorld,
             );
+            counts = glam::Vec2::ZERO;
             velocity = angle_delta(previous, cam.view_yaw()) / dt;
+            pitch_velocity = (-cam.orbit_degrees().1.to_radians() - previous_pitch) / dt;
             waited += dt;
             wait_frame += 1;
         }
@@ -207,8 +283,18 @@ mod tests {
             velocity.abs() <= 2.0_f32.to_radians(),
             "wait velocity {velocity}"
         );
+        assert!(
+            pitch_velocity.abs() <= 2.0_f32.to_radians(),
+            "wait pitch velocity {pitch_velocity}"
+        );
+        let final_pitch = -cam.orbit_degrees().1.to_radians();
+        assert!(
+            (final_pitch + 0.05).abs() <= 0.5_f32.to_radians(),
+            "pitch missed old QA target by {} degrees",
+            (final_pitch + 0.05).to_degrees()
+        );
         assert_eq!(cam.config, config, "gesture must preserve camera settings");
-        (cam.view_yaw(), velocity)
+        (cam.view_yaw(), velocity, final_pitch, pitch_velocity)
     }
 
     #[test]
@@ -221,7 +307,7 @@ mod tests {
         ];
         for mode in [CameraMode::Normal, CameraMode::Magic] {
             for dts in &schedules {
-                let (yaw, _) = run_scripted_turn(dts, 0.0, 100.0, mode);
+                let (yaw, _, _, _) = run_scripted_turn(dts, 0.0, 100.0, -0.7, mode);
                 assert!((angle_delta(0.0, yaw).to_degrees() - 100.0_f32).abs() < 0.5);
             }
         }
@@ -231,8 +317,21 @@ mod tests {
     fn scripted_yaw_turn_handles_opposite_direction_and_angle_wrap() {
         let schedules = [vec![1.0 / 30.0], vec![0.013, 0.027, 0.021, 0.019]];
         for dts in &schedules {
-            run_scripted_turn(dts, 170.0, 30.0, CameraMode::Magic);
-            run_scripted_turn(dts, -170.0, -35.0, CameraMode::Magic);
+            run_scripted_turn(dts, 170.0, 30.0, -0.7, CameraMode::Magic);
+            run_scripted_turn(dts, -170.0, -35.0, -0.7, CameraMode::Magic);
+        }
+    }
+
+    #[test]
+    fn zero_yaw_turn_waits_for_offset_pitch_and_residual_motion() {
+        let schedules = [
+            vec![1.0 / 30.0],
+            vec![1.0 / 60.0],
+            vec![1.0 / 120.0],
+            vec![0.009, 0.031, 0.017, 0.026, 0.013, 0.024],
+        ];
+        for dts in &schedules {
+            run_scripted_turn(dts, 0.0, 0.0, -0.7, CameraMode::Magic);
         }
     }
 

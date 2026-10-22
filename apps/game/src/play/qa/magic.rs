@@ -153,6 +153,8 @@ fn trace(sc: &mut Sc) {
 fn turn_to(sc: &mut Sc, label: &str, yaw_add: f32) {
     let trace_body = label == "turn the camera by 100 degrees";
     let mut turn = None;
+    let mut target_yaw = None;
+    let mut counts = gothic_camera::aim::MouseCountAccumulator::default();
     let mut last_t = None;
     sc.step(label.to_string(), move |cx| {
         if turn.is_none() {
@@ -168,25 +170,58 @@ fn turn_to(sc: &mut Sc, label: &str, yaw_add: f32) {
                 }
             }
             let yaw = cx.player().yaw;
-            turn = Some(gothic_camera::aim::ScriptedYawTurn::new(yaw, yaw_add));
+            let pitch = cx.player().pitch;
+            target_yaw = Some(yaw + yaw_add);
+            turn = Some(gothic_camera::aim::ScriptedCameraTurn::new(
+                yaw, yaw_add, pitch, -0.05,
+            ));
             last_t = Some(cx.now);
         }
 
         let yaw = cx.player().yaw;
         let dt = last_t.map_or(0.0, |t| (cx.now - t).clamp(0.0, 0.1));
         last_t = Some(cx.now);
-        let gain = cx
-            .world
-            .resource::<crate::walk::play::cam::PlayCam>()
-            .state
-            .yaw_input_gain();
-        let (counts, settled) = turn.as_mut().unwrap().update(yaw, dt, gain);
-        if counts != 0.0 {
-            cx.mouse_motion(Vec2::new(counts, 0.0));
+        let pitch = cx.player().pitch;
+        let (yaw_gain, pitch_gain) = {
+            let camera = &cx
+                .world
+                .resource::<crate::walk::play::cam::PlayCam>()
+                .state;
+            (camera.yaw_input_gain(), camera.pitch_input_gain())
+        };
+        let (requested_counts, settled) = turn
+            .as_mut()
+            .unwrap()
+            .update(yaw, pitch, dt, yaw_gain, pitch_gain);
+        let mouse_counts = counts.quantize(requested_counts);
+        if mouse_counts != Vec2::ZERO {
+            cx.mouse_motion(mouse_counts);
         }
         if settled {
             Poll::Done
         } else if cx.t > 4.0 {
+            if trace_body {
+                let target = target_yaw.unwrap_or(yaw);
+                let error = crate::walk::play::angle_delta(yaw, target);
+                let pitch = cx.player().pitch;
+                let elapsed = cx.t;
+                if let Some(trace) = cx
+                    .world
+                    .resource_mut::<crate::walk::Player>()
+                    .magic_body_trace
+                    .as_mut()
+                {
+                    eprint!(
+                        "{}",
+                        trace.finish(format!(
+                            "phase=turn_timeout elapsed={:.3}s target_yaw={target:.6} player_yaw={yaw:.6} yaw_error_deg={:.3} player_pitch={:.6}",
+                            elapsed,
+                            error.to_degrees(),
+                            pitch,
+                        ))
+                    );
+                }
+            }
             Poll::Fail("camera did not settle".into())
         } else {
             Poll::Wait

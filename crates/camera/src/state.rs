@@ -820,4 +820,9 @@ impl CameraState {
     pub fn yaw_input_gain(&self) -> f32 {
         self.config.radians_per_count * self.preset().velo_trans * 2.0 * self.config.sensitivity[0]
     }
+
+    /// Active vertical mouse-look gain in radians per count after camera mode and options.
+    pub fn pitch_input_gain(&self) -> f32 {
+        self.config.radians_per_count * self.preset().velo_trans * 2.0 * self.config.sensitivity[1]
+    }
 }
