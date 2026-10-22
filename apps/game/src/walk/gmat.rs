@@ -6,13 +6,14 @@ use bevy::{
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
-        AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+        AsBindGroup, BufferDescriptor, BufferUsages, Face, MapMode, PollType,
+        RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     },
     render::{
         Render, RenderApp, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
-        renderer::RenderQueue,
+        renderer::{RenderDevice, RenderQueue},
         storage::{GpuShaderBuffer, ShaderBuffer},
     },
     shader::{Shader, ShaderDefVal, ShaderRef},
@@ -34,6 +35,26 @@ pub struct WindClockFrame {
     pub buffer: Handle<ShaderBuffer>,
     /// Four oscillator records from the environment clock, followed by the shared grass focus.
     pub values: [f32; 20],
+    pub probe: WindClockProbeFrame,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindClockProbeCapture {
+    #[default]
+    None,
+    Seed,
+    BeforeBoundary,
+    AfterBoundary,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WindClockProbeFrame {
+    pub active: bool,
+    pub continuity_ok: bool,
+    pub finished: bool,
+    pub capture: WindClockProbeCapture,
+    pub elapsed_seconds: f64,
+    pub delta_seconds: f64,
 }
 
 pub struct GothicMaterialsPlugin;
@@ -465,6 +486,7 @@ fn create_wind_clock_buffer(mut buffers: ResMut<Assets<ShaderBuffer>>, mut comma
     commands.insert_resource(WindClockFrame {
         buffer: handle,
         values: [0.0; 20],
+        probe: WindClockProbeFrame::default(),
     });
 }
 
@@ -472,11 +494,249 @@ fn upload_wind_clock(
     frame: Res<WindClockFrame>,
     buffers: Res<RenderAssets<GpuShaderBuffer>>,
     queue: Res<RenderQueue>,
+    device: Res<RenderDevice>,
+    mut probe: Local<WindClockGpuProbe>,
 ) {
     let Some(buffer) = buffers.get(&frame.buffer) else {
         return;
     };
     queue.write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(&frame.values));
+
+    if frame.probe.active {
+        if !frame.probe.continuity_ok {
+            probe.fail("previous encoded record differs from last current record");
+        }
+        if let Some(previous) = &probe.first_buffer {
+            if previous.buffer.id() != buffer.buffer.id() {
+                probe.fail("shared GPU buffer identity changed");
+            }
+        } else {
+            probe.first_buffer = Some(GpuShaderBuffer {
+                buffer: buffer.buffer.clone(),
+                label: buffer.label.clone(),
+                buffer_usage: buffer.buffer_usage,
+                had_data: buffer.had_data,
+            });
+            eprintln!(
+                "wind-clock probe: synthetic start captured; shared GPU buffer identity baseline established"
+            );
+        }
+        if probe.schedule(frame.probe.capture) {
+            let staging = GpuShaderBuffer {
+                buffer: device.create_buffer(&BufferDescriptor {
+                    label: Some("wind_clock_probe_readback"),
+                    size: 80,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                label: "wind_clock_probe_readback".into(),
+                buffer_usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                had_data: true,
+            };
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let mut encoder = device.create_command_encoder(
+                &bevy::render::render_resource::CommandEncoderDescriptor {
+                    label: Some("wind_clock_probe_copy"),
+                },
+            );
+            encoder.copy_buffer_to_buffer(&buffer.buffer, 0, &staging.buffer, 0, 80);
+            queue.submit([encoder.finish()]);
+            staging
+                .buffer
+                .slice(..)
+                .map_async(MapMode::Read, move |result| {
+                    let _ = tx.send(result);
+                });
+            probe.pending.push(PendingWindClockReadback {
+                staging,
+                result: rx,
+                expected: frame.values,
+                capture: frame.probe.capture,
+                elapsed_seconds: frame.probe.elapsed_seconds,
+                delta_seconds: frame.probe.delta_seconds,
+                age_frames: 0,
+            });
+        }
+    }
+    collect_wind_clock_probe(&device, &mut probe);
+    if frame.probe.finished && probe.pending.is_empty() && !probe.complete_successfully() {
+        probe.fail("probe ended without all three distinct GPU captures");
+    }
+}
+
+#[derive(Default)]
+struct WindClockGpuProbe {
+    first_buffer: Option<GpuShaderBuffer>,
+    pending: Vec<PendingWindClockReadback>,
+    scheduled: [bool; 3],
+    completed: [bool; 3],
+    failed: bool,
+    completion_reported: bool,
+}
+
+impl WindClockGpuProbe {
+    fn schedule(&mut self, capture: WindClockProbeCapture) -> bool {
+        let Some(index) = capture.index() else {
+            return false;
+        };
+        if self.failed || self.scheduled[index] {
+            return false;
+        }
+        self.scheduled[index] = true;
+        true
+    }
+
+    fn complete(&mut self, capture: WindClockProbeCapture) {
+        if let Some(index) = capture.index() {
+            self.completed[index] = self.scheduled[index];
+        }
+    }
+
+    fn fail(&mut self, reason: &str) {
+        if !self.failed {
+            eprintln!("wind-clock probe FAIL: {reason}");
+            self.failed = true;
+        }
+    }
+
+    fn complete_successfully(&self) -> bool {
+        !self.failed && self.completed.into_iter().all(|complete| complete)
+    }
+}
+
+impl WindClockProbeCapture {
+    fn index(self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::Seed => Some(0),
+            Self::BeforeBoundary => Some(1),
+            Self::AfterBoundary => Some(2),
+        }
+    }
+}
+
+#[cfg(test)]
+mod wind_clock_probe_tests {
+    use super::*;
+
+    #[test]
+    fn only_distinct_scheduled_stages_complete_the_probe() {
+        let mut probe = WindClockGpuProbe::default();
+        assert!(probe.schedule(WindClockProbeCapture::Seed));
+        assert!(!probe.schedule(WindClockProbeCapture::Seed));
+        probe.complete(WindClockProbeCapture::Seed);
+        probe.complete(WindClockProbeCapture::BeforeBoundary);
+        assert!(!probe.complete_successfully());
+        assert!(probe.schedule(WindClockProbeCapture::BeforeBoundary));
+        assert!(probe.schedule(WindClockProbeCapture::AfterBoundary));
+        probe.complete(WindClockProbeCapture::BeforeBoundary);
+        probe.complete(WindClockProbeCapture::AfterBoundary);
+        assert!(probe.complete_successfully());
+    }
+
+    #[test]
+    fn any_probe_failure_is_sticky_and_blocks_success() {
+        let mut probe = WindClockGpuProbe::default();
+        for capture in [
+            WindClockProbeCapture::Seed,
+            WindClockProbeCapture::BeforeBoundary,
+            WindClockProbeCapture::AfterBoundary,
+        ] {
+            assert!(probe.schedule(capture));
+            probe.complete(capture);
+        }
+        probe.fail("synthetic test failure");
+        assert!(!probe.schedule(WindClockProbeCapture::Seed));
+        assert!(!probe.complete_successfully());
+    }
+}
+
+struct PendingWindClockReadback {
+    staging: GpuShaderBuffer,
+    result: std::sync::mpsc::Receiver<Result<(), bevy::render::render_resource::BufferAsyncError>>,
+    expected: [f32; 20],
+    capture: WindClockProbeCapture,
+    elapsed_seconds: f64,
+    delta_seconds: f64,
+    age_frames: u16,
+}
+
+fn collect_wind_clock_probe(device: &RenderDevice, probe: &mut WindClockGpuProbe) {
+    if probe.pending.is_empty() {
+        return;
+    }
+    if let Err(error) = device.poll(PollType::Poll) {
+        probe.fail(&format!("nonblocking GPU poll failed: {error:?}"));
+        probe.pending.clear();
+        return;
+    }
+    let mut index = 0;
+    while index < probe.pending.len() {
+        let mut completed_capture = None;
+        let mut failure = None;
+        let remove = {
+            let pending = &mut probe.pending[index];
+            pending.age_frames = pending.age_frames.saturating_add(1);
+            match pending.result.try_recv() {
+                Ok(Ok(())) => {
+                    match pending.staging.buffer.slice(..).get_mapped_range() {
+                        Ok(view) => {
+                            let actual: &[f32] = bytemuck::cast_slice(&view);
+                            let expected_bytes: &[u8] = bytemuck::cast_slice(&pending.expected);
+                            let matches = &view[..] == expected_bytes;
+                            let capture = pending.capture;
+                            if matches {
+                                completed_capture = Some(capture);
+                                eprintln!(
+                                    "wind-clock probe PASS: {capture:?}, synthetic elapsed {:.6}s, real frame delta {:.6}s, current={:?}, previous={:?}; all 20 f32 values (80 bytes) match uploaded bytes exactly",
+                                    pending.elapsed_seconds,
+                                    pending.delta_seconds,
+                                    &actual[0..8],
+                                    &actual[8..16]
+                                );
+                            } else {
+                                failure = Some(format!(
+                                    "{capture:?} GPU readback differs from uploaded frame"
+                                ));
+                            }
+                            drop(view);
+                            pending.staging.buffer.unmap();
+                        }
+                        Err(error) => {
+                            failure = Some(format!("GPU readback map range failed: {error:?}"));
+                            pending.staging.buffer.unmap();
+                        }
+                    }
+                    true
+                }
+                Ok(Err(error)) => {
+                    failure = Some(format!("GPU readback map failed: {error:?}"));
+                    true
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) if pending.age_frames < 180 => false,
+                Err(_) => {
+                    failure =
+                        Some("GPU readback callback timed out after 180 render frames".into());
+                    true
+                }
+            }
+        };
+        if let Some(capture) = completed_capture {
+            probe.complete(capture);
+        }
+        if let Some(reason) = failure {
+            probe.fail(&reason);
+        }
+        if remove {
+            probe.pending.swap_remove(index);
+        } else {
+            index += 1;
+        }
+    }
+    if probe.complete_successfully() && !probe.completion_reported {
+        eprintln!("wind-clock probe complete: three synthetic-boundary GPU captures verified");
+        probe.completion_reported = true;
+    }
 }
 
 pub fn wind_clock_buffer() -> Handle<ShaderBuffer> {
