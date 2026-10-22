@@ -2,23 +2,40 @@
 
 Quota reset VERIFIED2026-10-22 22:15UTC: 5h0% used, weekly16%; next reset03:15:16UTC.
 Resumed bounded work: controlled-wind screenshot implementation is committed2a82eb6
-(walk.rs/windsys.rs/new pure helper; no shader changes). ONE optimized GNU viewer build
-is RUNNING in exec session93271; log `.local/pc-wind-shots-build.log`. Poll that session,
-do not duplicate it or launch games/benchmarks under compiler load. After success preserve
-an immutable diagnostic EXE/source/hash, validate malformed CLI exits, run actual matching-
-pose wind shots around hour/day boundaries, compare selection/capture records and files,
-then normal-mode combat QA. No new delivery or jitter-fix claim until actual validation.
+(walk.rs/windsys.rs/new pure helper; no shader changes). Optimized GNU viewer build
+FINISHED successfully8m15s; exec93271 closed; log `.local/pc-wind-shots-build.log`.
+Immutable `.local/artifacts/gothic-reforged-wind-shots.exe`, SHA256
+`9372eac6354ea91f7a412733ac3d953b7447dff31dfdba3729addffe757d5c9a`, source2a82eb6.
+VALIDATION COMPLETE22:42UTC: NaN CLI exits1 beforeloader; controlled six-shot boundary
+smoke exits0, grounded360/360, all6 requestedPNG files present, clean renderer/shader logs.
+All6 capture CPU records exactly match selected current/previous records; all4 adjacent
+pairs within hour/day groups preserve previous=current-from-prior. Intentional long gap
+between groups is not a continuity test. Summary `.local/qa/wind-shots/validation-summary.json`.
+Root inspected hour-before/hour-at images; no general jitter cure or GPU-readback claim.
+Normal-mode magic9/bow15/melee13 each explicitPASS/exit0; saves remain empty. Logs:
+`.local/qa/wind-shots-normal-combat/`. No new Desktop package; existing releases untouched.
+No active compiler, game or coder remains. Current code differs from compiled2a82eb6 only
+by one formatting-only startup-expression line; later other changes are documentation.
+Helper/windsys targeted rustfmt PASS; walk retains3 pre-existing formatting hunks confirmed
+against5856cbe baseline, no new formatting hunks. Do not report full-project fmt/Clippy green.
 Helper tests5/5 pass (exact-source standalone harness); startup and per-shot deadlines240s
 use Time<Real>, capture waits for ScreenshotCaptured, Bevy Time/simulation untouched.
 See `docs/research/WIND_SHOT_CAPTURE.md`. Automation active; retain >=5% quota reserve.
+Usage checked22:42UTC: 5h22% used, weekly19%, reset2026-10-23T03:15:16Z. Continue with
+cheap bounded agents; NEXT practical performance task is review/promote/run the prepared
+physics broadphase oracle tests, then implement/measure a safe DDA candidate only after
+oracle passes. Do not benchmark under compilers, or infer speedup from synthetic tests.
 
 Native UV evidence: original leaf/global HLSL extracted create-new under own ignored
 `.local/qa/tree-diagnostic/`, no code committed. Fixed UV path passes through, but generated
 XFX_PS_DIFFUSE expression remains unknown. Separate leaf textures absent in bounded
 readable-archive inventory, not proof absent in unsupported archives/loose files.
 Engine ABI candidates mapped in `docs/research/SPT_NATIVE_UV_EVIDENCE.md`; no fresh native
-decompilation or original runtime. water_renderer currently checks existing compiled
-leaf shader cache evidence; do not launch a second REA native import.
+decompilation or original runtime. Existing compiled cache check completed:29ge_leaf blobs
+(28VS/1PS) pass UVs through under reviewed existing decoder. Summary with originalcache/
+decoderSHA and selectedranges `.local/qa/tree-diagnostic/leaf-cache-uv-summary.json`.
+No unsafe unpickling/helper writes used. Selected runtime permutation and upstream SDK
+mapping remain unknown. No active REA target/import; old Engine Ghidra timeout preserved.
 
 Performance next: expensive in-aim ray query still gathers all XZ rectangle cells, sorts/
 deduplicates candidates. Prior measured idle gate already shipped. SupercoverDDA proposal

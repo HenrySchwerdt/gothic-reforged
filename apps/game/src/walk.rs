@@ -1854,9 +1854,7 @@ fn smoke_script(
     }
     if let Some(control) = wind_shot.as_deref_mut() {
         let now = real_time.elapsed_secs_f64();
-        let started = *control
-            .startup_started_at_real_seconds
-            .get_or_insert(now);
+        let started = *control.startup_started_at_real_seconds.get_or_insert(now);
         if control.selected.is_none() && now - started >= 240.0 {
             eprintln!(
                 "wind-shot FAIL: initial smoke/streaming stages did not select the first sample within 240 seconds"

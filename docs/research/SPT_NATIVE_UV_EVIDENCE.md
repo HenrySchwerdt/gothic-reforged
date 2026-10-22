@@ -48,5 +48,22 @@ performed. Resolving that question requires focused dataflow evidence from the g
 creation path (or a matching original-render capture), not inference from export names or
 the visually denser atlas cell.
 
+## Cached `ge_leaf.fx` UV bytecode
+
+A bounded read-only disassembly of the 29 cached `ge_leaf.fx` Shader.Cache entries found
+28 vertex-shader blobs and one pixel-shader blob. All 28 vertex variants declare
+`texcoord0` in `v4` and copy `v4.xy` directly into four output UV registers; no other
+instruction in those variants references `v4`. The single pixel-shader blob samples the
+incoming `v0` UV directly and has no coordinate remap. This corroborates that the cached
+shader stages do not visibly apply a V flip. The machine-readable offsets, lengths,
+classification, and input-reference counts are retained in the ignored
+`.local/qa/tree-diagnostic/leaf-cache-uv-summary.json`; the disassembler was applied only
+to those 29 ranges, and `dec.pkl` was not opened or unpickled.
+
+This is cached permutation evidence, not proof of which permutation the live renderer
+selected. It also does not reveal how the SPT/SDK populated vertex UVs or whether geometry
+creation remapped leaf rectangles before the shader input. Runtime UV orientation therefore
+remains unresolved.
+
 Extracted shader sources and all original assets remain under ignored `.local/`; no
 decompiled function bodies or original asset data are included here.

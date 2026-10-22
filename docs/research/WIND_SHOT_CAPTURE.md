@@ -23,7 +23,21 @@ limits; a timeout exits with an error. Logs include the requested time and encod
 records at selection and immediately before screenshot capture. The shared grass-focus fields
 continue to follow the camera.
 
-This mode has not yet been run in a game build. A `ScreenshotCaptured` event confirms that Bevy
-produced the requested image; it does not verify a GPU clock-buffer readback or prove visible leaf
-displacement. Compare the resulting images at matching camera poses and inspect the foliage region
-before drawing conclusions about rendered motion.
+Validation ran on artifact `.local/artifacts/gothic-reforged-wind-shots.exe` (SHA-256
+`9372EAC6354EA91F7A412733AC3D953B7447DFF31DFDBA3729ADDFFE757D5C9A`, source `2a82eb6`). The
+`NaN` CLI check exited 1 before loader startup. A six-shot 1280x720 smoke exited 0 with grounded
+360/360; each capture record's current and previous CPU f32 arrays exactly matched its selected
+record, and four adjacent samples within the hour/day boundary groups preserved current-to-previous
+continuity. Six images and the machine-readable checks are under
+`.local/qa/wind-shots/` (`validation-summary.json`). Combat QA also passed: magic 9, bow 15, melee
+13 assertions, all exit 0, with saves empty before and after.
+
+Reproduce the boundary capture with the same camera pose for each sample:
+
+```text
+gothic-reforged --walk --smoke --screenshot .local/qa/wind-shots/boundary --shots "hour-before:38.83,55.5,28.5,0,0.12;hour-at:38.83,55.5,28.5,0,0.12;hour-after:38.83,55.5,28.5,0,0.12;day-before:38.83,55.5,28.5,0,0.12;day-at:38.83,55.5,28.5,0,0.12;day-after:38.83,55.5,28.5,0,0.12" --wind-shot-times "3599.983333333333,3600,3600.016666666667,86399.98333333333,86400,86400.01666666666"
+```
+
+These checks confirm CPU-selected clock records and that Bevy produced the requested screenshots.
+They do not verify a GPU clock-buffer readback or prove visible leaf displacement, temporal
+continuity in rendered foliage, or a jitter cure.
