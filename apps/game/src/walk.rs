@@ -45,6 +45,9 @@ const ORIGIN: Vec3 = Vec3::new(92_400.0, 0.0, -11_000.0);
 const CM: f32 = 0.01;
 const EYE_HEIGHT_CM: f32 = 165.0;
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct WalkUpdateSet;
+
 #[derive(Resource)]
 struct LoaderRes {
     requests: std::sync::mpsc::Sender<Request>,
@@ -382,6 +385,7 @@ pub fn run(args: &[String]) -> Result<()> {
     .add_systems(
         Update,
         (
+            bench_camera_pose,
             receive_tiles,
             stream_tiles,
             stream_vegetation,
@@ -396,7 +400,8 @@ pub fn run(args: &[String]) -> Result<()> {
             smoke_script,
             hud,
         )
-            .chain(),
+            .chain()
+            .in_set(WalkUpdateSet),
     );
     if play::requested(args) {
         play::install(&mut app, args)?;
@@ -588,6 +593,53 @@ fn observer_cm(player: &Player) -> Vec3 {
     } else {
         player.ctrl.position
     }
+}
+
+#[derive(Clone, Copy)]
+struct BenchCameraAnchor {
+    position_m: [f32; 3],
+    yaw: f32,
+    pitch: f32,
+}
+
+/// Benchmark-only renderer route. It bypasses hero physics and hides the hero, while the normal
+/// streaming, camera, focus, and capture systems consume this same camera pose in order.
+fn bench_camera_pose(
+    mut bench: ResMut<crate::perf::BenchWorld>,
+    mut player: ResMut<Player>,
+    camera: Query<&Transform, With<PlayerCamera>>,
+    mut play_state: Option<ResMut<play::PlayState>>,
+    mut anchor: Local<Option<BenchCameraAnchor>>,
+) {
+    let Some(elapsed) = bench.camera_route_target_elapsed_seconds else {
+        return;
+    };
+    if anchor.is_none() {
+        let Ok(transform) = camera.single() else {
+            return;
+        };
+        let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+        *anchor = Some(BenchCameraAnchor {
+            position_m: transform.translation.to_array(),
+            yaw,
+            pitch,
+        });
+        bench.camera_route_anchor_m = Some(transform.translation.to_array());
+    }
+    let anchor = anchor.expect("camera route anchor initialized");
+    let position_m = crate::perf::bench_camera_position(anchor.position_m, elapsed);
+    let rotation = Quat::from_euler(EulerRot::YXZ, anchor.yaw, anchor.pitch, 0.0);
+    bench.camera_route_elapsed_seconds = Some(elapsed);
+    player.fly = true;
+    player.fly_pos = Vec3::from_array(position_m) / CM;
+    player.yaw = anchor.yaw;
+    player.pitch = anchor.pitch;
+    if let Some(state) = play_state.as_deref_mut() {
+        state.hide_hero = true;
+        state.keep_items = false;
+    }
+    bench.expected_camera_position_m = Some(position_m);
+    bench.expected_camera_rotation_xyzw = Some(rotation.to_array());
 }
 
 fn stream_tiles(

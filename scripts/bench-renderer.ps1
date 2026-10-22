@@ -16,10 +16,13 @@ param(
     [int] $Repetitions = 2,
     [ValidatePattern('^[1-9][0-9]*x[1-9][0-9]*$')]
     [string] $Resolution = '1280x720',
-    [switch] $Walk
+    [switch] $Walk,
+    [switch] $Camera
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($Walk -and $Camera) { throw 'Use only one moving workload: -Walk or -Camera.' }
 
 function Get-FullExistingPath([string] $Path, [string] $Description) {
     $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
@@ -154,6 +157,7 @@ try {
             $stderrPath = Join-Path $outputFull "$runName.stderr.log"
             $argumentList = @('--play', '--bench', "$Seconds", '--bench-warmup', "$WarmupSeconds", '--bench-name', $runName, '--bench-gpu')
             if ($Walk) { $argumentList += '--bench-walk' }
+            if ($Camera) { $argumentList += '--bench-camera' }
             $startedAt = [DateTime]::UtcNow
             $process = Start-Process -FilePath $exe -ArgumentList $argumentList -WorkingDirectory $runtime -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -Wait
             if ($null -eq $process -or -not $process.HasExited) {
@@ -245,6 +249,7 @@ $summary = [ordered]@{
     measuredSeconds = $Seconds
     repetitionsPerVariant = $Repetitions
     walk = [bool]$Walk
+    camera = [bool]$Camera
     runtimeRoot = $runtime
     executableSha256 = [ordered]@{ baseline = $baselineHash; candidate = $candidateHash }
     inheritedGrEnvironment = $inheritedGrEnvironment

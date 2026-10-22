@@ -7,7 +7,21 @@ pub struct WindPlugin;
 
 impl Plugin for WindPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (advance_wind_clock, grass_focus));
+        app.add_systems(Update, advance_wind_clock);
+        app.add_systems(
+            Update,
+            grass_focus.run_if(|bench: Res<crate::perf::BenchWorld>| {
+                bench.camera_route_target_elapsed_seconds.is_none()
+            }),
+        );
+        app.add_systems(
+            Update,
+            grass_focus.after(super::WalkUpdateSet).run_if(
+                |bench: Res<crate::perf::BenchWorld>| {
+                    bench.camera_route_target_elapsed_seconds.is_some()
+                },
+            ),
+        );
     }
 }
 
