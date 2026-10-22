@@ -10,22 +10,25 @@
 //! [`Planner::score`] ranks an available info by how directly it advances that route; the bot
 //! always takes the highest-scoring option.
 use gothic_gameplay::conditions::is_permanent;
-use gothic_gameplay::model::{Cmd, InfoCond, InfoType};
+use gothic_gameplay::model::{Cmd, InfoCond};
 use gothic_gameplay::state::norm;
 use gothic_gameplay::{GameDatabase, GameState, InfoId};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Clone)]
 pub struct Planner {
     targets: Vec<String>,
     relevant: BTreeSet<String>,
     useful_events: BTreeSet<String>,
+    route_infos: Vec<InfoId>,
 }
 
 /// Score of an info that belongs to an unfinished relevant quest.
 pub const QUEST_STEP: i32 = 100;
+/// Score of a delivery (it finishes its quest, so it waits for the rest of the route).
+pub const DELIVERY: i32 = 15;
 /// Score of an info that sets a useful event not known yet.
-pub const UNLOCKS: i32 = 80;
+pub const UNLOCKS: i32 = 150;
 /// Score of an info that starts or finishes a relevant quest by script command.
 pub const SCRIPTED: i32 = 70;
 /// Score of any other unexplored, non-permanent info.
@@ -33,48 +36,81 @@ pub const EXPLORE: i32 = 1;
 
 impl Planner {
     pub fn new(db: &GameDatabase, targets: &[String]) -> Self {
-        let mut relevant: BTreeSet<String> = BTreeSet::new();
-        let mut todo: Vec<String> = targets.to_vec();
-        while let Some(q) = todo.pop() {
-            if !relevant.insert(norm(&q)) {
-                continue;
-            }
-            if let Some(quest) = db.quest_by_name(&q) {
-                todo.extend(quest.finished_quests.iter().cloned());
+        // Indices: infos setting an event, infos starting/succeeding a quest by script.
+        let mut setters: HashMap<String, Vec<InfoId>> = HashMap::new();
+        let mut scripted: HashMap<String, Vec<InfoId>> = HashMap::new();
+        for (n, info) in db.infos.iter().enumerate() {
+            let id = InfoId(n as u32);
+            for s in &info.script {
+                match Cmd::parse(&s.command) {
+                    Some(Cmd::SetGameEvent) => setters.entry(norm(&s.id1)).or_default().push(id),
+                    Some(Cmd::RunQuest | Cmd::SucceedQuest) => {
+                        scripted.entry(norm(&s.id1)).or_default().push(id)
+                    }
+                    _ => {}
+                }
             }
         }
-        // Events needed by infos of relevant quests, closed over their setters' needs.
+        // Worklist closure of everything the targets depend on:
+        // * a route info makes its quest relevant (all infos of that quest, its
+        //   `FinishedQuests`, and the infos that start / succeed it by script are route infos);
+        // * a route info needs its parent chain (`GetChildInfoList`) and the events it
+        //   `CondPlayerKnows`, which the infos that set them provide.
+        let mut relevant: BTreeSet<String> = BTreeSet::new();
         let mut useful: BTreeSet<String> = BTreeSet::new();
-        let mut frontier: Vec<String> = db
-            .infos
-            .iter()
-            .filter(|i| relevant.contains(&norm(&i.quest)))
-            .flat_map(|i| i.cond_player_knows.iter().map(|e| norm(e)))
-            .collect();
-        while let Some(e) = frontier.pop() {
-            if !useful.insert(e.clone()) {
-                continue;
-            }
-            for info in &db.infos {
-                let sets = info.script.iter().any(|s| {
-                    Cmd::parse(&s.command) == Some(Cmd::SetGameEvent) && norm(&s.id1) == e
-                });
-                if sets {
-                    frontier.extend(info.cond_player_knows.iter().map(|x| norm(x)));
-                    // A child info also needs its parent chain to be reachable.
-                    let mut parent = info.parent.clone();
-                    while let Some(p) = db.info_id(&parent).map(|id| db.info(id)) {
-                        frontier.extend(p.cond_player_knows.iter().map(|x| norm(x)));
-                        parent = p.parent.clone();
+        let mut route: BTreeSet<u32> = BTreeSet::new();
+        let mut quests: Vec<String> = targets.to_vec();
+        let mut infos: Vec<InfoId> = Vec::new();
+        loop {
+            if let Some(q) = quests.pop() {
+                if !relevant.insert(norm(&q)) {
+                    continue;
+                }
+                if let Some(quest) = db.quest_by_name(&q) {
+                    quests.extend(quest.finished_quests.iter().cloned());
+                }
+                infos.extend(db.infos_of_quest(&q).iter().copied());
+                if let Some(v) = scripted.get(&norm(&q)) {
+                    infos.extend(v.iter().copied());
+                }
+            } else if let Some(id) = infos.pop() {
+                if !route.insert(id.0) {
+                    continue;
+                }
+                let info = db.info(id);
+                if !info.quest.is_empty() {
+                    quests.push(info.quest.clone());
+                }
+                if let Some(p) = db.info_id(&info.parent) {
+                    infos.push(p);
+                }
+                for e in &info.cond_player_knows {
+                    if useful.insert(norm(e))
+                        && let Some(v) = setters.get(&norm(e))
+                    {
+                        infos.extend(v.iter().copied());
                     }
                 }
+            } else {
+                break;
             }
         }
         Self {
             targets: targets.to_vec(),
             relevant,
             useful_events: useful,
+            route_infos: route.into_iter().map(InfoId).collect(),
         }
+    }
+
+    /// Quests on the route (normalised names).
+    pub fn relevant_quests(&self) -> &BTreeSet<String> {
+        &self.relevant
+    }
+
+    /// Infos on the route to the targets (see [`Planner::new`]).
+    pub fn route_infos(&self) -> &[InfoId] {
+        &self.route_infos
     }
 
     pub fn targets(&self) -> &[String] {
@@ -90,11 +126,46 @@ impl Planner {
     }
 
     /// How much choosing `id` now advances the route (0 = not worth it).
-    pub fn score(&self, db: &GameDatabase, st: &GameState, id: InfoId) -> i32 {
-        self.score_depth(db, st, id, 0)
+    ///
+    /// Infos that close or fail a quest of the route score 0 unless `allow_spoilers`: the bot
+    /// takes them only when nothing else is left (`Beliar_Contact` closes `Innos_Contact`; a
+    /// player picks one side).
+    pub fn score(
+        &self,
+        db: &GameDatabase,
+        st: &GameState,
+        id: InfoId,
+        allow_spoilers: bool,
+    ) -> i32 {
+        self.score_depth(db, st, id, 0, allow_spoilers)
     }
 
-    fn score_depth(&self, db: &GameDatabase, st: &GameState, id: InfoId, depth: u8) -> i32 {
+    /// Does running `info` close or fail a quest of the route that is still going?
+    pub fn spoils(&self, st: &GameState, info: &gothic_formats::info::Info) -> bool {
+        // A `DoCancel` line cancels its own quest.
+        if InfoCond::from_raw(info.condition_type) == InfoCond::DoCancel
+            && self.is_relevant(&info.quest)
+            && !st.quest_status(&info.quest).is_finished()
+        {
+            return true;
+        }
+        info.script.iter().any(|s| {
+            matches!(
+                Cmd::parse(&s.command),
+                Some(Cmd::CloseQuest | Cmd::FailQuest)
+            ) && self.is_relevant(&s.id1)
+                && !st.quest_status(&s.id1).is_finished()
+        })
+    }
+
+    fn score_depth(
+        &self,
+        db: &GameDatabase,
+        st: &GameState,
+        id: InfoId,
+        depth: u8,
+        allow_spoilers: bool,
+    ) -> i32 {
         let info = db.info(id);
         let cond = InfoCond::from_raw(info.condition_type);
         if matches!(
@@ -103,18 +174,23 @@ impl Planner {
         ) {
             return 0;
         }
+        if !allow_spoilers && self.spoils(st, info) {
+            return 0;
+        }
         let mut best = 0;
         if !info.quest.is_empty()
             && self.is_relevant(&info.quest)
             && !st.quest_status(&info.quest).is_finished()
         {
-            best = QUEST_STEP
-                + match cond {
-                    InfoCond::Delivery | InfoCond::PartDelivery => 40,
-                    InfoCond::Success => 30,
-                    InfoCond::Activator | InfoCond::Reactivator => 20,
-                    _ => 10,
-                };
+            best = match cond {
+                // Handing in finishes the quest: every other step of the route goes first
+                // (`Hassan_Murder` needs a line of `Hassan_Kill` that only works while that
+                // quest is not finished, `Hanson_FollowTower` one of `Xardas_FindXardas`).
+                InfoCond::Delivery | InfoCond::PartDelivery => DELIVERY,
+                InfoCond::Success => QUEST_STEP + 30,
+                InfoCond::Activator | InfoCond::Reactivator => QUEST_STEP + 20,
+                _ => QUEST_STEP + 10,
+            };
         } else if !info.quest.is_empty()
             && self.is_relevant(&info.quest)
             && matches!(cond, InfoCond::Success | InfoCond::Won)
@@ -135,10 +211,12 @@ impl Planner {
                 _ => {}
             }
         }
-        if InfoType::from_raw(info.info_type) == InfoType::Parent && depth < 6 {
+        // Any info that has children opens them after it ran (`OnInfoScriptFinished`), not
+        // only `Parent` infos: `FILLER140` is a plain `Info` whose children start Braga_Tribut.
+        if depth < 6 {
             for &c in db.children_of(&info.name) {
                 if !st.told.contains(&norm(&db.info(c).name)) {
-                    best = best.max(self.score_depth(db, st, c, depth + 1));
+                    best = best.max(self.score_depth(db, st, c, depth + 1, allow_spoilers));
                 }
             }
         }

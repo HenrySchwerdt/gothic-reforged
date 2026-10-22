@@ -97,6 +97,51 @@ impl<'a> Engine<'a> {
             .root_candidates(npc)
             .filter(|&i| self.is_available(st, i, npc))
             .collect();
+        self.order_root(avail)
+    }
+
+    /// Root infos owned by `npc` itself (no `PC_Hero` ones), unordered, available now.
+    pub fn own_root_available(&self, st: &GameState, npc: &str) -> Vec<InfoId> {
+        self.db
+            .infos_of(npc)
+            .iter()
+            .copied()
+            .filter(|&i| self.db.info(i).parent.is_empty())
+            .filter(|&i| self.is_available(st, i, npc))
+            .collect()
+    }
+
+    /// Whether the availability of a `PC_Hero` root info can depend on the dialog partner
+    /// (party/teach/trade flags, talked-before, children owned by the partner).
+    pub fn hero_info_depends_on_partner(&self, id: InfoId) -> bool {
+        use InfoCond::*;
+        matches!(
+            self.cond(id),
+            Hello
+                | Join
+                | MobJoin
+                | SlaveJoin
+                | Dismiss
+                | MobDismiss
+                | Wait
+                | Companion
+                | Teach
+                | Trade
+        ) || self.ty(id) == InfoType::Parent
+            || !self.db.info(id).cond_player_party_member.is_empty()
+    }
+
+    /// `PC_Hero` root infos (candidates for every dialog partner).
+    pub fn hero_root_candidates(&self) -> impl Iterator<Item = InfoId> + '_ {
+        self.db
+            .infos_of(PLAYER_OWNER)
+            .iter()
+            .copied()
+            .filter(|&i| self.db.info(i).parent.is_empty())
+    }
+
+    /// Order an availability-filtered root candidate set like `GetInfoList`.
+    pub fn order_root(&self, avail: Vec<InfoId>) -> Vec<InfoId> {
         let of = |t: InfoType| avail.iter().copied().filter(move |&i| self.ty(i) == t);
         let mut list: Vec<InfoId> = Vec::new();
         list.extend(of(InfoType::Refuse).next());

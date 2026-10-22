@@ -46,6 +46,49 @@ For an unmet game event the report lists every info that sets it and why that se
 run (`already told`, `available, never chosen`, or its own unmet condition), so the remaining
 blockers can be checked against the data.
 
+## What the bot does about the real data (P5 findings)
+
+Each rule below fixed a class of "stuck" quests on the real install; the original behaviour is
+cited as `Class::method (Game.dll address)`.
+
+* **Quests nothing can start** (no activator info, no `RunQuest`): the world objective alone
+  finishes them. `gCQuest_PS::CheckDeliveryEntitiesStatus (0x10156bb0)` runs for Open, Running
+  and Lost quests and the hooks `OnReceiveItem (0x10158c70)`, `OnNPCKilled (0x10159110)`,
+  `OnEnclaveStateChanged (0x10159710)`, `OnSpellCast (0x1015acc0)`, `OnEnter (0x10158e20)` do not
+  look at the status. The bot performs the player action (kill, pickup, free the enclave, cast,
+  enter) through those hooks: trace `cheat` kinds `pickup`, `free_enclave`, `cast`.
+* **World objectives run when the dialogs on the route are dry**, not up front: killing an NPC
+  earlier removes lines that need it alive, finishing a quest earlier removes lines that need it
+  Open or Running (`Falk_HuntSnapper`, `Gunock_ReportGrok`).
+* **Route closure**: the planner follows `Parent` chains (children of a plain `Info` line count,
+  `gCInfo_PS::OnInfoScriptFinished` shows children of any finished info), the quests of parent
+  lines, the infos that set needed events, and infos that start/succeed route quests.
+* **Priorities**: infos that set a needed event first, deliveries last (they finish the quest),
+  lines that end the conversation last within a menu, lines that close/fail/cancel a route quest
+  (and NPCs whose auto-run `Important`/`News` line does) only when nothing else is left.
+* **Refusals**: `IS_Running_NotEnoughGold` / `NotEnoughLP` (`gCInfo_PS::Execute 0x101c0a30`) are
+  answered by earning the missing gold / learning points (trace `earn`), then retrying.
+* **Required items / NPC states**: route infos that need items in the player inventory get them
+  (hunted / bought / found); infos that need another NPC defeated, dead or talked to get that.
+* **Developer menu**: the info owner `sh` (365 infos: "Befreie Myrtana!", gold/item gifts) is a
+  cheat menu, not an NPC; the bot never talks to it (it used to "complete" quests through it).
+* **Loop detection**: progress is a *new* game state; returning to a seen state (two companion
+  quests that make each other `Lost`) is not progress. Having talked to an NPC alone is not
+  progress either. Scores are cached per state, so a sweep costs one NPC per round.
+* `gothic_gameplay::Assumptions::friend_reputation_gate`: `EnclaveFriend` / `PoliticalFriend`
+  lines need fame >= 75 (`gCInfo_PS::Execute`); the port ignored it, so `Ishtar_Test_Running`
+  was cleared by a line a player cannot yet use.
+
+Known data defects (not port bugs): `Ishtar_Test` lists the delivery entity `"Zuben "` (trailing
+space) and the original compares delivery entities with exact `bCString::operator==` in
+`gCInfo_PS::OnDelivery (0x101c2620)`, so the Report delivery never matches; `Ishtar_Revolution`
+depends on it. `Innos_Contact` vs `Beliar_Contact` (and the Adanos artefact quests) exclude each
+other by design (`CloseQuest` in the chosen side's delivery line).
+
+Debugging: `questbot <Data> --dump NAME` (an info, a quest with its infos, `event:NAME` for every
+info that sets / clears / needs an event, `route:QUEST` for the planner's route, `--ws` for names
+with stray whitespace, `--owners`). `--isolated --quest A --quest B` runs only those quests.
+
 ## Report format
 
 `--json` writes (schema `gothic-questbot/1`):
