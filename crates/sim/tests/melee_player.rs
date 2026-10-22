@@ -194,7 +194,7 @@ fn the_power_attack_raises_first_and_pays_after_the_raise() {
 
 #[test]
 fn headless_moves_have_no_clip_and_land_at_once() {
-    let (mut sim, hero, orc) = arena(false);
+    let (mut sim, _hero, orc) = arena(false);
     draw(&mut sim);
     sim.set_hero_control(Some(orc), Some(orc), false, false);
     let hp = sim.actor(orc).hp;

@@ -272,8 +272,8 @@ pub fn definition(state: State) -> Option<Def> {
         S::PsNormalLoop => custom(ps_normal_loop),
         S::PsNormalTake => custom(ps_normal_take),
         S::PsGonnaLoot => custom(ps_gonna_loot),
-        S::PsNormalJump | S::PsMeleeJump | S::PsRangedJump | S::PsMagicJump => custom(ps_jump),
-        S::PsNormalSneak | S::PsMeleeSneak | S::PsRangedSneak | S::PsMagicSneak => custom(ps_sneak),
+        S::PsNormalJump | S::PsMeleeJump | S::PsMagicJump => custom(ps_jump),
+        S::PsNormalSneak | S::PsMeleeSneak | S::PsMagicSneak => custom(ps_sneak),
         _ => None,
     }
 }

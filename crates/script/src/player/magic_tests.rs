@@ -5,7 +5,7 @@ use crate::host::{AiCommand, Attribute, EntityApi, EntityId, NpcApi, Pos, StatsA
 use crate::magic::api::{MagicApi, PathStyle};
 use crate::player::api::{Book, BoulderClass, PlayerApi, PlayerEvent};
 use crate::player::commands;
-use crate::player::ranged::{ARROW_SPEED, draw_multiplier};
+use crate::player::ranged::{ARROW_SPEED, POWER_RAISE_SECS, draw_multiplier};
 use crate::routine::dialog::{BribeOutcome, bribe};
 use crate::routine::state::State;
 use crate::testhost::TestWorld;
@@ -54,7 +54,7 @@ fn the_draw_multiplier_grows_for_1_95_seconds() {
 fn a_fully_drawn_bow_shoots_a_fast_arrow_and_uses_one_up() {
     let (mut w, p, orc) = archer(false);
     drive(&mut w, p, 4);
-    assert_eq!(w.current_state(p), Some(State::PsRangedWalk));
+    assert_eq!(w.current_state(p), Some(State::PsRangedWalkLoop));
     assert!((w.hit_multiplier(p) - 0.2).abs() < 1e-6, "an undrawn bow");
     commands::aim_ranged(&mut w, p, true);
     drive(&mut w, p, 4);
@@ -73,7 +73,46 @@ fn a_fully_drawn_bow_shoots_a_fast_arrow_and_uses_one_up() {
     assert_eq!(arrow.path, PathStyle::Physics);
     assert!((arrow.velocity - ARROW_SPEED).abs() < 1e-3);
     assert_eq!(w.stack_amount(p, Slot::RightHand as i32 + 1), 2);
-    assert_eq!(w.current_state(p), Some(State::PsRangedWalk));
+    // The next arrow is nocked, then the hero walks again.
+    drive(&mut w, p, 6);
+    assert_eq!(w.current_state(p), Some(State::PsRangedWalkLoop));
+}
+
+#[test]
+fn the_raise_clip_ends_in_the_aim_loop() {
+    let (mut w, p, _) = archer(false);
+    drive(&mut w, p, 4);
+    commands::aim_ranged(&mut w, p, true);
+    drive(&mut w, p, 4);
+    assert_eq!(w.current_state(p), Some(State::PsRangedPowerAim));
+    w.set_state_time(p, POWER_RAISE_SECS + 0.01);
+    drive(&mut w, p, 2);
+    assert_eq!(w.current_state(p), Some(State::PsRangedAimLoop));
+    assert!(
+        (w.hit_multiplier(p) - 1.0).abs() < 1e-6,
+        "full draw is held"
+    );
+}
+
+#[test]
+fn the_abort_key_gives_up_the_draw() {
+    let (mut w, p, _) = archer(false);
+    drive(&mut w, p, 4);
+    commands::aim_ranged(&mut w, p, true);
+    drive(&mut w, p, 4);
+    commands::aim_ranged(&mut w, p, false);
+    drive(&mut w, p, 6);
+    assert_eq!(w.current_state(p), Some(State::PsRangedWalkLoop));
+    assert!((w.hit_multiplier(p) - 0.2).abs() < 1e-6);
+    assert!(w.mg.projectiles.is_empty(), "no arrow left the bow");
+}
+
+#[test]
+fn the_ranged_task_gives_the_body_to_the_camera() {
+    let (mut w, p, _) = archer(false);
+    drive(&mut w, p, 4);
+    assert_eq!(w.pl.constraints.get(&p).copied(), Some(0.0));
+    assert_eq!(w.pl.alignment.get(&p).copied(), Some(EntityId::NONE));
 }
 
 #[test]
@@ -96,12 +135,15 @@ fn a_crossbow_always_shoots_at_full_strength_and_is_cocked_again() {
     let (mut w, p, orc) = archer(true);
     drive(&mut w, p, 4);
     assert!((w.hit_multiplier(p) - 1.0).abs() < 1e-6);
-    commands::aim_ranged(&mut w, p, true);
-    drive(&mut w, p, 4);
+    // The crossbow is aimed from the start of the task (`PS_Ranged` -> `PS_Ranged_Aim_Loop`).
     assert_eq!(w.current_state(p), Some(State::PsRangedAimLoop));
     assert!(commands::release_ranged(&mut w, p, orc));
-    let cmds = drive(&mut w, p, 8);
+    drive(&mut w, p, 8);
     assert!((w.mg.projectiles[0].hit_mult - 1.0).abs() < 1e-6);
+    // After the bolt the hero walks; the reload key cocks and aims again.
+    assert_eq!(w.current_state(p), Some(State::PsRangedWalkLoop));
+    PlayerApi::action_queue_push(&mut w, 42, EntityId::NONE);
+    let cmds = drive(&mut w, p, 8);
     assert!(
         cmds.iter().any(|c| matches!(
             c,
@@ -116,16 +158,25 @@ fn a_crossbow_always_shoots_at_full_strength_and_is_cocked_again() {
 }
 
 #[test]
-fn an_empty_quiver_ends_in_walking() {
+fn an_empty_quiver_ends_the_ranged_task() {
     let (mut w, p, orc) = archer(false);
     w.mg.amounts.insert((p, Slot::RightHand as i32 + 1), 1);
     drive(&mut w, p, 4);
     commands::aim_ranged(&mut w, p, true);
     drive(&mut w, p, 4);
     commands::release_ranged(&mut w, p, orc);
-    drive(&mut w, p, 6);
+    // The task passes through `PS_Normal` (the host's world keeps the bow in the hand, so the
+    // draw task of the weapon mode takes over again; the real hold puts it away).
+    let mut left_ranged = false;
+    for _ in 0..16 {
+        drive(&mut w, p, 1);
+        if w.current_task(p) == Some(State::PsNormal) {
+            left_ranged = true;
+            break;
+        }
+    }
     assert_eq!(w.mg.projectiles.len(), 1);
-    assert_eq!(w.current_state(p), Some(State::PsRangedWalk));
+    assert!(left_ranged, "the last arrow ends the ranged task");
 }
 
 #[test]

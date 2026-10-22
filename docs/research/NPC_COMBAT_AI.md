@@ -126,3 +126,13 @@ Last results (release build of the branch, `.local/qa/p2/*.log`, gitignored): `n
 speeds PASS, damage within 0.07 s of 0.6 x clip / speed (22 hero hits checked), at most two engaged PASS;
 `npc_shaman` PASS (casts 2 -> 35, spell missile on screen for 95 frames); `npc_vs_npc` PASS; `shaman_duel` PASS
 (before: casts 0). `npc_archer` needed the `Arrow` / `Bolt` fix above.
+
+## Single damage path
+
+`Sim::apply_attack` resolves every hit through the ported `AssessHit` (`Sim::resolve_ported` in
+`crates/sim/src/sim/hit_ported.rs`); the former `sim::combat` resolver is removed. Consequence checked
+against the original: a spell projectile whose `PathStyle` is Missile (3) has its base damage doubled
+(`AssessHit`, Script_Game.dll S:2b580, check at S:2c0f5; recorded `[V]` in `COMBAT_AI_RULES.md` 2.5). The
+power cast of Fireball flies as such a projectile, so it hits twice as hard as a plain cast (170 against 85
+for the test hero); `crates/sim/tests/magic.rs::a_power_cast_costs_the_maximum_mana` asserts this. The souls
+sink's non-commit preview is a nominal `amount * hit_mult`; only the commit is exact.

@@ -528,8 +528,12 @@ impl CharacterController {
         let mode = self.machine.mode();
         let face = cmd.face.map(flat).filter(|f| *f != Vec3::ZERO);
         let goal = face.or((dir != Vec3::ZERO).then_some(dir));
+        // `gCCharacterMovement_PS::ProcessControledRotation` runs every frame: an alignment
+        // (`SetAlignmentLookAt` / `SetAlignmentTarget`, here `face`) turns the body at the turn
+        // model's speed whether or not the hero moves; the wish direction alone only turns a
+        // self-controlled mode.
         if let Some(g) = goal
-            && (mode.is_self_controlled() || mode == MovementMode::Swimming)
+            && (face.is_some() || mode.is_self_controlled() || mode == MovementMode::Swimming)
         {
             let goal_yaw = (-g.x).atan2(-g.z);
             let angle = wrap_deg((goal_yaw - self.heading).to_degrees());

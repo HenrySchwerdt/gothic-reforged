@@ -25,6 +25,8 @@ use gothic_runtime::CoreRes;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
+mod bow;
+mod magic;
 mod melee;
 mod more;
 mod more2;

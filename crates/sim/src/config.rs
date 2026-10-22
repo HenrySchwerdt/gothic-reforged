@@ -35,7 +35,7 @@ pub struct Variants {
     /// NPC melee ignores the weapon and uses STR only [CA 2.5]. `true`: the weapon's damage
     /// is added on top (as the player's is).
     pub npc_weapon_damage_counts: bool,
-    /// Parrying needs stamina > 0 (inferred in the base rules, see `combat::can_parade`);
+    /// Parrying needs stamina > 0 (inferred in the base rules, see `script `can_parade` (S:...)`);
     /// set to `false` to allow parrying with an empty stamina bar.
     pub parry_needs_stamina: Option<bool>,
     /// Telegraphed NPC melee (Souls-style combat mode): every NPC swing is held this many

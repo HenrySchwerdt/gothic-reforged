@@ -928,6 +928,7 @@ impl<W: WorldQuery> Sim<W> {
                     | State::PsMeleeLoop
                     | State::PsMagicLoop
                     | State::PsRangedWalk
+                    | State::PsRangedWalkLoop
                     | State::PsRangedAimLoop,
             )
         )

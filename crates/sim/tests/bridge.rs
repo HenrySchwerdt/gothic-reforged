@@ -67,7 +67,12 @@ fn killing_the_quest_target_completes_the_kill_quest_and_pays_xp() {
     sim.world.set_facing(oid, std::f32::consts::PI);
     sim.actor_mut(oid).hp = 10;
     let out = sim.melee_hit(hero, oid);
-    assert!(out.killed());
+    assert!(
+        out.killed(),
+        "{out:?} att {:?} / {:?}",
+        sim.attitude(oid, hero),
+        sim.attitude(hero, oid)
+    );
     assert_eq!(sim.state.quest_status("KillOrc"), QuestStatus::Success);
     assert!(sim.state.npc("orc_target").unwrap().dead);
     // Kill XP: max(10*10, 50) = 100; quest reward 20 * 5 = 100.

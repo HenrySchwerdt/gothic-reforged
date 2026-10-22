@@ -9,7 +9,7 @@ use crate::attitude::{AttitudeCtx, get_attitude, political_attitude};
 use crate::brain::{Strike, Task};
 use crate::combat::{
     Attack, Deity, HitContext, HitOutcome, HitResult, IgnoreReason, PerceptionKind,
-    bow_hit_multiplier, kill_xp, resolve_hit,
+    bow_hit_multiplier, kill_xp,
 };
 use crate::config::SimConfig;
 use crate::crime::{
@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod ai_exec;
+mod hit_ported;
 pub mod npc_exec;
 
 /// Ground speed of the gaits of an ordinary humanoid NPC in game units per second: the
@@ -283,17 +284,6 @@ pub struct Sim<W: WorldQuery> {
     /// Actors outside are not thought for at all, like unprocessed entities in the original;
     /// the hero and companions that follow or wait for the hero always run.
     pub processing: Option<BTreeSet<ActorId>>,
-}
-
-fn two_mut(v: &mut [Actor], i: usize, j: usize) -> (&mut Actor, &mut Actor) {
-    assert_ne!(i, j);
-    if i < j {
-        let (a, b) = v.split_at_mut(j);
-        (&mut a[i], &mut b[0])
-    } else {
-        let (a, b) = v.split_at_mut(i);
-        (&mut b[0], &mut a[j])
-    }
 }
 
 /// Total duration of a melee move including recovery [I]; the hit window opens earlier
@@ -668,10 +658,7 @@ impl<W: WorldQuery> Sim<W> {
         let (ai, vi) = (att.0 as usize, vic.0 as usize);
         let now = self.now_ms();
         let action = self.actors[ai].action;
-        let outcome = {
-            let (a, v) = two_mut(&mut self.actors, ai, vi);
-            resolve_hit(&self.cfg, &mut self.rng, a, v, attack)
-        };
+        let outcome = self.resolve_ported(att, vic, attack);
         self.push(EventKind::Hit {
             attacker: att,
             victim: vic,
@@ -1254,6 +1241,10 @@ impl<W: WorldQuery> Sim<W> {
             return;
         }
         self.actors[i].action = st.action;
+        if self.actors[i].is_player {
+            // The player's blow goes against the entity he fights (`GetCurrentTarget`).
+            self.actors[i].target = Some(st.target);
+        }
         let second = vitals::second_stage_cost(st.action);
         if second > 0 {
             let a = &mut self.actors[i];

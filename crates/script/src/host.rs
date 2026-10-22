@@ -419,6 +419,11 @@ pub trait NpcApi {
     fn set_last_fight_timestamp(&mut self, npc: EntityId, t: f32);
     /// `PSNpc.LastFightAgainstPlayer`.
     fn last_fight_vs_player(&self, npc: EntityId) -> LastFight;
+    /// `PSNpc.AttitudeToPlayer`, the attitude the character's data gives it toward the player
+    /// (the last word of `AttitudeToPlayer`); `None` when the data says nothing.
+    fn base_attitude_to_player(&self, _npc: EntityId) -> Attitude {
+        Attitude::None
+    }
     /// `PSNpc.Ransacked`.
     fn ransacked(&self, npc: EntityId) -> bool;
     /// Write `PSNpc.Ransacked`.

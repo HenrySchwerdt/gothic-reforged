@@ -43,7 +43,7 @@ pub struct RangedView {
     pub draw: f32,
     pitch: AimPitch,
     /// The clips currently set on the animator, to skip reloading them every frame.
-    clips: [Option<String>; 2],
+    pub clips: [Option<String>; 2],
     /// Seconds since an aim state was last left (the crosshair fades after the shot).
     since_aim: f32,
     /// The raise glow (`eff_ani_fight_bow_raise_01`) runs.
@@ -216,6 +216,18 @@ struct CrosshairTick {
     dy: f32,
 }
 
+/// The clip of `Aim_Reload` at `t` seconds into the state.
+fn reload_phase(t: f32) -> Phase {
+    use gothic_projectile::aim::clips::bow::{RELOAD_BEGIN, RELOAD_RAISE};
+    if t < RELOAD_BEGIN {
+        Phase::ReloadBegin
+    } else if t < RELOAD_BEGIN + RELOAD_RAISE {
+        Phase::ReloadRaise
+    } else {
+        Phase::ReloadEnd
+    }
+}
+
 /// The hero's aim state from the script state machine.
 fn hero_state(core: &CoreRes) -> Option<State> {
     core.0.sim.script.npc(core.0.hero).state
@@ -287,9 +299,22 @@ fn aim_frame(
     let phase = match s {
         Some(State::PsRangedAim) => Some(Phase::Raise),
         Some(State::PsRangedPowerAim) => Some(Phase::PowerRaise),
+        // The bow keeps the last frame of the `PowerRaise` clip while the full draw is held
+        // (the aim command of `PS_Ranged_PowerAim` ended, nothing replaces the pose); a crossbow
+        // holds the `Aim` pose.
+        Some(State::PsRangedAimLoop) if !view.crossbow => Some(Phase::PowerRaise),
         Some(State::PsRangedAimLoop) => Some(Phase::Aim),
+        // `PS_Ranged_Aim_Reload`: the next arrow is nocked with the `Reload` clips one after
+        // the other (`Begin`, `Raise`, `End`; their lengths are the clips' own).
+        Some(State::PsRangedAimReload) if !view.crossbow => {
+            let t = core.0.sim.script.npc(core.0.hero).state_time;
+            Some(reload_phase(t))
+        }
         _ => None,
     };
+    let reloading = matches!(s, Some(State::PsRangedAimReload))
+        && core.0.sim.actor(core.0.hero).drawn
+        && !view.crossbow;
     if in_aim {
         view.since_aim = 0.0;
     } else {
@@ -412,7 +437,7 @@ fn aim_frame(
     }
 
     // ---- aim clips -----------------------------------------------------------------------------
-    let Some(phase) = phase.filter(|_| in_aim) else {
+    let Some(phase) = phase.filter(|_| in_aim || reloading) else {
         if view.clips.iter().any(Option::is_some) {
             animator.aim = [None, None];
             view.clips = [None, None];
@@ -434,7 +459,17 @@ fn aim_frame(
         phase
     };
     let family = animator.rig.family.clone();
-    let t = core.0.sim.script.npc(core.0.hero).state_time;
+    // Each clip of the reload starts at its own phase.
+    let held_bow = matches!(s, Some(State::PsRangedAimLoop)) && !view.crossbow;
+    let t = if held_bow {
+        aim::clips::bow::POWER_RAISE
+    } else {
+        core.0.sim.script.npc(core.0.hero).state_time
+    } - match phase {
+        Phase::ReloadRaise => aim::clips::bow::RELOAD_BEGIN,
+        Phase::ReloadEnd => aim::clips::bow::RELOAD_BEGIN + aim::clips::bow::RELOAD_RAISE,
+        _ => 0.0,
+    };
     let variants = [
         (Pitch::Fwd, 1.0f32),
         (
@@ -501,20 +536,64 @@ fn shot_animations(
     core: Res<CoreRes>,
     roster: Res<super::Roster>,
     mut q: Query<&mut super::anim::OverlayQueue>,
-    hero: Query<Entity, With<HeroActor>>,
+    hero: Query<(Entity, &super::anim::CombatStance), With<HeroActor>>,
+    mut last: Local<Option<State>>,
 ) {
     use gothic_runtime::Event;
     let hero_id = core.0.hero;
     let entity_of = |id| {
         if id == hero_id {
-            hero.single().ok()
+            hero.single().ok().map(|h| h.0)
         } else {
             roster.by_actor.get(&id).copied()
         }
     };
+    // The hero's cast clips follow his script state: `Raise` while the cast state runs, `Hit` and
+    // `Recover` once `_AI_Cast_Execute` ran (the state moves on to `PS_Magic_Reload`). The clips
+    // are those of the cast action (`Cast`, `PowerCast`, `QuickCast`, `Summon`); a quick cast has
+    // its own clips with the staff only.
+    let now = core.0.sim.script.npc(hero_id).state;
+    let cast_action = |s: State| -> Option<&'static str> {
+        match s {
+            State::PsMagicCast => Some("Cast"),
+            State::PsMagicPowerCast => Some("PowerCast"),
+            State::PsMagicSummon => Some("Summon"),
+            State::PsMagicQuickCast => Some(
+                if hero
+                    .single()
+                    .is_ok_and(|h| h.1.0 == gothic_animation::Stance::Staff)
+                {
+                    "QuickCast"
+                } else {
+                    "Cast"
+                },
+            ),
+            _ => None,
+        }
+    };
+    if now != *last {
+        if let (Some(prev), Some(en)) = (*last, hero.single().ok().map(|h| h.0))
+            && let Some(action) = cast_action(prev)
+            && now == Some(State::PsMagicReload)
+            && let Ok(mut queue) = q.get_mut(en)
+        {
+            super::anim::queue_steps(&mut queue, &[(action, "Hit"), (action, "Recover")]);
+        }
+        if let (Some(cur), Some(en)) = (now, hero.single().ok().map(|h| h.0))
+            && let Some(action) = cast_action(cur)
+            && let Ok(mut queue) = q.get_mut(en)
+        {
+            super::anim::queue_steps(&mut queue, &[(action, "Raise")]);
+        }
+        *last = now;
+    }
     for e in events.read() {
         match &e.0 {
             Event::Projectile { owner, spell, .. } => {
+                if *owner == hero_id && *spell {
+                    // The hero's `Hit` and `Recover` follow his state (above).
+                    continue;
+                }
                 let Some(en) = entity_of(*owner) else {
                     continue;
                 };
@@ -522,25 +601,11 @@ fn shot_animations(
                     continue;
                 };
                 if *spell {
-                    // The hero's raise already ran; the missile leaves, hit and recover follow.
                     // NPC casters play their clips as script instructions (`npc_moves`).
-                    if *owner == hero_id {
-                        super::anim::queue_steps(
-                            &mut queue,
-                            &[("Cast", "Hit"), ("Cast", "Recover")],
-                        );
-                    }
                 } else if *owner == hero_id {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Recover")]);
                 } else {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Aim"), ("Aim", "Recover")]);
-                }
-            }
-            Event::CastStarted(_) => {
-                if let Some(en) = hero.single().ok()
-                    && let Ok(mut queue) = q.get_mut(en)
-                {
-                    super::anim::queue_steps(&mut queue, &[("Cast", "Raise")]);
                 }
             }
             _ => {}
@@ -561,6 +626,29 @@ pub struct BowVisual {
     pub template: String,
     actor: String,
     clip: String,
+}
+
+/// Half turn of a drawn bow about the Z axis of `Slot_LeftHand_Weapon` [I], see `bow_sync`.
+const BOW_IN_HAND_TURN: Quat = Quat::from_xyzw(0.0, 0.0, 1.0, 0.0);
+
+/// Where a bow actor sits: at the slot bone of its owner (`root * bone`). The engine links the
+/// item to the slot bone without an offset (`GetBone` of `gCInventorySlot`, 0x100bd8d0;
+/// `AttachItemToSekelton`, 0x100bdb70 passes none). With that identity the drawn string lies
+/// between the right hand and the shooter, which no drawn bow does: the arrow line points 171
+/// degrees away from the view in the `bow_faithful` check. A half turn about the slot's Z axis
+/// gives 9 degrees, the hand at the middle of the string [I, probe `bow_orient`]. The hanging bow
+/// on the back keeps the identity. Used for the hero and for the NPCs (`npc_bows`).
+pub(super) fn bow_slot_transform(
+    root: &GlobalTransform,
+    joint: bevy::math::Affine3A,
+    in_hand: bool,
+) -> Transform {
+    let rot = if in_hand {
+        BOW_IN_HAND_TURN
+    } else {
+        Quat::IDENTITY
+    };
+    Transform::from_matrix(Mat4::from(root.affine() * joint) * Mat4::from_quat(rot))
 }
 
 /// Candidate actor names of an item template (`It_Bow_Hunting` -> `Bow_Hunting_01`).
@@ -662,31 +750,16 @@ pub(super) fn bow_sync(
         .get(slot)
         .and_then(|&j| hero_anim.joints.get(j as usize))
     {
-        let m = root.affine() * *j;
-        // Experiment aid: GR_BOW_ROT="rx,ry,rz" (degrees) turns the actor in the slot frame.
-        let rot = std::env::var("GR_BOW_ROT")
-            .ok()
-            .and_then(|v| {
-                let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-                (n.len() == 3).then(|| {
-                    Quat::from_euler(
-                        EulerRot::XYZ,
-                        n[0].to_radians(),
-                        n[1].to_radians(),
-                        n[2].to_radians(),
-                    )
-                })
-            })
-            // No eyeballed offset: the engine links the item entity to the slot bone with the
-            // identity (`AttachItemToSekelton` 0x100bdb70 passes no offset; the bone comes from
-            // `GetBone`), the same composition the static weapons use (`root * bone`).
-            .unwrap_or(Quat::IDENTITY);
-        *tf = Transform::from_matrix(Mat4::from(m) * Mat4::from_quat(rot));
+        *tf = bow_slot_transform(root, *j, state.drawn);
     }
     vis.set_if_neq(Visibility::Inherited);
     // The string: relaxed, or drawn while the power aim runs (`Cock` played with the draw time).
     let st = core.0.sim.script.npc(core.0.hero);
-    let drawing = state.drawn && st.state == Some(State::PsRangedPowerAim);
+    // The string is pulled by the draw (`PS_Ranged_PowerAim`) and stays pulled while the full
+    // draw is held (`PS_Ranged_Aim_Loop` of a bow); the shot lets it go.
+    let drawing = state.drawn
+        && (st.state == Some(State::PsRangedPowerAim)
+            || (st.state == Some(State::PsRangedAimLoop) && kind == Use::Bow));
     let base = b.actor.clone();
     let want_clip = format!("{base}_{}", if drawing { "Cock" } else { "Relax" });
     if b.clip != want_clip && spawner.library.has_motion(&want_clip) {
@@ -697,7 +770,15 @@ pub(super) fn bow_sync(
         }
     }
     if drawing {
-        anim.seek(st.state_time);
+        // `PS_Ranged_PowerAim` pulls the string for the length of the clip; in the aim loop it
+        // stays at the end of it.
+        let held = if st.state == Some(State::PsRangedAimLoop) {
+            gothic_projectile::aim::clips::bow::POWER_RAISE
+        } else {
+            st.state_time
+                .min(gothic_projectile::aim::clips::bow::POWER_RAISE)
+        };
+        anim.seek(held);
     }
     let _ = time;
 }
