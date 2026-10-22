@@ -1,5 +1,32 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+## Latest active state — 2026-10-22 23:44 UTC
+
+SOURCE3e5cbdb: acceleration now CAMERA-ONLY via explicit raycast_accelerated.
+Ordinary raycast/raycast_hit (including NPC LOS) restored legacy behavior, no flagread.
+QA independently pauses unrelatedNPCs afterselection, keepsselectedtargetAI until
+originalguardfreeze; one-time target/unrelated activity and downed-state notes.
+No HP, lifecycle, assertions, action timing or gameplay changes in that fixture fix.
+111focusedtestsPASS: physics59/camera25/camera integration13/movement integration14;
+`.local/physics-camera-raycast-scoped-tests-camera-regression.log`.
+
+ONE scoped GNU viewer build RUNNING parent93562, `.local/pc-raycast-camera-build.log`;
+source3e5cbdb; root owns definitiveexit check. wind_clock prepares NEW envsafe
+`.local/camera-raycast-runner.ps1` only, awaiting rootactualexit0 beforegames/copy.
+Planned new immutable `.local/artifacts/gothic-reforged-camera-raycast.exe`:
+FIRST melee13 thenmagic9/bow15 with childenvproof+targetactive/unrelated0 note;
+ifALLPASS then sameEXE forced4+normal4 Camera benches in
+`.local/bench-camera-raycast-{forced,normal}`. No package untilrootreview.
+
+PRIOR GLOBAL v2 prototypeNOT delivered: immutable raycast-dda-range426a2d...,
+sourcee5a93e4. Forcedquery~6.6->4.0ms/-8.15%frametime; normal resultsvariable
+0% and-2.7%; extra normal tailoutlier notstable. These DO NOT certify scopedEXE.
+Crucialblocker: two globaldefaultmeleeFAIL knockeddown; one startup-legacymeleePASS.
+Cause unresolved, therefore NPC LOS optimization WITHDRAWN. Before reenabling require
+same-loaded-world realLOS reference/candidate comparison, not synthetic tests alone.
+Evidence `.local/qa/raycast-dda-range-{combat,melee-default-repeat,melee-legacy}`.
+Fullhistory in docs/research/RAYCAST_TRAVERSAL.md. Existing Desktopreleases untouched.
+
 ## Latest active state — 2026-10-22 23:22 UTC
 
 REVISED build finished8m39s, parent7207 definitiveexit0, no compiler; compilede5a93e4.
