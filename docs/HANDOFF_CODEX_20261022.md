@@ -366,3 +366,66 @@ staging readbacks to submitted phase/current/previous/focus records. No normalTi
 probe overhead/logging whenabsent. Source/checks only until root review, no fullbuild/runtime yet.
 Agent wind_stability owns PERFORMANCE_ACTIONS.md compact result and read-only tracebuild plan;
 no code/build/runtime. Preserve current snapshot in oldfocus state; don'tmistake it foractivehead.
+
+## GPU probe source freeze — 2026-10-22
+
+Committed227d0a78d1933910d9f96f05142167493ecb22da. Opt-in exact
+GR_WIND_CLOCK_PROBE_START=3599.0 or86399.0; requires finite --bench-camera --bench>=4, waits
+ready+warmup route target. Seed then unchanged real deltas; full8f32 previous/current continuity;
+Bevy BufferId stable; three distinct80byte asynchronous GPUstaging captures compared bitwise.
+Scheduled stages deduplicated before callbacks, sticky errors, nonblockingpoll/callbacktimeout.
+No flag means noGPUcopies/poll/logging. Test is syntheticoffset, not hour-longsession/silhouetteproof.
+GNU viewer,trace cargo-check PASS .local/wind-clock-probe-cargo-check.log; shaderchecker PASS.
+Two stage/failure unit tests added but NOT executed yet; do not claim unit suitepassed.
+
+Agent wind_stability now owns SINGLE full --release --featuresviewer,trace -j4 build from ACTIVE
+checkout (NOToldfocus snapshot), .local/pc-wind-probe-trace-build.log, targetD:/gr-build/integrate.
+Save immutable .local/artifacts/gothic-reforged-wind-probe-trace.exe+hash. No runtime/profile while
+compiling. Root coordinates afterbuild: finite hour/dayprobe runs and then trace withprobeUNSET.
+Diagnostictracefeaturetimings do not replace optimizedshippingA/B. NoDesktoppackagechanges.
+
+## Diagnostic build in progress
+
+wind_stability owns full trace build session71059, .local/pc-wind-probe-trace-build.log;
+trace dependency compile completed, optimized app link ongoing. No duplicatejobs. After success
+agent authorized sequential hour/day synthetic GPUprobes, then probeUNSET --trace camera20s
+warmup30 (diagnosticinclusiveCPU only), saving own .local logs/JSON and immutableartifacthash.
+Require3distinct stagePASS+completion/noFAIL/rendererrors each probe, capturedtimesstraddleboundary.
+NoDesktopupdate. No rustc/unit tests concurrently withprofile.
+
+wind_clock prepared ignored exact-source stage unit harness +realBevy types, not compiled/run:
+.local/prepare-wind-clock-probe-tests.ps1, wind-clock-probe-unit-tests.rs, provenance.txt.
+After fullbuild AND runtimeprofile end, root selects matching new full libbevy-<hash>.rlib in
+D:/gr-build/integrate/release/deps and invokes script -Run -BevyRlib exactpath viaGNUenv.
+Do not count tests untilactualrun. Sourcehash0D9CED9E263806338A3FCDAA0F8F35A042457FFDCE33C24FA75E37262C29CA1E,
+harnesshashB63CC5190F854ACA7447915BDFB58FB4ED702FAF82CBBD5F78D6E22399D08542.
+
+## GPU boundary and diagnostic trace results — 2026-10-22
+
+Single optimized viewer,trace build227d0a7 completed14m31s, immutable artifact
+.local/artifacts/gothic-reforged-wind-probe-trace.exe SHA256
+93d3ebf238a2efc048d3cfaea6094152934e61742824a6e7187ed17a4c9f352f.
+Both finite synthetic probes PASS, exactly3distinctreadbacks+completion, noFAIL/rendererrors.
+Hour seed3599; before3599.783492; after3600.000997. Day seed86399; before86399.759410;
+after86400.003279. All20f32/80GPUbytes matchbitwise, bufferidentity unchanged, previousrecords
+continuous. Cameraresiduals max3.844um/3.815um, rotation0. This is syntheticboundaryverification,
+not hour-longGPU session or temporal silhouetteproof. Evidence .local/qa/wind-clock-probe/ and
+.local/profile-wind-probe/{probe-hour-1792684498.json,probe-day-1792684550.json}.
+
+ProbeUNSET traceprofile completed1263frames, avg15.836ms,p9516.596ms,GPU4.472ms, mainCPU11.283ms.
+Diagnostic feature timings are NOT shippingperformance. Inclusive aim_frame6.4764ms, GPUpreprocess
+bindgroups3.3471ms, shadowbinwrites3.0687ms; don'tsum nested/parallelspans. Trace/table/JSON in
+.local/profile-wind-probe/. Unconditional ranged pick is source-backed candidate, not yet measured
+subspan attribution. Root review also found reload phase needs pick even when aimingfalse.
+
+Stageunit exactsource harness compiled but failednative linking twice (firstmissingthinLTO,
+thenmissing Windowsimport librarysearchpaths); ZEROtestsrun. Logs/provenance own.local; don't
+count asunitPASS orgamefailure. ActualGPU3stage testsabove passed. No more harness retries now.
+
+Next agent water_renderer owns ranged.rs + bench-renderer.ps1 + PERFORMANCE_ACTIONS.md only:
+skip pick ONLY when !in_aim && !reloading && preupdatefade==0, preserving magic hand/glow/draw,
+lastfadeframe/clips/hitsemantics. Add diagnostic cached legacyunusedpick toggle for SAMEBINARY
+A/B with identical visible/sim outputs, nested tracepickspan andbounded statecounts; script perrun
+override/record/restore. Source+targetedchecks only; no fullbuild/runtime untilmanagerreview.
+Old DesktopWindFocus unchanged. Current only sourceeditor water_renderer; no compiler/runtime
+running at this checkpoint (nextcheckmaystart). wind_clock done, unithelperblockedbylinkconfig.
