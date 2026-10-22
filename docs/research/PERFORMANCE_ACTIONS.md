@@ -56,3 +56,20 @@ lighting quality.
 early when the observed cells are unchanged, and the vegetation search is a bounded 7x7
 neighborhood. The per-frame resident-set difference checks still run, but no supplied profile
 indicates they are material to the steady-state baseline.
+
+## Grass-focus camera A/B evidence and trace follow-up (2026-10-22)
+
+The committed analytical camera workload was used to compare the shared-focus buffer against the old per-material focus path. Immutable artifacts and provenance are in `D:/gr-wt/codex-renderer/.local/artifacts/gothic-reforged-camera-{oldfocus,focus}.exe`; source snapshots/manifests and the reverse-patch proof are summarized in `docs/HANDOFF_CODEX_20261022.md`. The 1280x720 A/B/A/B run used 30s settled-world warmup, 20s per sample, two repetitions, output `.local/bench-grass-focus-camera/summary.json`. Per pair, average/p95/GPU ms old→shared: 11.6661/12.8463/3.3069→11.2035/12.2293/3.2022, then 11.7172/12.9147/3.3681→11.2142/12.2673/3.1892. Run medians changed −4.13% average (11.6917→11.2088ms), p95 12.8805→12.2483ms, GPU average 3.3375→3.1957ms. The route followed the same 10s-period, 2m-radius loop; 21 expected/actual samples per run stayed within 3.85µm position residual and zero quaternion-component residual. Entity count matched at 12,752; start visible meshes differed by at most five (0.32%), final counts by two or fewer. `observer_cm` returns `Player.fly_pos` in fly mode, which `grass_focus` consumes, so this route does exercise the moving 2cm-gated grass-focus updates. It bypasses hero/controller physics and hides the hero; it is not whole-game movement parity. Two repetitions give only a small descriptive estimate, not high-confidence causal proof. The earlier generic walking comparison’s 3.69% average reduction is not causal evidence: its route endpoints and visible-mesh counts differed materially.
+
+### Next bottleneck trace
+
+Once the wind probe source is frozen, combine it and trace support into one optimized build rather than linking a trace-only binary and then rebuilding. The existing app feature is `trace = ["viewer", "bevy/trace", "bevy/debug"]`; `--trace` is installed before the Bevy app, and the benchmark resets span counters when measurement begins. Bevy 0.20 function systems emit INFO `system` spans with a `name` field, which the app table keys as `system:<name>`; check for the wind-probe/system spans in the output rather than assuming they are present. Use the reviewed GNU environment and target:
+
+```sh
+source /c/Users/PowerTower/dev/gothic-reforged/.local/env.sh
+cd /d/gr-wt/codex-renderer
+export CARGO_TARGET_DIR=D:/gr-build/integrate RUST_MIN_STACK=67108864
+cargo +stable-x86_64-pc-windows-gnu build --release -j4 -p gothic-reforged --features viewer,trace --locked
+```
+
+Run that frozen artifact from the existing Wind runtime at 1280x720 with the wind-probe option chosen by its owner plus `--play --bench 20 --bench-warmup 30 --bench-camera --bench-gpu --bench-name windprobe-trace --trace`; keep unrelated `GR_*` flags unset. The bench JSON is written under runtime `.local/bench/` and, with trace enabled, contains `top_spans_per_frame` entries (`span`, `ms_per_frame`, `calls_per_frame`, `max_ms`); a companion `.local/bench/trace-<unix>.txt` contains the top spans and a systems-only section. These spans are inclusive and summed across threads, so nested totals must not be added as if they were disjoint frame costs. The trace/debug build is diagnostic only; its timings are not a release-performance result. Rebuild without `trace` for final performance comparison.
