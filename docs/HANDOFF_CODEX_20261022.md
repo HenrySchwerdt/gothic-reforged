@@ -1,6 +1,16 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
-## Latest active state — 2026-10-22 23:14 UTC
+## Latest active state — 2026-10-22 23:22 UTC
+
+REVISED build finished8m39s, parent7207 definitiveexit0, no compiler; compilede5a93e4.
+wind_clock NOW sole runtime owner: create-new immutable raycast-dda-range EXE/hash,
+corrected ignored `.local/bench-raycast-dda-range-runner.ps1`, forced4run+unforced4run
+Camera A/B then magic/bow/melee. Child env proof passes (only GR_AIM_PROFILE1),
+including exact restoration of previously empty/nonempty variables. All env cleanup
+uses Remove-Item; preflight expectedmaps before phases. No package until rootreview.
+Root must not launch parallel game/compiler. Later notes about running7207 superseded.
+
+## Prior active state — 2026-10-22 23:14 UTC
 
 Revised physics traversal source `e5a93e4`, optimized physics59/59PASS with real
 10,000cm aim-camera regression and explicit nonempty hit checks. Final log
