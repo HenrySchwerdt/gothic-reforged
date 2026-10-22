@@ -57,7 +57,7 @@ uses prepass Globals at group0/binding1 and adds existing normals only to custom
 NORMAL_PREPASS_OR_DEFERRED_PREPASS and VERTEX_NORMALS guards use explicit braced blocks.
 Build3 normal smoke passed, but GR_NOWIND failed; build4 exposed the previously unbraced guard.
 Source correction passes8 WESL/Naga variants and rejects the historical unbraced assignment.
-Final GPU validation of build5 is pending. WIND_STABILITY.md documents exact scope/limitations.
+Build5 passed both normal and GR_NOWIND runtime smokes without shader/renderer errors. WIND_STABILITY.md documents exact scope/limitations.
 Hourly continuity is still open: proposed shared ShaderBuffer with bounded CPU-f64 phases/gust,
 once-per-frame RenderQueue write, no per-material asset mutation or engine fork. Not implemented.
 
@@ -91,7 +91,7 @@ regression claim. See own `.local/bench-final-walk` and PERFORMANCE_ACTIONS.md.
 Commit4b2357e instruments --bench-walk readiness: stream/vegetation empty, placed player,
 91stableframes, then warmup. Records start/end poses, view transforms and1Hz route samples.
 300s timeout bounds continuous lack of readiness. Idle timing unchanged; route is time-driven,
-not deterministic physics. Runtime metadata smoke pending after build5. Benchmark script ebe9738
+not deterministic physics. Build5 metadata smoke passed (13route snapshots, valid readiness/start/end data). Benchmark script ebe9738
 rejects renderer failure logs even if exit0; import warnings mark manual review. Never time builds.
 
 ## Build/reproduce
@@ -132,3 +132,8 @@ in PERFORMANCE_ACTIONS.md. Preserve quality and compare matched routes, not aggr
 No new APK until local SDK prerequisites are provided/prepared; no headless result proves on-headset UX.
 Continue through existing heartbeat with scoped cheap coders and coordinated builds. Current release
 is a tested milestone, not completion of the full port or all renderer/VR goals.
+Active next-task agent: `/root/wind_clock` (gpt-6-luna), started13:34. It confirmed vegetation,
+tree and leaf rates come from the shared WindEnv packet and is implementing the bounded shared
+clock. No full game release build is authorized until manager coordination; targeted tests/checker
+are allowed. Do not duplicate its source changes/builds. User-facing Desktop release above remains
+frozen at edd3b55. The next clock work is not included in that EXE.
