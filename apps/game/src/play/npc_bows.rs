@@ -19,7 +19,7 @@ const CM: f32 = 0.01;
 /// The bow actor of one NPC.
 #[derive(Component)]
 pub struct NpcBowVisual {
-    owner: Entity,
+    pub owner: Entity,
     template: String,
     actor: String,
 }
@@ -151,7 +151,7 @@ pub fn npc_bows(
             vis.set_if_neq(Visibility::Hidden);
             continue;
         };
-        *tf = Transform::from_matrix(Mat4::from(root.affine() * *j));
+        *tf = super::ranged::bow_slot_transform(root, *j, *in_hands);
         vis.set_if_neq(Visibility::Inherited);
         if debug && let Ok((i, w, c)) = vis_dbg.get(bow_e) {
             eprintln!(

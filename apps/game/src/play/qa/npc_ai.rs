@@ -571,6 +571,69 @@ pub fn npc_archer() -> Sc {
     find_and_place(&mut sc, "RebWarrior", 1800.0);
     trace(&mut sc, "npcs");
     super::ranged::visual_watch(&mut sc);
+    sc.watch(|cx| {
+        use crate::walk::play::npc_bows::NpcBowVisual;
+        let Some(&id) = ids(cx, "npcs").first() else {
+            return;
+        };
+        let (drawn, bow_in_hand) = {
+            let a = cx.core().0.sim.actor(id);
+            (
+                a.drawn,
+                matches!(
+                    a.equipment.left.as_ref().map(|d| d.use_kind()),
+                    Some(gothic_sim::item::Use::Bow | gothic_sim::item::Use::CrossBow)
+                ),
+            )
+        };
+        if !(drawn && bow_in_hand) {
+            return;
+        }
+        let Some(&body) = cx
+            .world
+            .resource::<crate::walk::play::Roster>()
+            .by_actor
+            .get(&id)
+        else {
+            return;
+        };
+        let (cam, gt) = {
+            let mut q = cx
+                .world
+                .query_filtered::<(&Camera, &GlobalTransform), With<crate::walk::PlayerCamera>>();
+            let Ok((c, g)) = q.single(cx.world) else {
+                return;
+            };
+            (c.clone(), *g)
+        };
+        let size = cam
+            .logical_viewport_size()
+            .unwrap_or(Vec2::new(1280.0, 720.0));
+        let mut q = cx
+            .world
+            .query::<(&NpcBowVisual, &GlobalTransform, &ViewVisibility)>();
+        let mut hit = false;
+        for (b, g, v) in q.iter(cx.world) {
+            if b.owner == body
+                && v.get()
+                && let Some(p) =
+                    crate::walk::play::ranged::screen_of(&cam, &gt, g.translation() / CM)
+                && p.x > 0.0
+                && p.y > 0.0
+                && p.x < size.x
+                && p.y < size.y
+            {
+                hit = true;
+            }
+        }
+        if hit {
+            let n = cx.st.n.entry("vis_bow_hand".into()).or_insert(0.0);
+            *n += 1.0;
+            if *n == 30.0 {
+                cx.shot("bow_in_hand");
+            }
+        }
+    });
     sc.act("setup: the archer attacks the hero", |cx| {
         let id = ActorId(cx.st.n["tgt"] as u32);
         cx.st.store.insert("npcs".into(), id.0.to_string());

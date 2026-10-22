@@ -4,7 +4,7 @@
 //! so stats, weapons and armour stay Gothic. [`SimpleSink`] is a toy for headless flow tests.
 use crate::actions::StrikeKind;
 use gothic_sim::actor::Actor;
-use gothic_sim::combat::{Attack, resolve_hit};
+use gothic_sim::combat::Attack;
 use gothic_sim::sim::Sim;
 use gothic_sim::types::{Action, ActorId};
 use gothic_sim::world::WorldQuery;
@@ -149,23 +149,18 @@ impl<W: WorldQuery> HitSink for SimSink<'_, W> {
         };
         let (action, mult) = Self::action_of(s);
         if !commit {
-            let mut a = self.sim.actor(att).clone();
-            a.action = action;
-            let mut v = self.sim.actor(vic).clone();
-            let attack = Self::build(&a, action, mult);
-            let out = resolve_hit(
-                &self.sim.cfg,
-                &mut self.sim.rng.clone(),
-                &a,
-                &mut v,
-                &attack,
-            );
+            // Preview: the nominal blow (`amount * hit_mult`); the real outcome comes only from
+            // the ported `AssessHit` on commit, so no second damage path is kept here.
+            let v = self.sim.actor(vic);
+            let a = self.sim.actor(att);
+            let attack = Self::build(a, action, mult);
+            let dmg = (attack.amount as f32 * attack.hit_mult).round().max(0.0) as i32;
             return HitReport {
-                damage: out.damage,
+                damage: dmg,
                 hp: v.hp as f32,
                 max_hp: v.hp_max(&self.sim.cfg) as f32,
-                killed: out.killed(),
-                ignored: out.ignored.is_some(),
+                killed: v.hp <= dmg,
+                ignored: false,
             };
         }
         let previous = {

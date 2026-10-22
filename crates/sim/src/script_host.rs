@@ -234,6 +234,10 @@ pub struct ScriptTables {
     political_crimes: BTreeMap<se::Alignment, i32>,
     wanted: Vec<se::Alignment>,
     god: bool,
+    /// While a hit is assessed the reaction tasks the ported `AssessHit` sets (stumbles, knock
+    /// downs, death) are recorded here instead of entering the victim's script machine: the
+    /// simulation runs them as its own hit aftermath.
+    pub(crate) capture_task: Option<Option<State>>,
     /// Behaviour variants of the script port (default: the shipped game).
     pub variants: Option<SVariants>,
     /// AI commands queued by script states since the last drain.
@@ -765,8 +769,14 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
             .unwrap_or(se::NpcType::Personal)
     }
     fn alignment(&self, npc: EntityId) -> se::Alignment {
-        self.actor(npc)
-            .map_or(se::Alignment::None, |a| s_alignment(a.alignment))
+        self.actor(npc).map_or(se::Alignment::None, |a| {
+            // The player's side is the story's `player_alignment`.
+            s_alignment(if a.is_player {
+                self.sim.player_alignment
+            } else {
+                a.alignment
+            })
+        })
     }
     fn guard_status(&self, npc: EntityId) -> se::GuardStatus {
         self.script(npc).guard_status
@@ -809,6 +819,12 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
         if let Some(s) = self.script_mut(npc) {
             s.last_fight_ts = t;
         }
+    }
+    fn base_attitude_to_player(&self, npc: EntityId) -> se::Attitude {
+        self.actor(npc).map_or(se::Attitude::None, |a| {
+            se::Attitude::from_name(&format!("{:?}", a.base_attitude_to_player))
+                .unwrap_or(se::Attitude::None)
+        })
     }
     fn last_fight_vs_player(&self, npc: EntityId) -> se::LastFight {
         if self.script(npc).last_fight_friendly {
@@ -1174,6 +1190,10 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
         self.script(npc).task
     }
     fn set_task(&mut self, npc: EntityId, task: State) {
+        if let Some(cap) = self.sim.script.capture_task.as_mut() {
+            *cap = Some(task);
+            return;
+        }
         if let Some(s) = self.script_mut(npc) {
             s.task = Some(task);
             s.state = Some(task);
@@ -2024,7 +2044,7 @@ mod tests {
     use crate::sim::EventKind;
     use crate::types::Species;
     use crate::world::Grid2dWorld;
-    use gothic_script::damage::{HitEvent, assess_hit, give_xp};
+    use gothic_script::damage::give_xp;
     use gothic_script::host::AiCommand;
     use gothic_script::routine::select::select_routine_task;
     use gothic_script::stats;
@@ -2085,68 +2105,6 @@ mod tests {
         // The hero reads player memory: strength 100 from the new-game attributes.
         let h = host.player();
         assert_eq!(stats::attribute(&host, h, Attribute::Strength), 100);
-    }
-
-    fn duel_world() -> (Sim<Grid2dWorld>, ActorId, ActorId) {
-        let mut s = sim();
-        let hero = s.hero.unwrap();
-        let orc = {
-            let mut o = Actor::npc(ActorId(0), "Orc", Species::Orc, 5, 30);
-            o.alignment = Alignment::Orc;
-            s.spawn(o, Pos::flat(100.0, 0.0))
-        };
-        s.equip_def(
-            hero,
-            crate::item::ItemDef::weapon("It_Sword", "1H", "Blade", 50),
-        )
-        .expect("hero may wield the sword");
-        (s, hero, orc)
-    }
-
-    #[test]
-    fn script_damage_agrees_with_the_simulation() {
-        // Differential check: the same hit through `resolve_hit` and through the ported
-        // `AssessHit`, hero -> orc and orc -> hero, for every move multiplier.
-        use crate::combat::{Attack, resolve_hit};
-        use crate::types::Action as A;
-        for (hero_hits, act, act_s) in [
-            (true, A::Attack, se::Action::Attack),
-            (true, A::QuickAttack, se::Action::QuickAttack),
-            (true, A::HackAttack, se::Action::HackAttack),
-            (true, A::PowerAttack, se::Action::PowerAttack),
-            (false, A::Attack, se::Action::Attack),
-            (false, A::QuickAttack, se::Action::QuickAttack),
-            (false, A::HackAttack, se::Action::HackAttack),
-        ] {
-            let (mut reference_sim, hero, orc) = duel_world();
-            let (att_id, vic_id) = if hero_hits { (hero, orc) } else { (orc, hero) };
-            reference_sim.actor_mut(att_id).action = act;
-            reference_sim.actor_mut(vic_id).hp = 100_000;
-            let (att, mut vic) = (
-                reference_sim.actor(att_id).clone(),
-                reference_sim.actor(vic_id).clone(),
-            );
-            let attack = Attack::melee(&att);
-            let mut rng = reference_sim.rng.clone();
-            let reference = resolve_hit(&reference_sim.cfg, &mut rng, &att, &mut vic, &attack);
-
-            let (mut port, hero, orc) = duel_world();
-            let (att_id, vic_id) = if hero_hits { (hero, orc) } else { (orc, hero) };
-            port.actor_mut(att_id).action = act;
-            port.actor_mut(vic_id).hp = 100_000;
-            let mut host = SimHost::new(&mut port);
-            let (a, v) = (host.entity(att_id), host.entity(vic_id));
-            host.set_current_action(a, act_s);
-            let mut ev = HitEvent::melee(v, a, se::DamageType::Blade, attack.amount);
-            ev.weapon_name = attack.entity_name.clone();
-            ev.hit_mult = attack.hit_mult;
-            let out = assess_hit(&mut host, &ev);
-            assert_eq!(
-                out.damage, reference.damage,
-                "hero_hits={hero_hits} {act_s:?}: port {} vs sim {}",
-                out.damage, reference.damage
-            );
-        }
     }
 
     #[test]

@@ -47,7 +47,7 @@ pub mod vitals;
 pub mod world;
 
 pub use actor::Actor;
-pub use combat::{Attack, HitOutcome, resolve_hit};
+pub use combat::{Attack, HitOutcome};
 pub use config::SimConfig;
 pub use sim::Sim;
 pub use types::ActorId;
