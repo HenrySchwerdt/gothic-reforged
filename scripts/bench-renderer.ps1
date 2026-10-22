@@ -51,6 +51,35 @@ function Assert-NoBuildOrGameProcess {
     }
 }
 
+function Get-RendererLogDiagnostics([string[]] $LogPaths) {
+    $fatal = [System.Collections.Generic.List[string]]::new()
+    $review = [System.Collections.Generic.List[string]]::new()
+    $unresolvedImportPattern = '(?i)\b(?:unresolved|could not resolve|failed to resolve|could not find|cannot find|failed to load|unable to load|not found|missing)\b.{0,100}\b(?:shader|wesl|naga|imports?)\b|\b(?:shader|wesl|naga|imports?)\b.{0,100}\b(?:unresolved|not found|missing)\b'
+    $shaderFailurePattern = '(?i)(?:\b(?:shader|wesl|naga)\b.{0,120}\b(?:compile|compilation|parse|import|validation)\b.{0,80}\b(?:failed|error|invalid|unresolved|not found|missing)\b|\b(?:failed|error|invalid|unresolved|not found|missing|unable to (?:compile|parse|import|load))\b.{0,100}\b(?:shader|wesl|naga|imports?)\b)'
+    foreach ($logPath in $LogPaths) {
+        if (-not (Test-Path -LiteralPath $logPath -PathType Leaf)) { continue }
+        foreach ($line in [System.IO.File]::ReadLines($logPath)) {
+            $lineText = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($lineText)) { continue }
+            $unresolvedImport = $lineText -match $unresolvedImportPattern
+            $warningLine = $lineText -match '(?i)\b(?:WARN|WARNING)\b'
+            $rendererError = $lineText -match '(?i)\b(?:ERROR|FATAL|PANIC)\b.{0,160}\b(?:bevy_render|wgpu|renderer|render[_ ](?:device|pipeline|graph)|shader|naga|wesl)\b|\b(?:bevy_render|wgpu|renderer|render[_ ](?:device|pipeline|graph)|shader|naga|wesl)\b.{0,160}\b(?:ERROR|FATAL|PANIC)\b'
+            $validationError = $lineText -match '(?i)\b(?:ValidationRenderError|RenderValidationError|Validation Error)\b'
+            $shaderFailure = $lineText -match $shaderFailurePattern
+            $entry = "${logPath}: $lineText"
+            if ($warningLine -and $unresolvedImport) {
+                $review.Add($entry)
+            } elseif ($validationError -or $rendererError -or $shaderFailure -or $unresolvedImport) {
+                $fatal.Add($entry)
+            }
+        }
+    }
+    return [pscustomobject]@{
+        Fatal = $fatal.ToArray()
+        Review = $review.ToArray()
+    }
+}
+
 function Assert-CompatibleRuntimeSidecar([string] $Exe, [string] $ExpectedRuntime) {
     $sidecar = Join-Path (Split-Path -Parent $Exe) 'runtime-root.txt'
     if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { return }
@@ -129,8 +158,16 @@ try {
             $process = Start-Process -FilePath $exe -ArgumentList $argumentList -WorkingDirectory $runtime -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
             $process.WaitForExit()
             $process.Refresh()
+            $rendererDiagnostics = Get-RendererLogDiagnostics @($stdoutPath, $stderrPath)
+            if ($rendererDiagnostics.Fatal.Count -gt 0) {
+                $details = ($rendererDiagnostics.Fatal | Select-Object -First 8) -join [Environment]::NewLine
+                throw "$variant benchmark wegen Renderer-/Shader-Fehlerlogs verworfen. Logs: $stdoutPath ; $stderrPath$([Environment]::NewLine)$details"
+            }
             if ($process.ExitCode -ne 0) {
                 throw "$variant benchmark endete mit Exitcode $($process.ExitCode). Logs: $stdoutPath ; $stderrPath"
+            }
+            if ($rendererDiagnostics.Review.Count -gt 0) {
+                Write-Warning "$variant benchmark enthält möglicherweise vorübergehende Shader-Importwarnungen; vor Timing-Aussagen manuell prüfen. Logs: $stdoutPath ; $stderrPath"
             }
 
             $benchDirectory = Join-Path $runtime '.local\bench'
@@ -156,6 +193,8 @@ try {
                 json = (Split-Path -Leaf $jsonDestination)
                 stdoutLog = (Split-Path -Leaf $stdoutPath)
                 stderrLog = (Split-Path -Leaf $stderrPath)
+                rendererLogReviewRequired = ($rendererDiagnostics.Review.Count -gt 0)
+                rendererLogReviewFindings = @($rendererDiagnostics.Review)
                 startedUtc = $startedAt.ToString('o')
                 avgMs = [double]$measurement.avg_ms
                 p50Ms = [double]$measurement.p50_ms
@@ -205,10 +244,11 @@ $summary = [ordered]@{
     inheritedGrEnvironment = $inheritedGrEnvironment
     environmentNote = 'GR_RES wurde für beide Varianten auf Resolution gesetzt; alle anderen GR_* Prozessvariablen wurden geerbt und hier dokumentiert.'
     order = 'baseline, candidate repeated; runs interleaved A/B/A/B.'
+    requiresManualRendererLogReview = [bool]@($runRows | Where-Object { $_.rendererLogReviewRequired }).Count
     baseline = Get-GroupSummary $baselineRuns
     candidate = Get-GroupSummary $candidateRuns
     medianRunAvgChangePercent = $medianChangePct
-    interpretation = 'Deskriptiver Vergleich der Run-Mediane; wenige Wiederholungen liefern keine hohe statistische Sicherheit.'
+    interpretation = if (@($runRows | Where-Object { $_.rendererLogReviewRequired }).Count -gt 0) { 'Deskriptiver Vergleich; Renderer-/Shader-Importwarnungen erfordern manuelle Logprüfung vor Timing-Aussagen.' } else { 'Deskriptiver Vergleich der Run-Mediane; wenige Wiederholungen liefern keine hohe statistische Sicherheit.' }
     runs = $runRows.ToArray()
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputFull 'summary.json') -Encoding utf8
