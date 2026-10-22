@@ -536,20 +536,64 @@ fn shot_animations(
     core: Res<CoreRes>,
     roster: Res<super::Roster>,
     mut q: Query<&mut super::anim::OverlayQueue>,
-    hero: Query<Entity, With<HeroActor>>,
+    hero: Query<(Entity, &super::anim::CombatStance), With<HeroActor>>,
+    mut last: Local<Option<State>>,
 ) {
     use gothic_runtime::Event;
     let hero_id = core.0.hero;
     let entity_of = |id| {
         if id == hero_id {
-            hero.single().ok()
+            hero.single().ok().map(|h| h.0)
         } else {
             roster.by_actor.get(&id).copied()
         }
     };
+    // The hero's cast clips follow his script state: `Raise` while the cast state runs, `Hit` and
+    // `Recover` once `_AI_Cast_Execute` ran (the state moves on to `PS_Magic_Reload`). The clips
+    // are those of the cast action (`Cast`, `PowerCast`, `QuickCast`, `Summon`); a quick cast has
+    // its own clips with the staff only.
+    let now = core.0.sim.script.npc(hero_id).state;
+    let cast_action = |s: State| -> Option<&'static str> {
+        match s {
+            State::PsMagicCast => Some("Cast"),
+            State::PsMagicPowerCast => Some("PowerCast"),
+            State::PsMagicSummon => Some("Summon"),
+            State::PsMagicQuickCast => Some(
+                if hero
+                    .single()
+                    .is_ok_and(|h| h.1.0 == gothic_animation::Stance::Staff)
+                {
+                    "QuickCast"
+                } else {
+                    "Cast"
+                },
+            ),
+            _ => None,
+        }
+    };
+    if now != *last {
+        if let (Some(prev), Some(en)) = (*last, hero.single().ok().map(|h| h.0))
+            && let Some(action) = cast_action(prev)
+            && now == Some(State::PsMagicReload)
+            && let Ok(mut queue) = q.get_mut(en)
+        {
+            super::anim::queue_steps(&mut queue, &[(action, "Hit"), (action, "Recover")]);
+        }
+        if let (Some(cur), Some(en)) = (now, hero.single().ok().map(|h| h.0))
+            && let Some(action) = cast_action(cur)
+            && let Ok(mut queue) = q.get_mut(en)
+        {
+            super::anim::queue_steps(&mut queue, &[(action, "Raise")]);
+        }
+        *last = now;
+    }
     for e in events.read() {
         match &e.0 {
             Event::Projectile { owner, spell, .. } => {
+                if *owner == hero_id && *spell {
+                    // The hero's `Hit` and `Recover` follow his state (above).
+                    continue;
+                }
                 let Some(en) = entity_of(*owner) else {
                     continue;
                 };
@@ -557,24 +601,15 @@ fn shot_animations(
                     continue;
                 };
                 if *spell {
-                    // The hero's raise already ran; the missile leaves, hit and recover follow.
-                    let steps: &[(&'static str, &'static str)] = if *owner == hero_id {
-                        &[("Cast", "Hit"), ("Cast", "Recover")]
-                    } else {
-                        &[("Cast", "Raise"), ("Cast", "Hit"), ("Cast", "Recover")]
-                    };
-                    super::anim::queue_steps(&mut queue, steps);
+                    // The caster's raise already ran; the missile leaves, hit and recover follow.
+                    super::anim::queue_steps(
+                        &mut queue,
+                        &[("Cast", "Raise"), ("Cast", "Hit"), ("Cast", "Recover")],
+                    );
                 } else if *owner == hero_id {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Recover")]);
                 } else {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Aim"), ("Aim", "Recover")]);
-                }
-            }
-            Event::CastStarted(_) => {
-                if let Some(en) = hero.single().ok()
-                    && let Ok(mut queue) = q.get_mut(en)
-                {
-                    super::anim::queue_steps(&mut queue, &[("Cast", "Raise")]);
                 }
             }
             _ => {}

@@ -450,7 +450,10 @@ pub fn bow_faithful() -> Sc {
     turn_to(&mut sc, "look up", 3000.0, 0.45);
     sc.wait(0.8);
     sc.check("aiming up blends Aim_O_Up over Aim_O_Fwd", |cx| {
-        let clips = cx.st.store.get("clips_seen").cloned().unwrap_or_default();
+        let mut clips = cx.st.store.get("clips_seen").cloned().unwrap_or_default();
+        for c in cx.world.resource::<RangedView>().clips.iter().flatten() {
+            clips.push_str(c);
+        }
         expect(
             clips.contains("_O_Up"),
             "an Up variant was played".to_string(),
@@ -461,7 +464,10 @@ pub fn bow_faithful() -> Sc {
     turn_to(&mut sc, "look down", -3000.0, -0.45);
     sc.wait(0.8);
     sc.check("aiming down blends Aim_O_Down over Aim_O_Fwd", |cx| {
-        let clips = cx.st.store.get("clips_seen").cloned().unwrap_or_default();
+        let mut clips = cx.st.store.get("clips_seen").cloned().unwrap_or_default();
+        for c in cx.world.resource::<RangedView>().clips.iter().flatten() {
+            clips.push_str(c);
+        }
         expect(
             clips.contains("_O_Down"),
             "a Down variant was played".to_string(),

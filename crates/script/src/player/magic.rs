@@ -5,7 +5,7 @@
 //! picks the state by the spell's animation ([`crate::magic::cast::get_cast_action`]): quick
 //! cast, cast, power cast, summon or flame sword. Each of them first asks the cast check
 //! ([`crate::magic::cast::can_cast`]), plays the cast animation and runs the cast
-//! ([`crate::magic::cast::run_cast`], the DLL's `_AI_Cast` begin and execute phases), and then
+//! ([`crate::magic::cast::cast_begin`] and [`crate::magic::cast::cast_execute`], the DLL's `_AI_Cast` begin and execute phases), and then
 //! `PS_Magic_Reload` re-holds the spell (after the reload delay of the spell) or, for a used-up
 //! scroll, drops back to `PS_Normal`.
 
@@ -41,9 +41,31 @@ fn target_of(host: &dyn ScriptHost, p: EntityId) -> EntityId {
     if t.is_some() { t } else { host.focus_entity() }
 }
 
+/// `gEAction` ids the magic loop reads from the queue (the jump table of `PS_Magic_Loop`,
+/// S:7a590): the staff parade (16), the cast (44), power cast (45), quick cast (47), summon (48),
+/// jump (57), weapon key (68), flame sword (72), sneak (77), quick slots (131..140) and potions
+/// (141..143).
+const ID_PARADE: u32 = 16;
+const ID_CAST: u32 = 44;
+const ID_POWER_CAST: u32 = 45;
+const ID_QUICK_CAST: u32 = 47;
+const ID_SUMMON: u32 = 48;
+const ID_JUMP: u32 = 57;
+const ID_HOLD: u32 = 68;
+const ID_FLAME_SWORD: u32 = 72;
+const ID_SNEAK: u32 = 77;
+const ID_QUICK_SLOT_BASE: u32 = 131;
+const ID_POTION_BASE: u32 = 141;
+
+/// `PSFocus.CurrentMode` of the magic task (`gECombatMode` magic = 4, `GetFocusEntity(.., 4)`).
+pub const FOCUS_MODE_MAGIC: u32 = 4;
+/// `PSCharacterControl::SetMovementConstraints` of the casting states (`_DAT_101074cc`): the
+/// camera does not steer the body, the alignment target does.
+pub const CAST_CONSTRAINT_DEGREES: f32 = 360.0;
+
 /// Port of `PS_Magic` (S:79e20): without a spell in hand the hero is back in `PS_Normal`.
-/// Otherwise he enters combat mode, remembers the spell (`LastSpell`), holds it in the right
-/// hand and stands up; then `PS_Magic_Loop`.
+/// Otherwise he enters combat mode, clears focus, look-at and alignment, remembers the spell
+/// (`LastSpell`), holds it in the right hand and stands up; then `PS_Magic_Loop`.
 fn ps_magic(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     gothic_portcov::hit!("ps_magic");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Magic {
@@ -54,6 +76,14 @@ fn ps_magic(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
         0 => {
             host.set_ai_mode(p, AiMode::Combat);
             host.set_current_target(p, EntityId::NONE);
+            host.set_last_weapon_config(2);
+            host.set_focus_entity(EntityId::NONE);
+            host.set_focus_current_mode(FOCUS_MODE_MAGIC);
+            host.set_look_at(p, EntityId::NONE);
+            host.set_alignment_target(p, EntityId::NONE);
+            // Whatever the state before left in the constraint [I]: the loop gives the body to the
+            // camera (`sub_20b0`) as soon as the hero moves; before that it keeps the last one.
+            host.set_movement_constraints(p, crate::player::ranged::FOLLOW_CAMERA_CONSTRAINT);
             let right = host.find_stack_index(p, Slot::RightHand);
             let name = host.stack_spell(p, right);
             host.set_last_spell(p, &name);
@@ -71,9 +101,11 @@ fn ps_magic(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     }
 }
 
-/// Port of `PS_Magic_Loop` (S:7a590): a spell that works on a character (the focus-bound
-/// ones) takes the focused character as target; otherwise there is none. The hero stays here
-/// until the weapon is put away.
+/// Port of `PS_Magic_Loop` (S:7a590), run every pass: the target is the entity the queued action
+/// names, else (for the spells that act on a character) the focused one; it is written to the
+/// focus and to `CurrentTarget`. While a movement key is down the alignment is cleared and the
+/// body follows the camera (`sub_20b0`). Then the head of the action queue becomes the next state:
+/// the casts, the staff parade, jump, sneak, the weapon key, quick slots and potions.
 fn ps_magic_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     gothic_portcov::hit!("ps_magic_loop");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Magic {
@@ -81,20 +113,66 @@ fn ps_magic_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
         return Flow::Done;
     }
     let needs_focus = cast::hand_spell(host, p).is_some_and(|s| s.needs_focus);
-    let target = if needs_focus {
-        host.focus_entity()
-    } else {
-        EntityId::NONE
+    let queued = host.action_queue_head();
+    let target = match queued {
+        Some((_, e)) if e.is_some() => e,
+        _ if needs_focus => host.focus_entity(),
+        _ => EntityId::NONE,
     };
+    host.set_focus_entity(target);
     host.set_current_target(p, target);
-    host.queue_ai(p, AiCommand::WaitMs { ms: 100 });
-    Flow::Yield
+    if host.movement_key_down() {
+        host.set_alignment_target(p, EntityId::NONE);
+        host.set_movement_constraints(p, crate::player::ranged::FOLLOW_CAMERA_CONSTRAINT);
+    }
+    host.set_current_action(p, Action::None);
+    let Some((id, _)) = queued else {
+        host.queue_ai(p, AiCommand::WaitMs { ms: 20 });
+        return Flow::Yield;
+    };
+    host.action_queue_pop();
+    let next = match id {
+        ID_PARADE => Some(State::PsMagicStaffParade),
+        ID_CAST => Some(State::PsMagicCast),
+        ID_POWER_CAST => Some(State::PsMagicPowerCast),
+        ID_QUICK_CAST => Some(State::PsMagicQuickCast),
+        ID_SUMMON => Some(State::PsMagicSummon),
+        ID_JUMP => Some(State::PsMagicJump),
+        ID_FLAME_SWORD => Some(State::PsMagicFlameSword),
+        ID_SNEAK => Some(State::PsMagicSneak),
+        ID_HOLD => {
+            crate::player::select_weapon::holster_from_melee(host, p);
+            None
+        }
+        n if (ID_QUICK_SLOT_BASE..ID_QUICK_SLOT_BASE + 10).contains(&n) => {
+            host.emit(PlayerEvent::QuickSlot(n - ID_QUICK_SLOT_BASE));
+            None
+        }
+        n if (ID_POTION_BASE..ID_POTION_BASE + 3).contains(&n) => {
+            host.emit(PlayerEvent::PotionKey(n - ID_POTION_BASE));
+            None
+        }
+        _ => None,
+    };
+    match next {
+        Some(state) => {
+            host.set_state(p, state);
+            Flow::Done
+        }
+        None => {
+            host.queue_ai(p, AiCommand::WaitMs { ms: 20 });
+            Flow::Yield
+        }
+    }
 }
 
 /// Port of `PS_Magic_QuickCast` (S:7ad30), `PS_Magic_Cast` (S:7b0a0), `PS_Magic_PowerCast`
-/// (S:7b410) and `PS_Magic_Summon` (S:7bee0): check, face the target, stop, play the cast
-/// animation and run the cast. Afterwards `Spl_SoulTravel` leaves the body (`PS_Ghost`),
-/// `Spl_DuskToDawn` runs `PS_DuskToDawn`, everything else reloads.
+/// (S:7b410) and `PS_Magic_Summon` (S:7bee0): the cast check (a refused cast drops the queued
+/// action and returns to the loop), then, outside the first-person view, the body aligns to the
+/// target (a summon has none) with the blocked constraint; `_AI_Cast` starts (the spell is loaded
+/// and its mana paid), the cast animation plays and the cast executes at its end. Afterwards
+/// `Spl_SoulTravel` leaves the body (`PS_Ghost`), `Spl_DuskToDawn` runs `PS_DuskToDawn`,
+/// everything else reloads.
 fn ps_magic_cast(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     gothic_portcov::hit!("ps_magic_cast");
     let state = host.current_state(p).unwrap_or(State::PsMagicCast);
@@ -114,13 +192,23 @@ fn ps_magic_cast(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
             host.set_current_target(p, target);
             host.set_current_action(p, action);
             host.set_ani_state(p, AniState::Stand);
+            if !host.camera_in_first_person() {
+                let aligned = if state == State::PsMagicSummon {
+                    EntityId::NONE
+                } else {
+                    target
+                };
+                host.set_alignment_target(p, aligned);
+                host.set_movement_constraints(p, CAST_CONSTRAINT_DEGREES);
+            }
             host.full_stop(p);
+            cast::cast_begin(host, p, power);
             host.queue_ai(p, AiCommand::Action { action, secs: 1 });
             Flow::Yield
         }
         _ => {
             let last = host.slot_spell_name(p, Slot::RightHand);
-            cast::run_cast(host, p, power);
+            cast::cast_execute(host, p);
             // The `Cast_Hit` and `Cast_Recover` clips play after the missile left.
             let (hit, recover) = match action {
                 Action::QuickCast => (200, 360),
@@ -152,6 +240,7 @@ fn ps_magic_cast(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 fn ps_magic_summon_abort(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     gothic_portcov::hit!("ps_magic_summon_abort");
     let stack = host.find_stack_index(p, Slot::RightHand);
+    host.full_stop(p);
     cast::start_cast_phase(host, p, EntityId::NONE, stack, Phase::Abort);
     host.set_state(p, State::PsMagicLoop);
     Flow::Done

@@ -157,8 +157,8 @@ pub fn select_spell(host: &mut dyn ScriptHost, player: EntityId, template: &str)
     true
 }
 
-/// The cast key: pick the cast state by the animation of the spell in hand
-/// ([`crate::magic::cast::get_cast_action`]). `power` is a long press; a charged spell cast with
+/// The cast key: queue the cast action of the animation of the spell in hand
+/// ([`crate::magic::cast::get_cast_action`]); the returned state is the one the loop will enter. `power` is a long press; a charged spell cast with
 /// a short press is a plain cast. Only works from the magic loop.
 pub fn cast_spell(
     host: &mut dyn ScriptHost,
@@ -183,8 +183,10 @@ pub fn cast_spell(
     let Some(state) = crate::player::magic::state_for_action(action) else {
         return Err(CastError::NoSpell);
     };
+    // The cast key of `OnMagicHandleInput` queues the action of the spell; the magic loop turns it
+    // into the state (`PS_Magic_Loop`, S:7a590). This entry point is for callers without a key.
     host.set_current_target(player, target);
-    host.set_state(player, state);
+    host.action_queue_push(action.raw(), target);
     Ok(state)
 }
 

@@ -159,15 +159,11 @@ fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<Core
     } else if constraint == gothic_sim::script::player::ranged::FOLLOW_CAMERA_CONSTRAINT
         && matches!(
             core.0.sim.hero_script_state().0,
-            Some(ScriptState::PsRanged)
+            Some(ScriptState::PsRanged | ScriptState::PsMagic)
         )
     {
         // `ProcessMovements` (G:0xddd40): with the constraint at 0 the body is aligned to the
         // camera direction every frame (`SetAlignmentLookAt`), whatever the wish direction.
-        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
-    } else if state.drawn
-        && core.0.sim.actor(core.0.hero).equipment.weapon_mode() == WeaponMode::Magic
-    {
         face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
     }
     player.face = face.filter(|f| f.length_squared() > 1.0);
@@ -252,7 +248,10 @@ fn potion_of(core: &CoreRes, n: u32) -> Option<String> {
 /// The weapon key: out of `PS_Melee_Loop` it is an action in the player's queue (`Hold`, 68), out
 /// of `PS_Normal_Loop` the script's `OnPlayerSelectWeapon` runs at once.
 fn weapon_key(task: PlayerTask, focus: Option<ActorId>, commands: &mut MessageWriter<CoreCommand>) {
-    if matches!(task, PlayerTask::Melee | PlayerTask::Ranged) {
+    if matches!(
+        task,
+        PlayerTask::Melee | PlayerTask::Ranged | PlayerTask::Magic
+    ) {
         commands.write(CoreCommand(Command::PlayerAction {
             id: msg::HOLD,
             focus,
@@ -418,7 +417,7 @@ pub(super) fn input(
             left_one_hander_or_torch: facts.left_one_hander_or_torch,
             finishing_target: facts.finishing_target,
         },
-        cast_action: cast_ready.then_some(msg::CAST),
+        cast_action: (cast_ready && facts.cast_action != 0).then_some(facts.cast_action),
         extended_hold: core.0.sim.cfg.ai_mode,
     };
     let msgs = frame.msgs.clone();
@@ -431,11 +430,6 @@ pub(super) fn input(
     // (`PS_Ranged_Aim`: `PSFocus::SetFocusEntity(GetFocusEntity(ranged))`, `PS_Magic_Loop`: the
     // focus only for spells with `SpellTarget` = focus; the others are cast free along the
     // forward axis, `MagicProjectile`). The melee layer picks its own target (`PS_Melee_Loop`).
-    let target_npc = state.target.and_then(|t| match t {
-        Target::Npc(a) => Some(a),
-        _ => None,
-    });
-    let target = target_npc;
     let queue_focus = state.focus;
 
     if std::env::var_os("GR_INPUT_DEBUG").is_some() && !orders.is_empty() {
@@ -467,7 +461,8 @@ pub(super) fn input(
             // (`PS_Ranged_Walk_Loop`, `PS_Ranged_Aim_Loop`, `OnPowerAim_Loop`). Jump and sneak
             // also move the body, which the host does at once.
             Order::Message(id)
-                if task == PlayerTask::Ranged && !matches!(id, msg::JUMP | msg::SNEAK) =>
+                if matches!(task, PlayerTask::Ranged | PlayerTask::Magic)
+                    && !matches!(id, msg::JUMP | msg::SNEAK) =>
             {
                 commands.write(CoreCommand(Command::PlayerAction {
                     id,
@@ -479,12 +474,6 @@ pub(super) fn input(
                 msg::SNEAK => sneak_toggle = true,
                 msg::HOLD => draw = true,
                 msg::USE => use_pressed = true,
-                msg::CAST | msg::POWER_CAST | msg::QUICK_CAST | msg::SUMMON => {
-                    commands.write(CoreCommand(Command::CastSpell {
-                        target,
-                        power: true,
-                    }));
-                }
                 m if (msg::QUICK_SLOT_BASE..msg::QUICK_SLOT_BASE + 10).contains(&m) => {
                     // `QuickUse n` is named after its key: n = 1..9 then 0, so key 0 is slot 10.
                     quick = Some(((m - msg::QUICK_SLOT_BASE + 9) % 10) as usize);
@@ -544,7 +533,12 @@ pub(super) fn input(
 
     // ---- weapons -------------------------------------------------------------------------------------
     if draw {
-        if mode == WeaponMode::Melee || matches!(task, PlayerTask::Melee | PlayerTask::Ranged) {
+        if mode == WeaponMode::Melee
+            || matches!(
+                task,
+                PlayerTask::Melee | PlayerTask::Ranged | PlayerTask::Magic
+            )
+        {
             // The weapon key: `OnPlayerSelectWeapon`; the draw is the task's `_AI_Hold...`.
             weapon_key(task, queue_focus, &mut commands);
         } else {
@@ -558,7 +552,12 @@ pub(super) fn input(
         }
     }
     if let Some(d) = script.draw.take() {
-        if mode == WeaponMode::Melee || matches!(task, PlayerTask::Melee | PlayerTask::Ranged) {
+        if mode == WeaponMode::Melee
+            || matches!(
+                task,
+                PlayerTask::Melee | PlayerTask::Ranged | PlayerTask::Magic
+            )
+        {
             if d != (core.0.sim.actor(core.0.hero).drawn) {
                 weapon_key(task, queue_focus, &mut commands);
             }
