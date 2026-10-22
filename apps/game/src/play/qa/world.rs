@@ -917,6 +917,7 @@ pub fn world_census() -> Sc {
             cx.st.n.insert(format!("c_{city}"), (want as i64 - failed as i64 - live as i64) as f64);
         });
         sc.shot(city);
+        clip_probe(&mut sc, city);
     }
     sc.act("stop the frame clock", |cx| {
         cx.st.n.insert("ft_on".into(), 0.0);
