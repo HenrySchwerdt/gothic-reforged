@@ -155,16 +155,22 @@ try {
             $argumentList = @('--play', '--bench', "$Seconds", '--bench-warmup', "$WarmupSeconds", '--bench-name', $runName, '--bench-gpu')
             if ($Walk) { $argumentList += '--bench-walk' }
             $startedAt = [DateTime]::UtcNow
-            $process = Start-Process -FilePath $exe -ArgumentList $argumentList -WorkingDirectory $runtime -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
-            $process.WaitForExit()
-            $process.Refresh()
+            $process = Start-Process -FilePath $exe -ArgumentList $argumentList -WorkingDirectory $runtime -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -Wait
+            if ($null -eq $process -or -not $process.HasExited) {
+                throw "$variant benchmark: Prozessabschluss wurde nicht bestätigt. Logs: $stdoutPath ; $stderrPath"
+            }
+            $exitCodeProperty = $process.PSObject.Properties['ExitCode']
+            if ($null -eq $exitCodeProperty -or $null -eq $exitCodeProperty.Value) {
+                throw "$variant benchmark: Exitcode konnte nach Prozessende nicht gelesen werden. Logs: $stdoutPath ; $stderrPath"
+            }
+            $exitCode = [int]$exitCodeProperty.Value
             $rendererDiagnostics = Get-RendererLogDiagnostics @($stdoutPath, $stderrPath)
             if ($rendererDiagnostics.Fatal.Count -gt 0) {
                 $details = ($rendererDiagnostics.Fatal | Select-Object -First 8) -join [Environment]::NewLine
                 throw "$variant benchmark wegen Renderer-/Shader-Fehlerlogs verworfen. Logs: $stdoutPath ; $stderrPath$([Environment]::NewLine)$details"
             }
-            if ($process.ExitCode -ne 0) {
-                throw "$variant benchmark endete mit Exitcode $($process.ExitCode). Logs: $stdoutPath ; $stderrPath"
+            if ($exitCode -ne 0) {
+                throw "$variant benchmark endete mit Exitcode $exitCode. Logs: $stdoutPath ; $stderrPath"
             }
             if ($rendererDiagnostics.Review.Count -gt 0) {
                 Write-Warning "$variant benchmark enthält möglicherweise vorübergehende Shader-Importwarnungen; vor Timing-Aussagen manuell prüfen. Logs: $stdoutPath ; $stderrPath"
