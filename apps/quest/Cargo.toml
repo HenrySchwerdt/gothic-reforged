@@ -1,0 +1,39 @@
+[package]
+name = "gothic-quest"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "gothic_quest"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gothic-xr-quest = { path = "../../crates/xr-quest" }
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_asset", "bevy_camera"] }
+anyhow.workspace = true
+log = "0.4"
+gothic-cook = { path = "../../crates/cook", default-features = false }
+gothic-physics = { path = "../../crates/physics" }
+gothic-render-rules = { path = "../../crates/render-rules" }
+gothic-vr = { path = "../../.local/vendor/crates/vr" }
+gothic-vr-physics = { path = "../../.local/vendor/crates/vr-physics" }
+gothic-vr-melee = { path = "../../.local/vendor/crates/vr-melee" }
+gothic-vr-archery = { path = "../../.local/vendor/crates/vr-archery" }
+gothic-vr-npc = { path = "../../.local/vendor/crates/vr-npc" }
+gothic-sim = { path = "../../crates/sim" }
+gothic-animation = { path = "../../crates/animation" }
+gothic-formats = { path = "../../crates/formats" }
+gothic-environment = { path = "../../crates/environment" }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+texture2ddecoder = "0.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_log-sys = "0.3"
+
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["png", "bevy_window"] }
