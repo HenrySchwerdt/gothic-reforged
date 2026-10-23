@@ -72,3 +72,25 @@ The manager read `hz-quest-verify-first` and used Meta's `vr_docs_search` and
 lists SDK platform/build tools and NDK as separate setup components. Its returned
 page includes legacy API/version examples; those are not evidence of current Store
 minimums. This checkpoint intentionally makes no new compatibility or policy claim.
+
+## File-only preflight utility
+
+`scripts/quest/check-apk-inputs.ps1` emits one JSON object and never runs the named binaries. It requires absolute SDK, NDK, OpenXR loader and native library paths; SDK/JDK defaults come only from ANDROID_HOME or ANDROID_SDK_ROOT and JAVA_HOME. It checks the standalone qmine manifest/lock, SDK build-tools 35.0.0, platform android-34, NDK/JDK files, explicit .so inputs, and equality of the canonical/staged manifest SHA-256. These version numbers are copied from the existing build script, not policy guidance. Exit 0 means file-inputs-only; exit 2 reports missing, wrong-type or hash-mismatched inputs. A pass does not validate binary compatibility, signing, APK output, or headset behavior.
+
+Example with explicit paths:
+
+    .\scripts\quest\check-apk-inputs.ps1 -SdkRoot 'C:\Android SDK' -NdkRoot 'D:\NDK r28c' -OpenXrLoader 'D:\deps\libopenxr_loader.so' -NativeLibrary 'D:\build\libgothic_quest.so' -JdkRoot 'C:\Program Files\Java\jdk-18'
+
+Verification: PowerShell AST parsing reported zero errors. Synthetic dummy-file
+fixtures under `.local/quest-apk-preflight/fixture space/` exercised matching inputs
+(exit0), missing native library (exit2), manifest mismatch (exit2), and drive-relative
+`C:relative` rejection (exit2). Space-containing absolute paths passed. The checker
+does not execute the dummy files; this intentionally verifies file checks only.
+
+Root's explicit real-path invocation confirmed child exit2, pass=false and matching
+manifest hashes; only the SDK root and its four expected files were missing when
+read-only primary NDK, loader, native library and JDK paths were supplied. Evidence:
+`.local/quest-apk-preflight/root-real-exitcheck-summary.json` and corresponding JSON
+and stderr log. Earlier wrapper exit-status anomalies and failed logs are preserved;
+the explicit child status above supersedes them. No native build, signing, tool
+version invocation or device operation ran. Do not repeat this check until inputs change.

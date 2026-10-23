@@ -8,6 +8,12 @@ outputs into primary. Exact SDK inputs remain absent. See
 `docs/research/QUEST_APK_PREREQUISITES.md` for evidence and isolated future inputs.
 No install/configuration, native rebuild, APK/signing, or device operation occurred.
 Do not repeat this audit/build while inputs remain unchanged. No own jobs pending.
+Added `scripts/quest/check-apk-inputs.ps1`: read-only file/type checks plus staged
+manifest SHA equality; JSON and exit0/2, no tools executed. Synthetic matching,
+missing-file, mismatched-manifest and drive-relative-path cases passed. Root real
+explicit-input check returned child exit2, manifest match, missing SDK + four SDK
+files only. Logs under `.local/quest-apk-preflight/`; see prerequisites note for
+limits. File-input completeness is not build/tool/ABI/APK/headset validation.
 
 ## Latest reporting correction
 
