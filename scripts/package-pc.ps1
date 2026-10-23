@@ -117,7 +117,13 @@ $readmeLines = @(
     'Auflösung und denselben Optionen; ein normales Spielfenster mit VSync eignet sich nicht',
     'zum Vergleich der maximalen Bildrate.', '',
     'Die Laufzeit ist ein getesteter Integrationsstand und kein vollständiger Gothic-3-Port;',
-    'Spielinhalte und Funktionen können unvollständig sein.'
+    'Spielinhalte und Funktionen können unvollständig sein.', '',
+    'Bekannte Einschränkungen dieses Standes',
+    'Der Menüpunkt Neues Spiel setzt die laufende Sitzung noch nicht zurück.',
+    'Ein erneuter Start der EXE beginnt eine frische Sitzung; eigene Spielstände',
+    'lassen sich über Spiel laden wiederherstellen. Unterstützt wird das eigene',
+    '.g3rs-Format, nicht das originale Gothic-3-Spielstandformat.',
+    'Der vollständige ursprüngliche Spielstart und Questablauf sind noch nicht umgesetzt und geprüft.'
 )
 [System.IO.File]::WriteAllText((Join-Path $outputFull 'LIESMICH.txt'), [string]::Join([Environment]::NewLine, $readmeLines), [System.Text.UTF8Encoding]::new($false))
 
