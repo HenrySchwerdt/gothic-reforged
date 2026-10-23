@@ -5,7 +5,9 @@ import bevy_pbr::render::{
     mesh_view_bindings::{view, globals},
     pbr_functions::main_pass_post_lighting_processing,
     pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
+    view_transformations::depth_ndc_to_view_z,
 };
+import bevy_pbr::prepass::utils::prepass_depth;
 
 struct WaterParams {
     sun_dir: vec4<f32>,
@@ -13,7 +15,7 @@ struct WaterParams {
     shallow: vec4<f32>,
     sky: vec4<f32>,
     sun_color: vec4<f32>,
-    // x: wave strength, y: normal-map Y sign, z: opacity
+    // x: wave strength, y: normal-map Y sign, z: base opacity, w: shoreline fade distance (m)
     misc: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> water: WaterParams;
@@ -49,7 +51,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var col = mix(body, refl_sky, clamp(fres * 1.6, 0.0, 1.0));
     let spec = pow(max(dot(r, sun), 0.0), 220.0);
     col = col + water.sun_color.rgb * spec * 2.5;
-    let alpha = clamp(mix(water.misc.z, 1.0, fres), 0.0, 1.0);
+    // Bevy uses reverse-Z: prepass clear/far depth is 0. Convert both values with Bevy's
+    // projection helper before subtracting so the fade uses linear view-space metres. Water
+    // opts out of the prepass, so this is the opaque scene behind it, never water self-depth.
+    let scene_depth_ndc = prepass_depth(in.position, 0u);
+    var shoreline = 1.0;
+    if scene_depth_ndc > 0.0 {
+        let scene_view_z = depth_ndc_to_view_z(scene_depth_ndc);
+        let water_view_z = depth_ndc_to_view_z(in.position.z);
+        let scene_gap = max(water_view_z - scene_view_z, 0.0);
+        shoreline = clamp(scene_gap / max(water.misc.w, 0.001), 0.0, 1.0);
+    }
+    let alpha = clamp(mix(water.misc.z, 1.0, fres) * shoreline, 0.0, 1.0);
 
     var pbr = pbr_input_new();
     pbr.material.flags = STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
