@@ -9,6 +9,25 @@ Ablation switches: `GR_HIDE=terrain,static,tree,foliage,water`, `GR_NOSHADOW`, `
 `GR_RES=WxH`, `GR_CASC/GR_SHDIST/GR_SHFIRST/GR_SHMAP`, `GR_NOCULL`. Other agents' builds skew timings: compare
 relative numbers from interleaved runs. Resolution 640x360 did not change the time: not fill bound.
 
+`--bench-walk` waits until tile and vegetation queues are empty, the normal player has been placed, and
+the existing smoke stability condition has held for 91 frames. Its warm-up then starts, followed by
+the measured interval and a forward-5 s/back-5 s route clock. Each JSON sample records a per-run ID,
+readiness wait, start/end player position and yaw, camera transform, entity/visible-mesh counts, and
+one route snapshot per second. A 300 s readiness timeout exits with an error; configured warm-up is
+counted only after readiness and is not included in that timeout. These fields expose mismatched
+workloads; they do not guarantee equal movement distance when frame/input rates or collision response
+differ, so compare route endpoints and counts before attributing A/B timing differences to code.
+
+`--bench-camera` is a separate renderer/focus workload for `--bench <finite-positive-seconds>` and
+cannot be combined with `--bench-walk`. It waits for the same settled-world gate and post-ready warm-up,
+then moves a hidden, physics-free camera around a 10 s horizontal circle (2 m radius, at most 4 m from
+the measured anchor). The pose is computed from monotonic elapsed time, not integrated frame deltas;
+normal play and `--bench-walk` are unchanged. JSON records the initial anchor, each sample's benchmark
+and trajectory times, expected and actual camera poses, plus entity/visibility counts. Compare these
+raw values across runs and reject mismatched trajectories or geometry rather than inferring a speedup.
+This measures renderer/focus behavior, not player movement or hero rendering. In the PowerShell
+benchmark harness, pass `-Camera` instead of `-Walk`.
+
 ## Findings (loaded machine, ms median)
 | Change | Before | After |
 |---|---|---|

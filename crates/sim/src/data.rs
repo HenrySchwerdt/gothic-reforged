@@ -46,6 +46,9 @@ pub struct NpcRecord {
     pub immortal: bool,
     pub enclave: Option<String>,
     pub attitude_to_player: String,
+    /// Decoded teacher subjects from `gCNPC_PS`; absent in older exported `npcs.json` files.
+    pub teach_attribs: Vec<String>,
+    pub teach_skills: Vec<String>,
     pub damage: Option<DamageDef>,
     pub inventory: InventoryRec,
     pub position: [f32; 3],
@@ -169,6 +172,8 @@ mod tests {
             200,
         ));
         let f = NpcFile::from_json(NPCS).unwrap();
+        assert!(f.entity("orc_test").unwrap().teach_attribs.is_empty());
+        assert!(f.entity("orc_test").unwrap().teach_skills.is_empty());
         let cfg = SimConfig::default();
         let a = f
             .entity("orc_test")
@@ -187,5 +192,21 @@ mod tests {
         let w = default_weapon(&items, Species::Orc).unwrap();
         assert_eq!(w.name, "It_Halberd_Orc_01");
         assert!(default_weapon(&items, Species::Wolf).is_none());
+    }
+
+    #[test]
+    fn teacher_subjects_decode_from_npcs_json_and_older_records_default_empty() {
+        let file = NpcFile::from_json(
+            r#"{"entities":[{"name":"Teacher","teach_attribs":["STR"],"teach_skills":["Perk_1H_2"]}]}"#,
+        )
+        .unwrap();
+        let teacher = file.entity("Teacher").unwrap();
+        assert_eq!(teacher.teach_attribs, vec![String::from("STR")]);
+        assert_eq!(teacher.teach_skills, vec![String::from("Perk_1H_2")]);
+
+        let old = NpcFile::from_json(r#"{"entities":[{"name":"Old"}]}"#).unwrap();
+        let old = old.entity("Old").unwrap();
+        assert!(old.teach_attribs.is_empty());
+        assert!(old.teach_skills.is_empty());
     }
 }

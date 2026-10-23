@@ -15,6 +15,7 @@
 //! (`PlayerInput::route`); `cam.rs` feeds the look counts to the camera. The few UI-level keys
 //! (window digits, Enter inside windows, F5..F10) stay on Bevy key codes.
 use super::interact::Interaction;
+use super::readiness::StartupReadiness;
 use super::{Mode, PlayState, ScriptInput};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButton};
 use bevy::prelude::*;
@@ -95,6 +96,8 @@ pub struct InputFrame {
     walk_toggled: bool,
     /// Keys are not delivered (a page, a dialog, a window or the death screen is up).
     pub blocked: bool,
+    /// The initial play gate specifically blocks startup keyboard shortcuts in other systems.
+    pub(super) startup_loading: bool,
     /// The mouse is captured by the game.
     pub grabbed: bool,
     /// The smoke script holds the left / right mouse button until this time.
@@ -128,6 +131,7 @@ impl InputFrame {
             walk: false,
             walk_toggled: false,
             blocked: false,
+            startup_loading: false,
             grabbed: false,
             script_left_until: None,
             script_right: false,
@@ -225,6 +229,7 @@ fn gather_input(
     ui: Res<gothic_ui::UiState>,
     state: Res<PlayState>,
     inter: Res<Interaction>,
+    startup: Option<Res<StartupReadiness>>,
     mut script: ResMut<ScriptInput>,
     time: Res<Time>,
     mut f: ResMut<InputFrame>,
@@ -239,8 +244,12 @@ fn gather_input(
     // frame after the capture.
     let mouse_live = grabbed && f.grabbed;
     f.grabbed = grabbed;
-    f.blocked =
-        ui.is_open() || state.mode == Mode::Dialog || state.hero_down || inter.window.is_some();
+    f.startup_loading = startup.is_some_and(|readiness| readiness.blocks_hardware());
+    f.blocked = f.startup_loading
+        || ui.is_open()
+        || state.mode == Mode::Dialog
+        || state.hero_down
+        || inter.window.is_some();
     // The legacy smoke flag is a 0.1 s click of the left button.
     if std::mem::take(&mut script.attack) {
         f.script_left_until = Some(now + 0.1);
@@ -257,13 +266,8 @@ fn gather_input(
         f.script_left_until = None;
     }
 
-    let mut raw = RawInput::default();
+    let mut raw = keyboard_input(&keyboard, !f.blocked);
     if !f.blocked {
-        for k in keyboard.get_pressed() {
-            if let Some(code) = dik::from_key_code_name(&format!("{k:?}")) {
-                raw.keys[code as usize] = true;
-            }
-        }
         if mouse_live {
             raw.buttons[0] = buttons.pressed(MouseButton::Left);
             raw.buttons[1] = buttons.pressed(MouseButton::Right);
@@ -320,4 +324,79 @@ fn gather_input(
     f.first_person = f.pressed_edge(SessionKey::FirstPerson);
     f.reset_camera = f.pressed_edge(SessionKey::ResetCamera);
     f.update_walk();
+}
+
+/// Convert Bevy's keyboard snapshot to the session-key state for this frame. `just_pressed`
+/// preserves a press and release that both arrived between updates; unioning it with `pressed`
+/// reports that tap for one frame, after which the mapper observes the release normally.
+fn keyboard_input(keyboard: &ButtonInput<KeyCode>, enabled: bool) -> RawInput {
+    let mut raw = RawInput::default();
+    if enabled {
+        for k in keyboard.get_pressed().chain(keyboard.get_just_pressed()) {
+            if let Some(code) = dik::from_key_code_name(&format!("{k:?}")) {
+                raw.set_key(code, true);
+            }
+        }
+    }
+    raw
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quick1(mapper: &mut ActionMapper, raw: &RawInput, at: u64) -> Option<GameKeyMessage> {
+        mapper
+            .process(raw, at)
+            .into_iter()
+            .find(|message| message.key == SessionKey::Quick1)
+    }
+
+    #[test]
+    fn keyboard_tap_between_updates_is_delivered_once_and_startup_block_does_not_replay() {
+        let mut keyboard = ButtonInput::<KeyCode>::default();
+        let mut mapper = ActionMapper::standard();
+
+        // Model two platform events consumed in one Bevy update: the final held state is up,
+        // while ButtonInput retains the press edge until clear().
+        keyboard.press(KeyCode::Digit1);
+        keyboard.release(KeyCode::Digit1);
+        assert!(!keyboard.pressed(KeyCode::Digit1));
+        assert!(keyboard.just_pressed(KeyCode::Digit1));
+        let pulse = keyboard_input(&keyboard, true);
+        let down = quick1(&mut mapper, &pulse, 10).expect("same-frame Digit1 tap");
+        assert!(down.is_press_edge());
+
+        keyboard.clear();
+        let up = quick1(&mut mapper, &keyboard_input(&keyboard, true), 20)
+            .expect("pulse releases on the following update");
+        assert!(up.is_release_edge());
+        assert!(quick1(&mut mapper, &keyboard_input(&keyboard, true), 30).is_none());
+
+        // Ordinary held keys still produce one press edge, held state, then a release edge.
+        let mut held = ButtonInput::<KeyCode>::default();
+        let mut held_mapper = ActionMapper::standard();
+        held.press(KeyCode::Digit1);
+        assert!(quick1(&mut held_mapper, &keyboard_input(&held, true), 40)
+            .expect("held press")
+            .is_press_edge());
+        held.clear();
+        let repeat = quick1(&mut held_mapper, &keyboard_input(&held, true), 50)
+            .expect("held state");
+        assert!(repeat.is_pressed());
+        assert!(!repeat.is_press_edge());
+        held.release(KeyCode::Digit1);
+        assert!(quick1(&mut held_mapper, &keyboard_input(&held, true), 60)
+            .expect("held release")
+            .is_release_edge());
+
+        // A pulse observed while startup blocks hardware is discarded, not replayed on ready.
+        let mut blocked = ButtonInput::<KeyCode>::default();
+        let mut blocked_mapper = ActionMapper::standard();
+        blocked.press(KeyCode::Digit1);
+        blocked.release(KeyCode::Digit1);
+        assert!(quick1(&mut blocked_mapper, &keyboard_input(&blocked, false), 70).is_none());
+        blocked.clear();
+        assert!(quick1(&mut blocked_mapper, &keyboard_input(&blocked, true), 80).is_none());
+    }
 }

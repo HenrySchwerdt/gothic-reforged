@@ -21,11 +21,12 @@ use gothic_formats::{
     xshmat::{TextureRole, Xshmat, graph::MaterialGraph},
 };
 use gothic_importer::world_index::WorldIndex;
+pub use gothic_render_rules::water::{is_confirmed_ocean_resource, is_river_depth_resource};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     path::Path,
     sync::{
-        Arc,
+        Arc, OnceLock,
         mpsc::{Receiver, Sender, channel},
     },
     thread,
@@ -36,7 +37,20 @@ pub const TILE_CM: f32 = 2500.0;
 /// Brightness multiplier of the (dark) SpeedTree composite map and bark textures.
 const TREE_LEAF_TINT: f32 = 0.42;
 const TREE_BARK_TINT: f32 = 2.0;
+static SPT_FLIP_ATLAS_V: OnceLock<bool> = OnceLock::new();
 pub type TileKey = (i32, i32);
+
+fn flip_spt_rect_v(rect: &mut [f32; 8]) {
+    for v in [1, 3, 5, 7] {
+        rect[v] = 1.0 - rect[v];
+    }
+}
+
+fn flip_spt_atlas_v_enabled() -> bool {
+    *SPT_FLIP_ATLAS_V.get_or_init(|| {
+        std::env::var("GR_SPT_FLIP_ATLAS_V").is_ok_and(|value| value == "1")
+    })
+}
 
 pub struct TexData {
     pub id: u64,
@@ -58,6 +72,15 @@ pub struct LayerData {
 pub enum MatKind {
     Surface,
     Water,
+    /// Water shader without samplers. Legitimate sea surfaces also use this form; source
+    /// identity is required before treating it as a depth proxy.
+    WaterUntextured,
+}
+
+impl MatKind {
+    pub fn is_water(self) -> bool {
+        matches!(self, Self::Water | Self::WaterUntextured)
+    }
 }
 
 pub struct MatData {
@@ -118,12 +141,29 @@ pub enum PartKind {
 pub struct Part {
     pub geom: Arc<GeomData>,
     pub material: Option<Arc<MatData>>,
+    /// Source placed-mesh identity from the world index. Shared by all subparts of one entity.
+    /// Present only on water parts; source identity distinguishes confirmed ocean meshes.
+    pub source: Option<Arc<PartSource>>,
+    /// Vertex-derived sea height for source-confirmed planar ocean parts, in metres.
+    pub ocean_plane_y_m: Option<f32>,
     /// Origin-relative cm transform (mirrored space).
     pub transform: Mat4,
     pub kind: PartKind,
     /// Mesh LoD stage this part belongs to (`eCRenderContextMesh::CalculateLoDStage`); `None`
     /// for geometry without LoD meshes.
     pub lod: Option<LodPart>,
+}
+
+#[derive(Debug)]
+pub struct PartSource {
+    pub resource: Arc<str>,
+    pub entity_id: Arc<str>,
+}
+
+fn planar_ocean_y_m(positions: &[[f32; 3]], transform: Mat4) -> Option<f32> {
+    gothic_render_rules::water::planar_water_height_m(positions.iter().map(|position| {
+        transform.transform_point3(Vec3::from(*position)).y
+    }))
 }
 
 /// One stage of a placed mesh that has several LoD meshes (`.xlmsh`).
@@ -179,6 +219,9 @@ pub enum Response {
     Tile(Box<TilePayload>),
     Vegetation(Box<VegPayload>),
     Texture(String, Option<Arc<TexData>>),
+    /// Loader initialization failed before it could emit `Ready`; unlike an individual tile error,
+    /// this prevents the initial world stream from becoming usable.
+    StartupFailed(String),
     Failed(String),
 }
 
@@ -256,7 +299,7 @@ pub fn spawn_loader(data_dir: std::path::PathBuf, origin: Origin) -> LoaderHandl
                     }
                 }
                 Err(e) => {
-                    let _ = resp_tx.send(Response::Failed(format!("loader start: {e:#}")));
+                    let _ = resp_tx.send(Response::StartupFailed(format!("loader start: {e:#}")));
                 }
             }
         })
@@ -718,7 +761,11 @@ impl Loader {
                 }
             }
             let lname = key.as_str();
-            let water = lname.contains("water") && layers.is_empty();
+            let water = layers.is_empty() && (lname.contains("water") || x.water_shader);
+            let water_depth = water
+                && x.water_shader
+                && x.diffuse().is_none()
+                && x.texture(TextureRole::Normal).is_none();
             if water {
                 let mut found = x
                     .textures
@@ -743,7 +790,9 @@ impl Loader {
             Some(Arc::new(MatData {
                 id,
                 name: key.clone(),
-                kind: if water {
+                kind: if water_depth {
+                    MatKind::WaterUntextured
+                } else if water {
                     MatKind::Water
                 } else {
                     MatKind::Surface
@@ -1050,6 +1099,8 @@ impl Loader {
             let material = self.material(&mat_name);
             parts.push(Part {
                 lod: None,
+                source: None,
+                ocean_plane_y_m: None,
                 geom: Arc::new(GeomData {
                     id: self.id(),
                     positions: geom.0,
@@ -1110,6 +1161,22 @@ impl Loader {
             let Some(mesh) = self.mesh(&resource, 0) else {
                 continue;
             };
+            let river_depth_proxy = is_river_depth_resource(&resource)
+                && mesh.parts.iter().any(|(_, material)| {
+                    material
+                        .as_ref()
+                        .is_some_and(|m| m.kind == MatKind::WaterUntextured)
+                });
+            let source = mesh
+                .parts
+                .iter()
+                .any(|(_, material)| material.as_ref().is_some_and(|m| m.kind.is_water()))
+                .then(|| {
+                    Arc::new(PartSource {
+                        resource: Arc::from(resource.as_str()),
+                        entity_id: Arc::from(entity_id.as_str()),
+                    })
+                });
             let transform =
                 Mat4::from_translation(Vec3::new(origin.0.x, -origin.0.y, -origin.0.z)) * f * m * f;
             // Translation of F*M*F is (-tx, ty, tz); the origin shift above makes it
@@ -1130,6 +1197,14 @@ impl Loader {
             };
             for (pi, (geom, material)) in mesh.parts.iter().enumerate() {
                 let geom = lit.get(pi).and_then(Option::as_ref).unwrap_or(geom);
+                // This depth-hull source is proxy geometry, not visible water geometry.
+                if river_depth_proxy
+                    && material
+                        .as_ref()
+                        .is_some_and(|m| m.kind == MatKind::WaterUntextured)
+                {
+                    continue;
+                }
                 // Distant-LOD proxy submeshes (low-poly world atlas) overlap the real geometry.
                 if material.as_ref().is_some_and(|m| {
                     m.name.contains("world_lowpoly")
@@ -1137,15 +1212,24 @@ impl Loader {
                 }) {
                     continue;
                 }
-                let is_water = material.as_ref().is_some_and(|m| m.kind == MatKind::Water);
+                let is_water = material.as_ref().is_some_and(|m| m.kind.is_water());
                 let solid = !is_water
                     && material
                         .as_ref()
                         .is_none_or(|m| !matches!(m.blend_mode, Some(2 | 7 | 8)));
                 any_solid |= solid;
                 water_only &= is_water;
+                let ocean_plane_y_m = if is_water
+                    && source.as_ref().is_some_and(|s| is_confirmed_ocean_resource(&s.resource))
+                {
+                    planar_ocean_y_m(&geom.positions, transform)
+                } else {
+                    None
+                };
                 parts.push(Part {
                     lod: if is_water { None } else { lod_info(0) },
+                    source: if is_water { source.clone() } else { None },
+                    ocean_plane_y_m,
                     geom: geom.clone(),
                     material: material.clone(),
                     transform,
@@ -1161,7 +1245,7 @@ impl Loader {
                 let stage = li as u8 + 1;
                 for (pi, (geom, material)) in coarse.parts.iter().enumerate() {
                     if material.as_ref().is_some_and(|m| {
-                        m.kind == MatKind::Water
+                        m.kind.is_water()
                             || m.name.contains("world_lowpoly")
                             || m.layer_names.iter().any(|n| n.contains("world_lowpoly"))
                     }) {
@@ -1173,6 +1257,8 @@ impl Loader {
                     };
                     parts.push(Part {
                         lod: lod_info(stage),
+                        source: None,
+                        ocean_plane_y_m: None,
                         geom,
                         material: material.clone(),
                         transform,
@@ -1184,24 +1270,26 @@ impl Loader {
                 continue;
             }
             stats.statics += 1;
-            if let Some(col) = self.collision_mesh(&resource, 0) {
-                stats.statics_with_collision_mesh += 1;
-                collision.extend(
-                    col.iter()
-                        .map(|tri| tri.map(|p| transform.transform_point3(p))),
-                );
-            } else if any_solid && architectural(&resource) {
-                // No authored collision mesh: large architecture falls back to its render mesh.
-                for (geom, material) in &mesh.parts {
-                    let solid = material
-                        .as_ref()
-                        .is_none_or(|m| m.kind == MatKind::Surface && m.blend_mode != Some(2));
-                    if solid && geom.indices.len() <= 40_000 {
-                        for tri in geom.indices.as_chunks::<3>().0 {
-                            collision.push([0, 1, 2].map(|k| {
-                                transform
-                                    .transform_point3(Vec3::from(geom.positions[tri[k] as usize]))
-                            }));
+            if !river_depth_proxy {
+                if let Some(col) = self.collision_mesh(&resource, 0) {
+                    stats.statics_with_collision_mesh += 1;
+                    collision.extend(
+                        col.iter()
+                            .map(|tri| tri.map(|p| transform.transform_point3(p))),
+                    );
+                } else if any_solid && architectural(&resource) {
+                    // No authored collision mesh: large architecture falls back to its render mesh.
+                    for (geom, material) in &mesh.parts {
+                        let solid = material
+                            .as_ref()
+                            .is_none_or(|m| m.kind == MatKind::Surface && m.blend_mode != Some(2));
+                        if solid && geom.indices.len() <= 40_000 {
+                            for tri in geom.indices.as_chunks::<3>().0 {
+                                collision.push([0, 1, 2].map(|k| {
+                                    transform
+                                        .transform_point3(Vec3::from(geom.positions[tri[k] as usize]))
+                                }));
+                            }
                         }
                     }
                 }
@@ -1285,6 +1373,8 @@ impl Loader {
                 if let Some(g) = &variant.bark {
                     parts.push(Part {
                         lod: None,
+                        source: None,
+                        ocean_plane_y_m: None,
                         geom: g.clone(),
                         material: Some(kind.bark_mat.clone()),
                         transform,
@@ -1294,6 +1384,8 @@ impl Loader {
                 if let Some(g) = &variant.cards {
                     parts.push(Part {
                         lod: None,
+                        source: None,
+                        ocean_plane_y_m: None,
                         geom: g.clone(),
                         material: Some(kind.card_mat.clone()),
                         transform,
@@ -1303,6 +1395,8 @@ impl Loader {
                 if let Some(g) = &kind.far_bark {
                     parts.push(Part {
                         lod: None,
+                        source: None,
+                        ocean_plane_y_m: None,
                         geom: g.clone(),
                         material: Some(kind.bark_mat.clone()),
                         transform,
@@ -1311,6 +1405,8 @@ impl Loader {
                 }
                 parts.push(Part {
                     lod: None,
+                    source: None,
+                    ocean_plane_y_m: None,
                     geom: kind.far.clone(),
                     material: Some(kind.card_mat.clone()),
                     transform,
@@ -1340,7 +1436,20 @@ impl Loader {
         }
         let kind = (|| {
             let slot = self.vfs.resolve_name(&key)?;
-            let spt = Spt::parse(&self.vfs.read(slot).ok()?).ok()?;
+            let mut spt = Spt::parse(&self.vfs.read(slot).ok()?).ok()?;
+            if flip_spt_atlas_v_enabled() {
+                // Experimental whole-atlas V-origin diagnostic. Apply before silhouette
+                // measurement and geometry generation so leaves, fronds, and billboard agree.
+                for leaf in &mut spt.leaves {
+                    flip_spt_rect_v(&mut leaf.rect);
+                }
+                if let Some(rect) = &mut spt.frond_rect {
+                    flip_spt_rect_v(rect);
+                }
+                if let Some(rect) = &mut spt.billboard_rect {
+                    flip_spt_rect_v(rect);
+                }
+            }
             let atlas_stem = stem_of(spt.composite.as_ref()?);
             let atlas = self.texture(&atlas_stem)?;
             let bark_tex = self.texture(&stem_of(&spt.bark));
@@ -1683,6 +1792,8 @@ impl Loader {
             geom.id = self.id();
             parts.push(Part {
                 lod: None,
+                source: None,
+                ocean_plane_y_m: None,
                 geom: Arc::new(geom),
                 material: Some(material),
                 transform: Mat4::IDENTITY,
@@ -1821,6 +1932,8 @@ impl Loader {
             geom.id = self.id();
             parts.push(Part {
                 lod: None,
+                source: None,
+                ocean_plane_y_m: None,
                 geom: Arc::new(geom),
                 material: Some(material),
                 transform: Mat4::IDENTITY,
@@ -2076,6 +2189,8 @@ fn merge_statics(parts: &mut Vec<Part>, first_id: u64) -> u64 {
         consumed += 1;
         keep.push(Part {
             lod: None,
+            source: None,
+            ocean_plane_y_m: None,
             geom: Arc::new(geom),
             material: Some(material),
             transform: Mat4::IDENTITY,

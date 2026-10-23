@@ -67,7 +67,12 @@ fn killing_the_quest_target_completes_the_kill_quest_and_pays_xp() {
     sim.world.set_facing(oid, std::f32::consts::PI);
     sim.actor_mut(oid).hp = 10;
     let out = sim.melee_hit(hero, oid);
-    assert!(out.killed());
+    assert!(
+        out.killed(),
+        "{out:?} att {:?} / {:?}",
+        sim.attitude(oid, hero),
+        sim.attitude(hero, oid)
+    );
     assert_eq!(sim.state.quest_status("KillOrc"), QuestStatus::Success);
     assert!(sim.state.npc("orc_target").unwrap().dead);
     // Kill XP: max(10*10, 50) = 100; quest reward 20 * 5 = 100.
@@ -258,6 +263,52 @@ fn falling_hurts_and_can_kill() {
     let n = sim.spawn(n, Pos::flat(0.0, 0.0));
     sim.land(n, 5.0);
     assert!(sim.actor(n).is_alive() && sim.actor(n).hp >= 1);
+}
+
+#[test]
+fn movement_mode_changes_follow_on_movement_mode_changed() {
+    use gothic_sim::moves::{ModeTask, mode};
+    let mut sim = sim_with(SimConfig::default());
+    let hero = sim.spawn_hero(Pos::flat(0.0, 0.0));
+    // entering the fall mode: ZS_Fall; sliding: ZS_Slide
+    let o = sim.movement_mode_changed(hero, 4, mode::FALLING, 0.0);
+    assert_eq!(o.task, ModeTask::Fall);
+    assert_eq!(sim.actor(hero).ani_state, AniState::Fall);
+    // a short fall costs nothing and the character just goes on
+    let o = sim.movement_mode_changed(hero, mode::FALLING, 4, 0.8);
+    assert_eq!((o.task, o.damage), (ModeTask::None, 0));
+    assert_eq!(sim.actor(hero).ani_state, AniState::Stand);
+    // 1.5 s: floor(160 * 0.6^2) = 57 and ZS_HeavyLand
+    let o = sim.movement_mode_changed(hero, mode::FALLING, 4, 1.5);
+    assert_eq!((o.task, o.damage), (ModeTask::HeavyLand, 57));
+    assert_eq!(sim.actor(hero).hp, 200 - 57);
+    // Perk_Acrobatic halves it and plays ZS_Acrobat
+    sim.actor_mut(hero).perks.insert("perk_acrobatic".into());
+    let o = sim.movement_mode_changed(hero, mode::FALLING, 4, 2.0);
+    assert_eq!((o.task, o.damage), (ModeTask::Acrobat, 96));
+    sim.actor_mut(hero).perks.clear();
+    sim.actor_mut(hero).hp = 200;
+    // into deep water: no damage; PS_Swim / ZS_DiveIn; a long fall teaches Perk_Acrobatic
+    let o = sim.movement_mode_changed(hero, mode::FALLING, mode::SWIMMING, 3.0);
+    assert_eq!((o.task, o.damage, o.learned_acrobat), (ModeTask::DiveIn, 0, false));
+    assert_eq!(sim.actor(hero).hp, 200);
+    assert_eq!(sim.actor(hero).ani_state, AniState::Swim);
+    let o = sim.movement_mode_changed(hero, mode::FALLING, mode::SWIMMING, 8.0);
+    assert!(o.learned_acrobat && sim.actor(hero).has_perk("perk_acrobatic"));
+    // swimming: PS_Swim for the hero; leaving the water restores the stand state
+    let o = sim.movement_mode_changed(hero, 4, mode::SWIMMING, 0.0);
+    assert_eq!(o.task, ModeTask::Swim);
+    let o = sim.movement_mode_changed(hero, mode::SWIMMING, 4, 5.0);
+    assert!(o.left_swim);
+    assert_eq!(sim.actor(hero).ani_state, AniState::Stand);
+    // a landing on ground too steep to stand starts the slide state, without damage yet
+    let o = sim.movement_mode_changed(hero, mode::FALLING, mode::SLIDING, 1.2);
+    assert_eq!((o.task, o.damage), (ModeTask::Slide, 0));
+    // the stamina tick sees the body: sprinting drains, jumping neither drains nor refills
+    sim.hero_move = gothic_sim::vitals::Movement::Jumping;
+    sim.actor_mut(hero).stamina = 50;
+    sim.run_ticks(60);
+    assert_eq!(sim.actor(hero).stamina, 50);
 }
 
 #[test]

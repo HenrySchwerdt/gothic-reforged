@@ -11,8 +11,8 @@
 //!   regeneration, trade prices, pickpocketing, armor fame thresholds ([`vitals`], [`economy`]),
 //!   political / species attitudes ([`attitude`]), perception ranges ([`perception`]), crime
 //!   bookkeeping ([`crime`]), time-of-day routines ([`routine`]).
-//! * Inferred (tagged `[I]` in place): per-move scores and move durations ([`tactics`],
-//!   [`sim::move_duration_ms`]), stagger lock times, run speed, FOV, `CurrentLevel`'s second term,
+//! * Inferred (tagged `[I]` in place): move durations of the unshown NPCs
+//!   ([`sim::move_duration_ms`]), stagger lock times, FOV, `CurrentLevel`'s second term,
 //!   the Orc/Assassin chapter switch, melee parry needing stamina.
 //! * Magic and ranged weapons run on the ported script pipeline ([`script_magic`]): spell
 //!   templates, projectiles in flight, area spells, summons, the hero's cast and bow states.
@@ -31,6 +31,7 @@ pub mod crime;
 pub mod data;
 pub mod economy;
 pub mod item;
+pub mod moves;
 pub mod perception;
 pub mod persist;
 pub mod rng;
@@ -40,14 +41,13 @@ pub mod script_magic;
 pub mod script_player;
 pub mod shots;
 pub mod sim;
-pub mod tactics;
 pub mod trade;
 pub mod types;
 pub mod vitals;
 pub mod world;
 
 pub use actor::Actor;
-pub use combat::{Attack, HitOutcome, resolve_hit};
+pub use combat::{Attack, HitOutcome};
 pub use config::SimConfig;
 pub use sim::Sim;
 pub use types::ActorId;

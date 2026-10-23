@@ -4,14 +4,15 @@
 //! OnPlayerGameKeyPressed.cpp`): `OnPlayerGameKeyPressed` (S:61640), `OnPlayerMovement`
 //! (S:622f0), `OnPlayerAction` (S:62480, the first action key), `OnPlayerSecondaryAction`
 //! (S:62ff0), `OnPlayerWalk` (S:638b0), `OnPlayerSneak` (S:63a00), `OnPlayerJump` (S:63b80),
-//! `OnMagicHandleInput` (S:7d360) and the message loops of `PS_Ranged_Walk_Loop` (S:84080) and
-//! `PS_Ranged_Aim_Loop` (S:84d60) / `OnPowerAim_Loop` (S:84b90).
+//! and `OnMagicHandleInput` (S:7d360). The message loops of `PS_Ranged_Walk_Loop` (S:84080),
+//! `PS_Ranged_Aim_Loop` (S:84d60) and `OnPowerAim_Loop` (S:84b90) are in
+//! `gothic_script::player::ranged`.
 //!
 //! The protocol: `gCCharacterControl_PS::OnAction` stores the key state in the
 //! `PSCharacterControl` properties and calls the script function `OnPlayerGameKeyPressed` for
 //! every [`GameKeyMessage`](crate::GameKeyMessage). The handlers do not act themselves; they
 //! enqueue a gEAction id (an [`Order::Message`]) in the player's action queue, which the loop
-//! states of the `PS_*` tasks poll and turn into state changes ([`ranged_loop`]). A few handlers
+//! states of the `PS_*` tasks poll and turn into state changes. A few handlers
 //! switch states directly ([`Order::EnterState`]).
 //!
 //! Every constant below is read from the DLL unless marked [I] (inferred from the structure of
@@ -564,75 +565,6 @@ impl PlayerInput {
     }
 }
 
-/// What a message does in the loop states of `PS_Ranged`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reaction {
-    /// Nothing; the message is dropped.
-    Ignore,
-    /// Switch to this state.
-    State(&'static str),
-    /// Switch to this state after putting the ammunition away (`HoldStack(-1)`).
-    StateUnholdAmmo(&'static str),
-    /// Quick slot `n` (`OnPlayerUseQuickSlot`).
-    QuickSlot(u8),
-    /// Potion quick use (`OnPlayerPotionQuickUse`) of the pool 0..2.
-    Potion(u8),
-    /// The weapon key: `OnPlayerSelectWeapon`.
-    SelectWeapon,
-}
-
-fn common(id: u32) -> Option<Reaction> {
-    match id {
-        msg::HOLD => Some(Reaction::SelectWeapon),
-        131..=140 => Some(Reaction::QuickSlot((id - msg::QUICK_SLOT_BASE) as u8)),
-        141..=143 => Some(Reaction::Potion((id - msg::POTION_BASE) as u8)),
-        _ => None,
-    }
-}
-
-/// Port of the message switch of `PS_Ranged_Walk_Loop` (S:84080): the hero walks with the
-/// weapon ready. `crossbow`: the left hand holds a crossbow.
-pub fn ranged_walk_loop(message: u32, crossbow: bool) -> Reaction {
-    gothic_portcov::hit!("ranged_walk_loop");
-    match message {
-        msg::ABORT_ATTACK => Reaction::StateUnholdAmmo("PS_Ranged_Reload"),
-        msg::AIM => Reaction::State("PS_Ranged_Aim"),
-        // The crossbow shoots from the walk state; a bow turns the press into an aim.
-        msg::SHOOT => Reaction::State(if crossbow {
-            "PS_Ranged_Shoot"
-        } else {
-            "PS_Ranged_Aim"
-        }),
-        msg::RELOAD => Reaction::State("PS_Ranged_Reload"),
-        msg::JUMP => Reaction::State("PS_Ranged_Jump"),
-        msg::SNEAK => Reaction::State("PS_Ranged_Sneak"),
-        other => common(other).unwrap_or(Reaction::Ignore),
-    }
-}
-
-/// Port of the message switch of `PS_Ranged_Aim_Loop` (S:84d60): the weapon is up.
-pub fn ranged_aim_loop(message: u32, crossbow: bool) -> Reaction {
-    gothic_portcov::hit!("ranged_aim_loop");
-    match message {
-        msg::ABORT_ATTACK => Reaction::StateUnholdAmmo("PS_Ranged_Reload"),
-        msg::SHOOT => Reaction::State("PS_Ranged_Shoot"),
-        // Only a crossbow sneaks out of the aim.
-        msg::SNEAK if crossbow => Reaction::State("PS_Ranged_Sneak"),
-        other => common(other).unwrap_or(Reaction::Ignore),
-    }
-}
-
-/// Port of the message switch of `OnPowerAim_Loop` (S:84b90), the callback of the drawn bow:
-/// the abort message gives up the draw, the shoot message looses the arrow.
-pub fn power_aim_loop(message: u32) -> Reaction {
-    gothic_portcov::hit!("power_aim_loop");
-    match message {
-        msg::ABORT_ATTACK => Reaction::StateUnholdAmmo("PS_Ranged_Reload"),
-        msg::SHOOT => Reaction::State("PS_Ranged_Shoot"),
-        _ => Reaction::Ignore,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -746,48 +678,6 @@ mod tests {
         let v = mapper.process(&raw, 16);
         let o = input.route(&find(&v, SessionKey::Use2), &ctx);
         assert_eq!(o, vec![Order::Message(msg::ABORT_ATTACK)]);
-    }
-
-    #[test]
-    fn the_aim_loops_turn_messages_into_states() {
-        assert_eq!(
-            ranged_walk_loop(msg::AIM, false),
-            Reaction::State("PS_Ranged_Aim")
-        );
-        assert_eq!(
-            ranged_walk_loop(msg::SHOOT, true),
-            Reaction::State("PS_Ranged_Shoot")
-        );
-        assert_eq!(
-            ranged_walk_loop(msg::SHOOT, false),
-            Reaction::State("PS_Ranged_Aim")
-        );
-        assert_eq!(
-            ranged_aim_loop(msg::SHOOT, false),
-            Reaction::State("PS_Ranged_Shoot")
-        );
-        assert_eq!(ranged_aim_loop(msg::SNEAK, false), Reaction::Ignore);
-        assert_eq!(
-            ranged_aim_loop(msg::SNEAK, true),
-            Reaction::State("PS_Ranged_Sneak")
-        );
-        assert_eq!(
-            power_aim_loop(msg::ABORT_ATTACK),
-            Reaction::StateUnholdAmmo("PS_Ranged_Reload")
-        );
-        assert_eq!(
-            power_aim_loop(msg::SHOOT),
-            Reaction::State("PS_Ranged_Shoot")
-        );
-        assert_eq!(
-            ranged_walk_loop(msg::QUICK_SLOT_BASE + 4, false),
-            Reaction::QuickSlot(4)
-        );
-        assert_eq!(
-            ranged_aim_loop(msg::POTION_BASE + 2, false),
-            Reaction::Potion(2)
-        );
-        assert_eq!(ranged_walk_loop(msg::HOLD, false), Reaction::SelectWeapon);
     }
 
     /// A melee context where every move of the weapon is allowed.

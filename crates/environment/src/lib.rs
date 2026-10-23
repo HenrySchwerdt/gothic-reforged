@@ -10,6 +10,7 @@
 pub mod precip;
 pub mod sky;
 pub mod wind;
+pub mod wind_clock;
 use gothic_formats::weather::{WeatherData, WeatherState};
 
 /// L0 / L1 real spherical-harmonic constants (floats at Engine.dll:0x10426c94 / 0x10426c98).
@@ -420,24 +421,68 @@ pub fn hemisphere_sh(
     sh
 }
 
+/// Port of the light block of `eCWeatherAdmin::Process` (Engine.dll:0x1028d070, x87 arithmetic
+/// read from the machine code at 0x1028d919..0x1028dd3b; the decompiler loses it). With the sun
+/// height factor `H` (`sun_state.height_factor`) the directional light's `Intensity` is the
+/// record intensity times `H` (0x1028da86 `fmul`), and the hemisphere gets
+/// `BackLight = ambient_back * (0.5 + 0.5 H) + sun * I * (0.5 - 0.5 H)^2` and
+/// `SunLight = sun * I * (0.5 + 0.5 H) * (0.5 - 0.5 H) + ambient_back * (0.5 - 0.5 H)` (the
+/// colour products are `bCFloatColor::GetProduct` calls 0x10396c20, the sums `GetSum` 0x10397070).
+/// Returns `(sun diffuse * I * H, back light colour, sun light colour)`.
+pub fn weather_light_terms(
+    sun_diffuse: [f32; 3],
+    intensity: f32,
+    ambient_back: [f32; 3],
+    h: f32,
+) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    gothic_portcov::hit!("weather_light_terms");
+    let a = 0.5 + 0.5 * h;
+    let b = 1.0 - a;
+    let mut dir = [0.0; 3];
+    let mut back = [0.0; 3];
+    let mut sun = [0.0; 3];
+    for c in 0..3 {
+        let si = sun_diffuse[c] * intensity;
+        dir[c] = si * h;
+        back[c] = ambient_back[c] * a + si * b * b;
+        sun[c] = si * a * b + ambient_back[c] * b;
+    }
+    (dir, back, sun)
+}
+
 /// Turn a blended record into the renderer packet.
 pub fn packet(rec: &EnvRecord, day_time: f32, azimuth: f32, far_cm: f32) -> EnvPacket {
     let sun = sun_state(day_time, azimuth);
     let rgb = |c: [f32; 4]| [c[0], c[1], c[2]];
     let scale = |c: [f32; 3], k: f32| [c[0] * k, c[1] * k, c[2] * k];
     let back_dir = [-sun.to_light[0], -sun.to_light[1], -sun.to_light[2]];
-    let sh = hemisphere_sh(
-        rgb(rec.ambient_general),
+    let (dir_diffuse, back, sun_light) = weather_light_terms(
+        rgb(rec.sun_diffuse),
+        rec.sun_intensity,
         rgb(rec.ambient_back),
+        sun.height_factor,
+    );
+    let mut sh = hemisphere_sh(
+        rgb(rec.ambient_general),
+        back,
         back_dir,
         rec.ambient_intensity,
     );
+    // `UpdateSHHemisphere` (0x100ecf50) adds the SunLight colour along the sun axis as well
+    // (helper 0x100edbf0: colour * 0.282095 to L0, colour * 0.4886025 * dir to L1).
+    for c in 0..3 {
+        let col = sun_light[c] * rec.ambient_intensity;
+        sh[0][c] += col * SH_L0;
+        for a in 0..3 {
+            sh[1 + a][c] += col * SH_L1 * sun.to_light[a];
+        }
+    }
     let (fog_start, fog_end) = clip_fog(rec.fog_start, rec.fog_end, far_cm);
     EnvPacket {
         day_time,
         sun,
-        sun_color: scale(rgb(rec.sun_diffuse), rec.sun_intensity),
-        sun_specular: scale(rgb(rec.sun_specular), rec.sun_intensity),
+        sun_color: dir_diffuse,
+        sun_specular: scale(rgb(rec.sun_specular), rec.sun_intensity * sun.height_factor),
         shadow_density: rec.shadow_density,
         sh,
         sky_color: rgb(rec.sky_color),

@@ -357,20 +357,8 @@ pub fn teach() -> Sc {
     sc
 }
 
+/// Kept for the old name: the door tests live in `world_doors` (the world has 4 interactive doors,
+/// none in Ardea).
 pub fn doors() -> Sc {
-    let mut sc = Sc::new(60.0);
-    sc.wait(2.0);
-    sc.check("doors: Ardea has no door / mover entities to open", |cx| {
-        // Data scan (inspector object-dump, whole world): 28770 interactive entities, 6 with
-        // gCDoor_PS / gCMover_PS, the nearest 711 m from the start; 0 within 400 m.
-        let o = cx.world.resource::<WorldObjects>();
-        let doors = o.list.iter().filter(|o| o.def.script_use() == UseType::Door).count();
-        let _ = Poll::Done;
-        expect(
-            doors == 0,
-            format!("{doors} door entities in the streamed region (world scan: 6 doors, nearest 711 m away); N/A in Ardea"),
-            format!("{doors} doors exist: wire the mover"),
-        )
-    });
-    sc
+    super::world::world_doors()
 }

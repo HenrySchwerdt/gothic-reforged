@@ -3,6 +3,7 @@
 //!
 //! The numbers and rules live in `gothic-environment`; this module only moves the resulting
 //! packet into Bevy resources and the material uniforms. Disable with `GR_ORIG_ENV=0`.
+//! `GR_ENV_SYNTH=auto|1` feeds synthetic placeholder states instead (see `env_synth.rs`).
 //!
 //! Options: `--hour H` (0..24) or `GR_TIME=<day fraction>`, `--day-speed N` (game days per real
 //! second), `--weather STATE` (force the Myrtana environment into a named state, e.g. `Rainy`).
@@ -105,7 +106,7 @@ impl OrigEnv {
 
     /// Take the weather data and zones delivered by the loader.
     pub fn install(&mut self, payload: WeatherPayload) {
-        let Some(data) = payload.data else {
+        let Some(data) = super::env_synth::weather_data(payload.data) else {
             eprintln!("environment: WeatherStates.g3ws missing, keeping the built-in light set");
             self.enabled = false;
             return;
@@ -162,11 +163,27 @@ impl OrigEnv {
     }
 }
 
+/// Hour of the day of the simulation clock (play mode); the environment follows it, so the
+/// light, sky and weather match the routines' time (`GetRoutineTime`).
+#[derive(Resource)]
+pub struct SimHour(pub f32);
+
+fn follow_sim_clock(hour: Option<Res<SimHour>>, mut env: ResMut<OrigEnv>) {
+    if let Some(h) = hour {
+        env.day_time = (h.0 / 24.0).rem_euclid(1.0);
+        // 12 game seconds per real second [CA 11.2]: the weather evolves with the same clock.
+        env.speed = 12.0 / 86_400.0;
+    }
+}
+
 pub struct EnvPlugin;
 
 impl Plugin for EnvPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (env_request, env_update, env_shot).chain());
+        app.add_systems(
+            Update,
+            (env_request, follow_sim_clock, env_update, env_shot).chain(),
+        );
     }
 }
 
@@ -363,6 +380,18 @@ fn env_update(
             .collect();
         let sel = lights::select(c.to_array(), 12.0, cand, CHAR_LIGHTS);
         if sel != env.char_lights {
+            if std::env::var_os("GR_ENV_LOG").is_some() {
+                for l in &sel {
+                    eprintln!(
+                        "CHARLIGHT cam={:?} pos={:?} col={:?} range_m={:.1} d={:.1}",
+                        c,
+                        l.position,
+                        l.color,
+                        l.range,
+                        (Vec3::from(l.position) - c).length()
+                    );
+                }
+            }
             let mut pos = [Vec4::ZERO; CHAR_LIGHTS];
             let mut col = [Vec4::ZERO; CHAR_LIGHTS];
             for (i, l) in sel.iter().enumerate() {

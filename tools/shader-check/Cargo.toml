@@ -1,0 +1,15 @@
+[package]
+name = "gothic-shader-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deliberately separate from the main workspace so this validator can be built and run without
+# rebuilding or relinking the game binary after a WESL-only edit.
+[workspace]
+
+[dependencies]
+bevy_asset = "=0.20.0"
+bevy_shader = "=0.20.0"
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
+uuid = "=1.21.0"

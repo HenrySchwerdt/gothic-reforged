@@ -1,0 +1,20 @@
+[package]
+name = "gothic-xr-quest"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bevy 0.20 + OpenXR (Vulkan, Meta Quest) integration: raw Vulkan bootstrap, per-eye swapchains, controller actions, custom runner."
+
+[dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_asset", "bevy_camera"] }
+openxr = "0.22"
+ash = "0.38"
+wgpu = "30"
+log = "0.4"
+anyhow.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_system_properties = "0.1"
+android_log-sys = "0.3"

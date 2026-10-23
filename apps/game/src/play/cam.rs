@@ -232,7 +232,8 @@ pub(super) fn play_camera(
         .single()
         .is_ok_and(|o| o.grab_mode != CursorGrabMode::None);
     let free = grabbed && !ui.is_open() && !in_dialog && !script.active;
-    let toggle = keys.just_pressed(KeyCode::KeyV) || frame.first_person;
+    let toggle = (!frame.startup_loading && keys.just_pressed(KeyCode::KeyV))
+        || frame.first_person;
     if toggle {
         c.first_person = !c.first_person;
     }

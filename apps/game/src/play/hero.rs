@@ -48,6 +48,7 @@ pub fn register(app: &mut App) {
         );
     app.add_systems(Update, key_events.after(input));
     super::hero_moves::register(app);
+    super::move_states::register(app);
 }
 
 /// The quick slot and potion keys the melee loop took out of the queue (`PS_Melee_Loop`'s jump
@@ -134,6 +135,10 @@ fn spawn_hero(mut spawner: ActorSpawner, mut state: ResMut<PlayState>, kit: Res<
 /// movement constraint of 360: `PS_Melee_*`, `gCCharacterMovement_PS::
 /// ProcessControledRotationToTarget`, G:0x100e3fb0), or the aim direction while a ranged weapon
 /// or a spell is drawn.
+/// The camera direction is a unit vector; `face` ignores vectors shorter than a centimetre (a target
+/// standing on the hero), so it is given a length in the same unit.
+const CAMERA_ALIGN_LENGTH: f32 = 100.0;
+
 fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<CoreRes>) {
     let pos = player.ctrl.position;
     let toward = |id: ActorId| {
@@ -152,13 +157,15 @@ fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<Core
         && constraint >= gothic_sim::script::player::melee::CONSTRAINT_DEGREES
     {
         face = toward(t);
-    } else if state.drawn
+    } else if constraint == gothic_sim::script::player::ranged::FOLLOW_CAMERA_CONSTRAINT
         && matches!(
-            core.0.sim.actor(core.0.hero).equipment.weapon_mode(),
-            WeaponMode::Ranged | WeaponMode::Magic
+            core.0.sim.hero_script_state().0,
+            Some(ScriptState::PsRanged | ScriptState::PsMagic)
         )
     {
-        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()));
+        // `ProcessMovements` (G:0xddd40): with the constraint at 0 the body is aligned to the
+        // camera direction every frame (`SetAlignmentLookAt`), whatever the wish direction.
+        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
     }
     player.face = face.filter(|f| f.length_squared() > 1.0);
 }
@@ -242,7 +249,10 @@ fn potion_of(core: &CoreRes, n: u32) -> Option<String> {
 /// The weapon key: out of `PS_Melee_Loop` it is an action in the player's queue (`Hold`, 68), out
 /// of `PS_Normal_Loop` the script's `OnPlayerSelectWeapon` runs at once.
 fn weapon_key(task: PlayerTask, focus: Option<ActorId>, commands: &mut MessageWriter<CoreCommand>) {
-    if task == PlayerTask::Melee {
+    if matches!(
+        task,
+        PlayerTask::Melee | PlayerTask::Ranged | PlayerTask::Magic
+    ) {
         commands.write(CoreCommand(Command::PlayerAction {
             id: msg::HOLD,
             focus,
@@ -291,10 +301,12 @@ pub(super) fn input(
         }
     }
     if window_open {
-        w.window_key = w
-            .window_key
-            .or_else(|| quick_slot_pressed(&keys).map(|n| n + 1));
-        w.window_enter |= just_pressed(&keys, Act::Confirm);
+        if !frame.startup_loading {
+            w.window_key = w
+                .window_key
+                .or_else(|| quick_slot_pressed(&keys).map(|n| n + 1));
+            w.window_enter |= just_pressed(&keys, Act::Confirm);
+        }
         w.window_close |= keys.just_pressed(KeyCode::Escape);
         if let Some(n) = w.window_key {
             inter.window_key = Some(n);
@@ -304,10 +316,10 @@ pub(super) fn input(
     }
 
     // ---- save / load ---------------------------------------------------------------------------
-    if just_pressed(&keys, Act::QuickSave) {
+    if !frame.startup_loading && just_pressed(&keys, Act::QuickSave) {
         commands.write(CoreCommand(Command::Save(save.0.clone())));
     }
-    if just_pressed(&keys, Act::QuickLoad) {
+    if !frame.startup_loading && just_pressed(&keys, Act::QuickLoad) {
         commands.write(CoreCommand(Command::Load(save.0.clone())));
     }
 
@@ -408,7 +420,7 @@ pub(super) fn input(
             left_one_hander_or_torch: facts.left_one_hander_or_torch,
             finishing_target: facts.finishing_target,
         },
-        cast_action: cast_ready.then_some(msg::CAST),
+        cast_action: (cast_ready && facts.cast_action != 0).then_some(facts.cast_action),
         extended_hold: core.0.sim.cfg.ai_mode,
     };
     let msgs = frame.msgs.clone();
@@ -421,11 +433,6 @@ pub(super) fn input(
     // (`PS_Ranged_Aim`: `PSFocus::SetFocusEntity(GetFocusEntity(ranged))`, `PS_Magic_Loop`: the
     // focus only for spells with `SpellTarget` = focus; the others are cast free along the
     // forward axis, `MagicProjectile`). The melee layer picks its own target (`PS_Melee_Loop`).
-    let target_npc = state.target.and_then(|t| match t {
-        Target::Npc(a) => Some(a),
-        _ => None,
-    });
-    let target = target_npc;
     let queue_focus = state.focus;
 
     if std::env::var_os("GR_INPUT_DEBUG").is_some() && !orders.is_empty() {
@@ -452,30 +459,24 @@ pub(super) fn input(
                     focus: queue_focus,
                 }));
             }
+            // In `PS_Ranged` the aim, shoot, reload and abort keys, the weapon key, the quick
+            // slots and the potions are read from the queue by the loop states
+            // (`PS_Ranged_Walk_Loop`, `PS_Ranged_Aim_Loop`, `OnPowerAim_Loop`). Jump and sneak
+            // also move the body, which the host does at once.
+            Order::Message(id)
+                if matches!(task, PlayerTask::Ranged | PlayerTask::Magic)
+                    && !matches!(id, msg::JUMP | msg::SNEAK) =>
+            {
+                commands.write(CoreCommand(Command::PlayerAction {
+                    id,
+                    focus: queue_focus,
+                }));
+            }
             Order::Message(id) => match id {
                 msg::JUMP => jump = true,
                 msg::SNEAK => sneak_toggle = true,
                 msg::HOLD => draw = true,
                 msg::USE => use_pressed = true,
-                msg::AIM => {
-                    commands.write(CoreCommand(Command::AimRanged { aim: true }));
-                }
-                msg::SHOOT => {
-                    // A crossbow shoots from the walk state: take aim first.
-                    if left == Hand::CrossBow {
-                        commands.write(CoreCommand(Command::AimRanged { aim: true }));
-                    }
-                    commands.write(CoreCommand(Command::ReleaseRanged { target }));
-                }
-                msg::ABORT_ATTACK => {
-                    commands.write(CoreCommand(Command::AimRanged { aim: false }));
-                }
-                msg::CAST | msg::POWER_CAST | msg::QUICK_CAST | msg::SUMMON => {
-                    commands.write(CoreCommand(Command::CastSpell {
-                        target,
-                        power: true,
-                    }));
-                }
                 m if (msg::QUICK_SLOT_BASE..msg::QUICK_SLOT_BASE + 10).contains(&m) => {
                     // `QuickUse n` is named after its key: n = 1..9 then 0, so key 0 is slot 10.
                     quick = Some(((m - msg::QUICK_SLOT_BASE + 9) % 10) as usize);
@@ -535,8 +536,13 @@ pub(super) fn input(
 
     // ---- weapons -------------------------------------------------------------------------------------
     if draw {
-        if mode == WeaponMode::Melee || task == PlayerTask::Melee {
-            // The melee weapon: `OnPlayerSelectWeapon`; the draw is `PS_Melee`'s `_AI_Hold...`.
+        if mode == WeaponMode::Melee
+            || matches!(
+                task,
+                PlayerTask::Melee | PlayerTask::Ranged | PlayerTask::Magic
+            )
+        {
+            // The weapon key: `OnPlayerSelectWeapon`; the draw is the task's `_AI_Hold...`.
             weapon_key(task, queue_focus, &mut commands);
         } else {
             // Bow and spells keep the host-side draw until their states are ported.
@@ -549,7 +555,12 @@ pub(super) fn input(
         }
     }
     if let Some(d) = script.draw.take() {
-        if mode == WeaponMode::Melee || task == PlayerTask::Melee {
+        if mode == WeaponMode::Melee
+            || matches!(
+                task,
+                PlayerTask::Melee | PlayerTask::Ranged | PlayerTask::Magic
+            )
+        {
             if d != (core.0.sim.actor(core.0.hero).drawn) {
                 weapon_key(task, queue_focus, &mut commands);
             }
@@ -724,6 +735,23 @@ fn focus(
     // Candidates for the ported focus rules (`gothic_gameplay::focus`); `ids` maps a
     // candidate's index back to what it stands for. Sizes and the line of sight are the host's
     // estimates [I]: half-extents of 40 cm for characters and objects, 15 cm for items.
+    // The focus mode follows the hero's combat task (`PSFocus.CurrentMode`).
+    let mode = match core.0.sim.hero_script_state().0 {
+        Some(ScriptState::PsMelee) => FocusMode::Melee,
+        Some(ScriptState::PsRanged) => FocusMode::Ranged,
+        Some(ScriptState::PsMagic) => FocusMode::Magic,
+        _ if state.drawn => match core.0.sim.actor(core.0.hero).equipment.weapon_mode() {
+            WeaponMode::Ranged => FocusMode::Ranged,
+            WeaponMode::Magic => FocusMode::Magic,
+            _ => FocusMode::Normal,
+        },
+        _ => FocusMode::Normal,
+    };
+    // CollectInteractionEntities: only what lies within the largest scan range of the mode
+    // (`gCFocus_PS::GetCurrentMaxRange`, Game:0x1006c1d0). The world holds tens of thousands of
+    // objects and every character the hero ever met, so reject by distance before collecting.
+    let max_range = FocusConfig::hero().max_range(mode);
+    let near = |p: [f32; 3]| (p[0] - hero.x).hypot(p[2] - hero.z) <= max_range;
     let mut ids: Vec<Target> = Vec::new();
     let mut cands: Vec<FocusCandidate> = Vec::new();
     let mut push = |t: Target, class: FocusClass, p: [f32; 3], radius: f32| {
@@ -745,6 +773,9 @@ fn focus(
         let Some(p) = core.0.sim.world.actors.get(&a.id).map(|w| w.0) else {
             continue;
         };
+        if !near([p.x, p.y, p.z]) {
+            continue;
+        }
         let t = if a.is_alive() {
             Target::Npc(a.id)
         } else {
@@ -753,6 +784,9 @@ fn focus(
         push(t, FocusClass::Character, [p.x, p.y, p.z], 40.0);
     }
     for (i, o) in objects.list.iter().enumerate() {
+        if !near([o.pos_cm.x, o.pos_cm.y, o.pos_cm.z]) || !objects.docs[o.doc as usize].on {
+            continue;
+        }
         let usable = if o.def.is_item {
             !o.taken && o.entity.is_some() && o.visual.is_some()
         } else {
@@ -768,18 +802,6 @@ fn focus(
             push(Target::Object(i), FocusClass::Interact, p, 40.0);
         }
     }
-    // The focus mode follows the hero's combat task (`PSFocus.CurrentMode`).
-    let mode = match core.0.sim.hero_script_state().0 {
-        Some(ScriptState::PsMelee) => FocusMode::Melee,
-        Some(ScriptState::PsRanged) => FocusMode::Ranged,
-        Some(ScriptState::PsMagic) => FocusMode::Magic,
-        _ if state.drawn => match core.0.sim.actor(core.0.hero).equipment.weapon_mode() {
-            WeaponMode::Ranged => FocusMode::Ranged,
-            WeaponMode::Magic => FocusMode::Magic,
-            _ => FocusMode::Normal,
-        },
-        _ => FocusMode::Normal,
-    };
     let viewer = FocusViewer {
         pos: [hero.x, hero.y, hero.z],
         yaw: fwd.x.atan2(fwd.y),
@@ -821,8 +843,6 @@ pub(super) fn sync(
     parts: Query<&gothic_animation::runtime::PartMeshes, With<HeroActor>>,
     mut part_vis: Query<&mut Visibility, (Without<HeroActor>, Without<PlayerBody>)>,
     mut body_hidden: Local<bool>,
-    mut aim_blend: Local<f32>,
-    ranged: Res<super::ranged::RangedView>,
 ) {
     if let Ok(mut v) = body.single_mut() {
         *v = Visibility::Hidden;
@@ -845,7 +865,6 @@ pub(super) fn sync(
             }
         }
     }
-    let dt = time.delta_secs().clamp(1.0e-3, 0.1);
     let pos = player.ctrl.position;
     // The weapon is drawn when the script's hold put it in the hand (`PSInventory::HoldStacks`).
     state.drawn = core.0.sim.actor(core.0.hero).drawn;
@@ -896,12 +915,9 @@ pub(super) fn sync(
     state.hero_yaw = player.ctrl.heading;
     let turn_error = target.map_or(0.0, |t| angle_delta(state.hero_yaw, t));
     tf.translation = pos * CM;
-    // The aim clips leave the body side-on with the left arm along the entity's -X: while a ranged
-    // weapon aims the model turns a quarter so that arm points at the target (the original's
-    // aim pose, checked against the user's screenshot); eased in and out.
-    let aim_target_blend = if ranged.aiming { 1.0 } else { 0.0 };
-    *aim_blend += (aim_target_blend - *aim_blend) * (dt * 10.0).min(1.0);
-    tf.rotation = Quat::from_rotation_y(state.hero_yaw + std::f32::consts::FRAC_PI_2 * *aim_blend);
+    // The body keeps the heading: with a ranged weapon up `ProcessMovements` aligns it to the
+    // camera (`face_target`), the aim clips are played as they are.
+    tf.rotation = Quat::from_rotation_y(state.hero_yaw);
     tf.scale = Vec3::splat(CM);
     let equipped = stance_of(&core.0.sim.actor(core.0.hero).equipment);
     cstance.0 = if equipped == Stance::Unarmed || equipped == Stance::Torch {

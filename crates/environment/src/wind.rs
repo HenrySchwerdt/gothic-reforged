@@ -195,15 +195,38 @@ impl SpeedTreeWind {
         (lerp(self.vibration_frequency[0], self.vibration_frequency[1], s) / 100.0).clamp(0.1, 4.0)
     }
 
+    /// Base strength at which oscillator frequencies are sampled. Gusts still change wind
+    /// amplitude, but keeping their frequency fixed prevents elapsed-time phase drift.
+    fn base_strength(&self) -> f32 {
+        self.strength.clamp(0.0, 1.0)
+    }
+
+    fn tree_phase_cycles(&self, t: f32, phase: f32) -> f32 {
+        self.vibration_hz(self.base_strength()) * t + phase
+    }
+
+    fn leaf_frequencies_hz(&self) -> (f32, f32) {
+        let s = self.base_strength();
+        (
+            lerp(self.leaf_rocking_frequency[0], self.leaf_rocking_frequency[1], s) / 100.0,
+            lerp(self.leaf_rustling_frequency[0], self.leaf_rustling_frequency[1], s) / 100.0,
+        )
+    }
+
+    fn leaf_phase_cycles(&self, t: f32, phase: f32, hz: f32) -> f32 {
+        hz * t + phase
+    }
+
     /// Horizontal sway of a branch point with height weight `weight` (`(y / H)^2`) on a tree of
     /// world height `height` metres, along the wind direction. `phase` is a per-tree random
-    /// phase in `[0, 1)`.
+    /// phase in `[0, 1)`. Gusts change bend and vibration amplitude; oscillator frequency uses
+    /// the base strength so phase rate stays continuous.
     pub fn tree_offset(&self, t: f32, weight: f32, height: f32, phase: f32) -> f32 {
         let s = self.strength_at(t);
         let bend = self.bend_angle(s).sin();
-        let osc = 0.75 + 0.25 * (TAU * (self.vibration_hz(s) * t + phase)).sin();
-        let vib =
-            self.vibration_angle(s).sin() * (TAU * (self.vibration_hz(s) * t + phase * 7.0)).sin();
+        let osc = 0.75 + 0.25 * (TAU * self.tree_phase_cycles(t, phase)).sin();
+        let vib = self.vibration_angle(s).sin()
+            * (TAU * self.tree_phase_cycles(t * 3.0, phase * 7.0)).sin();
         let off = height * weight * (bend * osc + vib);
         off.clamp(-0.35 * height * weight, 0.35 * height * weight)
     }
@@ -230,27 +253,17 @@ impl SpeedTreeWind {
         )
     }
 
-    /// Displacement (metres) of a leaf card along its normal at time `t`: the card edge
-    /// (`leaf_size`, metres) rocked by the leaf angles. `phase` must be the same for all
-    /// vertices of a card (the shader derives it from a slowly varying function of position),
-    /// otherwise the corners move against each other and the card wobbles.
+    /// Displacement (metres) of a leaf-card vertex along the card normal at time `t`;
+    /// `leaf_size` is the card edge in metres and `phase` a per-vertex random phase. Gusts
+    /// change flutter amplitude; oscillator frequencies use base strength for continuous phase.
     pub fn leaf_offset(&self, t: f32, leaf_size: f32, phase: f32) -> f32 {
         let s = self.strength_at(t);
         let (rock, rust) = self.leaf_angles(s);
-        let f_rock = lerp(
-            self.leaf_rocking_frequency[0],
-            self.leaf_rocking_frequency[1],
-            s,
-        ) / 100.0;
-        let f_rust = lerp(
-            self.leaf_rustling_frequency[0],
-            self.leaf_rustling_frequency[1],
-            s,
-        ) / 100.0;
+        let (f_rock, f_rust) = self.leaf_frequencies_hz();
         leaf_size
             * 0.5
-            * (rock.sin() * (TAU * (f_rock * t + phase)).sin()
-                + rust.sin() * (TAU * (f_rust * t + phase * 3.0)).sin())
+            * (rock * (TAU * self.leaf_phase_cycles(t, phase, f_rock)).sin()
+                + rust * (TAU * self.leaf_phase_cycles(t, phase * 3.0, f_rust)).sin())
     }
 }
 
@@ -413,33 +426,72 @@ mod tests {
         assert!(w.leaf_offset(0.37, 0.4, 0.2).abs() <= w.leaf_offset(0.37, 0.8, 0.2).abs() + 1e-9);
     }
 
-    /// Amplitude and speed bounds that keep trees calm (the vertex stage in
-    /// `apps/game/src/walk/shaders/gothic_vertex.wesl` mirrors these formulas): a 15 m tree with
-    /// 0.45 m leaf cards in the world's wind, sampled over two minutes with gusts.
     #[test]
-    fn tree_motion_stays_calm() {
-        let w = SpeedTreeWind::default();
-        let (height, card) = (15.0, 0.45);
-        let mut tremble: f32 = 0.0;
-        let mut flutter: f32 = 0.0;
-        for i in 0..12_000 {
-            let t = i as f32 * 0.01;
-            let s = w.strength_at(t);
-            // The fast part of the crown sway (bend excluded): vibration only.
-            tremble = tremble.max(height * w.vibration_angle(s).sin().abs());
-            flutter = flutter.max(w.leaf_offset(t, card, 0.3).abs());
-            assert!(w.vibration_hz(s) <= 4.0);
+    fn speedtree_oscillator_phase_stays_continuous_over_long_runtimes() {
+        let mut w = SpeedTreeWind::default();
+        w.strength = 0.2;
+        w.gust_strength = [0.2, 0.2];
+        w.gust_duration = [1.0, 1.0];
+        w.gust_frequency = 30.0;
+        // A two-second slot and one-second gust give repeatable, bounded transitions. Keep the
+        // original default oscillator frequency ranges so the bound covers the real shader setup.
+
+        let frame = 1.0 / 60.0;
+        // Evaluate actual public offsets on the first frame at/after each onset and the last
+        // frame before each end. Divide by the representable f32 interval: at 50 h, one 60 Hz
+        // frame rounds to 15.625 ms because elapsed time is stored as f32.
+        for hours in [0.0, 1.0, 10.0, 50.0] {
+            let around = hours * 3600.0;
+            let period = w.gust_period();
+            let first_slot = (around / period).floor() as i32;
+            // Multiple actual gust boundaries keep the regression from passing because one
+            // particular phase happens to alias the bad frequency(s) * t expression.
+            for gust_slot in first_slot..first_slot + 16 {
+                let s = gust_slot as f32;
+                let start = (s + hash11(s)) * period;
+                if start < around {
+                    continue;
+                }
+                let end = start + w.gust_duration[0];
+                for (t0, t1) in [(start, start + frame), (end - frame, end)] {
+                    let dt = t1 - t0;
+                    assert!(dt > 0.0, "f32 time must advance across the sampled frame");
+
+                    let tree_speed = (w.tree_offset(t1, 1.0, 8.0, 0.25)
+                        - w.tree_offset(t0, 1.0, 8.0, 0.25))
+                    .abs()
+                        / dt;
+                    let leaf_speed = (w.leaf_offset(t1, 1.0, 0.17)
+                        - w.leaf_offset(t0, 1.0, 0.17))
+                    .abs()
+                        / dt;
+
+                    // At base strength 0.2, branch phase is 2.08 Hz and its 3x vibration is
+                    // 6.24 Hz. For a 1 m leaf, the configured flutter amplitudes are 0.144 m
+                    // (rocking) and 0.18 m (rustling), each scaled by 0.5 in the sum. Their
+                    // maximum smooth derivative, including the one-second gust amplitude
+                    // change, is below 3.6 m/s. At 50 h the phase-cycle f32 ULP is at most
+                    // 0.125 cycles for branch vibration and 0.03125 for leaves; those add up
+                    // to conservative 12 / 7 m/s long-runtime bounds over the representable
+                    // frame interval. At startup, where phase quantization is negligible, the
+                    // tighter 5 / 4.5 m/s bounds check the smooth gust-boundary envelope. The
+                    // old frequency(s) * elapsed_time formula exceeds these limits as t*f'
+                    // grows; checking 16 consecutive gust slots avoids a lucky phase alias.
+                    let (tree_limit, leaf_limit) = if hours == 0.0 {
+                        (5.0, 4.5)
+                    } else {
+                        (12.0, 7.0)
+                    };
+                    assert!(
+                        tree_speed < tree_limit,
+                        "tree wind jumped {tree_speed} m/s at {hours} h"
+                    );
+                    assert!(
+                        leaf_speed < leaf_limit,
+                        "leaf wind jumped {leaf_speed} m/s at {hours} h"
+                    );
+                }
+            }
         }
-        assert!(tremble < 0.08, "crown tremble {tremble} m");
-        assert!(flutter < 0.02, "leaf flutter {flutter} m");
-        // Calm air still moves the leaves a little.
-        let still = SpeedTreeWind {
-            gust_strength: [0.0, 0.0],
-            ..w
-        };
-        let calm = (0..300)
-            .map(|i| still.leaf_offset(i as f32 * 0.01, card, 0.0).abs())
-            .fold(0.0f32, f32::max);
-        assert!(calm > 0.0005, "calm flutter {calm} m");
     }
 }

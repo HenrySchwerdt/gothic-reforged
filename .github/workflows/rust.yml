@@ -60,6 +60,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/dev/engine-continuation' }}
       - run: cargo clippy --workspace --all-targets --all-features --locked ${{ env.NO_VR }} -- -D warnings
       - run: cargo test --workspace --locked ${{ env.NO_VR }}
+      - run: cargo test --locked -p gothic-audio-plus --features plugin
 
   # VR crates (docs/vr/README.md): avian3d physics and the headless desktop-fallback demos are a
   # large separate dependency tree, so they build in their own job (and cache) in parallel.

@@ -237,21 +237,23 @@ pub fn start_cast_phase(
     }
 }
 
-/// How a cast proceeds in the animation: `_AI_Cast_Begin` loads (and for a power cast charges),
-/// `_AI_Cast_Execute` casts and resets. Both are run back to back by the host, which plays the
-/// animation between them. Returns the mana the cast cost.
+fn cast_target(host: &dyn ScriptHost, caster: EntityId) -> EntityId {
+    let t = host.current_target(caster);
+    if t.is_some() { t } else { host.focus_entity() }
+}
+
+/// The begin of a cast, run when the cast animation starts: `_AI_Cast_Begin` loads the spell
+/// (the minimum mana is paid, unless the stack is alchemy) and for a power cast charges it up to
+/// the maximum. Returns whether a spell was in hand.
 ///
-/// Port of `_AI_Cast` (S:38710), `_AI_Cast_Begin` (S:38ae0) and `_AI_Cast_Execute` (S:39180).
-pub fn run_cast(host: &mut dyn ScriptHost, caster: EntityId, power: bool) -> i32 {
-    gothic_portcov::hit!("run_cast");
+/// Port of `_AI_Cast` (S:38710) and `_AI_Cast_Begin` (S:38ae0).
+pub fn cast_begin(host: &mut dyn ScriptHost, caster: EntityId, power: bool) -> bool {
+    gothic_portcov::hit!("cast_begin");
     let stack = host.find_stack_index(caster, Slot::RightHand);
     if stack < 0 {
-        return 0;
+        return false;
     }
-    let target = {
-        let t = host.current_target(caster);
-        if t.is_some() { t } else { host.focus_entity() }
-    };
+    let target = cast_target(host, caster);
     let name = host.stack_spell(caster, stack);
     if host.cast_spell(caster) != name {
         start_cast_phase(host, caster, target, stack, Phase::Reset);
@@ -261,10 +263,34 @@ pub fn run_cast(host: &mut dyn ScriptHost, caster: EntityId, power: bool) -> i32
     if power {
         start_cast_phase(host, caster, target, stack, Phase::Power);
     }
+    true
+}
+
+/// The end of a cast, run when the animation reaches the cast moment: `_AI_Cast_Execute` casts
+/// and resets. Returns the mana the cast cost.
+///
+/// Port of `_AI_Cast_Execute` (S:39180).
+pub fn cast_execute(host: &mut dyn ScriptHost, caster: EntityId) -> i32 {
+    gothic_portcov::hit!("cast_execute");
+    let stack = host.find_stack_index(caster, Slot::RightHand);
+    if stack < 0 {
+        return 0;
+    }
+    let target = cast_target(host, caster);
     let paid = host.mana_used(caster);
     start_cast_phase(host, caster, target, stack, Phase::Cast);
     start_cast_phase(host, caster, EntityId::NONE, stack, Phase::Reset);
     paid
+}
+
+/// A whole cast at once ([`cast_begin`] then [`cast_execute`]), for callers that have no
+/// animation between the two. Returns the mana the cast cost.
+pub fn run_cast(host: &mut dyn ScriptHost, caster: EntityId, power: bool) -> i32 {
+    gothic_portcov::hit!("run_cast");
+    if !cast_begin(host, caster, power) {
+        return 0;
+    }
+    cast_execute(host, caster)
 }
 
 /// Port of `MagicInstant` (S:52c40): the spell acts at once; its `FuncOnTargetHit` is called with

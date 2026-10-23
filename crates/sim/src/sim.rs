@@ -9,7 +9,7 @@ use crate::attitude::{AttitudeCtx, get_attitude, political_attitude};
 use crate::brain::{Strike, Task};
 use crate::combat::{
     Attack, Deity, HitContext, HitOutcome, HitResult, IgnoreReason, PerceptionKind,
-    bow_hit_multiplier, kill_xp, resolve_hit,
+    bow_hit_multiplier, kill_xp,
 };
 use crate::config::SimConfig;
 use crate::crime::{
@@ -24,9 +24,8 @@ use crate::rng::Rng;
 use crate::routine::{
     GameClock, RoutineResolver, TaskContext, follow_distance, routine_time, select_routine_task,
 };
-use crate::tactics::{attack_range, wants_to_flee};
 use crate::types::*;
-use crate::vitals::{self, TickEnv, stamina_cost};
+use crate::vitals::{self, TickEnv};
 use crate::world::{Pos, WorldQuery, in_fov};
 use gothic_gameplay::model::QuestStatus;
 use gothic_gameplay::script::{ExecResult, Output, npc_defeated, npc_killed};
@@ -35,10 +34,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod ai_exec;
+mod hit_ported;
+pub mod npc_exec;
 
-/// Run speed and walk speed in game units per second [I].
-pub const RUN_SPEED: f32 = 550.0;
-pub const WALK_SPEED: f32 = 180.0;
+/// Ground speed of the gaits of an ordinary humanoid NPC in game units per second: the
+/// template value `ForwardSpeedMax` 400 times the gait modifier (`SetSpeedByMode`, Game.dll:
+/// Walk `SlowModifier` 0.375, Run 1, Sprint `FastModifier` 1.5), `gothic_physics::MovementProfile::
+/// human_npc` / `gait_speed` (726 + 252 + 65 NPC templates share the values).
+pub const RUN_SPEED: f32 = 400.0;
+pub const WALK_SPEED: f32 = 150.0;
+pub const SPRINT_SPEED: f32 = 600.0;
+/// Strafe and backward speed (`StrafeSpeedMax`, `BackwardSpeedMax` of the same templates).
+pub const SIDESTEP_SPEED: f32 = 280.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
@@ -145,6 +152,28 @@ pub enum EventKind {
     },
     /// The hero's running instruction was stopped (`FullStop`).
     HeroStop,
+    /// `sAICombatMoveInstr` of an NPC whose body the host drives
+    /// ([`Sim::set_host_drives_npc`]): play the `phase` clip of `action` at `speed`, call
+    /// [`Sim::npc_move_hit`] when a `Hit` clip reaches the damage moment and
+    /// [`Sim::npc_exec_done`] when the clip ends.
+    NpcMove {
+        actor: ActorId,
+        seq: u32,
+        action: gothic_script::enums::Action,
+        phase: gothic_script::host::MovePhase,
+        speed: f32,
+        pose: gothic_script::enums::AniState,
+        target: Option<ActorId>,
+    },
+    /// An NPC archer starts to take aim (`ZS_Attack_Shoot` S:18ed0 waits a second before
+    /// `_AI_Shoot`): the host plays the raise and aim clips of the bow.
+    NpcAim {
+        actor: ActorId,
+    },
+    /// The running instruction of an NPC was dropped (a blow, death): stop its clip.
+    NpcStop {
+        actor: ActorId,
+    },
     Teleported {
         actor: ActorId,
     },
@@ -247,6 +276,9 @@ pub struct Sim<W: WorldQuery> {
     /// The NPC of the running dialog (`npc` / `self` in forwarded effects).
     pub dialog_partner: Option<ActorId>,
     pub gui_open: bool,
+    /// What the hero's body does (`Entity::IsSprinting` etc. in the stamina tick, S:b0520); the
+    /// host sets it from the movement mode machine.
+    pub hero_move: vitals::Movement,
     pub npc_templates: BTreeMap<String, NpcRecord>,
     /// Script-port state (routine tasks, interact points, queued AI commands), see
     /// [`crate::script_host`].
@@ -255,17 +287,6 @@ pub struct Sim<W: WorldQuery> {
     /// Actors outside are not thought for at all, like unprocessed entities in the original;
     /// the hero and companions that follow or wait for the hero always run.
     pub processing: Option<BTreeSet<ActorId>>,
-}
-
-fn two_mut(v: &mut [Actor], i: usize, j: usize) -> (&mut Actor, &mut Actor) {
-    assert_ne!(i, j);
-    if i < j {
-        let (a, b) = v.split_at_mut(j);
-        (&mut a[i], &mut b[0])
-    } else {
-        let (a, b) = v.split_at_mut(i);
-        (&mut b[0], &mut a[j])
-    }
 }
 
 /// Total duration of a melee move including recovery [I]; the hit window opens earlier
@@ -319,6 +340,7 @@ impl<W: WorldQuery> Sim<W> {
             bark: Default::default(),
             dialog_partner: None,
             gui_open: false,
+            hero_move: vitals::Movement::Idle,
             npc_templates: BTreeMap::new(),
             script: crate::script_host::ScriptTables::default(),
             processing: None,
@@ -549,6 +571,20 @@ impl<W: WorldQuery> Sim<W> {
             return;
         }
         let task = self.actors[i].brain.task;
+        // The instruction in flight (a swing, a guard, a hit reaction) keeps the actor busy.
+        if !matches!(task, Task::Dead | Task::Unconscious)
+            && self.npc_plan_active(i)
+            && self.npc_plan_tick(i, now)
+        {
+            if task == Task::Attack
+                && let Some(t) = self.actors[i].target
+                && self.actors[i].brain.plan.host_drives
+                && !self.actors[i].is_player
+            {
+                self.face(i, t);
+            }
+            return;
+        }
         match task {
             Task::Dead => {}
             Task::Unconscious => self.unconscious_think(i, now),
@@ -572,6 +608,11 @@ impl<W: WorldQuery> Sim<W> {
         let id = self.actors[i].id;
         let env = TickEnv {
             gui_open: self.gui_open,
+            movement: if self.actors[i].is_player {
+                self.hero_move
+            } else {
+                vitals::Movement::Idle
+            },
             ..TickEnv::default()
         };
         vitals::apply_tick(&self.cfg, &mut self.actors[i], &env);
@@ -626,10 +667,7 @@ impl<W: WorldQuery> Sim<W> {
         let (ai, vi) = (att.0 as usize, vic.0 as usize);
         let now = self.now_ms();
         let action = self.actors[ai].action;
-        let outcome = {
-            let (a, v) = two_mut(&mut self.actors, ai, vi);
-            resolve_hit(&self.cfg, &mut self.rng, a, v, attack)
-        };
+        let outcome = self.resolve_ported(att, vic, attack);
         self.push(EventKind::Hit {
             attacker: att,
             victim: vic,
@@ -656,6 +694,14 @@ impl<W: WorldQuery> Sim<W> {
                 v.action = Action::None;
                 v.brain.parade_until_ms = 0;
                 v.brain.busy_until_ms = now + lock;
+            }
+        }
+        if lock > 0 && self.actors[vi].action != Action::SprintAttack && !self.actors[vi].is_player
+        {
+            // The victim's running instruction ends; the reaction clip of the result plays.
+            self.npc_react_to_hit(vi, now, outcome.result, att);
+            if self.actors[vi].brain.plan.host_drives {
+                self.actors[vi].brain.busy_until_ms = now;
             }
         }
         if outcome.killed() {
@@ -755,6 +801,7 @@ impl<W: WorldQuery> Sim<W> {
     /// `Kill` (S:1bc30) [CA 4.1]: AIMode Dead, quest hooks, XP once for the player side.
     pub fn kill(&mut self, victim: ActorId, killer: Option<ActorId>) {
         let vi = victim.0 as usize;
+        self.npc_cancel_plan(vi);
         let name = self.actors[vi].name.clone();
         {
             let v = &mut self.actors[vi];
@@ -829,6 +876,7 @@ impl<W: WorldQuery> Sim<W> {
         let now = self.now_ms();
         let by_player_side = by.is_some_and(|b| self.is_player_side(b));
         let by_player = by.is_some_and(|b| self.actors[b.0 as usize].is_player);
+        self.npc_cancel_plan(vi);
         let name = self.actors[vi].name.clone();
         {
             let arena = self.actors[vi].attack_reason == AttackReason::Arena;
@@ -1101,6 +1149,9 @@ impl<W: WorldQuery> Sim<W> {
             let a = &mut self.actors[i];
             if a.action == Action::Parade && now >= a.brain.parade_until_ms {
                 a.action = Action::None;
+                if a.ani_state == AniState::Parade {
+                    a.ani_state = AniState::Stand;
+                }
             }
             if a.brain.strike.is_none()
                 && now >= a.brain.busy_until_ms
@@ -1164,15 +1215,32 @@ impl<W: WorldQuery> Sim<W> {
         if matches!(self.actors[i].ai_mode, AiMode::Dead | AiMode::Down) {
             return;
         }
+        if st.action == Action::FinishingAttack {
+            // `OnAI_FinishingAttack`: the downed victim dies when the blow has taken
+            // `FINISHING_SECS` (the strike was queued with that delay).
+            if self.actors[st.target.0 as usize].ai_mode == AiMode::Down {
+                self.kill(st.target, Some(id));
+            }
+            return;
+        }
         let t = &self.actors[st.target.0 as usize];
         if matches!(t.ai_mode, AiMode::Dead | AiMode::Down) {
             return;
         }
-        let (sp, fist) = {
-            let a = &self.actors[i];
-            (a.species, a.equipment.weapon_damage().is_none())
+        // An NPC's blow reaches as far as it may start (`GetAttackRange`, S:4e940: species base
+        // plus the length of the move); the hero's keeps the slack of the player layer.
+        let slack = if self.actors[i].is_player { 50.0 } else { 0.0 };
+        let reach = {
+            let host = crate::script_host::SimHost::new(self);
+            let mv = vitals::script_action(st.action);
+            gothic_script::combat::range::attack_range(
+                &host,
+                crate::script_host::entity_of(id),
+                crate::script_host::entity_of(st.target),
+                mv,
+            ) as f32
+                + slack
         };
-        let reach = attack_range(sp, fist, st.action) + 50.0;
         if self.dist(id, st.target) > reach {
             self.push(EventKind::Whiff {
                 attacker: id,
@@ -1182,6 +1250,10 @@ impl<W: WorldQuery> Sim<W> {
             return;
         }
         self.actors[i].action = st.action;
+        if self.actors[i].is_player {
+            // The player's blow goes against the entity he fights (`GetCurrentTarget`).
+            self.actors[i].target = Some(st.target);
+        }
         let second = vitals::second_stage_cost(st.action);
         if second > 0 {
             let a = &mut self.actors[i];
@@ -1803,6 +1875,20 @@ impl<W: WorldQuery> Sim<W> {
 }
 
 /// Parse `wpos x y z` style position words (`lpos`, `wposg`, `lposg` too) [GAME_RULES 3 Spawn].
+/// The shipped `WantToFlee` is a stub (S:bd420, returns 0); the optional variant makes non-boss
+/// NPCs flee at low HP without a potion (off by default, not part of the port).
+fn wants_to_flee(cfg: &SimConfig, a: &Actor) -> bool {
+    match cfg.variants.flee_below_hp_pct {
+        Some(p) => {
+            !a.is_player
+                && !a.boss
+                && a.hp * 100 < a.hp_max(cfg) * p
+                && a.inventory.count("it_potion_health") == 0
+        }
+        None => false,
+    }
+}
+
 fn parse_pos(s: &str) -> Option<Pos> {
     let nums: Vec<f32> = s
         .split_whitespace()

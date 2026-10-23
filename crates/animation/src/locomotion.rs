@@ -17,6 +17,10 @@
 //! | Jump | `Stand` | `Jump` / `Stand` (one shot) | `Fwd` |
 //! | Fall | `Stand` | `Fall` / `Loop` | `Fwd` |
 //! | Land | `Stand` | `Fall` / `End` (fallback `Recover`) | `Fwd` |
+//! | HeavyLand | `Stand` | `Fall` / `Hit` (`ZS_HeavyLand`, S:ae9b0; fallback `End`) | `Fwd` |
+//! | DiveIn | `Swim` | `Fall` / `Hit` (`ZS_DiveIn`, S:af3e0) | `Fwd` |
+//! | Slide | `Stand` | `Slide` / `Begin` (`ZS_Slide`) | `Fwd` |
+//! | Wade / Swim | `Wade` / `Swim` | the walk / run / sprint / idle / turn clips of the pose | as ground |
 //!
 //! `Left`/`Right` hands per [`Stance`]: Unarmed `None/None`, Fist `None/Fist`, OneHand
 //! `None/1H`, OneHandShield `Shield/1H`, TwoHand `None/2H`, Bow `Bow/Arrow`, CrossBow
@@ -42,6 +46,17 @@ pub enum GaitHint {
     Sprint,
 }
 
+/// The body pose family of the locomotion clips: `Hero_<Pose>_...` (`Stand` on land, `Wade`
+/// in shallow water, `Swim` while swimming and diving). Wading and swimming are the movement
+/// modes 10 / 7 / 8 of `gECharMovementMode`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum BodyPose {
+    #[default]
+    Stand,
+    Wade,
+    Swim,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Stance {
     #[default]
@@ -58,6 +73,20 @@ pub enum Stance {
 }
 
 impl Stance {
+    /// Every stance, in declaration order.
+    pub const ALL: [Stance; 10] = [
+        Stance::Unarmed,
+        Stance::Fist,
+        Stance::OneHand,
+        Stance::OneHandShield,
+        Stance::TwoHand,
+        Stance::Bow,
+        Stance::CrossBow,
+        Stance::Staff,
+        Stance::Magic,
+        Stance::Torch,
+    ];
+
     /// `(left hand, right hand)` tokens of the motion names.
     pub fn hands(self) -> (&'static str, &'static str) {
         match self {
@@ -96,6 +125,15 @@ pub struct LocomotionInput {
     pub turn_error: f32,
     /// Gait from the movement mode machine; `None` keeps the speed-threshold guess.
     pub gait: Option<GaitHint>,
+    /// Pose family: wading / swimming (movement modes 10 / 7 / 8).
+    pub body: BodyPose,
+    /// The slide mode (`gECharMovementMode` 0xc, `ZS_Slide`).
+    pub slide: bool,
+    /// The landing that just happened hurt (`ZS_HeavyLand`): play the heavy landing clip
+    /// instead of the plain landing. Set by the host together with the landing.
+    pub heavy_land: bool,
+    /// The fall ended in deep water (`ZS_DiveIn`): play the dive-in clip of the swim pose.
+    pub dive_in: bool,
 }
 
 impl Default for LocomotionInput {
@@ -108,6 +146,10 @@ impl Default for LocomotionInput {
             parade: false,
             turn_error: 0.0,
             gait: None,
+            body: BodyPose::Stand,
+            slide: false,
+            heavy_land: false,
+            dive_in: false,
         }
     }
 }
@@ -123,6 +165,14 @@ pub enum MoveKind {
     Jump,
     Fall,
     Land,
+    /// `ZS_HeavyLand`: the clip of a landing that cost hit points.
+    HeavyLand,
+    /// `ZS_DiveIn`: falling into deep water.
+    DiveIn,
+    /// `ZS_Slide`: sliding down ground steeper than `SteepGroundAngleMax`.
+    Slide,
+    /// The slide ended on ground (`Slide_End`).
+    SlideEnd,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -152,6 +202,21 @@ pub struct LocoKey {
     pub stance: Stance,
     pub sneak: bool,
     pub parade: bool,
+    pub body: BodyPose,
+}
+
+impl LocoKey {
+    /// Standing idle in `stance` (the key a freshly spawned character plays).
+    pub fn idle(stance: Stance) -> Self {
+        Self {
+            kind: MoveKind::Idle,
+            dir: MoveDir::Fwd,
+            stance,
+            sneak: false,
+            parade: false,
+            body: BodyPose::Stand,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -224,6 +289,7 @@ impl Locomotion {
                 stance: Stance::Unarmed,
                 sneak: false,
                 parade: false,
+                body: BodyPose::Stand,
             },
             ground_speed: 0.0,
             playing: None,
@@ -246,9 +312,28 @@ impl Locomotion {
             stance: input.stance,
             sneak: input.sneak,
             parade: input.parade,
+            body: input.body,
             ..prev
         };
-        if !input.grounded {
+        // Swimming and diving: the swim pose never falls or lands. A fall that ended in the
+        // water plays the dive-in clip once (`ZS_DiveIn`).
+        if input.body == BodyPose::Swim
+            && (input.dive_in || prev.kind == MoveKind::DiveIn)
+            && !(prev.kind == MoveKind::DiveIn && clip_finished)
+            && speed < c.run_enter
+        {
+            next.kind = MoveKind::DiveIn;
+            next.dir = MoveDir::Fwd;
+            self.key = next;
+            return next;
+        }
+        if input.slide {
+            next.kind = MoveKind::Slide;
+            next.dir = MoveDir::Fwd;
+            self.key = next;
+            return next;
+        }
+        if !input.grounded && input.body == BodyPose::Stand {
             next.dir = MoveDir::Fwd;
             next.kind = match prev.kind {
                 MoveKind::Jump if !clip_finished => MoveKind::Jump,
@@ -259,9 +344,31 @@ impl Locomotion {
             self.key = next;
             return next;
         }
-        if matches!(prev.kind, MoveKind::Jump | MoveKind::Fall) {
-            next.kind = MoveKind::Land;
+        if prev.kind == MoveKind::Slide && input.body == BodyPose::Stand {
+            next.kind = MoveKind::SlideEnd;
             next.dir = MoveDir::Fwd;
+            self.key = next;
+            return next;
+        }
+        // The slide stops at once (the speed accumulators are reset); the filtered animation
+        // velocity still shows the old speed for a moment, so only a steering player (a gait
+        // from the movement mode machine) interrupts the clip.
+        if prev.kind == MoveKind::SlideEnd && !clip_finished && input.gait.is_none() {
+            self.key = next;
+            return next;
+        }
+        if matches!(prev.kind, MoveKind::Jump | MoveKind::Fall) && input.body == BodyPose::Stand {
+            next.kind = if input.heavy_land {
+                MoveKind::HeavyLand
+            } else {
+                MoveKind::Land
+            };
+            next.dir = MoveDir::Fwd;
+            self.key = next;
+            return next;
+        }
+        if matches!(prev.kind, MoveKind::HeavyLand) && !clip_finished {
+            // `ZS_HeavyLand` plays its clip to the end before the routine goes on.
             self.key = next;
             return next;
         }
@@ -316,7 +423,7 @@ impl Locomotion {
             } else {
                 MoveKind::Walk
             };
-        } else if input.turn_error.abs() > c.turn_enter {
+        } else if input.turn_error.abs() > c.turn_enter && input.body != BodyPose::Swim {
             next.dir = MoveDir::Fwd;
             next.kind = if input.turn_error > 0.0 {
                 MoveKind::TurnLeft
@@ -346,7 +453,13 @@ impl Locomotion {
     pub fn is_one_shot(kind: MoveKind) -> bool {
         matches!(
             kind,
-            MoveKind::Jump | MoveKind::Land | MoveKind::TurnLeft | MoveKind::TurnRight
+            MoveKind::Jump
+                | MoveKind::Land
+                | MoveKind::HeavyLand
+                | MoveKind::SlideEnd
+                | MoveKind::DiveIn
+                | MoveKind::TurnLeft
+                | MoveKind::TurnRight
         )
     }
 }
@@ -373,6 +486,14 @@ fn alternatives(key: LocoKey) -> Vec<(&'static str, &'static str, &'static str)>
         MoveKind::Jump => vec![("Jump", "Stand", "Fwd")],
         MoveKind::Fall => vec![("Fall", "Loop", "Fwd")],
         MoveKind::Land => vec![("Fall", "End", "Fwd"), ("Fall", "Recover", "Fwd")],
+        MoveKind::HeavyLand => vec![
+            ("Fall", "Hit", "Fwd"),
+            ("Fall", "End", "Fwd"),
+            ("Fall", "Recover", "Fwd"),
+        ],
+        MoveKind::DiveIn => vec![("Fall", "Hit", "Fwd"), ("Move", "Stand", "Fwd")],
+        MoveKind::Slide => vec![("Slide", "Begin", "Fwd"), ("Fall", "Loop", "Fwd")],
+        MoveKind::SlideEnd => vec![("Slide", "End", "Fwd"), ("Fall", "End", "Fwd")],
     }
 }
 
@@ -387,7 +508,15 @@ pub fn resolve_motion<'a>(
     if (l, r) != ("None", "None") {
         hands.push(("None", "None"));
     }
-    let poses: &[&str] = if key.parade && key.kind != MoveKind::Jump {
+    let poses: &[&str] = if key.body != BodyPose::Stand {
+        // Water poses have no weapon variants: the unarmed clips of the pose.
+        hands.clear();
+        hands.push(("None", "None"));
+        match key.body {
+            BodyPose::Wade => &["Wade", "Stand"],
+            _ => &["Swim", "Wade"],
+        }
+    } else if key.parade && key.kind != MoveKind::Jump {
         &["Parade", "Stand"]
     } else if key.sneak && key.kind != MoveKind::Jump {
         &["Sneak", "Stand"]
@@ -543,6 +672,7 @@ mod tests {
             stance,
             sneak,
             parade: false,
+            body: BodyPose::Stand,
         };
         // Run with a sword has no run clip in this set: walk with the sword wins over
         // running unarmed.
@@ -603,5 +733,75 @@ mod tests {
             guess.step(&i, lm(100.0, 0.0, 0.0), false).kind,
             MoveKind::Walk
         );
+    }
+    #[test]
+    fn slide_heavy_landing_and_water_poses() {
+        let mut l = Locomotion::default();
+        let mut i = input(Stance::Unarmed);
+        // sliding keeps the slide clip, the end plays `Slide_End`, then idle again
+        i.slide = true;
+        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), false).kind, MoveKind::Slide);
+        i.slide = false;
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, 0.0), false).kind,
+            MoveKind::SlideEnd
+        );
+        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), true).kind, MoveKind::Idle);
+        // a landing that hurt plays the heavy clip to its end
+        let mut l = Locomotion::default();
+        i.grounded = false;
+        l.step(&i, lm(0.0, 0.0, -900.0), false);
+        i.grounded = true;
+        i.heavy_land = true;
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, 0.0), false).kind,
+            MoveKind::HeavyLand
+        );
+        i.heavy_land = false;
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, 0.0), false).kind,
+            MoveKind::HeavyLand
+        );
+        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), true).kind, MoveKind::Idle);
+        // the swim pose never falls and has no turn clips
+        let mut l = Locomotion::default();
+        i.body = BodyPose::Swim;
+        i.grounded = false;
+        i.turn_error = 2.0;
+        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), false).kind, MoveKind::Idle);
+        i.dive_in = true;
+        assert_eq!(
+            l.step(&i, lm(0.0, 0.0, -300.0), false).kind,
+            MoveKind::DiveIn
+        );
+        i.dive_in = false;
+        assert_eq!(l.step(&i, lm(0.0, 0.0, 0.0), true).kind, MoveKind::Idle);
+        // clip resolution in the water poses (shipped names)
+        let names = [
+            "Hero_Swim_None_None_P0_Ambient_Loop_N_Fwd_00_%_00_P0_0",
+            "Hero_Swim_None_None_P0_Fall_Hit_N_Fwd_00_%_00_P0_0",
+            "Hero_Swim_None_None_P0_Move_Run_N_Fwd_00_%_00_P0_400",
+            "Hero_Wade_None_None_P0_Move_Walk_N_Fwd_00_%_00_P0_160",
+            "Hero_Stand_None_None_P0_Fall_Hit_N_Fwd_00_%_00_P0_430",
+            "Hero_Stand_None_None_P0_Slide_Begin_N_Fwd_00_%_00_P0_0",
+            "Hero_Stand_None_None_P0_Slide_End_N_Fwd_00_%_00_P0_0",
+        ];
+        let catalog = MotionCatalog::new(names);
+        let key = |kind, body| LocoKey {
+            kind,
+            dir: MoveDir::Fwd,
+            stance: Stance::OneHand,
+            sneak: false,
+            parade: false,
+            body,
+        };
+        let r = |k| resolve_motion(&catalog, "Hero", k);
+        assert_eq!(r(key(MoveKind::Idle, BodyPose::Swim)), Some(names[0]));
+        assert_eq!(r(key(MoveKind::Run, BodyPose::Swim)), Some(names[2]));
+        assert_eq!(r(key(MoveKind::DiveIn, BodyPose::Swim)), Some(names[1]));
+        assert_eq!(r(key(MoveKind::Walk, BodyPose::Wade)), Some(names[3]));
+        assert_eq!(r(key(MoveKind::HeavyLand, BodyPose::Stand)), Some(names[4]));
+        assert_eq!(r(key(MoveKind::Slide, BodyPose::Stand)), Some(names[5]));
+        assert_eq!(r(key(MoveKind::SlideEnd, BodyPose::Stand)), Some(names[6]));
     }
 }

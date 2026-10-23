@@ -1,22 +1,62 @@
 //! Gothic surface, sky and water materials (custom WESL shaders, see `shaders/`).
 use bevy::{
-    asset::{embedded_asset, load_embedded_asset},
-    mesh::MeshVertexBufferLayoutRef,
+    asset::{RenderAssetUsages, embedded_asset, load_embedded_asset},
+    mesh::{Mesh, MeshVertexBufferLayoutRef},
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
-        AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+        AsBindGroup, BufferDescriptor, BufferUsages, Face, FragmentState, MapMode, PollType,
+        RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     },
-    shader::{Shader, ShaderRef},
+    render::{
+        Render, RenderApp, RenderSystems,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        render_asset::RenderAssets,
+        renderer::{RenderDevice, RenderQueue},
+        storage::{GpuShaderBuffer, ShaderBuffer},
+    },
+    shader::{Shader, ShaderDefVal, ShaderRef},
 };
 use std::sync::OnceLock;
 
 static GOTHIC_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_PREPASS_FS: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_PREPASS_VS: OnceLock<Handle<Shader>> = OnceLock::new();
 static GOTHIC_VS: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_WIND: OnceLock<Handle<Shader>> = OnceLock::new();
+static GOTHIC_VISIBILITY: OnceLock<Handle<Shader>> = OnceLock::new();
 static SKY_FS: OnceLock<Handle<Shader>> = OnceLock::new();
 static WATER_FS: OnceLock<Handle<Shader>> = OnceLock::new();
+static WIND_CLOCK_BUFFER: OnceLock<Handle<ShaderBuffer>> = OnceLock::new();
+
+#[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
+pub struct WindClockFrame {
+    pub buffer: Handle<ShaderBuffer>,
+    /// Four oscillator records from the environment clock, followed by the shared grass focus.
+    pub values: [f32; 20],
+    pub probe: WindClockProbeFrame,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindClockProbeCapture {
+    #[default]
+    None,
+    Seed,
+    BeforeBoundary,
+    AfterBoundary,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WindClockProbeFrame {
+    pub active: bool,
+    pub continuity_ok: bool,
+    pub finished: bool,
+    pub capture: WindClockProbeCapture,
+    pub elapsed_seconds: f64,
+    pub delta_seconds: f64,
+}
 
 pub struct GothicMaterialsPlugin;
 
@@ -25,13 +65,21 @@ impl Plugin for GothicMaterialsPlugin {
         embedded_asset!(app, "shaders/gothic.wesl");
         embedded_asset!(app, "shaders/gothic_prepass.wesl");
         embedded_asset!(app, "shaders/gothic_vertex.wesl");
+        embedded_asset!(app, "shaders/gothic_wind.wesl");
+        embedded_asset!(app, "shaders/gothic_visibility.wesl");
         embedded_asset!(app, "shaders/sky.wesl");
         embedded_asset!(app, "shaders/water.wesl");
+        // `gothic_prepass.wesl` is also used as its fragment shader when `GR_NOWIND=1`, and its
+        // top-level WESL import still needs to resolve even when the custom vertex entry is off.
+        // Load and retain the module before either importing Gothic shader is requested.
+        let _ = GOTHIC_WIND.set(load_embedded_asset!(app, "shaders/gothic_wind.wesl"));
+        let _ = GOTHIC_VISIBILITY.set(load_embedded_asset!(app, "shaders/gothic_visibility.wesl"));
         let _ = GOTHIC_FS.set(load_embedded_asset!(app, "shaders/gothic.wesl"));
         let _ = GOTHIC_PREPASS_FS.set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
         // `GR_NOWIND=1` keeps Bevy's own vertex stage (wind off, for A/B comparisons).
         if std::env::var_os("GR_NOWIND").is_none() {
             let _ = GOTHIC_VS.set(load_embedded_asset!(app, "shaders/gothic_vertex.wesl"));
+            let _ = GOTHIC_PREPASS_VS.set(load_embedded_asset!(app, "shaders/gothic_prepass.wesl"));
         }
         let _ = SKY_FS.set(load_embedded_asset!(app, "shaders/sky.wesl"));
         let _ = WATER_FS.set(load_embedded_asset!(app, "shaders/water.wesl"));
@@ -40,6 +88,14 @@ impl Plugin for GothicMaterialsPlugin {
         let _ = CHAR_FS.set(load_embedded_asset!(app, "shaders/char.wesl"));
         let _ = CHAR_PREPASS_FS.set(load_embedded_asset!(app, "shaders/char_prepass.wesl"));
         app.add_systems(Update, convert_standard);
+        app.add_systems(Startup, create_wind_clock_buffer);
+        app.add_plugins(ExtractResourcePlugin::<WindClockFrame>::default());
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(
+                Render,
+                upload_wind_clock.in_set(RenderSystems::PrepareResources),
+            );
+        }
         app.add_plugins((
             MaterialPlugin::<CharMaterial>::default(),
             MaterialPlugin::<GothicMaterial>::default(),
@@ -85,8 +141,8 @@ pub struct GothicParams {
     pub uv_d_rot: Vec4,
     pub uv_n_scroll: Vec4,
     pub uv_n_rot: Vec4,
-    /// Wind: x mode (see [`WindMode`]), y tree height in local units, z leaf card size (m),
-    /// w leaf flutter scale (`GR_LEAF_FLUTTER`, 1 = default).
+    /// Wind: x mode (see [`WindMode`]), y tree height in local units, z leaf flutter amplitude
+    /// input (nominal leaf card size in metres times the optional `GR_LEAF_FLUTTER` scale).
     pub wind_mat: Vec4,
     /// Vegetation wave: xy angular wave numbers (1/cm), zw phase rates (rad/s).
     pub veg: Vec4,
@@ -167,6 +223,7 @@ pub struct WindEnv {
     pub wind: [Vec4; 7],
     pub veg: Vec4,
     pub veg_amp: Vec4,
+    pub clock: gothic_environment::wind_clock::WindClockConfig,
 }
 
 impl WindEnv {
@@ -183,6 +240,7 @@ impl WindEnv {
         }
         Self {
             wind: pack_speedtree_wind(tree),
+            clock: gothic_environment::wind_clock::WindClockConfig::new(tree, v),
             veg: Vec4::new(
                 v.wave_number[0],
                 v.wave_number[1],
@@ -295,8 +353,11 @@ pub fn char_lights() -> ([Vec4; CHAR_LIGHTS], [Vec4; CHAR_LIGHTS]) {
 pub fn push_char_lights(
     chars: &mut Assets<CharMaterial>,
     lights: [Vec4; CHAR_LIGHTS],
-    cols: [Vec4; CHAR_LIGHTS],
+    mut cols: [Vec4; CHAR_LIGHTS],
 ) {
+    if std::env::var_os("GR_NOCLIGHTS").is_some() {
+        cols = [Vec4::ZERO; CHAR_LIGHTS];
+    }
     *char_lights_cell()
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = (lights, cols);
@@ -402,6 +463,8 @@ impl From<&GothicMaterial> for GothicKey {
 pub struct GothicMaterial {
     #[uniform(0)]
     pub params: GothicParams,
+    #[storage(8, read_only)]
+    pub wind_clock: Handle<ShaderBuffer>,
     #[texture(1)]
     #[sampler(2)]
     pub a0: Option<Handle<Image>>,
@@ -419,6 +482,274 @@ pub struct GothicMaterial {
     pub two_sided: bool,
 }
 
+fn create_wind_clock_buffer(mut buffers: ResMut<Assets<ShaderBuffer>>, mut commands: Commands) {
+    // Four vec4s hold current and previous-frame bounded phases/gust; the fifth holds the
+    // shared grass focus. The buffer identity is stable for every Gothic material and frame.
+    let handle = buffers.add(ShaderBuffer::with_size(80, RenderAssetUsages::default()));
+    let _ = WIND_CLOCK_BUFFER.set(handle.clone());
+    commands.insert_resource(WindClockFrame {
+        buffer: handle,
+        values: [0.0; 20],
+        probe: WindClockProbeFrame::default(),
+    });
+}
+
+fn upload_wind_clock(
+    frame: Res<WindClockFrame>,
+    buffers: Res<RenderAssets<GpuShaderBuffer>>,
+    queue: Res<RenderQueue>,
+    device: Res<RenderDevice>,
+    mut probe: Local<WindClockGpuProbe>,
+) {
+    let Some(buffer) = buffers.get(&frame.buffer) else {
+        return;
+    };
+    queue.write_buffer(&buffer.buffer, 0, bytemuck::cast_slice(&frame.values));
+
+    if frame.probe.active {
+        if !frame.probe.continuity_ok {
+            probe.fail("previous encoded record differs from last current record");
+        }
+        if let Some(previous) = &probe.first_buffer {
+            if previous.buffer.id() != buffer.buffer.id() {
+                probe.fail("shared GPU buffer identity changed");
+            }
+        } else {
+            probe.first_buffer = Some(GpuShaderBuffer {
+                buffer: buffer.buffer.clone(),
+                label: buffer.label.clone(),
+                buffer_usage: buffer.buffer_usage,
+                had_data: buffer.had_data,
+            });
+            eprintln!(
+                "wind-clock probe: synthetic start captured; shared GPU buffer identity baseline established"
+            );
+        }
+        if probe.schedule(frame.probe.capture) {
+            let staging = GpuShaderBuffer {
+                buffer: device.create_buffer(&BufferDescriptor {
+                    label: Some("wind_clock_probe_readback"),
+                    size: 80,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                label: "wind_clock_probe_readback".into(),
+                buffer_usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                had_data: true,
+            };
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let mut encoder = device.create_command_encoder(
+                &bevy::render::render_resource::CommandEncoderDescriptor {
+                    label: Some("wind_clock_probe_copy"),
+                },
+            );
+            encoder.copy_buffer_to_buffer(&buffer.buffer, 0, &staging.buffer, 0, 80);
+            queue.submit([encoder.finish()]);
+            staging
+                .buffer
+                .slice(..)
+                .map_async(MapMode::Read, move |result| {
+                    let _ = tx.send(result);
+                });
+            probe.pending.push(PendingWindClockReadback {
+                staging,
+                result: rx,
+                expected: frame.values,
+                capture: frame.probe.capture,
+                elapsed_seconds: frame.probe.elapsed_seconds,
+                delta_seconds: frame.probe.delta_seconds,
+                age_frames: 0,
+            });
+        }
+    }
+    collect_wind_clock_probe(&device, &mut probe);
+    if frame.probe.finished && probe.pending.is_empty() && !probe.complete_successfully() {
+        probe.fail("probe ended without all three distinct GPU captures");
+    }
+}
+
+#[derive(Default)]
+struct WindClockGpuProbe {
+    first_buffer: Option<GpuShaderBuffer>,
+    pending: Vec<PendingWindClockReadback>,
+    scheduled: [bool; 3],
+    completed: [bool; 3],
+    failed: bool,
+    completion_reported: bool,
+}
+
+impl WindClockGpuProbe {
+    fn schedule(&mut self, capture: WindClockProbeCapture) -> bool {
+        let Some(index) = capture.index() else {
+            return false;
+        };
+        if self.failed || self.scheduled[index] {
+            return false;
+        }
+        self.scheduled[index] = true;
+        true
+    }
+
+    fn complete(&mut self, capture: WindClockProbeCapture) {
+        if let Some(index) = capture.index() {
+            self.completed[index] = self.scheduled[index];
+        }
+    }
+
+    fn fail(&mut self, reason: &str) {
+        if !self.failed {
+            eprintln!("wind-clock probe FAIL: {reason}");
+            self.failed = true;
+        }
+    }
+
+    fn complete_successfully(&self) -> bool {
+        !self.failed && self.completed.into_iter().all(|complete| complete)
+    }
+}
+
+impl WindClockProbeCapture {
+    fn index(self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::Seed => Some(0),
+            Self::BeforeBoundary => Some(1),
+            Self::AfterBoundary => Some(2),
+        }
+    }
+}
+
+#[cfg(test)]
+mod wind_clock_probe_tests {
+    use super::*;
+
+    #[test]
+    fn only_distinct_scheduled_stages_complete_the_probe() {
+        let mut probe = WindClockGpuProbe::default();
+        assert!(probe.schedule(WindClockProbeCapture::Seed));
+        assert!(!probe.schedule(WindClockProbeCapture::Seed));
+        probe.complete(WindClockProbeCapture::Seed);
+        probe.complete(WindClockProbeCapture::BeforeBoundary);
+        assert!(!probe.complete_successfully());
+        assert!(probe.schedule(WindClockProbeCapture::BeforeBoundary));
+        assert!(probe.schedule(WindClockProbeCapture::AfterBoundary));
+        probe.complete(WindClockProbeCapture::BeforeBoundary);
+        probe.complete(WindClockProbeCapture::AfterBoundary);
+        assert!(probe.complete_successfully());
+    }
+
+    #[test]
+    fn any_probe_failure_is_sticky_and_blocks_success() {
+        let mut probe = WindClockGpuProbe::default();
+        for capture in [
+            WindClockProbeCapture::Seed,
+            WindClockProbeCapture::BeforeBoundary,
+            WindClockProbeCapture::AfterBoundary,
+        ] {
+            assert!(probe.schedule(capture));
+            probe.complete(capture);
+        }
+        probe.fail("synthetic test failure");
+        assert!(!probe.schedule(WindClockProbeCapture::Seed));
+        assert!(!probe.complete_successfully());
+    }
+}
+
+struct PendingWindClockReadback {
+    staging: GpuShaderBuffer,
+    result: std::sync::mpsc::Receiver<Result<(), bevy::render::render_resource::BufferAsyncError>>,
+    expected: [f32; 20],
+    capture: WindClockProbeCapture,
+    elapsed_seconds: f64,
+    delta_seconds: f64,
+    age_frames: u16,
+}
+
+fn collect_wind_clock_probe(device: &RenderDevice, probe: &mut WindClockGpuProbe) {
+    if probe.pending.is_empty() {
+        return;
+    }
+    if let Err(error) = device.poll(PollType::Poll) {
+        probe.fail(&format!("nonblocking GPU poll failed: {error:?}"));
+        probe.pending.clear();
+        return;
+    }
+    let mut index = 0;
+    while index < probe.pending.len() {
+        let mut completed_capture = None;
+        let mut failure = None;
+        let remove = {
+            let pending = &mut probe.pending[index];
+            pending.age_frames = pending.age_frames.saturating_add(1);
+            match pending.result.try_recv() {
+                Ok(Ok(())) => {
+                    match pending.staging.buffer.slice(..).get_mapped_range() {
+                        Ok(view) => {
+                            let actual: &[f32] = bytemuck::cast_slice(&view);
+                            let expected_bytes: &[u8] = bytemuck::cast_slice(&pending.expected);
+                            let matches = &view[..] == expected_bytes;
+                            let capture = pending.capture;
+                            if matches {
+                                completed_capture = Some(capture);
+                                eprintln!(
+                                    "wind-clock probe PASS: {capture:?}, synthetic elapsed {:.6}s, real frame delta {:.6}s, current={:?}, previous={:?}; all 20 f32 values (80 bytes) match uploaded bytes exactly",
+                                    pending.elapsed_seconds,
+                                    pending.delta_seconds,
+                                    &actual[0..8],
+                                    &actual[8..16]
+                                );
+                            } else {
+                                failure = Some(format!(
+                                    "{capture:?} GPU readback differs from uploaded frame"
+                                ));
+                            }
+                            drop(view);
+                            pending.staging.buffer.unmap();
+                        }
+                        Err(error) => {
+                            failure = Some(format!("GPU readback map range failed: {error:?}"));
+                            pending.staging.buffer.unmap();
+                        }
+                    }
+                    true
+                }
+                Ok(Err(error)) => {
+                    failure = Some(format!("GPU readback map failed: {error:?}"));
+                    true
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) if pending.age_frames < 180 => false,
+                Err(_) => {
+                    failure =
+                        Some("GPU readback callback timed out after 180 render frames".into());
+                    true
+                }
+            }
+        };
+        if let Some(capture) = completed_capture {
+            probe.complete(capture);
+        }
+        if let Some(reason) = failure {
+            probe.fail(&reason);
+        }
+        if remove {
+            probe.pending.swap_remove(index);
+        } else {
+            index += 1;
+        }
+    }
+    if probe.complete_successfully() && !probe.completion_reported {
+        eprintln!("wind-clock probe complete: three synthetic-boundary GPU captures verified");
+        probe.completion_reported = true;
+    }
+}
+
+pub fn wind_clock_buffer() -> Handle<ShaderBuffer> {
+    WIND_CLOCK_BUFFER
+        .get()
+        .expect("wind clock buffer is initialized during Startup")
+        .clone()
+}
+
 impl Material for GothicMaterial {
     fn fragment_shader() -> ShaderRef {
         GOTHIC_FS
@@ -430,19 +761,23 @@ impl Material for GothicMaterial {
             .get()
             .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
+    fn prepass_vertex_shader() -> ShaderRef {
+        GOTHIC_PREPASS_VS
+            .get()
+            .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
+    }
     fn vertex_shader() -> ShaderRef {
         GOTHIC_VS
             .get()
             .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
-    // The shadow/depth prepass has no `globals` binding: shadows of swaying geometry stay static.
     fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
     }
     fn specialize(
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = if key.bind_group_data.two_sided {
@@ -450,6 +785,79 @@ impl Material for GothicMaterial {
         } else {
             Some(Face::Back)
         };
+
+        // Bevy omits normals from depth-only and shadow prepass vertex layouts. Our wind
+        // deformation needs the same normal as the color pass for leaf flutter, so add the
+        // existing mesh attribute only to the custom prepass vertex pipeline. This is a
+        // pipeline fetch change; it does not duplicate mesh data or affect forward layouts.
+        let is_prepass_pipeline = descriptor
+            .vertex
+            .shader_defs
+            .contains(&ShaderDefVal::from("PREPASS_PIPELINE"));
+        let needs_extra_normal = GOTHIC_PREPASS_VS.get().is_some()
+            && is_prepass_pipeline
+            && !key.mesh_key.intersects(
+                bevy::pbr::MeshPipelineKey::NORMAL_PREPASS
+                    | bevy::pbr::MeshPipelineKey::DEFERRED_PREPASS,
+            );
+        if needs_extra_normal && layout.0.contains(Mesh::ATTRIBUTE_NORMAL) {
+            let normal_attribute = layout
+                .0
+                .get_layout(&[Mesh::ATTRIBUTE_NORMAL.at_shader_location(3)])?
+                .attributes[0];
+            if let Some(vertex_buffer) = descriptor.vertex.buffers.first_mut() {
+                vertex_buffer.attributes.push(normal_attribute);
+                vertex_buffer
+                    .attributes
+                    .sort_by_key(|attribute| attribute.shader_location);
+                descriptor
+                    .vertex
+                    .shader_defs
+                    .push("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into());
+                descriptor.vertex.shader_defs.push("VERTEX_NORMALS".into());
+                if let Some(fragment) = descriptor.fragment.as_mut() {
+                    fragment
+                        .shader_defs
+                        .push("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into());
+                    fragment.shader_defs.push("VERTEX_NORMALS".into());
+                }
+                if layout
+                    .0
+                    .get_attribute_compression()
+                    .contains(bevy::mesh::MeshAttributeCompressionFlags::COMPRESS_NORMAL)
+                {
+                    descriptor
+                        .vertex
+                        .shader_defs
+                        .push("VERTEX_NORMALS_COMPRESSED".into());
+                    if let Some(fragment) = descriptor.fragment.as_mut() {
+                        fragment
+                            .shader_defs
+                            .push("VERTEX_NORMALS_COMPRESSED".into());
+                    }
+                }
+            }
+        }
+        // Bevy 0.20 can omit the fragment stage from depth-only prepasses for opaque
+        // materials: its fragment-required test accounts for MAY_DISCARD, but visibility-range
+        // dithering is introduced separately by the mesh key. Keep the same dither in depth as
+        // color for those pipelines by supplying our no-color-output prepass fragment only when
+        // the prepass otherwise has none. Normal/deferred/motion prepasses keep their own stage.
+        if is_prepass_pipeline
+            && descriptor.fragment.is_none()
+            && key
+                .mesh_key
+                .intersects(bevy::pbr::MeshPipelineKey::VISIBILITY_RANGE_DITHER)
+            && let Some(shader) = GOTHIC_PREPASS_FS.get()
+        {
+            descriptor.fragment = Some(FragmentState {
+                shader: shader.clone(),
+                shader_defs: descriptor.vertex.shader_defs.clone(),
+                entry_point: Some("fragment".into()),
+                targets: Vec::new(),
+                ..default()
+            });
+        }
         Ok(())
     }
 }
@@ -569,7 +977,7 @@ pub struct CharParams {
 }
 
 /// Static lights evaluated per character fragment.
-pub const CHAR_LIGHTS: usize = 6;
+pub const CHAR_LIGHTS: usize = 3;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct CharMaterial {
@@ -635,7 +1043,9 @@ fn convert_standard(
                 converted.add(CharMaterial {
                     params: CharParams {
                         tint: src.base_color.to_linear().to_vec4(),
-                        misc: Vec4::new(cutoff, 0.65, 2.2, 1.0),
+                        // Original rim lighting is permutation-gated; StandardMaterial carries
+                        // no evidence that this source material used the rim permutation.
+                        misc: Vec4::new(cutoff, 0.65, 2.2, 0.0),
                         sun,
                         sh,
                         lights: char_lights().0,

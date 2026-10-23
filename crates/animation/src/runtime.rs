@@ -12,8 +12,7 @@ use crate::{
     animator::{Animator, Overlay},
     library::{ActorLibrary, AssetStores, Composition},
     locomotion::{
-        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveDir, MoveKind, RIGHT,
-        Stance,
+        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveKind, RIGHT, Stance,
     },
 };
 use anyhow::{Result, anyhow};
@@ -79,6 +78,12 @@ pub struct WeaponMount {
     pub drawn_joint: u16,
     pub holster_joint: u16,
 }
+
+/// A host that knows better than the character's stance which of its weapons are in the hand
+/// (an archer with a sword on the back and a bow in the hand): `true` draws this mount's weapon,
+/// `false` holsters it. Without it [`weapon_mount_system`] follows the stance of the parent.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct MountOverride(pub bool);
 
 /// Wall-clock cost of the animation systems in the last frame.
 #[derive(Resource, Default, Debug)]
@@ -221,13 +226,7 @@ impl ActorSpawner<'_, '_> {
         );
         let mut locomotion = Locomotion::default();
         locomotion.key.stance = spec.stance;
-        let idle_key = LocoKey {
-            kind: MoveKind::Idle,
-            dir: MoveDir::Fwd,
-            stance: spec.stance,
-            sneak: false,
-            parade: false,
-        };
+        let idle_key = LocoKey::idle(spec.stance);
         if let Some(name) = &spec.motion {
             let motion = library.motion(&rig, name)?;
             animator.play(motion, 0.0, 1.0, spec.start_time);
@@ -627,13 +626,19 @@ pub fn write_joints_system(
 /// Chooses the drawn or holstered joint for weapons from the parent's stance.
 pub fn weapon_mount_system(
     inputs: Query<&LocomotionInput>,
-    mut mounts: Query<(&WeaponMount, &ChildOf, &mut Attachment)>,
+    mut mounts: Query<(
+        &WeaponMount,
+        &ChildOf,
+        &mut Attachment,
+        Option<&MountOverride>,
+    )>,
 ) {
-    for (mount, parent, mut attachment) in &mut mounts {
+    for (mount, parent, mut attachment, forced) in &mut mounts {
         let Ok(input) = inputs.get(parent.parent()) else {
             continue;
         };
-        let joint = if input.stance.weapon_drawn() {
+        let drawn = forced.map_or_else(|| input.stance.weapon_drawn(), |f| f.0);
+        let joint = if drawn {
             mount.drawn_joint
         } else {
             mount.holster_joint

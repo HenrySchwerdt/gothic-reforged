@@ -33,6 +33,7 @@ fn main() -> Result<ExitCode> {
                 && Some(*a) != value("--language").as_ref()
                 && Some(*a) != value("--max-rounds").as_ref()
                 && Some(*a) != value("--shard").as_ref()
+                && Some(*a) != value("--dump").as_ref()
         }) else {
             bail!(
                 "usage: questbot --fixture | questbot <Gothic3/Data> [--language German] [--quest NAME]... [--strict] [--trace] [--isolated [--shard I/N]] [--max-rounds N] [--json OUT]"
@@ -45,6 +46,11 @@ fn main() -> Result<ExitCode> {
         let _ = db.load_item_names(Path::new(dir));
         db
     };
+    // `--dump NAME`: print the info(s) with that name or the quest and its infos, then exit.
+    if let Some(name) = value("--dump") {
+        dump(&db, &name);
+        return Ok(ExitCode::SUCCESS);
+    }
     let quests: Vec<String> = args
         .iter()
         .enumerate()
@@ -95,7 +101,15 @@ fn isolated(
         .unwrap_or((0, 1));
     let mut rows = Vec::new();
     let mut done = 0usize;
+    // `--isolated --quest A --quest B`: only those quests.
+    let only = options.targets.clone();
     for q in db.quests.iter().skip(si).step_by(sn) {
+        if only
+            .as_ref()
+            .is_some_and(|o| !o.iter().any(|n| n.eq_ignore_ascii_case(&q.name)))
+        {
+            continue;
+        }
         let report = play(
             db,
             BotOptions {
@@ -112,6 +126,20 @@ fn isolated(
             "unsuccessful".to_string()
         };
         println!("{:<44} {result}", q.name);
+        if let Some(st) = report.stuck.first() {
+            for b in st.blockers.iter().take(6) {
+                println!(
+                    "    {} ({}, {}): {}{}",
+                    b.info,
+                    b.owner,
+                    b.condition,
+                    b.unmet,
+                    b.hint
+                        .as_ref()
+                        .map_or(String::new(), |h| format!(" -- {h}"))
+                );
+            }
+        }
         rows.push((q.name.clone(), result));
     }
     println!("isolated: {done}/{} completed", rows.len());
@@ -129,4 +157,133 @@ fn isolated(
     } else {
         ExitCode::from(2)
     })
+}
+
+/// Debug dump: one compact line per info (`--dump NAME`: the info, or the quest and its infos).
+fn dump(db: &GameDatabase, name: &str) {
+    let line = |id| {
+        let i = db.info(id);
+        let cmds: Vec<String> = i
+            .script
+            .iter()
+            .filter(|s| {
+                !matches!(
+                    s.command.as_str(),
+                    "Say" | "SaySvm" | "SaySound" | "Description"
+                )
+            })
+            .map(|s| format!("{}({},{},{})", s.command, s.entity1, s.id1, s.id2))
+            .collect();
+        println!(
+            "{} @{} parent={:?} quest={:?} cond={:?} type={:?} perm={} knows={:?} knows_not={:?} items={:?}x{:?}@{:?} npcs={:?}{:?} near={:?} script=[{}]",
+            i.name,
+            i.owner,
+            i.parent,
+            i.quest,
+            gothic_gameplay::model::InfoCond::from_raw(i.condition_type),
+            gothic_gameplay::model::InfoType::from_raw(i.info_type),
+            i.permanent,
+            i.cond_player_knows,
+            i.cond_player_knows_not,
+            i.cond_items,
+            i.cond_item_amounts,
+            i.cond_item_container,
+            i.cond_secondary_npc,
+            i.cond_secondary_npc_states,
+            i.cond_owner_near_entity,
+            cmds.join(" ")
+        );
+    };
+    if let Some(ev) = name.strip_prefix("event:") {
+        // Infos that set / clear / require the game event.
+        for (n, i) in db.infos.iter().enumerate() {
+            let touches = i.script.iter().any(|s| {
+                matches!(s.command.as_str(), "SetGameEvent" | "ClearGameEvent")
+                    && s.id1.eq_ignore_ascii_case(ev)
+            });
+            let needs = i
+                .cond_player_knows
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(ev))
+                || i.cond_player_knows_not
+                    .iter()
+                    .any(|e| e.eq_ignore_ascii_case(ev));
+            if touches || needs {
+                line(gothic_gameplay::InfoId(n as u32));
+            }
+        }
+        return;
+    }
+    if let Some(q) = name.strip_prefix("route:") {
+        let p = gothic_questbot::plan::Planner::new(db, &[q.to_string()]);
+        println!(
+            "route of {q}: {} quests, {} infos",
+            p.relevant_quests().len(),
+            p.route_infos().len()
+        );
+        for r in p.relevant_quests() {
+            println!("  {r}");
+        }
+        return;
+    }
+    if name == "--ws" {
+        // Names with leading / trailing whitespace in quest / info data.
+        for q in &db.quests {
+            for e in q.delivery_entities.iter().chain([&q.destination_entity]) {
+                if e.trim() != e {
+                    println!("quest {} entity {e:?}", q.name);
+                }
+            }
+        }
+        for i in &db.infos {
+            for e in [&i.owner, &i.quest, &i.parent]
+                .into_iter()
+                .chain(i.cond_player_knows.iter())
+                .chain(i.cond_secondary_npc.iter())
+            {
+                if e.trim() != e {
+                    println!("info {} name {e:?}", i.name);
+                }
+            }
+            for s in &i.script {
+                for e in [&s.entity1, &s.id1] {
+                    if e.trim() != e {
+                        println!("info {} script {} {e:?}", i.name, s.command);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    if name == "--owners" {
+        println!("owners: {}, infos: {}", db.owners().count(), db.infos.len());
+        println!("PC_Hero infos: {}", db.infos_of("PC_Hero").len());
+        for o in db.owners() {
+            println!("{o} {}", db.infos_of(o).len());
+        }
+        return;
+    }
+    if let Some(&id) = db.infos_of(name).first() {
+        if db.info_id(name).is_none() {
+            println!("{} infos owned by {name}; first:", db.infos_of(name).len());
+            line(id);
+        }
+    }
+    if let Some(id) = db.info_id(name) {
+        line(id);
+    }
+    if let Some(q) = db.quest_by_name(name) {
+        println!(
+            "QUEST {} type={:?} prereq={:?} deliver={:?}x{:?} dest={:?}",
+            q.name,
+            gothic_gameplay::model::QuestType::from_raw(q.quest_type),
+            q.finished_quests,
+            q.delivery_entities,
+            q.delivery_amounts,
+            q.destination_entity
+        );
+        for &id in db.infos_of_quest(name) {
+            line(id);
+        }
+    }
 }

@@ -27,6 +27,7 @@ pub fn synthetic_items() -> ItemDb {
         200,
     ));
     db.insert(ItemDef::weapon("It_Arrow", "Arrow", "Missile", 40));
+    db.insert(ItemDef::weapon("Arrow", "Arrow", "Missile", 40));
     db.insert(ItemDef {
         name: "It_Potion_Health".into(),
         use_type: Some("Potion".into()),

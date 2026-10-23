@@ -366,6 +366,10 @@ pub struct ControlFacts {
     pub left_one_hander_or_torch: bool,
     /// The focus is knocked down, killable and within 300 cm.
     pub finishing_target: bool,
+    /// `GetCastAction` (S:52a10) of the spell in the right hand: the `gEAction` id the cast key
+    /// queues (44 cast, 45 power cast, 47 quick cast, 48 summon, 72 flame sword), 0 without a
+    /// spell.
+    pub cast_action: u32,
 }
 
 /// Distance within which a finishing blow is offered (`_DAT_10107478`).
@@ -399,5 +403,10 @@ pub fn control_facts(host: &dyn ScriptHost, p: EntityId) -> ControlFacts {
         ),
         left_one_hander_or_torch: matches!(left, U::OneH | U::Torch),
         finishing_target,
+        cast_action: if right == U::Cast {
+            crate::magic::cast::get_cast_action(host, p).raw()
+        } else {
+            0
+        },
     }
 }

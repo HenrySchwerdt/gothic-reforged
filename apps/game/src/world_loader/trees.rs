@@ -12,6 +12,15 @@ use gothic_formats::terrain::{
     spt::Spt,
     spt_gen::{self, GenOptions, MeshOut},
 };
+use std::sync::OnceLock;
+
+static FLIP_LEAF_RENDER_V: OnceLock<bool> = OnceLock::new();
+
+fn flip_leaf_render_v_enabled() -> bool {
+    *FLIP_LEAF_RENDER_V.get_or_init(|| {
+        std::env::var("GR_SPT_FLIP_LEAF_RENDER_V").is_ok_and(|value| value == "1")
+    })
+}
 
 /// Number of random variants generated per species.
 pub const VARIANTS: usize = 3;
@@ -208,6 +217,9 @@ pub fn build(spt: &Spt, composite: &TexData, next_id: &mut impl FnMut() -> u64) 
     };
     let opt = GenOptions {
         length_scale: scale,
+        // Read once while building a species, after the billboard-based calibration probe.
+        // The generator applies this to leaf UVs only; geometry and atlas calibration stay fixed.
+        flip_leaf_render_v: flip_leaf_render_v_enabled(),
         ..base_opt
     };
     let shade = |g: &spt_gen::TreeGeometry| {

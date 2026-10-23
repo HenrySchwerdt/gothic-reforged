@@ -12,6 +12,7 @@ use super::more2::{grab, pick_target, target_goal, tgt_id};
 use super::{Cx, Sc, expect};
 use crate::walk::play::hero_moves::HeroMover;
 use bevy::prelude::*;
+use gothic_animation::runtime::{Attachment, CharacterComposition, WeaponMount};
 use gothic_sim::script::routine::state::State;
 use std::sync::Arc;
 
@@ -44,13 +45,318 @@ fn log_since(cx: &Cx, from: usize) -> Vec<(String, f32)> {
     cx.world.resource::<HeroMover>().log[from.min(log_len(cx))..].to_vec()
 }
 
+/// Send a press and release before the next input update, matching a platform tap that happened
+/// entirely between two Bevy frames. `gather_input` must preserve its `just_pressed` edge.
+fn same_frame_key_tap(cx: &mut Cx, key: KeyCode) {
+    let window = {
+        let mut windows = cx
+            .world
+            .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>();
+        windows.iter(cx.world).next()
+    };
+    let Some(window) = window else { return };
+    for state in [
+        bevy::input::ButtonState::Pressed,
+        bevy::input::ButtonState::Released,
+    ] {
+        cx.world
+            .write_message(bevy::input::keyboard::KeyboardInput {
+                key_code: key,
+                logical_key: bevy::input::keyboard::Key::Unidentified(
+                    bevy::input::keyboard::NativeKey::Unidentified,
+                ),
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+    }
+}
+
 fn stamina(cx: &Cx) -> i32 {
     cx.core().0.sim.actor(cx.core().0.hero).stamina
+}
+
+fn draw_sword(sc: &mut Sc, key: KeyCode, label: &'static str) {
+    draw_sword_with_tap(sc, key, label, false);
+}
+
+fn draw_sword_with_tap(sc: &mut Sc, key: KeyCode, label: &'static str, same_frame: bool) {
+    sc.act(label, move |cx| {
+        let n = log_len(cx);
+        cx.st.n.insert("mark".into(), n as f64);
+        if same_frame {
+            same_frame_key_tap(cx, key);
+        } else {
+            cx.tap(key);
+        }
+    });
+    sc.wait(0.25);
+    sc.until(
+        "the hero stands in PS_Melee_Loop with the sword drawn",
+        6.0,
+        |cx| {
+            hero_state(cx).1 == Some(State::PsMeleeLoop)
+                && cx.core().0.sim.actor(cx.core().0.hero).drawn
+        },
+    );
+    sc.check("draw input diagnostics", |cx| {
+        let (task, state, _) = hero_state(cx);
+        let slot = cx.play().quick.first().and_then(Option::as_deref);
+        let core = &cx.core().0;
+        let sim = &core.sim;
+        let slot_kind = slot.and_then(|name| sim.items.get(name)).map(|item| item.use_kind());
+        let actor = sim.actor(core.hero);
+        let right = actor.equipment.right.as_ref();
+        let clips: Vec<String> = log_since(cx, cx.st.n["mark"] as usize)
+            .into_iter()
+            .map(|c| c.0)
+            .collect();
+        let ok = task == Some(State::PsMelee)
+            && state == Some(State::PsMeleeLoop)
+            && slot.is_some_and(|name| name.eq_ignore_ascii_case("It_1H_OrcSlayer_01"))
+            && right.is_some_and(|item| item.use_kind().is_melee_weapon())
+            && actor.drawn;
+        let detail = format!(
+            "task={task:?} state={state:?} quickslot1={slot:?} kind={slot_kind:?} right={:?} drawn={} clips={clips:?}",
+            right.map(|item| (&item.name, item.use_kind())),
+            actor.drawn
+        );
+        expect(ok, detail.clone(), detail)
+    });
+    sc.check(
+        "the Begin clip starts with the sword holstered; End puts it in hand",
+        |cx| {
+            let clips = log_since(cx, cx.st.n["mark"] as usize);
+            let begin = clips.iter().any(|(c, _)| c.contains("HoldRight_Begin"));
+            let (b, e) = (
+                cx.st.n.get("drawn_at_begin").copied(),
+                cx.st.n.get("drawn_at_end").copied(),
+            );
+            expect(
+                begin && b == Some(0.0) && e == Some(1.0),
+                format!("Begin drawn={b:?}, End drawn={e:?}"),
+                format!("clips {clips:?}; drawn at Begin {b:?}, at End {e:?}"),
+            )
+        },
+    );
+    sc.check(
+        "Hold Begin, slot swap, Hold End; melee task and focus mode",
+        |cx| {
+            let clips: Vec<String> = log_since(cx, cx.st.n["mark"] as usize)
+                .into_iter()
+                .map(|c| c.0)
+                .collect();
+            let ok = clips.iter().any(|c| c.contains("HoldRight_Begin"))
+                && clips.iter().any(|c| c.contains("HoldRight_End"))
+                && hero_state(cx).0 == Some(State::PsMelee);
+            let modes = cx.core().0.sim.hero_script_modes();
+            let ai = cx.core().0.sim.actor(cx.core().0.hero).ai_mode;
+            expect(
+                ok && modes.1.0 == 2 && modes.0 == 2,
+                format!("{clips:?} modes {modes:?} ai {ai:?}"),
+                format!("{clips:?} {:?} {modes:?}", hero_state(cx)),
+            )
+        },
+    );
+    sc.check(
+        "the sword mesh is mounted visibly on the right-hand slot",
+        |cx| {
+            let Some(hero) = cx.play().hero_entity else {
+                return Err("hero render entity is not spawned".into());
+            };
+            let drawn_joint = cx
+                .world
+                .get::<CharacterComposition>(hero)
+                .and_then(|composition| {
+                    composition
+                        .0
+                        .joint_by_name
+                        .get("slot_righthand_weapon")
+                        .copied()
+                });
+            let Some(drawn_joint) = drawn_joint else {
+                return Err("right-hand weapon joint is missing".into());
+            };
+            let sword_in_right_hand = {
+                let mut query = cx.world.query::<(
+                    &ChildOf,
+                    &WeaponMount,
+                    &Attachment,
+                    &Visibility,
+                    &bevy::mesh::Mesh3d,
+                )>();
+                query
+                    .iter(cx.world)
+                    .any(|(parent, mount, attachment, visibility, _mesh)| {
+                        parent.parent() == hero
+                            && mount.drawn_joint == drawn_joint
+                            && attachment.joint == drawn_joint
+                            && *visibility != Visibility::Hidden
+                    })
+            };
+            let actor = cx.core().0.sim.actor(cx.core().0.hero);
+            let equipped = actor.equipment.right.as_ref();
+            let ok = actor.drawn
+                && equipped.is_some_and(|item| item.use_kind().is_melee_weapon())
+                && sword_in_right_hand;
+            expect(
+                ok,
+                format!(
+                    "drawn={} right={:?} visible_mount={sword_in_right_hand}",
+                    actor.drawn,
+                    equipped.map(|item| (&item.name, item.use_kind()))
+                ),
+                format!(
+                    "drawn={} right={:?} visible_mount={sword_in_right_hand}",
+                    actor.drawn,
+                    equipped.map(|item| (&item.name, item.use_kind()))
+                ),
+            )
+        },
+    );
+    sc.shot("drawn");
+}
+
+pub fn melee_quickslot() -> Sc {
+    let mut sc = Sc::new(45.0);
+    grab(&mut sc);
+    rec(&mut sc, true);
+    trace_draw_clips(&mut sc);
+    sc.until("fresh hero is idle in PS_Normal_Loop", 6.0, |cx| {
+        hero_state(cx).1 == Some(State::PsNormalLoop)
+            && cx
+                .world
+                .resource::<super::super::readiness::StartupReadiness>()
+                .is_playing()
+    });
+    sc.check(
+        "startup gate opened on a live fresh hero before Digit1",
+        |cx| {
+            let actor = cx.core().0.sim.actor(cx.core().0.hero);
+            let interaction = cx.world.resource::<super::super::interact::Interaction>();
+            let ready = !cx
+                .world
+                .resource::<super::super::readiness::StartupReadiness>()
+                .blocks_hardware();
+            let ok = ready
+                && !cx.play().hero_down
+                && actor.hp > 0
+                && hero_state(cx).1 == Some(State::PsNormalLoop)
+                && !cx.ui().is_open()
+                && interaction.window.is_none();
+            let detail = format!(
+                "ready={ready} hp={} hero_down={} state={} ui_open={} interaction_window={}",
+                actor.hp,
+                cx.play().hero_down,
+                state_name(cx),
+                cx.ui().is_open(),
+                interaction.window.is_some()
+            );
+            expect(ok, detail.clone(), detail)
+        },
+    );
+    sc.check(
+        "fresh game assigns OrcSlayer to quick slot 1 and equips it",
+        |cx| {
+            let slot = cx.play().quick.first().and_then(Option::as_deref);
+            let actor = cx.core().0.sim.actor(cx.core().0.hero);
+            let equipped = actor.equipment.right.as_ref();
+            let inventory_count = actor.inventory.count("It_1H_OrcSlayer_01");
+            let (task, state, _) = hero_state(cx);
+            let ok = slot.is_some_and(|item| item.eq_ignore_ascii_case("It_1H_OrcSlayer_01"))
+                && equipped
+                    .is_some_and(|item| item.name.eq_ignore_ascii_case("It_1H_OrcSlayer_01"))
+                && inventory_count > 0
+                && task == Some(State::PsNormal)
+                && state == Some(State::PsNormalLoop)
+                && !actor.drawn;
+            let detail = format!(
+                "slot1={slot:?} right={:?} inventory={inventory_count} task/state={task:?}/{state:?} drawn={}",
+                equipped.map(|item| (&item.name, item.use_kind())),
+                actor.drawn
+            );
+            expect(
+                ok, detail.clone(), detail,
+            )
+        },
+    );
+    sc.shot("before_digit1");
+    draw_sword_with_tap(
+        &mut sc,
+        KeyCode::Digit1,
+        "Digit1: draw the sword from quick slot 1",
+        true,
+    );
+    sc
+}
+
+/// Passive clip observation for the clean quick-slot test. Unlike `trace`, this does not heal the
+/// hero, choose a target, or alter any NPC AI before the real Digit1 input.
+fn trace_draw_clips(sc: &mut Sc) {
+    sc.watch(|cx| {
+        if cx.st.n.get("quickslot_end_pending").copied() == Some(1.0) {
+            let t = f64::from(cx.now);
+            let started = cx.st.n.get("quickslot_end_pending_at").copied();
+            match started {
+                None => {
+                    cx.st.n.insert("quickslot_end_pending_at".into(), t);
+                }
+                Some(t0) if t - t0 > 0.1 => {
+                    let drawn = u8::from(cx.core().0.sim.actor(cx.core().0.hero).drawn);
+                    cx.st.n.insert("drawn_at_end".into(), f64::from(drawn));
+                    cx.st.n.insert("quickslot_end_pending".into(), 0.0);
+                    cx.st.n.remove("quickslot_end_pending_at");
+                }
+                _ => {}
+            }
+        }
+        let seen = cx
+            .st
+            .n
+            .get("quickslot_draw_clip_seen")
+            .copied()
+            .unwrap_or(0.0) as usize;
+        let n = log_len(cx);
+        if n <= seen {
+            return;
+        }
+        let drawn = u8::from(cx.core().0.sim.actor(cx.core().0.hero).drawn);
+        for (clip, _) in log_since(cx, seen) {
+            if clip.contains("HoldRight_Begin") {
+                cx.st.n.insert("drawn_at_begin".into(), f64::from(drawn));
+            }
+            if clip.contains("HoldRight_End") {
+                cx.st.n.insert("quickslot_end_pending".into(), 1.0);
+            }
+        }
+        cx.st
+            .n
+            .insert("quickslot_draw_clip_seen".into(), n as f64);
+    });
 }
 
 /// Records every state change and every clip start with the scenario time.
 fn trace(sc: &mut Sc) {
     sc.watch(|cx| {
+        // Observe a downed hero once, before the existing HP recovery can change the value.
+        // This is diagnostic only: it does not clear the down state or change the result.
+        if cx.play().hero_down && !cx.st.store.contains_key("hero_down_first") {
+            let hp = cx.hero_hp();
+            let target = tgt_id(cx);
+            let freeze_others = cx.st.n.get("freeze_others").copied() == Some(1.0);
+            let stage = match (target.is_some(), freeze_others) {
+                (false, _) => "before target selection",
+                (true, false) => "selected target active before guard stage",
+                (true, true) => "guard stage freeze active",
+            };
+            let note = format!(
+                "hero_down observed at {:.2}s: hp {hp}, target {target:?}, stage {stage}",
+                cx.now
+            );
+            cx.st.store.insert("hero_down_first".into(), note.clone());
+            cx.note(note);
+        }
         // Setup, not under test: the raider fights back, the hero must survive the scenario.
         {
             let hero = cx.core().0.hero;
@@ -69,6 +375,32 @@ fn trace(sc: &mut Sc) {
                 if a.id != hero {
                     a.ai_controlled = false;
                 }
+            }
+        }
+        // Keep the selected opponent active, but stop unrelated start-area actors from
+        // interrupting the hero-input assertions. Before selection, leave everyone untouched.
+        if let Some(target) = tgt_id(cx) {
+            let hero = cx.core().0.hero;
+            for a in cx.core_mut().0.sim.actors.iter_mut() {
+                if a.id != hero && a.id != target {
+                    a.ai_controlled = false;
+                }
+            }
+            if !cx.st.store.contains_key("actor_isolation_note") {
+                let actors = &cx.core().0.sim.actors;
+                let target_active = actors
+                    .iter()
+                    .find(|actor| actor.id == target)
+                    .is_some_and(|actor| actor.ai_controlled);
+                let unrelated_active = actors
+                    .iter()
+                    .filter(|actor| actor.id != hero && actor.id != target && actor.ai_controlled)
+                    .count();
+                let note = format!(
+                    "melee QA actor isolation: target {target:?} active={target_active}, unrelated active={unrelated_active}"
+                );
+                cx.st.store.insert("actor_isolation_note".into(), note.clone());
+                cx.note(note);
             }
         }
         // The lowest stamina since a payment was announced (regeneration runs while it is paid).
@@ -141,61 +473,7 @@ pub fn melee_faithful() -> Sc {
     pick_target(&mut sc);
     trace(&mut sc);
     rec(&mut sc, true);
-    // ---- the weapon key ------------------------------------------------------------------------
-    sc.act("Space: the weapon key", |cx| {
-        let n = log_len(cx);
-        cx.st.n.insert("mark".into(), n as f64);
-        cx.tap(KeyCode::Space);
-    });
-    sc.wait(0.25);
-    sc.until(
-        "the hero stands in PS_Melee_Loop with the sword drawn",
-        6.0,
-        |cx| {
-            hero_state(cx).1 == Some(State::PsMeleeLoop)
-                && cx.core().0.sim.actor(cx.core().0.hero).drawn
-        },
-    );
-    sc.check(
-        "the Begin clip of the Hold action plays while the sword is still on the back",
-        |cx| {
-            let m = cx.st.n["mark"] as usize;
-            let clips = log_since(cx, m);
-            let begin = clips.iter().any(|(c, _)| c.contains("HoldRight_Begin"));
-            let (b, e) = (
-                cx.st.n.get("drawn_at_begin").copied(),
-                cx.st.n.get("drawn_at_end").copied(),
-            );
-            expect(
-                begin && b == Some(0.0) && e == Some(1.0),
-                format!(
-                    "Begin starts with the sword on the back, End with it in the hand: {b:?} {e:?}"
-                ),
-                format!("clips {clips:?}; drawn at Begin {b:?}, at End {e:?}"),
-            )
-        },
-    );
-    sc.check(
-        "Hold Begin, the swap, Hold End; AIMode Combat; focus mode melee",
-        |cx| {
-            let m = cx.st.n["mark"] as usize;
-            let clips: Vec<String> = log_since(cx, m).into_iter().map(|c| c.0).collect();
-            let ok = clips.iter().any(|c| c.contains("HoldRight_Begin"))
-                && clips.iter().any(|c| c.contains("HoldRight_End"))
-                && hero_state(cx).0 == Some(State::PsMelee);
-            let modes = cx.core().0.sim.hero_script_modes();
-            let ai = cx.core().0.sim.actor(cx.core().0.hero).ai_mode;
-            expect(
-                ok && modes.1.0 == 2 && modes.0 == 2,
-                format!(
-                    "{clips:?} camera mode {} focus {:?} ai {ai:?}",
-                    modes.0, modes.1
-                ),
-                format!("{clips:?} {:?} {modes:?}", hero_state(cx)),
-            )
-        },
-    );
-    sc.shot("drawn");
+    draw_sword(&mut sc, KeyCode::Space, "Space: the weapon key");
     // ---- close in --------------------------------------------------------------------------------
     approach(
         &mut sc,

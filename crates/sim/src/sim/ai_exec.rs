@@ -16,8 +16,6 @@ use gothic_script::host::{AiCommand, EntityId, GotoKind, NpcApi};
 use gothic_script::routine::state::{Callback, State};
 use gothic_script::routine::work::{Flow, run_state};
 
-/// Speed of the sidestep and backing-off movements in game units per second [I].
-const SIDESTEP_SPEED: f32 = 300.0;
 /// Contact distance at which an approach to an actor stops by itself.
 const CONTACT_DISTANCE: f32 = 110.0;
 /// Distance at which a walk to a point or object counts as arrived.
@@ -47,7 +45,6 @@ fn task_for(state: Option<State>) -> Option<Task> {
 impl<W: WorldQuery> Sim<W> {
     /// Put the script state machine of `id` into `state` (the entry of a task).
     pub(super) fn script_enter(&mut self, id: ActorId, state: State) {
-        let combat_state = u32::from(self.actors[id.0 as usize].combat_state_active);
         let s = self.script.npc_mut(id);
         s.task = Some(state);
         s.state = Some(state);
@@ -58,7 +55,10 @@ impl<W: WorldQuery> Sim<W> {
         s.task_cb = Callback::None;
         s.local_cb = Callback::None;
         if state == State::Attack {
-            s.combat_state = combat_state;
+            // A new fight starts passive (`CombatState` 0); `OnAttack` -> `UpdateCombatState`
+            // (S:14f0) lets the fighter step up to the front line when fewer than the allowed
+            // number of NPCs fight the same target (1; 2 or 3 against the player).
+            s.combat_state = 0;
         }
         self.actors[id.0 as usize].brain.goto = None;
     }
@@ -269,33 +269,25 @@ impl<W: WorldQuery> Sim<W> {
         }
         match cmd {
             AiCommand::Attack { action, target } => {
-                let Some(m) = from_script_action(action) else {
-                    return;
-                };
-                self.begin_swing(i, actor_id(target), m, now);
+                let tid = actor_id(target);
+                if from_script_action(action).is_some() {
+                    self.npc_begin_melee(i, action, tid);
+                }
+                if action == se::Action::FinishingAttack {
+                    // The victim dies when the blow ran `FINISHING_SECS` (`OnAI_FinishingAttack`).
+                    let secs = gothic_script::combat::commands::FINISHING_SECS;
+                    self.actors[i].brain.strike = Some(Strike {
+                        at_ms: now + (secs * 1000.0) as u64,
+                        action: Action::FinishingAttack,
+                        target: tid,
+                    });
+                }
             }
             AiCommand::Parade { target } => {
-                self.face(i, actor_id(target));
-                let a = &mut self.actors[i];
-                a.action = Action::Parade;
-                a.brain.parade_until_ms = now + 600;
-                a.brain.busy_until_ms = now + 600;
-                a.brain.last_move = Action::Parade;
+                self.npc_begin_parade(i, actor_id(target));
             }
             AiCommand::JumpBack { target } => {
-                let tid = actor_id(target);
-                let tp = self.pos(tid);
-                let me = self.pos(id);
-                let dir = me.yaw_to(tp);
-                let to = Pos::new(me.x - dir.cos() * 250.0, me.y, me.z - dir.sin() * 250.0);
-                self.world.move_towards(id, to, 250.0);
-                self.face(i, tid);
-                let cost = stamina_cost(&self.cfg, Action::JumpBack);
-                let a = &mut self.actors[i];
-                a.action = Action::JumpBack;
-                a.brain.last_move = Action::JumpBack;
-                a.brain.busy_until_ms = now + 600;
-                a.stamina = (a.stamina - cost).max(0);
+                self.npc_begin_jump_back(i, actor_id(target));
             }
             AiCommand::CombatGoto {
                 target,
@@ -361,14 +353,23 @@ impl<W: WorldQuery> Sim<W> {
                     // (NPC archers are re-supplied), it lands after its flight time.
                     let mut host = crate::script_host::SimHost::new(self);
                     gothic_script::player::ranged::shoot(&mut host, entity(id), target);
+                    // `_AI_Shoot` (S:4a710) ends by preparing the next aim
+                    // (`sAIPrepareAimInstr(1.0)`, S:4a8c5): the raise clip of the weapon.
+                    let crossbow =
+                        self.actors[i].equipment.left_use() == crate::item::Use::CrossBow;
+                    let raise = if crossbow {
+                        gothic_projectile::aim::clips::crossbow::RAISE
+                    } else {
+                        gothic_projectile::aim::clips::bow::RAISE
+                    };
                     self.actors[i].action = Action::Shoot;
-                    self.actors[i].brain.busy_until_ms = now + 1500;
+                    self.actors[i].brain.busy_until_ms = now + (raise * 1000.0) as u64;
                 } else {
                     let ammo = if self.actors[i].equipment.left_use() == crate::item::Use::CrossBow
                     {
-                        "It_Bolt"
+                        "Bolt"
                     } else {
-                        "It_Arrow"
+                        "Arrow"
                     };
                     if self.shoot(id, tid, 2.0, ammo).is_none() {
                         self.actors[i].brain.busy_until_ms = now + 1500;
@@ -376,6 +377,9 @@ impl<W: WorldQuery> Sim<W> {
                 }
             }
             AiCommand::WaitMs { ms } => {
+                if self.actors[i].action == Action::Shoot {
+                    self.push(EventKind::NpcAim { actor: id });
+                }
                 let a = &mut self.actors[i];
                 a.brain.busy_until_ms = now + u64::from(ms);
                 if a.action == Action::Parade {
@@ -398,13 +402,13 @@ impl<W: WorldQuery> Sim<W> {
             AiCommand::UseItem(name) if name.eq_ignore_ascii_case("It_Potion_Health") => {
                 self.drink_potion(i, now);
             }
+            AiCommand::SelectWeapon => self.npc_select_weapon(i),
             AiCommand::Cast { power } => {
-                // The ported cast pipeline: load, (power), cast, reset; the spell data come
-                // from the spell templates.
-                let mut host = crate::script_host::SimHost::new(self);
-                gothic_script::magic::cast::run_cast(&mut host, entity(id), power);
-                self.actors[i].action = Action::Cast;
-                self.actors[i].brain.busy_until_ms = now + 1500;
+                // The ported cast pipeline (`run_cast`, S:38710): the animation plays, the
+                // spell leaves at the damage moment of its `Hit` clip.
+                if let Some(t) = self.actors[i].target {
+                    self.npc_begin_cast(i, power, t);
+                }
             }
             AiCommand::HoldInventoryStacks {
                 right: -1,
@@ -434,41 +438,6 @@ impl<W: WorldQuery> Sim<W> {
             }
             _ => {}
         }
-    }
-
-    /// Start a melee swing: pay the stamina, open the hit window later, stay busy for the
-    /// recovery. Stamina-starved fighters catch their breath instead.
-    fn begin_swing(&mut self, i: usize, tid: ActorId, m: Action, now: u64) {
-        let cost = stamina_cost(&self.cfg, m);
-        self.face(i, tid);
-        if m == Action::FinishingAttack {
-            let id = self.actors[i].id;
-            self.actors[i].action = m;
-            self.actors[i].brain.last_move = m;
-            self.actors[i].brain.busy_until_ms = now + 1200;
-            self.kill(tid, Some(id));
-            return;
-        }
-        // Opt-in variant: NPC swings are telegraphed (never changes the player's moves).
-        let telegraph = match self.cfg.variants.npc_telegraph_ms {
-            Some(ms) if !self.actors[i].is_player => u64::from(ms),
-            _ => 0,
-        };
-        let a = &mut self.actors[i];
-        if a.stamina <= 0 && cost > 0 {
-            a.brain.busy_until_ms = now + 500;
-            return;
-        }
-        a.stamina = (a.stamina - cost).max(0);
-        a.action = m;
-        a.brain.last_move = m;
-        a.brain.last_strike_ms = Some(now);
-        a.brain.strike = Some(Strike {
-            at_ms: now + (vitals::hit_window_secs(m) * 1000.0) as u64 + telegraph,
-            action: m,
-            target: tid,
-        });
-        a.brain.busy_until_ms = now + move_duration_ms(m) + telegraph;
     }
 
     /// One tick of a running movement instruction: the callback may end it by switching the
@@ -502,10 +471,11 @@ impl<W: WorldQuery> Sim<W> {
         let dist = ((dest.x - me.x).powi(2) + (dest.z - me.z).powi(2)).sqrt();
         match g.kind {
             GotoKind::Approach => {
-                let speed = if g.walk_mode == 1 {
-                    WALK_SPEED
-                } else {
-                    RUN_SPEED
+                // `GetCombatWalkMode` (S:1b060): 1 walk, 2 run, 3 sprint.
+                let speed = match g.walk_mode {
+                    1 => WALK_SPEED,
+                    3 => SPRINT_SPEED,
+                    _ => RUN_SPEED,
                 };
                 if dist <= g.stop {
                     self.actors[i].brain.goto = None;

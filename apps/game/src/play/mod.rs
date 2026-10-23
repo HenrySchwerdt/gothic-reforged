@@ -14,6 +14,7 @@ mod barks;
 mod cam;
 mod controls;
 mod data;
+mod doors;
 mod er_pack;
 mod events;
 mod fx;
@@ -22,13 +23,18 @@ mod hero_moves;
 mod hud;
 mod interact;
 mod kit;
+pub(crate) mod move_states;
 mod layers;
 pub(crate) mod nav;
+mod npc_bows;
+mod npc_moves;
+mod npc_stream;
 mod npcs;
 mod objects;
 mod pose;
 mod qa;
 mod ranged;
+pub(super) mod readiness;
 mod record;
 mod routines;
 mod saves;
@@ -80,6 +86,8 @@ pub struct Cand {
     pub actor: Option<ActorId>,
     /// The appearance does not resolve; never retried.
     pub failed: bool,
+    /// When the body's parts were handed to the background decoder (seconds since start).
+    pub prefetch_at: Option<f32>,
 }
 
 /// A world document (sector layer) that holds characters.
@@ -373,17 +381,21 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         "play: game database from {db_source} in {} ms",
         t_db.elapsed().as_millis()
     );
-    let db = std::sync::Arc::new(db);
     let items_json = PathBuf::from(".local/items.json");
     let items = ItemDb::load(&items_json).map_err(|e| {
         anyhow::anyhow!("item database (run `gothic-inspector item-dump` first): {e:#}")
     })?;
+    let (db, items) = super::cloud::mods::apply_opt_in(args, db, items);
+    let db = std::sync::Arc::new(db);
     let catalog = ItemCatalog::load(&items_json)?;
     let npcs = NpcFile::load(std::path::Path::new(".local/npcs.json")).map_err(|e| {
         anyhow::anyhow!("NPC database (run `gothic-inspector npc-dump` first): {e:#}")
     })?;
-    let library = ActorLibrary::open(&data_dir)
+    let mut library = ActorLibrary::open(&data_dir)
         .map_err(|e| anyhow::anyhow!("opening actor archives: {e:#}"))?;
+    if !npc_stream::enabled() {
+        library.start_prefetch();
+    }
     let audio = GothicAudioPlugin::open(&data_dir, "German")
         .map_err(|e| anyhow::anyhow!("opening audio: {e:#}"))?;
     eprintln!("play: data loaded in {} ms", started.elapsed().as_millis());
@@ -407,7 +419,10 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 
     let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;
     let hero_look = looks.pc_hero();
-    let layer_flags = layers::load(&data_dir, &npcs::candidate_docs(&npcs, &looks));
+    let object_defs = objects::WorldObjects::load_defs();
+    let mut flag_docs = npcs::candidate_docs(&npcs, &looks);
+    flag_docs.extend(object_defs.iter().map(|d| d.document.clone()));
+    let layer_flags = layers::load(&data_dir, &flag_docs);
     let roster = npcs::select_roster(&npcs, &looks, &layer_flags);
     // Register the sectors with the initial flag of their layer roots before any character
     // exists: the core files each actor under its document's sector.
@@ -417,6 +432,18 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
             sectors.push(gothic_runtime::Command::RegisterSector {
                 name: d.sector.clone(),
                 enabled: d.enabled,
+            });
+        }
+    }
+    let objects = objects::WorldObjects::build(object_defs, &layer_flags);
+    for d in &objects.docs {
+        let name = layers::sector_name(&d.path);
+        if !sectors.iter().any(
+            |c| matches!(c, gothic_runtime::Command::RegisterSector { name: n, .. } if *n == name),
+        ) {
+            sectors.push(gothic_runtime::Command::RegisterSector {
+                name,
+                enabled: d.on,
             });
         }
     }
@@ -444,9 +471,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         units_per_meter: 1.0,
         ..audio.settings
     };
-    let objects = objects::WorldObjects::load();
     eprintln!(
-        "play: {} world entities around Ardea, {} item meshes",
+        "play: {} world entities (interact objects, items, points), {} item meshes",
         objects.list.len(),
         objects.item_mesh.len()
     );
@@ -482,11 +508,14 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     .add_plugins((AnimationPlugin, GothicUiPlugin, audio, CorePlugin));
 
     controls::register(app);
+    readiness::register(app, args);
     hero::register(app);
     ranged::register(app);
     shots::register(app);
     uibridge::register(app);
     objects::register(app);
+    doors::register(app);
+    app.add_systems(Update, publish_sim_hour.before(crate::walk::update_camera));
     saves::register(app);
     interact::register(app);
     windows::register(app);
@@ -494,6 +523,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     fx::register(app);
     app.add_systems(Update, pose::pose_system.after(crate::walk::update_camera));
     npcs::register(app);
+    npc_stream::register(app, &data_dir);
     teleport::register(app);
     triggers::register(app);
     routines::register(app);
@@ -540,4 +570,9 @@ pub(crate) fn angle_delta(from: f32, to: f32) -> f32 {
 /// Bevy yaw that makes an entity face the horizontal direction `d` (x, z).
 pub(crate) fn yaw_of_dir(dx: f32, dz: f32) -> f32 {
     (-dx).atan2(-dz)
+}
+
+/// The environment's time of day is the simulation clock's.
+fn publish_sim_hour(core: Res<CoreRes>, mut commands: Commands) {
+    commands.insert_resource(crate::walk::env::SimHour(core.0.sim.clock.hour_of_day()));
 }

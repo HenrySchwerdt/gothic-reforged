@@ -18,7 +18,7 @@
 //! `PartMeshes`, skinned meshes, attachments), so every other system works unchanged.
 use crate::animator::{Animator, Motion};
 use crate::library::{Composition, PartAsset, PartMesh};
-use crate::locomotion::{Locomotion, LocomotionInput, Stance};
+use crate::locomotion::{LocoKey, Locomotion, LocomotionInput, Stance};
 use crate::rig::{EvalStep, Rig};
 use crate::runtime::{
     Attachment, CharacterComposition, CharacterJoints, PartMeshes, SkeletonJoint, WeaponMount,
@@ -53,6 +53,8 @@ pub struct BuildRequest {
     pub attachments: Vec<AttachRequest>,
     /// Motion to play instead of the idle locomotion.
     pub motion: Option<String>,
+    /// Initial playback offset in seconds (desynchronises crowds). Not part of the look.
+    pub start_time: f32,
 }
 
 impl BuildRequest {
@@ -61,6 +63,7 @@ impl BuildRequest {
             parts: parts.into_iter().map(Into::into).collect(),
             attachments: Vec::new(),
             motion: None,
+            start_time: 0.0,
         }
     }
 
@@ -101,6 +104,8 @@ pub struct CpuMesh {
 
 pub struct CpuPart {
     pub name: String,
+    /// The part's own skeleton ([`PartAsset::rig`]); the body's is [`ActorBundle::rig`].
+    pub rig: Arc<Rig>,
     /// Index into [`ActorBundle::joint_nodes`] for every skin joint of this part.
     pub joints: Vec<u16>,
     /// Rig node of every skin joint (for [`PartAsset::joint_nodes`]).
@@ -126,12 +131,18 @@ pub struct ActorBundle {
     pub joint_nodes: Arc<[u16]>,
     pub facing_fix: Quat,
     pub joint_by_name: HashMap<String, u16>,
+    /// `Slot_*` nodes only extra parts define ([`Composition::slot_mounts`]).
+    pub slot_mounts: HashMap<String, (u16, Affine3A)>,
     pub parts: Vec<CpuPart>,
     pub attachments: Vec<CpuAttachment>,
     /// Motion to start with (idle or the requested one).
     pub motion: Option<Motion>,
     /// Use the locomotion state machine (no explicit motion was requested).
     pub locomotion: bool,
+    /// Standing idle per stance for locomotion characters: the character starts with the
+    /// idle of its stance (as `ActorSpawner::spawn` does) and `motion` is not played. A
+    /// stance missing here falls back to `motion`.
+    pub idle: Vec<(Stance, Motion)>,
 }
 
 /// Builds bundles on worker threads. Implementations must not touch the ECS.
@@ -190,6 +201,7 @@ struct PendingSpawn {
     key: String,
     position: Vec3,
     stance: Stance,
+    start_time: f32,
 }
 
 /// A committed attachment: meshes, joint, offset, (hand, holster) joints of a weapon.
@@ -201,6 +213,7 @@ struct Committed {
     attachments: Vec<CommittedAttachment>,
     motion: Option<Motion>,
     locomotion: bool,
+    idle: Vec<(Stance, Motion)>,
 }
 
 /// Settings of the streamer.
@@ -293,15 +306,27 @@ impl ActorStreamer {
         transform: Transform,
         stance: Stance,
     ) -> Entity {
+        let entity = commands.spawn((transform, Visibility::default())).id();
+        self.request_on(commands, entity, request, transform.translation, stance);
+        entity
+    }
+
+    /// Like [`Self::request`] for an existing root entity (which keeps its own transform and
+    /// other components): marks it [`PendingActor`] and queues the build. `position` is used
+    /// for the priority. Also the way to re-request a root whose look failed.
+    pub fn request_on(
+        &mut self,
+        commands: &mut Commands,
+        entity: Entity,
+        request: BuildRequest,
+        position: Vec3,
+        stance: Stance,
+    ) {
         let key = request.key();
-        let entity = commands
-            .spawn((
-                transform,
-                Visibility::default(),
-                PendingActor { key: key.clone() },
-            ))
-            .id();
-        let position = transform.translation;
+        commands
+            .entity(entity)
+            .insert(PendingActor { key: key.clone() });
+        let start_time = request.start_time;
         if !self.committed.contains_key(&key)
             && !self.ready.contains_key(&key)
             && !self.failed.contains_key(&key)
@@ -320,8 +345,8 @@ impl ActorStreamer {
             key,
             position,
             stance,
+            start_time,
         });
-        entity
     }
 
     /// Build (if needed) and spawn a character right now on the calling thread, ignoring the
@@ -335,6 +360,7 @@ impl ActorStreamer {
         stance: Stance,
     ) -> Result<Entity> {
         let key = request.key();
+        let start_time = request.start_time;
         let look = match self.committed.get(&key) {
             Some(c) => c.clone(),
             None => {
@@ -350,7 +376,7 @@ impl ActorStreamer {
         let entity = commands
             .spawn((transform, Visibility::default(), PendingActor { key }))
             .id();
-        spawn_character(commands, entity, &look, stance);
+        spawn_character(commands, entity, &look, stance, start_time);
         self.stats.spawned += 1;
         Ok(entity)
     }
@@ -426,7 +452,7 @@ impl ActorStreamer {
             part_joints.push(p.joints);
             parts.push(Arc::new(PartAsset {
                 name: p.name,
-                rig: bundle.rig.clone(),
+                rig: p.rig,
                 joint_nodes: p.joint_rig_nodes,
                 inverse_bindposes,
                 meshes,
@@ -454,13 +480,14 @@ impl ActorStreamer {
             plan: bundle.plan,
             facing_fix: bundle.facing_fix,
             joint_by_name: bundle.joint_by_name,
-            slot_mounts: HashMap::new(),
+            slot_mounts: bundle.slot_mounts,
         });
         let committed = Arc::new(Committed {
             composition,
             attachments,
             motion: bundle.motion,
             locomotion: bundle.locomotion,
+            idle: bundle.idle,
         });
         self.committed.insert(bundle.key, committed.clone());
         self.stats.committed_looks += 1;
@@ -525,7 +552,13 @@ pub struct StreamAssets<'w> {
 }
 
 /// Spawn the entities of a committed look under `root` (as `ActorSpawner::spawn` does).
-fn spawn_character(commands: &mut Commands, root: Entity, look: &Committed, stance: Stance) {
+fn spawn_character(
+    commands: &mut Commands,
+    root: Entity,
+    look: &Committed,
+    stance: Stance,
+    start_time: f32,
+) {
     let c = &look.composition;
     let mut animator = Animator::new(
         c.rig.clone(),
@@ -533,8 +566,14 @@ fn spawn_character(commands: &mut Commands, root: Entity, look: &Committed, stan
         c.joint_nodes.clone(),
         c.facing_fix,
     );
-    if let Some(m) = &look.motion {
-        animator.play(m.clone(), 0.0, 1.0, 0.0);
+    let idle = look
+        .locomotion
+        .then(|| look.idle.iter().find(|(s, _)| *s == stance))
+        .flatten();
+    if let Some((_, m)) = idle {
+        animator.play(m.clone(), 0.0, 1.0, start_time);
+    } else if let Some(m) = &look.motion {
+        animator.play(m.clone(), 0.0, 1.0, start_time);
     }
     animator.evaluate();
     let mut root_cmd = commands.entity(root);
@@ -544,6 +583,9 @@ fn spawn_character(commands: &mut Commands, root: Entity, look: &Committed, stan
     if look.locomotion {
         let mut locomotion = Locomotion::default();
         locomotion.key.stance = stance;
+        if idle.is_some() {
+            locomotion.playing = Some(LocoKey::idle(stance));
+        }
         root_cmd.insert((
             locomotion,
             LocomotionInput {
@@ -668,7 +710,7 @@ pub fn stream_commit_system(
             }
         };
         let p = &s.pending[i];
-        spawn_character(&mut commands, p.entity, &look, p.stance);
+        spawn_character(&mut commands, p.entity, &look, p.stance, p.start_time);
         s.stats.spawned += 1;
         s.stats.spawned_this_frame += 1;
         s.stats.max_commit_one = s.stats.max_commit_one.max(one.elapsed());

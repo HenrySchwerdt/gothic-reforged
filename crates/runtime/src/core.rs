@@ -98,6 +98,19 @@ pub enum Command {
     ToggleSneak,
     /// Jump.
     Jump,
+    /// The movement mode machine of the hero's body changed the mode
+    /// (`OnMovementModeChanged`, S:adbf0): raw `gECharMovementMode` values and the time spent in
+    /// the left state. Answered by [`Event::ModeChanged`].
+    HeroModeChanged {
+        /// `GetLastMovementMode`.
+        last: u8,
+        /// `GetMovementMode`.
+        mode: u8,
+        /// Seconds in the left state (the fall time when leaving the fall mode).
+        state_secs: f32,
+    },
+    /// What the hero's body is doing (read by the stamina tick, S:b0520).
+    HeroMovement(gothic_sim::vitals::Movement),
     /// Dodge (`ZS_Evade*`).
     Dodge {
         /// Direction.
@@ -141,6 +154,34 @@ pub enum Command {
     },
     /// The hero's instruction (combat move or hold) ended.
     HeroExecDone {
+        /// Sequence number of the event.
+        seq: u32,
+    },
+    /// The host plays the clips of an NPC (its body is shown) and reports their moments back.
+    HostDrivesNpc {
+        actor: ActorId,
+        on: bool,
+    },
+    /// The `Hit` clip of an NPC's combat move reached the damage moment (`OnHit`).
+    NpcMoveHit {
+        actor: ActorId,
+        /// Sequence number of the `NpcMove` event.
+        seq: u32,
+    },
+    /// The clip of an NPC's script instruction moved its body (root motion, in cm).
+    NpcNudge {
+        actor: ActorId,
+        dx: f32,
+        dz: f32,
+    },
+    /// The pose token `Pn` the clips of an NPC's last move ended in (`GetPrimaryPoseExt`).
+    NpcPrimaryPose {
+        actor: ActorId,
+        pose: u8,
+    },
+    /// An NPC's instruction ended.
+    NpcExecDone {
+        actor: ActorId,
         /// Sequence number of the event.
         seq: u32,
     },
@@ -347,6 +388,8 @@ pub enum Event {
     Notice(String),
     /// A simulation event (hit, kill, aggro, ...).
     Sim(EventKind),
+    /// What `OnMovementModeChanged` made of a mode change of the hero's body.
+    ModeChanged(gothic_sim::moves::ModeOutcome),
     /// A character says a stock voice line: play `SVM_<voice>_<key>`
     /// (`gothic_audio::PlayVoice::svm(voice, key)`).
     Voice {
@@ -451,6 +494,9 @@ pub struct Core {
     /// Initial flag of each registered sector (the layer roots' `Enabled`); a save without an
     /// entry for a sector means "as authored".
     sector_defaults: std::collections::BTreeMap<String, bool>,
+    /// Canonical static Teach subjects for NPCs spawned in this runtime. Older saves predate
+    /// these lists, so restore them from the already-loaded NPC records after loading a save.
+    teacher_subjects: std::collections::BTreeMap<String, (Vec<String>, Vec<String>)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -505,6 +551,7 @@ impl Core {
             clock: 0.0,
             actor_sector: Default::default(),
             sector_defaults: Default::default(),
+            teacher_subjects: Default::default(),
         };
         // The new game's start kit lives in the quest/dialog state; the hero actor carries it.
         core.sync_inventory();
@@ -765,6 +812,15 @@ impl Core {
             }
             Command::SpawnNpc { record, at, yaw } => {
                 let id = self.sim.spawn_record(record, *at);
+                let name = gothic_gameplay::state::norm(&record.name);
+                self.teacher_subjects.insert(
+                    name.clone(),
+                    (record.teach_attribs.clone(), record.teach_skills.clone()),
+                );
+                self.sim
+                    .state
+                    .npc_mut(&name)
+                    .import_teach_subjects(&record.teach_attribs, &record.teach_skills);
                 let sector = self.sector_of_document(&record.document);
                 if let Some(s) = sector {
                     self.actor_sector.insert(id, s);
@@ -820,6 +876,18 @@ impl Core {
             }
             Command::ToggleSneak => self.sim.player_toggle_sneak(),
             Command::Jump => self.sim.player_jump(),
+            Command::HeroModeChanged {
+                last,
+                mode,
+                state_secs,
+            } => {
+                let hero = self.hero;
+                let outcome = self
+                    .sim
+                    .movement_mode_changed(hero, *last, *mode, *state_secs);
+                out.push(Event::ModeChanged(outcome));
+            }
+            Command::HeroMovement(m) => self.sim.hero_move = *m,
             Command::Dodge { direction } => {
                 self.sim.player_dodge(*direction);
             }
@@ -844,6 +912,14 @@ impl Core {
             Command::HeroMoveHit { seq } => self.sim.hero_move_hit(*seq),
             Command::HeroExecDone { seq } => self.sim.hero_exec_done(*seq),
             Command::HeroHoldSwap { seq } => self.sim.hero_hold_swap(*seq),
+            Command::HostDrivesNpc { actor, on } => self.sim.set_host_drives_npc(*actor, *on),
+            Command::NpcPrimaryPose { actor, pose } => {
+                // The script counts poses from 1 (`P0` of the clip names is pose 1).
+                self.sim.script.npc_mut(*actor).primary_pose = u32::from(*pose) + 1
+            }
+            Command::NpcNudge { actor, dx, dz } => self.sim.nudge_npc(*actor, *dx, *dz),
+            Command::NpcMoveHit { actor, seq } => self.sim.npc_move_hit(*actor, *seq),
+            Command::NpcExecDone { actor, seq } => self.sim.npc_exec_done(*actor, *seq),
             Command::TakeLoot { object, index } => {
                 let taken = self.sim.script.take_loot(EntityId(*object), *index);
                 for (item, n) in taken {
@@ -1212,6 +1288,15 @@ impl Core {
         self.state_rev += 1;
     }
 
+    fn rehydrate_teacher_subjects(&mut self) {
+        for (name, (attribs, skills)) in &self.teacher_subjects {
+            self.sim
+                .state
+                .npc_mut(name)
+                .import_teach_subjects(attribs, skills);
+        }
+    }
+
     /// The event that tells the host where the hero stands after a load.
     pub fn loaded_event(&self) -> Event {
         let hero = self
@@ -1247,6 +1332,7 @@ impl Core {
             game_ms: state.hours * 3_600_000,
         };
         self.sim.state = state;
+        self.rehydrate_teacher_subjects();
         self.sim.tick = file.tick;
         self.dialog = None;
         self.sim.dialog_partner = None;
@@ -1281,5 +1367,57 @@ impl Core {
             hero: Pos::new(file.hero.x, file.hero.y, file.hero.z),
             yaw: file.hero.yaw,
         })
+    }
+}
+
+#[cfg(test)]
+mod teach_restore_tests {
+    use super::*;
+
+    fn empty_db() -> Arc<GameDatabase> {
+        let source = "[LocAdmin_Languages]\r\nLanguages=English\r\nCurrentLanguage=English\r\nCurrentRevision=0\r\n[LocAdmin_Strings]\r\n[LocAdmin_Revisions]\r\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in source.encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        let strings = gothic_formats::stringtable::StringTable::parse(&bytes).unwrap();
+        Arc::new(GameDatabase::from_parts(vec![], vec![], strings, "English").unwrap())
+    }
+
+    #[test]
+    fn legacy_save_rehydrates_canonical_teach_subjects_without_overwriting_flags() {
+        let mut core = Core::new(empty_db(), ItemDb::default(), GameState::new(), 1);
+        let record = NpcRecord {
+            name: "Trainer".into(),
+            species: "Human".into(),
+            teach_attribs: vec!["STR".into()],
+            teach_skills: vec!["Perk_1H_2".into()],
+            ..Default::default()
+        };
+        core.tick(
+            0.0,
+            &[Command::SpawnNpc {
+                record: Box::new(record),
+                at: Pos::default(),
+                yaw: 0.0,
+            }],
+        );
+        core.sim.state.npc_mut("Trainer").teach_enabled = Some(false);
+
+        // Model an older save whose NpcRuntime did not yet contain subject lists.
+        let mut save: serde_json::Value = serde_json::from_str(&core.save_json().unwrap()).unwrap();
+        let state_text = save["state"].as_str().unwrap();
+        let mut state: serde_json::Value = serde_json::from_str(state_text).unwrap();
+        let npc = state["npcs"]["trainer"].as_object_mut().unwrap();
+        npc.remove("teach_attribs");
+        npc.remove("teach_skills");
+        save["state"] = serde_json::Value::String(serde_json::to_string(&state).unwrap());
+        core.load_json(&serde_json::to_string(&save).unwrap())
+            .unwrap();
+
+        let restored = core.sim.state.npc("Trainer").unwrap();
+        assert!(restored.teach_attribs.contains("str"));
+        assert!(restored.teach_skills.contains("perk_1h_2"));
+        assert_eq!(restored.teach_enabled, Some(false));
     }
 }

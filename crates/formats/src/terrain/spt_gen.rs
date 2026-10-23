@@ -40,6 +40,9 @@ pub struct GenOptions {
     pub crown_base: Option<f32>,
     /// Leaf card size multiplier (reduced LODs use larger, fewer cards).
     pub card_scale: f32,
+    /// Diagnostic-only V flip for rendered leaf-card UVs. Does not alter SPT rectangles or
+    /// frond/billboard geometry, and is not evidence for the native texture convention.
+    pub flip_leaf_render_v: bool,
 }
 
 impl Default for GenOptions {
@@ -51,6 +54,7 @@ impl Default for GenOptions {
             length_scale: 1.0,
             crown_base: None,
             card_scale: 1.0,
+            flip_leaf_render_v: false,
         }
     }
 }
@@ -264,7 +268,13 @@ pub fn generate(spt: &Spt, variant: u32, opt: GenOptions) -> TreeGeometry {
             out.crown_radius = out.crown_radius.max((p[0] * p[0] + p[2] * p[2]).sqrt());
         }
     }
+    let leaf_uv_start = out.cards.uvs.len();
     emit_leaves(spt, &leaf_sites, &mut out, &mut rng, opt);
+    if opt.flip_leaf_render_v {
+        for uv in &mut out.cards.uvs[leaf_uv_start..] {
+            uv[1] = 1.0 - uv[1];
+        }
+    }
     out
 }
 
@@ -479,6 +489,93 @@ fn emit_leaves(
             out.cards
                 .indices
                 .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terrain::spt::{Leaf, Spline};
+
+    fn mixed_frond_leaf_fixture() -> Spt {
+        let mut levels = vec![Level::default(); 3];
+        for level in &mut levels {
+            level.segments = 2;
+            level.splines[4] = Spline {
+                min: 0.35,
+                max: 0.35,
+                ..Spline::default()
+            };
+            level.child_start = 0.0;
+            level.child_end = 1.0;
+            level.per_node = [1.0, 1.0];
+        }
+        levels[0].child_count = 1.0;
+        levels[1].child_count = 1.0;
+        levels[1].frond = true;
+
+        Spt {
+            size: 1000.0,
+            seed: 41,
+            levels,
+            leaves: vec![Leaf {
+                enabled: true,
+                size: [0.08, 0.12],
+                rect: [0.25, 0.25, 0.0, 0.25, 0.0, 0.0, 0.25, 0.0],
+                ..Leaf::default()
+            }],
+            frond_rect: Some([0.5, 1.0, 0.0, 1.0, 0.0, 0.75, 0.5, 0.75]),
+            ..Spt::default()
+        }
+    }
+
+    #[test]
+    fn leaf_render_v_flip_changes_only_leaf_uv_suffix() {
+        let spt = mixed_frond_leaf_fixture();
+        let options = GenOptions {
+            max_cards: 2,
+            crossed: false,
+            ..GenOptions::default()
+        };
+        let baseline = generate(&spt, 3, options);
+        let flipped = generate(
+            &spt,
+            3,
+            GenOptions {
+                flip_leaf_render_v: true,
+                ..options
+            },
+        );
+        let mut frond_only = spt.clone();
+        frond_only.leaves.clear();
+        let fronds = generate(&frond_only, 3, options);
+        let leaf_start = fronds.cards.uvs.len();
+
+        assert!(leaf_start > 0, "fixture must generate a frond prefix");
+        assert!(
+            baseline.cards.uvs.len() > leaf_start,
+            "fixture must generate leaf cards"
+        );
+        assert_eq!(baseline.cards.positions, flipped.cards.positions);
+        assert_eq!(baseline.cards.normals, flipped.cards.normals);
+        assert_eq!(baseline.cards.indices, flipped.cards.indices);
+        assert_eq!(baseline.bark.positions, flipped.bark.positions);
+        assert_eq!(baseline.bark.normals, flipped.bark.normals);
+        assert_eq!(baseline.bark.uvs, flipped.bark.uvs);
+        assert_eq!(baseline.bark.indices, flipped.bark.indices);
+        assert_eq!(baseline.height, flipped.height);
+        assert_eq!(baseline.crown_radius, flipped.crown_radius);
+        assert_eq!(
+            baseline.cards.uvs[..leaf_start],
+            flipped.cards.uvs[..leaf_start]
+        );
+        for (before, after) in baseline.cards.uvs[leaf_start..]
+            .iter()
+            .zip(&flipped.cards.uvs[leaf_start..])
+        {
+            assert_eq!(before[0], after[0]);
+            assert_eq!(after[1], 1.0 - before[1]);
         }
     }
 }

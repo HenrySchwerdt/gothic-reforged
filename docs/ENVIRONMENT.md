@@ -1,7 +1,10 @@
 # Environment: day/night and weather (`crates/env-synth`)
 
-> Naming: this is the data-driven, game-data-free environment simulation (`gothic-env-synth`). The in-engine
-> Gothic 3 parity work (real weather data from the installation) lives in `crates/environment` and is separate.
+> Naming: this is the game-data-free reference environment (`gothic-env-synth`, cloud REN-02).
+> The Gothic 3 parity work on the real weather data (`WeatherStates.g3ws`, weather zones, the
+> world's precipitation / skydome / wind entities) lives in `crates/environment`
+> (`gothic-environment`) and is **authoritative** in the game. See
+> [Relation to `gothic-environment`](#relation-to-gothic-environment-issue-38) for the decision.
 
 `gothic-env-synth` computes everything about the time of day and the weather: sun and
 moon, sky gradient, clouds, fog, rain, snow, sand, lightning, and surface wetness and snow
@@ -82,13 +85,86 @@ take the same parameters into a shader.
   This also works headless with `xvfb-run` and a software Vulkan driver.
 * `cargo run -p gothic-env-synth --example timeline`: one day as JSON lines, no window.
 
-## Integration hooks (game)
+## Relation to `gothic-environment` (issue #38)
 
-To wire the environment into the game:
-- In `apps/game`, add `EnvironmentPlugin` and tag the play camera `EnvironmentCamera` and the
-  existing sun light `Sun`. That replaces the fixed `GlobalAmbientLight` / `DistanceFog`
-  setup in `walk.rs`.
-- Drive the clock from the core's game time: set `state.env.clock.hours` from the script
-  time, and use `hours_per_second = 0` with `paused` so the core stays authoritative.
-- Set the climate from the region (Myrtana, Nordmar, Varant).
-- Scripted weather uses `force_weather`.
+### What each crate models
+
+| | `gothic-environment` (authoritative) | `gothic-env-synth` (reference / fallback) |
+| --- | --- | --- |
+| Source of numbers | Original `WeatherStates.g3ws` (16 keyframed scales per state, environments with state probabilities and durations), `eCWeatherZone_PS`, `eCPrecipitation_PS`, `eCSkydome_PS`, `eCSpeedTreeWind_PS` entities | Synthetic RON tables (`data/day.ron`, `data/weather.ron`), explicitly not original values |
+| Rules | Ports of `eCWeatherAdmin::Process`, `eCWeatherEnvironment::Process`, zone blend / overwrites, SH hemisphere, fog clip (addresses in the crate docs) | Own design: Markov weather machine, smoothstep blends, lightning, wetness / snow cover, exposure |
+| Time | Day fraction 0..1, sun arc 0.25..0.9167 | Game hours 0..24, latitude / declination sky path |
+| Weather | Independent weighted state picks per environment, 1 h cross-fade, durations in days | Climate transition table, hold seconds, blend from the current look |
+| Output | `EnvRecord` / `EnvPacket` (sun colour x intensity, SH, sky / haze, clouds, fog cm), `PrecipParams`, wind, skydome | `EnvFrame` (lux, cd/m^2, fog m, precipitation strengths, wetness) |
+| Bevy | None (the game's `walk/env.rs`, `walk/precip.rs`, `walk/windsys.rs`, `gmat.rs` and `gothic-fx` consume it) | Optional `render` plugin with its own sky dome and full-screen precipitation overlay |
+
+Overlap: time of day, sun / moon placement, sky / fog / cloud colours, a seeded weather picker
+and precipitation. Every overlapping piece exists in `gothic-environment` as a port of the
+original, so nothing of the overlap was folded into it. The env-synth extras (lightning,
+surface wetness / snow, exposure, sand) have no counterpart in the original data or rules;
+adding them to `gothic-environment` would mix invented behaviour into the faithful crate, so
+they stay in env-synth.
+
+### Decision
+
+* `gothic-environment` stays authoritative and is **unchanged**. With the original data present
+  and `GR_ENV_SYNTH` unset, the game behaves exactly as before.
+* `gothic-env-synth` is kept as the data-free reference (its demos, tests, shaders and plugin are
+  untouched) and becomes an **explicit fallback data source**: `g3ws::synthetic_weather_data`
+  turns its placeholder tables into a synthetic `WeatherData` (the decoded `.g3ws` shape) that
+  runs through the same `WeatherAdmin` / `packet` / `evaluate_precipitation` pipeline. One
+  render path, no second environment plugin in the game; the env-synth Bevy plugin is not wired
+  into `apps/game`.
+* Mapping (synthetic, in `crates/env-synth/src/g3ws.rs`): one state per `WeatherKind`
+  (`Sunny`, `Rainy`, `Storm`, `Snow`, `Sandstorm`), every scale sampled hourly (25 keys) with the
+  weather profile applied as in `Environment::frame`; lux / cd/m^2 / metres are scaled to record
+  intensities and cm; climates become environments (`temperate` -> `Myrtana`, `cold` ->
+  `Nordmar`, `desert` -> `Varant`) whose state probabilities are the long-run shares of the
+  transition table; hold seconds become days with the clock rate (1 game hour = 2 real minutes);
+  rain and snow get `eCPrecipitation_PS` parameters, sand produces no particles. Lightning,
+  wetness and snow cover are dropped (no slot in the record).
+
+### Game wiring (`apps/game/src/walk/env_synth.rs`)
+
+`OrigEnv::install` passes the loaded data through `env_synth::weather_data`:
+
+| `GR_ENV_SYNTH` | Original `.g3ws` present | Original missing |
+| --- | --- | --- |
+| unset / `0` / `off` (default) | original (unchanged) | built-in light set (unchanged) |
+| `auto` / `fallback` | original | synthetic placeholder states |
+| `1` / `force` / anything else | synthetic placeholder states | synthetic placeholder states |
+
+A synthetic choice is logged (`environment: GR_ENV_SYNTH: using the SYNTHETIC ...`). Weather
+zones, static lights, wind and the world's precipitation / skydome entities still come from the
+world; only the weather states are replaced. `--weather Rainy`, `--hour`, `--day-speed` work with
+both.
+
+### Verification status
+
+* Tested (synthetic data only, no game assets): `cargo +1.99 test -p gothic-env-synth`
+  (`tests/g3ws_fallback.rs`: state / key layout, environments and probabilities, duration
+  conversion, stationary shares, `WeatherAdmin` day / night / rain on the synthetic record) and
+  `cargo +1.99 test -p gothic-reforged --features viewer -- env_synth` (mode parsing and
+  selection; `Off` never touches the synthetic builder).
+* **Not verified in game**: how the synthetic states look in the walk viewer (brightness of the
+  scaled lux / ambient mapping, fog distances, rain density), and that the default path with
+  real data is visually identical (the code path is unchanged; only `install` now calls the
+  selector, which returns the original data untouched when `GR_ENV_SYNTH` is unset).
+* Check with real data (Windows; `--walk` defaults to the installation's `Data` directory on D:,
+  PowerShell syntax):
+
+  ```
+  cargo run --release -p gothic-reforged --features viewer -- --walk --hour 12
+  $env:GR_ENV_SYNTH = "1"; cargo run --release -p gothic-reforged --features viewer -- --walk --hour 12 --weather Rainy
+  Remove-Item Env:GR_ENV_SYNTH
+  ```
+
+  The first run must look as before (log: `environment: N weather states, ...`, no
+  `GR_ENV_SYNTH` line); the second logs the synthetic line and shows placeholder colours and
+  rain. `GR_ENV_SHOT=<file.png>:<seconds>` captures both for comparison.
+
+### Not wired / remaining
+
+* The env-synth Bevy plugin, sky / precipitation WGSL shaders, lightning, wetness and snow cover
+  are not used by the game; issue #13 (game integration) stays open for any of them.
+* Region -> climate switching and script-driven time are not connected for either crate.

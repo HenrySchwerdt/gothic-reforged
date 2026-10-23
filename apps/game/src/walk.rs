@@ -2,12 +2,17 @@
 //!
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
+//! Opt-in extras: `--render-plus [preset|profile.json]`, `--audio-plus` (see `plus.rs`).
+mod cloud;
 mod env;
+mod env_synth;
 mod gmat;
 #[path = "play/mod.rs"]
 mod play;
+mod plus;
 mod post;
 mod precip;
+mod wind_shots;
 mod windsys;
 
 use crate::world_loader::{
@@ -18,6 +23,7 @@ use anyhow::Result;
 use bevy::{
     asset::RenderAssetUsages,
     camera::Exposure,
+    core_pipeline::prepass::DepthPrepass,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     input::mouse::AccumulatedMouseMotion,
     light::{CascadeShadowConfigBuilder, NotShadowCaster},
@@ -35,14 +41,28 @@ use gothic_physics::{CharacterController, CollisionWorld, ControllerConfig};
 use gothic_world::{StreamingSettings, TileStreamer};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     time::Instant,
 };
 
 /// Gothic-space origin: the Ardea city centre (cm).
 const ORIGIN: Vec3 = Vec3::new(92_400.0, 0.0, -11_000.0);
+
+fn leaf_flutter_scale() -> f32 {
+    static SCALE: OnceLock<f32> = OnceLock::new();
+    *SCALE.get_or_init(|| {
+        std::env::var("GR_LEAF_FLUTTER")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite() && (0.0..=4.0).contains(value))
+            .unwrap_or(1.0)
+    })
+}
 const CM: f32 = 0.01;
 const EYE_HEIGHT_CM: f32 = 165.0;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct WalkUpdateSet;
 
 #[derive(Resource)]
 struct LoaderRes {
@@ -109,6 +129,8 @@ struct Stream {
     pending: VecDeque<Pending>,
     spawned: HashMap<TileKey, Vec<Entity>>,
     ready: bool,
+    /// A terminal tile-loader error; play startup shows it instead of leaving input gated forever.
+    load_error: Option<String>,
     loader_ms: u128,
     records: usize,
     triangles_nav: usize,
@@ -123,6 +145,47 @@ struct Stream {
 
 #[derive(Resource)]
 struct Collision(CollisionWorld);
+
+/// Water surfaces of the loaded tiles (`gCWaterZone_PS` carriers: the lake / river / ocean
+/// meshes), world-space triangles per tile, for the hero's water level.
+#[derive(Resource, Default)]
+struct WaterSurfaces {
+    tiles: std::collections::HashMap<u64, Vec<[Vec3; 3]>>,
+}
+
+impl WaterSurfaces {
+    /// Highest water surface (cm) over the point whose height is within `up` above and `down`
+    /// below `p.y`, searched in the tile of `cell` and its neighbours.
+    fn level_at(&self, cell: (i32, i32), p: Vec3, up: f32, down: f32) -> Option<f32> {
+        let mut best: Option<f32> = None;
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                let Some(tris) = self.tiles.get(&tile_chunk_id((cell.0 + dx, cell.1 + dz)))
+                else {
+                    continue;
+                };
+                for t in tris {
+                    let (a, b, c) = (t[0], t[1], t[2]);
+                    // Barycentric test in the horizontal plane.
+                    let d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+                    if d.abs() < 1.0e-6 {
+                        continue;
+                    }
+                    let u = ((b.z - c.z) * (p.x - c.x) + (c.x - b.x) * (p.z - c.z)) / d;
+                    let v = ((c.z - a.z) * (p.x - c.x) + (a.x - c.x) * (p.z - c.z)) / d;
+                    if u < 0.0 || v < 0.0 || u + v > 1.0 {
+                        continue;
+                    }
+                    let y = u * a.y + v * b.y + (1.0 - u - v) * c.y;
+                    if y <= p.y + up && y >= p.y - down {
+                        best = Some(best.map_or(y, |m: f32| m.max(y)));
+                    }
+                }
+            }
+        }
+        best
+    }
+}
 
 #[derive(Resource)]
 struct Player {
@@ -144,6 +207,85 @@ struct Player {
     command: bool,
     /// Direction the hero turns to instead of the wish direction (dialog, lock-on, aiming).
     face: Option<Vec3>,
+    /// What the last controller step reported (landing, take-off, slide start); the play mode's
+    /// movement-state layer (`play/move_states.rs`) consumes it.
+    report: gothic_physics::StepReport,
+    /// Dive input while swimming (-1 down .. 1 up, `MoveCommand::vertical`), from the play layer.
+    scripted_dive: Option<f32>,
+    /// Water surface height at the hero from the world's water zones (cm), `None` = use the sea.
+    scripted_water: Option<Option<f32>>,
+    /// Opt-in trace for diagnosing the `magic_faithful` body-follow QA assertion.
+    magic_body_trace: Option<MagicBodyTrace>,
+}
+
+/// Bounded, deferred diagnostics for one scripted magic body-follow turn.
+struct MagicBodyTrace {
+    started: Option<Instant>,
+    last_sample: Option<Instant>,
+    movement_dt: f32,
+    rows: VecDeque<String>,
+}
+
+impl MagicBodyTrace {
+    const CAPACITY: usize = 256;
+    const MIN_SAMPLE_PERIOD: std::time::Duration = std::time::Duration::from_nanos(16_666_667);
+
+    fn new() -> Self {
+        Self {
+            started: None,
+            last_sample: None,
+            movement_dt: 0.0,
+            rows: VecDeque::with_capacity(Self::CAPACITY),
+        }
+    }
+
+    fn begin(&mut self) {
+        self.rows.clear();
+        self.started = Some(Instant::now());
+        self.last_sample = None;
+        self.movement_dt = 0.0;
+    }
+
+    fn record(&mut self, make_row: impl FnOnce() -> String) {
+        let now = Instant::now();
+        let Some(started) = self.started else { return };
+        if self
+            .last_sample
+            .is_some_and(|last| now.duration_since(last) < Self::MIN_SAMPLE_PERIOD)
+        {
+            return;
+        }
+        if self.rows.len() == Self::CAPACITY {
+            self.rows.pop_front();
+        }
+        self.rows.push_back(format!(
+            "wall_s={:.4} {}",
+            started.elapsed().as_secs_f64(),
+            make_row()
+        ));
+        self.last_sample = Some(now);
+    }
+
+    fn finish(&mut self, snapshot: String) -> String {
+        let mut dump = format!("GR_MAGIC_BODY_TRACE: {snapshot}\n");
+        for row in &self.rows {
+            dump.push_str("  ");
+            dump.push_str(row);
+            dump.push('\n');
+        }
+        self.started = None;
+        self.last_sample = None;
+        self.rows.clear();
+        dump
+    }
+}
+
+impl Player {
+    fn record_magic_body_trace(&mut self, make_row: impl FnOnce() -> String) {
+        if let Some(trace) = self.magic_body_trace.as_mut() {
+            trace.record(make_row);
+        }
+    }
 }
 
 #[derive(Component)]
@@ -162,6 +304,16 @@ struct Smoke {
     stable: u32,
     shots: Vec<Shot>,
     shot_index: usize,
+}
+
+#[derive(Resource)]
+struct WindShotControl {
+    times: Vec<f64>,
+    selected: Option<usize>,
+    capture_requested: Option<usize>,
+    captured: Option<usize>,
+    startup_started_at_real_seconds: Option<f64>,
+    selected_at_real_seconds: Option<f64>,
 }
 
 /// Extra screenshot viewpoint: name, position in metres relative to the origin (mirrored
@@ -213,8 +365,20 @@ pub fn run(args: &[String]) -> Result<()> {
         })
         .unwrap_or((4000.0, 4000.0));
     let smoke = args.iter().any(|a| a == "--smoke");
+    let magic_body_trace_enabled = std::env::var("GR_MAGIC_BODY_TRACE").is_ok_and(|v| v == "1")
+        && args
+            .windows(2)
+            .any(|pair| pair[0] == "--qa" && pair[1] == "magic_faithful");
     let prefix = arg("--screenshot").unwrap_or_else(|| ".local/ardea".into());
     let shots = arg("--shots").map(|s| parse_shots(&s)).unwrap_or_default();
+    let wind_shot_times = wind_shots::parse_wind_shot_times(
+        args,
+        shots.len(),
+        smoke,
+        std::env::var_os("GR_NOWIND").is_some(),
+        std::env::var_os("GR_WIND_CLOCK_PROBE_START").is_some(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let handle: LoaderHandle = spawn_loader(data_dir.clone().into(), Origin(ORIGIN));
     // The grid keeps at least `radius` tiles resident in every direction (the prefetch
     // rectangle is 0.4 x far plus one 10 000-unit cell).
@@ -268,6 +432,7 @@ pub fn run(args: &[String]) -> Result<()> {
         pending: VecDeque::new(),
         spawned: HashMap::new(),
         ready: false,
+        load_error: None,
         loader_ms: 0,
         records: 0,
         triangles_nav: 0,
@@ -280,6 +445,7 @@ pub fn run(args: &[String]) -> Result<()> {
         last_activity: 0,
     })
     .insert_resource(Collision(CollisionWorld::new()))
+    .init_resource::<WaterSurfaces>()
     .insert_resource(Caches::default())
     .insert_resource(Player {
         ctrl: CharacterController::new(
@@ -295,6 +461,10 @@ pub fn run(args: &[String]) -> Result<()> {
         scripted_wish: None,
         scripted_gait: None,
         scripted_jump: None,
+        report: Default::default(),
+        scripted_dive: None,
+        scripted_water: None,
+        magic_body_trace: magic_body_trace_enabled.then(MagicBodyTrace::new),
         command: false,
         face: None,
     })
@@ -329,6 +499,7 @@ pub fn run(args: &[String]) -> Result<()> {
     .add_systems(
         Update,
         (
+            bench_camera_pose,
             receive_tiles,
             stream_tiles,
             stream_vegetation,
@@ -339,14 +510,33 @@ pub fn run(args: &[String]) -> Result<()> {
             input_mode,
             player_motion,
             update_camera,
+            capture_bench_world,
             smoke_script,
             hud,
         )
-            .chain(),
+            .chain()
+            .in_set(WalkUpdateSet),
     );
     if play::requested(args) {
         play::install(&mut app, args)?;
     }
+    if let Some(times) = wind_shot_times {
+        app.insert_resource(WindShotControl {
+            times,
+            selected: None,
+            capture_requested: None,
+            captured: None,
+            startup_started_at_real_seconds: None,
+            selected_at_real_seconds: None,
+        });
+    }
+    plus::install(&mut app, args, play::requested(args))?;
+    cloud::install(
+        &mut app,
+        args,
+        std::path::Path::new(&data_dir),
+        play::requested(args),
+    );
     app.add_plugins(crate::perf::PerfPlugin {
         args: args.to_vec(),
     });
@@ -387,9 +577,20 @@ fn setup(
         NotShadowCaster,
         SkyDome,
     ));
+    // Bevy's non-indirect path reduced measured Windows PC CPU render overhead without obvious
+    // losses in the checked views. This is a platform-specific default, not a universal performance claim
+    // or a VR result. Sample once at spawn because NoIndirectDrawing must be present before the
+    // camera is first extracted: exact 0 forces indirect mode, exact 1 forces non-indirect mode,
+    // and unset/invalid values use the Windows-only default.
+    let no_indirect_drawing = match std::env::var("GR_NO_INDIRECT_DRAWING").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => cfg!(target_os = "windows"),
+    };
     let cam = commands
         .spawn((
             Camera3d::default(),
+            DepthPrepass,
             Projection::Perspective(PerspectiveProjection {
                 fov: 70f32.to_radians(),
                 near: 0.05,
@@ -411,6 +612,13 @@ fn setup(
             PlayerCamera,
         ))
         .id();
+    if no_indirect_drawing {
+        // This insert follows the spawn in the same deferred command queue, before the camera
+        // is visible to extraction; it is not a live render-mode toggle.
+        commands
+            .entity(cam)
+            .insert(bevy::render::view::NoIndirectDrawing);
+    }
     if std::env::var_os("GR_NOBLOOM").is_none() {
         commands.entity(cam).insert(post::BloomPost::original());
         // The HDR exposure curve of the original needs the unclamped scene.
@@ -494,6 +702,12 @@ fn receive_tiles(
             }
             Response::Weather(p) => orig_env.install(*p),
             Response::Failed(e) => eprintln!("loader: {e}"),
+            Response::StartupFailed(e) => {
+                eprintln!("loader: {e}");
+                if stream.load_error.is_none() {
+                    stream.load_error = Some(e);
+                }
+            }
             Response::Vegetation(payload) => {
                 let key = payload.key;
                 veg.in_flight.remove(&key);
@@ -535,11 +749,59 @@ fn observer_cm(player: &Player) -> Vec3 {
     }
 }
 
+#[derive(Clone, Copy)]
+struct BenchCameraAnchor {
+    position_m: [f32; 3],
+    yaw: f32,
+    pitch: f32,
+}
+
+/// Benchmark-only renderer route. It bypasses hero physics and hides the hero, while the normal
+/// streaming, camera, focus, and capture systems consume this same camera pose in order.
+fn bench_camera_pose(
+    mut bench: ResMut<crate::perf::BenchWorld>,
+    mut player: ResMut<Player>,
+    camera: Query<&Transform, With<PlayerCamera>>,
+    mut play_state: Option<ResMut<play::PlayState>>,
+    mut anchor: Local<Option<BenchCameraAnchor>>,
+) {
+    let Some(elapsed) = bench.camera_route_target_elapsed_seconds else {
+        return;
+    };
+    if anchor.is_none() {
+        let Ok(transform) = camera.single() else {
+            return;
+        };
+        let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+        *anchor = Some(BenchCameraAnchor {
+            position_m: transform.translation.to_array(),
+            yaw,
+            pitch,
+        });
+        bench.camera_route_anchor_m = Some(transform.translation.to_array());
+    }
+    let anchor = anchor.expect("camera route anchor initialized");
+    let position_m = crate::perf::bench_camera_position(anchor.position_m, elapsed);
+    let rotation = Quat::from_euler(EulerRot::YXZ, anchor.yaw, anchor.pitch, 0.0);
+    bench.camera_route_elapsed_seconds = Some(elapsed);
+    player.fly = true;
+    player.fly_pos = Vec3::from_array(position_m) / CM;
+    player.yaw = anchor.yaw;
+    player.pitch = anchor.pitch;
+    if let Some(state) = play_state.as_deref_mut() {
+        state.hide_hero = true;
+        state.keep_items = false;
+    }
+    bench.expected_camera_position_m = Some(position_m);
+    bench.expected_camera_rotation_xyzw = Some(rotation.to_array());
+}
+
 fn stream_tiles(
     loader: Res<LoaderRes>,
     mut stream: ResMut<Stream>,
     player: Res<Player>,
     mut collision: ResMut<Collision>,
+    mut water: ResMut<WaterSurfaces>,
     mut commands: Commands,
 ) {
     stream.last_activity += 1;
@@ -556,6 +818,7 @@ fn stream_tiles(
         stream.in_flight.remove(&key);
         stream.pending.retain(|p| p.payload.key != key);
         collision.0.remove_chunk(tile_chunk_id(key));
+        water.tiles.remove(&tile_chunk_id(key));
         if let Some(entities) = stream.spawned.remove(&key) {
             for e in entities {
                 commands.entity(e).despawn();
@@ -638,6 +901,7 @@ fn surface_material(
                         tint_a: Vec4::new(0.55, 0.55, 0.5, 1.0),
                         ..default()
                     },
+                    wind_clock: gmat::wind_clock_buffer(),
                     a0: None,
                     a1: None,
                     b0: None,
@@ -664,12 +928,16 @@ fn surface_material(
     let mut params = GothicParams::default();
     if wind_mode != gmat::WindMode::None {
         // Leaf cards are about 3 % of the tree height (metres).
+        let flutter_scale = if wind_mode == gmat::WindMode::TreeLeaves {
+            leaf_flutter_scale()
+        } else {
+            1.0
+        };
         params.wind_mat = Vec4::new(
             wind_mode as i32 as f32,
             data.wind_height,
-            data.wind_height * CM * 0.03,
-            // `GR_LEAF_FLUTTER=<x>` scales the leaf rocking (0 = off) for tuning on real data.
-            env_f32("GR_LEAF_FLUTTER", 1.0),
+            data.wind_height * CM * 0.03 * flutter_scale,
+            0.0,
         );
     }
     let mut flags = 0;
@@ -739,6 +1007,8 @@ fn surface_material(
     if kind == PartKind::Foliage {
         // The vertex alpha of ground cover is the wind weight, not a layer blend.
         flags &= !F_VBLEND;
+        // Keep the distance fade in both forward and prepass fragments. If foliage ever casts
+        // shadows, those passes need the main-camera position instead of the light-view position.
         flags |= F_FADE;
         params.misc.x = FOLIAGE_FADE.0;
         params.misc.y = FOLIAGE_FADE.1;
@@ -764,6 +1034,7 @@ fn surface_material(
     };
     let handle = materials.add(GothicMaterial {
         params,
+        wind_clock: gmat::wind_clock_buffer(),
         a0,
         a1,
         b0,
@@ -809,7 +1080,8 @@ fn water_material(
             shallow: Vec4::new(0.12, 0.34, 0.38, 1.0),
             sky: Vec4::new(0.45, 0.62, 0.86, 1.0),
             sun_color: Vec4::new(1.0, 0.86, 0.62, 1.0),
-            misc: Vec4::new(0.5, NORMAL_Y_SIGN, 0.72, 0.0),
+            // The final component is the screen-space scene-depth softening band (metres).
+            misc: Vec4::new(0.5, NORMAL_Y_SIGN, 0.72, 3.0),
         },
         n0,
         n1,
@@ -903,8 +1175,51 @@ fn spawn_part(
         || part
             .material
             .as_ref()
-            .is_some_and(|m| m.kind == MatKind::Water);
+            .is_some_and(|m| m.kind.is_water());
     if is_water {
+        if std::env::var_os("GR_WATER_AUDIT").is_some() {
+            let area_m2 = part
+                .geom
+                .indices
+                .chunks_exact(3)
+                .map(|tri| {
+                    let at = |i: u32| {
+                        transform.transform_point(Vec3::from(part.geom.positions[i as usize]))
+                    };
+                    let a = at(tri[0]);
+                    let b = at(tri[1]);
+                    let c = at(tri[2]);
+                    ((b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x)).abs() * 0.5
+                })
+                .sum::<f32>();
+            let (min_vertex_y_m, max_vertex_y_m) = part
+                .geom
+                .positions
+                .iter()
+                .map(|p| transform.transform_point(Vec3::from(*p)).y)
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), y| {
+                    (lo.min(y), hi.max(y))
+                });
+            let (resource, entity_id) = part
+                .source
+                .as_ref()
+                .map_or(("<unknown>", "<unknown>"), |s| {
+                    (s.resource.as_ref(), s.entity_id.as_ref())
+                });
+            let material_name = part
+                .material
+                .as_ref()
+                .map_or("<unknown>", |m| m.name.as_str());
+            let ocean_y_m = part.ocean_plane_y_m;
+            eprintln!(
+                "WATER_SOURCE resource={resource} entity={entity_id} material={material_name} ocean={} ocean_plane_y_m={ocean_y_m:?} y_m={:.3} vertex_y_range_m={min_vertex_y_m:.3}..{max_vertex_y_m:.3} area_xz_m2={area_m2:.1} triangles={}",
+                part.source
+                    .as_ref()
+                    .is_some_and(|s| crate::world_loader::is_confirmed_ocean_resource(&s.resource)),
+                transform.translation.y,
+                part.geom.indices.len() / 3,
+            );
+        }
         let material = water_material(
             &part.material,
             &mut gpu.caches,
@@ -912,9 +1227,12 @@ fn spawn_part(
             &mut gpu.images,
             gpu.sun.0,
         );
-        let sea = *gpu.caches.sea_y.get_or_insert(transform.translation.y);
-        // Sea-level tile water is replaced by the single camera-following ocean plane.
-        let visibility = if (transform.translation.y - sea).abs() < 0.3 {
+        let ocean_y = part.ocean_plane_y_m;
+        let sea = ocean_y.map(|y| *gpu.caches.sea_y.get_or_insert(y));
+        // Only a source-confirmed, planar ocean part at the selected ocean height is replaced.
+        let visibility = if profile_hidden(PartKind::Water)
+            || ocean_y.zip(sea).is_some_and(|(y, sea)| (y - sea).abs() <= 0.01)
+        {
             Visibility::Hidden
         } else {
             Visibility::Inherited
@@ -1037,6 +1355,8 @@ fn spawn_part(
         part.kind,
         PartKind::Foliage | PartKind::Tree | PartKind::TreeFar
     ) {
+        // F_FADE foliage relies on this exclusion: shadow views use a light position, not the
+        // main-camera position. Revisit the fade uniform before enabling foliage shadows.
         e.insert(NotShadowCaster);
     }
     // SpeedTree LOD: full geometry near, whole-tree billboard far, dither cross-fade between.
@@ -1064,6 +1384,7 @@ fn spawn_pending(
     mut commands: Commands,
     mut stream: ResMut<Stream>,
     mut collision: ResMut<Collision>,
+    mut water: ResMut<WaterSurfaces>,
     mut gpu: Gpu,
 ) {
     let start = Instant::now();
@@ -1078,6 +1399,34 @@ fn spawn_pending(
             collision
                 .0
                 .insert_chunk(tile_chunk_id(front.payload.key), tris);
+            // Lakes/rivers remain mesh-backed; only confirmed planar ocean parts use the sea plane.
+            let mut surf: Vec<[Vec3; 3]> = Vec::new();
+            for part in front
+                .payload
+                .parts
+                .iter()
+                .filter(|p| p.kind == PartKind::Water && p.lod.is_none_or(|l| l.stage == 0))
+            {
+                let g = &part.geom;
+                let ocean_y = part.ocean_plane_y_m;
+                let sea_y = ocean_y.map(|y| *gpu.caches.sea_y.get_or_insert(y));
+                let replaced_by_plane = ocean_y
+                    .zip(sea_y)
+                    .is_some_and(|(y, sea)| (y - sea).abs() <= 0.01);
+                for t in g.indices.chunks_exact(3) {
+                    if replaced_by_plane {
+                        continue;
+                    }
+                    let at = |i: u32| {
+                        part.transform
+                            .transform_point3(Vec3::from(g.positions[i as usize]))
+                    };
+                    surf.push([at(t[0]), at(t[1]), at(t[2])]);
+                }
+            }
+            if !surf.is_empty() {
+                water.tiles.insert(tile_chunk_id(front.payload.key), surf);
+            }
             front.collision_done = true;
             if front.payload.terrain_collision_from_nav {
                 stream.triangles_nav += n;
@@ -1093,6 +1442,9 @@ fn spawn_pending(
         let part = &front.payload.parts[front.next];
         front.next += 1;
         let entity = spawn_part(&mut commands, part, &mut gpu, double_sided);
+        if cloud::statics::routes(part.kind) && !profile_hidden(part.kind) {
+            commands.entity(entity).insert(cloud::statics::StaticProp);
+        }
         front.entities.push(entity);
         stream.parts_spawned += 1;
     }
@@ -1174,6 +1526,9 @@ fn ocean_follow(
     camera: Query<&Transform, (With<PlayerCamera>, Without<Ocean>)>,
     mut ocean: Query<&mut Transform, With<Ocean>>,
 ) {
+    if profile_hidden(PartKind::Water) {
+        return;
+    }
     let Ok(cam) = camera.single() else { return };
     if let Ok(mut t) = ocean.single_mut() {
         t.translation.x = cam.translation.x;
@@ -1206,11 +1561,13 @@ fn sky_follow(
 fn input_mode(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    startup: Option<Res<play::readiness::StartupReadiness>>,
     mut player: ResMut<Player>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     camera: Query<&Transform, With<PlayerCamera>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyF) {
+    let startup_loading = startup.is_some_and(|readiness| readiness.blocks_hardware());
+    if !startup_loading && keys.just_pressed(KeyCode::KeyF) {
         player.fly = !player.fly;
         if player.fly {
             if let Ok(t) = camera.single() {
@@ -1224,11 +1581,11 @@ fn input_mode(
             player.ctrl.grounded = false;
         }
     }
-    if keys.just_pressed(KeyCode::KeyV) {
+    if !startup_loading && keys.just_pressed(KeyCode::KeyV) {
         player.third = !player.third;
     }
     if let Ok(mut c) = cursor.single_mut() {
-        if buttons.just_pressed(MouseButton::Left) {
+        if !startup_loading && buttons.just_pressed(MouseButton::Left) {
             c.grab_mode = CursorGrabMode::Locked;
             c.visible = false;
         }
@@ -1244,13 +1601,32 @@ fn player_motion(
     mouse: Res<AccumulatedMouseMotion>,
     cursor: Query<&CursorOptions, With<PrimaryWindow>>,
     time: Res<Time>,
+    startup: Option<Res<play::readiness::StartupReadiness>>,
     stream: Res<Stream>,
     collision: Res<Collision>,
     caches: Res<Caches>,
     mut player: ResMut<Player>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    if !player.command
+    let startup_loading = startup.is_some_and(|readiness| readiness.blocks_hardware());
+    let trace_motion = player
+        .magic_body_trace
+        .as_ref()
+        .is_some_and(|trace| trace.started.is_some());
+    let camera_yaw_pre_motion = player.yaw;
+    let heading_pre = trace_motion.then_some(player.ctrl.heading);
+    let turn_velocity_pre = trace_motion.then_some(player.ctrl.turn.velocity_deg);
+    let mode_pre = trace_motion.then(|| player.ctrl.machine.mode());
+    let target_yaw = trace_motion.then(|| player.face.map(|face| (-face.x).atan2(-face.z)));
+    let mouse_delta = mouse.delta;
+    let command = player.command;
+    let cursor_mouse_gate = trace_motion
+        && !command
+        && cursor
+            .single()
+            .is_ok_and(|options| options.grab_mode != CursorGrabMode::None);
+    if !startup_loading
+        && !player.command
         && cursor
             .single()
             .is_ok_and(|c| c.grab_mode != CursorGrabMode::None)
@@ -1262,43 +1638,51 @@ fn player_motion(
     let forward = rot * Vec3::NEG_Z;
     let right = rot * Vec3::X;
     let mut wish = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
+    if !startup_loading && keys.pressed(KeyCode::KeyW) {
         wish += forward;
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if !startup_loading && keys.pressed(KeyCode::KeyS) {
         wish -= forward;
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if !startup_loading && keys.pressed(KeyCode::KeyD) {
         wish += right;
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if !startup_loading && keys.pressed(KeyCode::KeyA) {
         wish -= right;
     }
     if let Some(w) = player.scripted_wish {
         wish = rot * w;
     }
-    let sprint = keys.pressed(KeyCode::ShiftLeft);
+    let sprint = !startup_loading && keys.pressed(KeyCode::ShiftLeft);
     if player.fly {
+        if trace_motion {
+            player.record_magic_body_trace(|| {
+                format!(
+                    "early_return=fly command={command} cursor_mouse_gate={cursor_mouse_gate} dt_raw={:.6} dt_used={dt:.6}",
+                    time.delta_secs()
+                )
+            });
+        }
         let look = Quat::from_euler(EulerRot::YXZ, player.yaw, player.pitch, 0.0);
         let mut dir = Vec3::ZERO;
         {
-            if keys.pressed(KeyCode::KeyW) {
+            if !startup_loading && keys.pressed(KeyCode::KeyW) {
                 dir += look * Vec3::NEG_Z;
             }
-            if keys.pressed(KeyCode::KeyS) {
+            if !startup_loading && keys.pressed(KeyCode::KeyS) {
                 dir -= look * Vec3::NEG_Z;
             }
-            if keys.pressed(KeyCode::KeyD) {
+            if !startup_loading && keys.pressed(KeyCode::KeyD) {
                 dir += look * Vec3::X;
             }
-            if keys.pressed(KeyCode::KeyA) {
+            if !startup_loading && keys.pressed(KeyCode::KeyA) {
                 dir -= look * Vec3::X;
             }
         }
-        if keys.pressed(KeyCode::Space) {
+        if !startup_loading && keys.pressed(KeyCode::Space) {
             dir.y += 1.0;
         }
-        if keys.pressed(KeyCode::ControlLeft) {
+        if !startup_loading && keys.pressed(KeyCode::ControlLeft) {
             dir.y -= 1.0;
         }
         let speed = if sprint { 6000.0 } else { 1500.0 };
@@ -1309,6 +1693,14 @@ fn player_motion(
     let tile_ready = collision.0.has_chunk(tile_chunk_id((tile.x, tile.z)));
     if !player.placed {
         if !tile_ready {
+            if trace_motion {
+                player.record_magic_body_trace(|| {
+                    format!(
+                        "early_return=tile_not_ready_before_placement command={command} cursor_mouse_gate={cursor_mouse_gate} tile=({}, {}) dt_raw={:.6} dt_used={dt:.6}",
+                        tile.x, tile.z, time.delta_secs()
+                    )
+                });
+            }
             return;
         }
         let p = player.ctrl.position;
@@ -1319,10 +1711,26 @@ fn player_motion(
             player.ctrl.position.y = y + 5.0;
             player.placed = true;
         } else {
+            if trace_motion {
+                player.record_magic_body_trace(|| {
+                    format!(
+                        "early_return=ground_not_found command={command} cursor_mouse_gate={cursor_mouse_gate} tile=({}, {}) tile_ready={tile_ready} dt_raw={:.6} dt_used={dt:.6}",
+                        tile.x, tile.z, time.delta_secs()
+                    )
+                });
+            }
             return;
         }
     }
     if !tile_ready {
+        if trace_motion {
+            player.record_magic_body_trace(|| {
+                format!(
+                    "early_return=tile_not_ready command={command} cursor_mouse_gate={cursor_mouse_gate} tile=({}, {}) tile_ready={tile_ready} dt_raw={:.6} dt_used={dt:.6}",
+                    tile.x, tile.z, time.delta_secs()
+                )
+            });
+        }
         return; // never integrate gravity into a void
     }
     // Speeds come from the PC_Hero movement template (Run 400 cm/s, Sprint 600 cm/s), with the
@@ -1348,10 +1756,14 @@ fn player_motion(
             right: local.x.max(0.0),
         };
         let wish = gothic_physics::movement::wish_direction(forward, right, &keys_axes);
-        let water_level = caches
-            .sea_y
-            .map(|y| y * 100.0)
-            .filter(|y| player.ctrl.position.y < y + 400.0);
+        let water_level = match player.scripted_water {
+            Some(w) => w,
+            None => caches
+                .sea_y
+                .map(|y| y * 100.0)
+                .filter(|y| player.ctrl.position.y < y + 400.0),
+        };
+        let dive = player.scripted_dive;
         player.ctrl.player_controlled = true;
         let cmd = gothic_physics::MoveCommand {
             wish,
@@ -1359,9 +1771,36 @@ fn player_motion(
             jump,
             face: player.face,
             water_level,
+            dive: dive.is_some_and(|v| v != 0.0),
+            vertical: dive.unwrap_or(0.0),
             ..Default::default()
         };
-        player.ctrl.step_command(&collision.0, &cmd, dt);
+        let report = player.ctrl.step_command(&collision.0, &cmd, dt);
+        let heading_post = player.ctrl.heading;
+        let turn_velocity_post = player.ctrl.turn.velocity_deg;
+        let mode_post = player.ctrl.machine.mode();
+        let camera_yaw_after_mouse = player.yaw;
+        let position_post = player.ctrl.position;
+        let placed_post = player.placed;
+        if let Some(trace) = player.magic_body_trace.as_mut() {
+            if trace.started.is_some() {
+                trace.movement_dt += dt;
+                let movement_dt = trace.movement_dt;
+                trace.record(|| format!(
+                    "dt_raw={:.6} dt_used={dt:.6} movement_dt_total={movement_dt:.6} command={command} cursor_mouse_gate={cursor_mouse_gate} fly=false placed={placed_post} tile_ready={tile_ready} mouse=({:.2},{:.2}) camera_yaw_pre={camera_yaw_pre_motion:.6} camera_yaw_after_mouse={camera_yaw_after_mouse:.6} target_yaw={:?} heading_pre={:.6} heading_post={heading_post:.6} turn_velocity_pre={:.3} turn_velocity_post={turn_velocity_post:.3} mode_pre={:?} mode_post={mode_post:?} position_cm=({:.2},{:.2},{:.2})",
+                    time.delta_secs(), mouse_delta.x, mouse_delta.y, target_yaw.flatten(),
+                    heading_pre.unwrap_or_default(), turn_velocity_pre.unwrap_or_default(),
+                    mode_pre, position_post.x, position_post.y, position_post.z,
+                ));
+            }
+        }
+        // Keep the earliest unconsumed landing / take-off: the movement layer drains them.
+        let prev = player.report;
+        player.report = gothic_physics::StepReport {
+            landed: report.landed.or(prev.landed),
+            took_off: report.took_off || prev.took_off,
+            started_sliding: report.started_sliding || prev.started_sliding,
+        };
         return;
     }
     player.ctrl.facing = Some(Vec2::new(forward.x, forward.z));
@@ -1424,6 +1863,40 @@ fn update_camera(
     let _ = &mut player;
 }
 
+/// Establish a repeatable readiness gate for `--bench-walk` without changing play-mode loading.
+/// This mirrors the existing smoke-run settled condition and requires the real player placement.
+fn capture_bench_world(
+    stream: Res<Stream>,
+    veg: Res<VegStream>,
+    player: Res<Player>,
+    mut bench: ResMut<crate::perf::BenchWorld>,
+    camera: Query<&Transform, With<PlayerCamera>>,
+    mut stable_frames: Local<u32>,
+) {
+    if !bench.enabled {
+        return;
+    }
+    let loaded_all = stream.ready
+        && stream.in_flight.is_empty()
+        && stream.pending.is_empty()
+        && veg.in_flight.is_empty()
+        && veg.pending.is_empty()
+        && player.placed;
+    if loaded_all && stream.last_activity > 5 {
+        *stable_frames = stable_frames.saturating_add(1);
+    } else {
+        *stable_frames = 0;
+    }
+    bench.stable_frames = *stable_frames;
+    bench.settled = *stable_frames > 90;
+    bench.player_position_cm = player.ctrl.position.to_array();
+    bench.player_yaw_rad = player.yaw;
+    if let Ok(transform) = camera.single() {
+        bench.camera_position_m = transform.translation.to_array();
+        bench.camera_rotation_xyzw = transform.rotation.to_array();
+    }
+}
+
 fn smoke_script(
     mut commands: Commands,
     mut smoke: ResMut<Smoke>,
@@ -1431,11 +1904,25 @@ fn smoke_script(
     stream: Res<Stream>,
     veg: Res<VegStream>,
     time: Res<Time>,
+    real_time: Res<Time<Real>>,
     meshes: Query<&ViewVisibility, With<Mesh3d>>,
     diags: Res<bevy::diagnostic::DiagnosticsStore>,
+    wind_clock: Res<gmat::WindClockFrame>,
+    mut wind_shot: Option<ResMut<WindShotControl>>,
 ) {
     if !smoke.enabled {
         return;
+    }
+    if let Some(control) = wind_shot.as_deref_mut() {
+        let now = real_time.elapsed_secs_f64();
+        let started = *control.startup_started_at_real_seconds.get_or_insert(now);
+        if control.selected.is_none() && now - started >= 240.0 {
+            eprintln!(
+                "wind-shot FAIL: initial smoke/streaming stages did not select the first sample within 240 seconds"
+            );
+            commands.write_message(AppExit::error());
+            return;
+        }
     }
     smoke.frames += 1;
     let loaded_all = stream.ready
@@ -1514,7 +2001,8 @@ fn smoke_script(
             }
         }
         2 => {
-            // Walk forward for 6 s through the real collision to prove the controller.
+            // Walk forward for 360 Update samples through the real collision to prove the
+            // controller.
             let p = player.ctrl.position;
             let g = player.ctrl.grounded;
             smoke.walk_log.push((p, g));
@@ -1529,8 +2017,9 @@ fn smoke_script(
                     hi = hi.max(p.y);
                 }
                 eprintln!(
-                    "WALK TEST: moved {:.0} cm horizontally in 6 s, height {:.0} -> {:.0} (range {:.0}..{:.0}), grounded {}/{} frames",
+                    "WALK TEST: moved {:.0} cm horizontally across {} sampled frames, height {:.0} -> {:.0} (range {:.0}..{:.0}), grounded {}/{} frames",
                     Vec3::new(end.x - start.x, 0.0, end.z - start.z).length(),
+                    smoke.walk_log.len(),
                     start.y,
                     end.y,
                     lo,
@@ -1563,10 +2052,38 @@ fn smoke_script(
             }
         }
         5 => {
+            if wind_shot
+                .as_deref()
+                .and_then(|control| control.selected_at_real_seconds)
+                .is_some_and(|started| real_time.elapsed_secs_f64() - started >= 240.0)
+            {
+                eprintln!(
+                    "wind-shot FAIL: shot {} did not reach capture completion within 240 seconds",
+                    smoke.shot_index + 1
+                );
+                commands.write_message(AppExit::error());
+                return;
+            }
             let i = smoke.shot_index;
             if i >= smoke.shots.len() {
                 if smoke.frames > 130 {
                     commands.write_message(AppExit::Success);
+                }
+            } else if wind_shot
+                .as_deref()
+                .is_some_and(|control| control.capture_requested == Some(i))
+            {
+                if wind_shot
+                    .as_deref()
+                    .is_some_and(|control| control.captured == Some(i))
+                {
+                    let control = wind_shot.as_deref_mut().expect("controlled wind shot");
+                    control.capture_requested = None;
+                    control.captured = None;
+                    control.selected_at_real_seconds = None;
+                    smoke.shot_index += 1;
+                    smoke.frames = 0;
+                    smoke.stable = 0;
                 }
             } else if smoke.frames == 1 {
                 let (pos, yaw, pitch) =
@@ -1575,14 +2092,44 @@ fn smoke_script(
                 player.fly_pos = pos / CM;
                 player.yaw = yaw;
                 player.pitch = pitch;
+                if let Some(wind_shot) = wind_shot.as_deref_mut() {
+                    wind_shot.selected = Some(i);
+                    wind_shot.selected_at_real_seconds = Some(real_time.elapsed_secs_f64());
+                }
             } else if smoke.frames > 60 && smoke.stable > 60 {
                 let name = format!("{}-{}.png", smoke.prefix, smoke.shots[i].name);
-                shoot(&mut commands, name);
-                smoke.shot_index += 1;
-                smoke.frames = 100;
-                smoke.stable = 0;
-                if smoke.shot_index < smoke.shots.len() {
-                    smoke.frames = 0;
+                if let Some(wind_shot) = wind_shot.as_deref() {
+                    let requested = wind_shot.times[i];
+                    eprintln!(
+                        "wind-shot capture: {} at requested synthetic elapsed {:.9}s; current={:?}; previous={:?}",
+                        name,
+                        requested,
+                        &wind_clock.values[..8],
+                        &wind_clock.values[8..16]
+                    );
+                }
+                if let Some(control) = wind_shot.as_deref_mut() {
+                    use bevy::render::view::screenshot::{
+                        Screenshot, ScreenshotCaptured, save_to_disk,
+                    };
+                    control.capture_requested = Some(i);
+                    control.captured = None;
+                    let mut save = save_to_disk(name);
+                    commands.spawn(Screenshot::primary_window()).observe(
+                        move |captured: On<ScreenshotCaptured>,
+                              mut control: ResMut<WindShotControl>| {
+                            save(captured);
+                            control.captured = Some(i);
+                        },
+                    );
+                } else {
+                    shoot(&mut commands, name);
+                    smoke.shot_index += 1;
+                    smoke.frames = 100;
+                    smoke.stable = 0;
+                    if smoke.shot_index < smoke.shots.len() {
+                        smoke.frames = 0;
+                    }
                 }
             }
         }

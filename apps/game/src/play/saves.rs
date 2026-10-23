@@ -20,7 +20,7 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         (
-            slot_keys,
+            slot_keys.after(super::hero::input),
             menu_entries,
             file_commands,
             autosave,
@@ -53,14 +53,16 @@ fn next_manual(dir: &SaveDir) -> std::path::PathBuf {
 
 fn slot_keys(
     keys: Res<ButtonInput<KeyCode>>,
+    frame: Res<super::controls::InputFrame>,
     save: Res<SavePath>,
     mut commands: MessageWriter<CoreCommand>,
 ) {
     let dir = dir_of(&save);
-    if just_pressed(&keys, Act::Save) {
+    if !frame.startup_loading && just_pressed(&keys, Act::Save) {
         commands.write(CoreCommand(Command::Save(next_manual(&dir))));
     }
-    if just_pressed(&keys, Act::Load)
+    if !frame.startup_loading
+        && just_pressed(&keys, Act::Load)
         && let Some(newest) = dir.list().into_iter().next()
     {
         commands.write(CoreCommand(Command::Load(newest.path)));

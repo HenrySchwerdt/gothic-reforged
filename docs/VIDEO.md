@@ -49,6 +49,36 @@ app.add_systems(Update, gameplay.run_if(not(cutscene_playing)));
   subtitle UI can show it. The player also draws them unless `show_subtitles` is `false`.
   Cues come from `.srt` or are built from the game's string table as `Subtitles { cues }`.
 
+## In the game (`--video FILE`, `GR_VIDEO=1`)
+
+Opt-in; without it no player is added. Glue: `apps/game/src/walk/cloud/video.rs`.
+
+```sh
+# a file, on start of --walk or --play
+cargo run -p gothic-reforged --features viewer -- --play --video "D:/SteamLibrary/steamapps/common/Gothic 3/Data/Video/G3_Intro.bik"
+# the original intro: G3_Intro.bik, looked up (case-insensitively) in the data directory,
+# Data/Video, and the installation's Video folder
+GR_VIDEO=1 cargo run -p gothic-reforged --features viewer -- --play
+```
+
+* The start log says whether ffmpeg and its Bink decoder were found. Without them the player
+  answers at once with `CutsceneFinished { error }`, the log says `video: ... not played: ...`
+  and the game goes on.
+* No new Cargo feature: ffmpeg runs as a subprocess, so the game links nothing new.
+
+Not wired / not verified:
+
+* **Real `.bik` playback was not verified** (no game data here). To verify, with a Bink-capable
+  ffmpeg on `PATH` or in `GOTHIC_FFMPEG` / `GOTHIC_FFPROBE`:
+  `ffmpeg -hide_banner -decoders | grep -i bink` (expect `binkvideo` and `binkaudio_*`), then
+  `cargo run -p gothic-video --example cutscene --features demo -- "<Gothic 3>/Data/Video/G3_Intro.bik"`
+  and the game command above. The intro's location is an assumption (`gCSession::Start` plays
+  `G3_Intro.bik`; the folder was not checked against the installation).
+* Gameplay is **not paused** while the video plays (the world streams and the core ticks
+  underneath), and the walk / play input also sees the skip keys (Esc, Space, Enter, click).
+* Story cutscenes (`EndGame` credits etc.) are not triggered from the game yet; only the start
+  video is.
+
 ## Tests and demo
 
 * `cargo test -p gothic-video`. The tests generate their videos with ffmpeg (`testsrc2` +

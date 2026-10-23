@@ -32,6 +32,7 @@ pub struct QuestRuntime {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NpcRuntime {
     pub dead: bool,
     /// Defeated by the player in a fight (`NPC_PS+0xa4`, GAME_RULES 1.3).
@@ -40,6 +41,10 @@ pub struct NpcRuntime {
     pub mob_enabled: Option<bool>,
     pub slavery_enabled: Option<bool>,
     pub teach_enabled: Option<bool>,
+    /// Exact attribute subjects this NPC can teach, normalized to lower case.
+    pub teach_attribs: BTreeSet<String>,
+    /// Exact skill subjects this NPC can teach, normalized to lower case.
+    pub teach_skills: BTreeSet<String>,
     pub trade_enabled: Option<bool>,
     pub party_enabled: Option<bool>,
     pub routine: String,
@@ -48,6 +53,14 @@ pub struct NpcRuntime {
     /// interpret yet (guard status, slavery flag, sleeping points ...): `command -> value`.
     pub settings: BTreeMap<String, String>,
     pub inventory: Inventory,
+}
+
+impl NpcRuntime {
+    /// Import the canonical NPC property lists used by Teach-condition matching.
+    pub fn import_teach_subjects(&mut self, attribs: &[String], skills: &[String]) {
+        self.teach_attribs = attribs.iter().map(|subject| norm(subject)).collect();
+        self.teach_skills = skills.iter().map(|subject| norm(subject)).collect();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,6 +315,23 @@ mod tests {
         s.version = SAVE_VERSION + 1;
         assert!(GameState::from_json(&s.to_json().unwrap()).is_err());
         assert!(GameState::from_json("{").is_err());
+    }
+
+    #[test]
+    fn old_npc_runtime_saves_default_new_teacher_lists() {
+        let old: NpcRuntime = serde_json::from_str(r#"{"talked":true}"#).unwrap();
+        assert!(old.talked);
+        assert!(old.teach_attribs.is_empty());
+        assert!(old.teach_skills.is_empty());
+        assert_eq!(old.teach_enabled, None);
+    }
+
+    #[test]
+    fn canonical_teacher_subjects_import_case_insensitively() {
+        let mut npc = NpcRuntime::default();
+        npc.import_teach_subjects(&["STR".into()], &["Perk_1H_2".into()]);
+        assert!(npc.teach_attribs.contains("str"));
+        assert!(npc.teach_skills.contains("perk_1h_2"));
     }
 
     #[test]

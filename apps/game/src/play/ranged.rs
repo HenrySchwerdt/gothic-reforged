@@ -43,7 +43,7 @@ pub struct RangedView {
     pub draw: f32,
     pitch: AimPitch,
     /// The clips currently set on the animator, to skip reloading them every frame.
-    clips: [Option<String>; 2],
+    pub clips: [Option<String>; 2],
     /// Seconds since an aim state was last left (the crosshair fades after the shot).
     since_aim: f32,
     /// The raise glow (`eff_ani_fight_bow_raise_01`) runs.
@@ -64,6 +64,138 @@ const FADE_SECS: f32 = 0.2;
 /// centres it.
 const CROSS_MIN: f32 = 8.0;
 const CROSS_MAX: f32 = 32.0;
+
+fn should_pick(in_aim: bool, reloading: bool, fade_active: bool, legacy_always_pick: bool) -> bool {
+    in_aim || reloading || fade_active || legacy_always_pick
+}
+
+#[derive(Default)]
+struct AimPickPhaseProfile {
+    frames: u64,
+    in_aim_frames: u64,
+    reload_frames: u64,
+    fade_frames: u64,
+    pick_calls: u64,
+    idle_picks_forced: u64,
+    idle_picks_skipped: u64,
+    pick_elapsed: std::time::Duration,
+}
+
+#[derive(Default)]
+struct AimPickProfile {
+    initialized: bool,
+    enabled: bool,
+    legacy_always_pick: bool,
+    pre_measure: AimPickPhaseProfile,
+    measurement: AimPickPhaseProfile,
+}
+
+impl AimPickProfile {
+    fn initialize(&mut self) {
+        if self.initialized {
+            return;
+        }
+        self.initialized = true;
+        self.legacy_always_pick = std::env::var_os("GR_AIM_ALWAYS_PICK").is_some();
+        if std::env::var_os("GR_AIM_PROFILE").is_some() {
+            let args: Vec<_> = std::env::args().collect();
+            self.enabled = args.windows(2).any(|pair| {
+                pair[0] == "--bench"
+                    && pair[1]
+                        .parse::<f32>()
+                        .is_ok_and(|seconds| seconds.is_finite() && seconds > 0.0)
+            });
+        }
+    }
+
+    fn record(
+        &mut self,
+        in_aim: bool,
+        reloading: bool,
+        fade_active: bool,
+        pick_called: bool,
+        pick_elapsed: std::time::Duration,
+        measurement_phase: Option<bool>,
+    ) {
+        let Some(measuring) = measurement_phase else {
+            return;
+        };
+        if !self.enabled {
+            return;
+        }
+        let legacy_always_pick = self.legacy_always_pick;
+        let phase = if measuring {
+            &mut self.measurement
+        } else {
+            &mut self.pre_measure
+        };
+        phase.record(
+            in_aim,
+            reloading,
+            fade_active,
+            pick_called,
+            pick_elapsed,
+            legacy_always_pick,
+        );
+    }
+
+    fn finish(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        let pre = &self.pre_measure;
+        let measured = &self.measurement;
+        eprintln!(
+            "aim-pick profile: pre_measure_frames={} pre_aim={} pre_reload={} pre_fade={} pre_picks={} pre_idle_forced={} pre_idle_skipped={} pre_pick_ms={:.3} measurement_frames={} measurement_aim={} measurement_reload={} measurement_fade={} measurement_picks={} measurement_idle_forced={} measurement_idle_skipped={} measurement_pick_ms={:.3}",
+            pre.frames,
+            pre.in_aim_frames,
+            pre.reload_frames,
+            pre.fade_frames,
+            pre.pick_calls,
+            pre.idle_picks_forced,
+            pre.idle_picks_skipped,
+            pre.pick_elapsed.as_secs_f64() * 1000.0,
+            measured.frames,
+            measured.in_aim_frames,
+            measured.reload_frames,
+            measured.fade_frames,
+            measured.pick_calls,
+            measured.idle_picks_forced,
+            measured.idle_picks_skipped,
+            measured.pick_elapsed.as_secs_f64() * 1000.0,
+        );
+        self.enabled = false;
+    }
+}
+
+impl AimPickPhaseProfile {
+    fn record(
+        &mut self,
+        in_aim: bool,
+        reloading: bool,
+        fade_active: bool,
+        pick_called: bool,
+        pick_elapsed: std::time::Duration,
+        legacy_always_pick: bool,
+    ) {
+        self.frames += 1;
+        self.in_aim_frames += u64::from(in_aim);
+        self.reload_frames += u64::from(reloading);
+        self.fade_frames += u64::from(fade_active);
+        self.pick_calls += u64::from(pick_called);
+        let idle = !in_aim && !reloading && !fade_active;
+        self.idle_picks_forced += u64::from(idle && pick_called && legacy_always_pick);
+        self.idle_picks_skipped += u64::from(idle && !pick_called);
+        self.pick_elapsed += pick_elapsed;
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+struct AimPickDiagnostics<'w, 's> {
+    app_exit: MessageReader<'w, 's, bevy::app::AppExit>,
+    profile: Local<'s, AimPickProfile>,
+    perf: Res<'w, crate::perf::Perf>,
+}
 
 /// The picture of the crosshair (`G3_HUD_CrosssHair.tga`, `FUN_100a6b30`), once the UI atlas that
 /// holds it is loaded.
@@ -216,6 +348,18 @@ struct CrosshairTick {
     dy: f32,
 }
 
+/// The clip of `Aim_Reload` at `t` seconds into the state.
+fn reload_phase(t: f32) -> Phase {
+    use gothic_projectile::aim::clips::bow::{RELOAD_BEGIN, RELOAD_RAISE};
+    if t < RELOAD_BEGIN {
+        Phase::ReloadBegin
+    } else if t < RELOAD_BEGIN + RELOAD_RAISE {
+        Phase::ReloadRaise
+    } else {
+        Phase::ReloadEnd
+    }
+}
+
 /// The hero's aim state from the script state machine.
 fn hero_state(core: &CoreRes) -> Option<State> {
     core.0.sim.script.npc(core.0.hero).state
@@ -260,10 +404,22 @@ fn aim_frame(
     mut commands: Commands,
     mut anchors: Query<&mut Transform, (Without<PlayerCamera>, Without<CrosshairTick>)>,
     mut hand_anchor: ResMut<HandAnchor>,
+    mut diagnostics: AimPickDiagnostics,
 ) {
+    diagnostics.profile.initialize();
+    let finishing_bench =
+        diagnostics.profile.enabled && diagnostics.app_exit.read().next().is_some();
     let dt = time.delta_secs().min(0.1);
-    let Ok(cam) = cam.single() else { return };
+    let Ok(cam) = cam.single() else {
+        if finishing_bench {
+            diagnostics.profile.finish();
+        }
+        return;
+    };
     let Ok((hero_e, mut animator, comp, root)) = hero.single_mut() else {
+        if finishing_bench {
+            diagnostics.profile.finish();
+        }
         return;
     };
     let s = hero_state(&core);
@@ -287,14 +443,34 @@ fn aim_frame(
     let phase = match s {
         Some(State::PsRangedAim) => Some(Phase::Raise),
         Some(State::PsRangedPowerAim) => Some(Phase::PowerRaise),
+        // The bow keeps the last frame of the `PowerRaise` clip while the full draw is held
+        // (the aim command of `PS_Ranged_PowerAim` ended, nothing replaces the pose); a crossbow
+        // holds the `Aim` pose.
+        Some(State::PsRangedAimLoop) if !view.crossbow => Some(Phase::PowerRaise),
         Some(State::PsRangedAimLoop) => Some(Phase::Aim),
+        // `PS_Ranged_Aim_Reload`: the next arrow is nocked with the `Reload` clips one after
+        // the other (`Begin`, `Raise`, `End`; their lengths are the clips' own).
+        Some(State::PsRangedAimReload) if !view.crossbow => {
+            let t = core.0.sim.script.npc(core.0.hero).state_time;
+            Some(reload_phase(t))
+        }
         _ => None,
     };
+    let reloading = matches!(s, Some(State::PsRangedAimReload))
+        && core.0.sim.actor(core.0.hero).drawn
+        && !view.crossbow;
     if in_aim {
         view.since_aim = 0.0;
     } else {
         view.since_aim += dt;
     }
+    let fade_active = fade.0 > 0.0;
+    let pick_called = should_pick(
+        in_aim,
+        reloading,
+        fade_active,
+        diagnostics.profile.legacy_always_pick,
+    );
 
     // The glow on the bow while it is drawn (`PS_Ranged_PowerAim`); the shot stops it.
     let glow_key = 0x3_0000_0000 | u64::from(core.0.hero.0);
@@ -335,8 +511,25 @@ fn aim_frame(
 
     // ---- the pick and the aim handed to the simulation ------------------------------------------
     let cam_cm = cam.translation / CM;
-    let pick = pick_point(cam_cm, cam.rotation, &collision.0);
-    view.pick = in_aim.then_some(pick);
+    let pick_started = (diagnostics.profile.enabled && pick_called).then(std::time::Instant::now);
+    let pick = pick_called.then(|| {
+        #[cfg(feature = "trace")]
+        let pick_span = bevy::log::tracing::info_span!("ranged_pick_point").entered();
+        let pick = pick_point(cam_cm, cam.rotation, &collision.0);
+        #[cfg(feature = "trace")]
+        drop(pick_span);
+        pick
+    });
+    let pick_elapsed = pick_started.map_or(std::time::Duration::ZERO, |start| start.elapsed());
+    diagnostics.profile.record(
+        in_aim,
+        reloading,
+        fade_active,
+        pick_called,
+        pick_elapsed,
+        diagnostics.perf.benchmark_measurement_phase(),
+    );
+    view.pick = if in_aim { pick } else { None };
     // The arrow sits in the right hand (`Slot_RightHand_Weapon` of `gCInventorySlot::GetBone`).
     let (bone, _) = gothic_gameplay::inventory::slot::bone(Slot::RightHand, 1);
     let hand_cm = comp
@@ -363,7 +556,7 @@ fn aim_frame(
             .sim
             .set_hero_aim(Some(HeroAim {
                 origin,
-                pick_point: pick.point,
+                pick_point: pick.expect("in_aim always requires a fresh pick").point,
             }));
     } else {
         if core.0.sim.script.magic.hero_aim.is_some() {
@@ -389,7 +582,8 @@ fn aim_frame(
         }
         // `OnGetAimAngle`: the size follows the pick distance (1 near .. 0 far), the window is
         // resized between its minimum and maximum edge.
-        let edge = CROSS_MIN + (CROSS_MAX - CROSS_MIN) * crosshair_size(pick.distance);
+        let crosshair_pick = pick.expect("visible crosshair fade requires a fresh pick");
+        let edge = CROSS_MIN + (CROSS_MAX - CROSS_MIN) * crosshair_size(crosshair_pick.distance);
         for (mut n, _) in &mut cross.pic_nodes {
             n.width = Val::Px(edge);
             n.height = Val::Px(edge);
@@ -403,7 +597,7 @@ fn aim_frame(
                 n.display = Display::None;
             }
         } else {
-            let k = 0.5 + 1.2 * crosshair_size(pick.distance);
+            let k = 0.5 + 1.2 * crosshair_size(crosshair_pick.distance);
             for (mut n, t) in &mut cross.ticks {
                 n.left = Val::Px(CROSS_BOX * 0.5 + t.dx * 14.0 * k - 2.0);
                 n.top = Val::Px(CROSS_BOX * 0.5 + t.dy * 14.0 * k - 2.0);
@@ -412,15 +606,19 @@ fn aim_frame(
     }
 
     // ---- aim clips -----------------------------------------------------------------------------
-    let Some(phase) = phase.filter(|_| in_aim) else {
+    let Some(phase) = phase.filter(|_| in_aim || reloading) else {
         if view.clips.iter().any(Option::is_some) {
             animator.aim = [None, None];
             view.clips = [None, None];
             view.pitch.reset();
         }
+        if finishing_bench {
+            diagnostics.profile.finish();
+        }
         return;
     };
-    let aim_sine = hand_cm.map_or(0.0, |h| hero_aim_sine(h, pick.point));
+    let aim_pick = pick.expect("aim or reload animation requires a fresh pick");
+    let aim_sine = hand_cm.map_or(0.0, |h| hero_aim_sine(h, aim_pick.point));
     let blend = view.pitch.update(aim_sine);
     let (left, right) = if view.crossbow {
         ("CrossBow", "Bolt")
@@ -434,7 +632,17 @@ fn aim_frame(
         phase
     };
     let family = animator.rig.family.clone();
-    let t = core.0.sim.script.npc(core.0.hero).state_time;
+    // Each clip of the reload starts at its own phase.
+    let held_bow = matches!(s, Some(State::PsRangedAimLoop)) && !view.crossbow;
+    let t = if held_bow {
+        aim::clips::bow::POWER_RAISE
+    } else {
+        core.0.sim.script.npc(core.0.hero).state_time
+    } - match phase {
+        Phase::ReloadRaise => aim::clips::bow::RELOAD_BEGIN,
+        Phase::ReloadEnd => aim::clips::bow::RELOAD_BEGIN + aim::clips::bow::RELOAD_RAISE,
+        _ => 0.0,
+    };
     let variants = [
         (Pitch::Fwd, 1.0f32),
         (
@@ -481,6 +689,9 @@ fn aim_frame(
             o.weight = weight;
         }
     }
+    if finishing_bench {
+        diagnostics.profile.finish();
+    }
 }
 
 trait ToVec3 {
@@ -501,20 +712,64 @@ fn shot_animations(
     core: Res<CoreRes>,
     roster: Res<super::Roster>,
     mut q: Query<&mut super::anim::OverlayQueue>,
-    hero: Query<Entity, With<HeroActor>>,
+    hero: Query<(Entity, &super::anim::CombatStance), With<HeroActor>>,
+    mut last: Local<Option<State>>,
 ) {
     use gothic_runtime::Event;
     let hero_id = core.0.hero;
     let entity_of = |id| {
         if id == hero_id {
-            hero.single().ok()
+            hero.single().ok().map(|h| h.0)
         } else {
             roster.by_actor.get(&id).copied()
         }
     };
+    // The hero's cast clips follow his script state: `Raise` while the cast state runs, `Hit` and
+    // `Recover` once `_AI_Cast_Execute` ran (the state moves on to `PS_Magic_Reload`). The clips
+    // are those of the cast action (`Cast`, `PowerCast`, `QuickCast`, `Summon`); a quick cast has
+    // its own clips with the staff only.
+    let now = core.0.sim.script.npc(hero_id).state;
+    let cast_action = |s: State| -> Option<&'static str> {
+        match s {
+            State::PsMagicCast => Some("Cast"),
+            State::PsMagicPowerCast => Some("PowerCast"),
+            State::PsMagicSummon => Some("Summon"),
+            State::PsMagicQuickCast => Some(
+                if hero
+                    .single()
+                    .is_ok_and(|h| h.1.0 == gothic_animation::Stance::Staff)
+                {
+                    "QuickCast"
+                } else {
+                    "Cast"
+                },
+            ),
+            _ => None,
+        }
+    };
+    if now != *last {
+        if let (Some(prev), Some(en)) = (*last, hero.single().ok().map(|h| h.0))
+            && let Some(action) = cast_action(prev)
+            && now == Some(State::PsMagicReload)
+            && let Ok(mut queue) = q.get_mut(en)
+        {
+            super::anim::queue_steps(&mut queue, &[(action, "Hit"), (action, "Recover")]);
+        }
+        if let (Some(cur), Some(en)) = (now, hero.single().ok().map(|h| h.0))
+            && let Some(action) = cast_action(cur)
+            && let Ok(mut queue) = q.get_mut(en)
+        {
+            super::anim::queue_steps(&mut queue, &[(action, "Raise")]);
+        }
+        *last = now;
+    }
     for e in events.read() {
         match &e.0 {
             Event::Projectile { owner, spell, .. } => {
+                if *owner == hero_id && *spell {
+                    // The hero's `Hit` and `Recover` follow his state (above).
+                    continue;
+                }
                 let Some(en) = entity_of(*owner) else {
                     continue;
                 };
@@ -522,24 +777,11 @@ fn shot_animations(
                     continue;
                 };
                 if *spell {
-                    // The hero's raise already ran; the missile leaves, hit and recover follow.
-                    let steps: &[(&'static str, &'static str)] = if *owner == hero_id {
-                        &[("Cast", "Hit"), ("Cast", "Recover")]
-                    } else {
-                        &[("Cast", "Raise"), ("Cast", "Hit"), ("Cast", "Recover")]
-                    };
-                    super::anim::queue_steps(&mut queue, steps);
+                    // NPC casters play their clips as script instructions (`npc_moves`).
                 } else if *owner == hero_id {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Recover")]);
                 } else {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Aim"), ("Aim", "Recover")]);
-                }
-            }
-            Event::CastStarted(_) => {
-                if let Some(en) = hero.single().ok()
-                    && let Ok(mut queue) = q.get_mut(en)
-                {
-                    super::anim::queue_steps(&mut queue, &[("Cast", "Raise")]);
                 }
             }
             _ => {}
@@ -562,8 +804,31 @@ pub struct BowVisual {
     clip: String,
 }
 
+/// Half turn of a drawn bow about the Z axis of `Slot_LeftHand_Weapon` [I], see `bow_sync`.
+const BOW_IN_HAND_TURN: Quat = Quat::from_xyzw(0.0, 0.0, 1.0, 0.0);
+
+/// Where a bow actor sits: at the slot bone of its owner (`root * bone`). The engine links the
+/// item to the slot bone without an offset (`GetBone` of `gCInventorySlot`, 0x100bd8d0;
+/// `AttachItemToSekelton`, 0x100bdb70 passes none). With that identity the drawn string lies
+/// between the right hand and the shooter, which no drawn bow does: the arrow line points 171
+/// degrees away from the view in the `bow_faithful` check. A half turn about the slot's Z axis
+/// gives 9 degrees, the hand at the middle of the string [I, probe `bow_orient`]. The hanging bow
+/// on the back keeps the identity. Used for the hero and for the NPCs (`npc_bows`).
+pub(super) fn bow_slot_transform(
+    root: &GlobalTransform,
+    joint: bevy::math::Affine3A,
+    in_hand: bool,
+) -> Transform {
+    let rot = if in_hand {
+        BOW_IN_HAND_TURN
+    } else {
+        Quat::IDENTITY
+    };
+    Transform::from_matrix(Mat4::from(root.affine() * joint) * Mat4::from_quat(rot))
+}
+
 /// Candidate actor names of an item template (`It_Bow_Hunting` -> `Bow_Hunting_01`).
-fn actor_candidates(template: &str) -> Vec<String> {
+pub(super) fn actor_candidates(template: &str) -> Vec<String> {
     let rest = template.strip_prefix("It_").unwrap_or(template);
     vec![
         format!("{rest}_01"),
@@ -661,31 +926,16 @@ pub(super) fn bow_sync(
         .get(slot)
         .and_then(|&j| hero_anim.joints.get(j as usize))
     {
-        let m = root.affine() * *j;
-        // Experiment aid: GR_BOW_ROT="rx,ry,rz" (degrees) turns the actor in the slot frame.
-        let rot = std::env::var("GR_BOW_ROT")
-            .ok()
-            .and_then(|v| {
-                let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-                (n.len() == 3).then(|| {
-                    Quat::from_euler(
-                        EulerRot::XYZ,
-                        n[0].to_radians(),
-                        n[1].to_radians(),
-                        n[2].to_radians(),
-                    )
-                })
-            })
-            // No eyeballed offset: the engine links the item entity to the slot bone with the
-            // identity (`AttachItemToSekelton` 0x100bdb70 passes no offset; the bone comes from
-            // `GetBone`), the same composition the static weapons use (`root * bone`).
-            .unwrap_or(Quat::IDENTITY);
-        *tf = Transform::from_matrix(Mat4::from(m) * Mat4::from_quat(rot));
+        *tf = bow_slot_transform(root, *j, state.drawn);
     }
     vis.set_if_neq(Visibility::Inherited);
     // The string: relaxed, or drawn while the power aim runs (`Cock` played with the draw time).
     let st = core.0.sim.script.npc(core.0.hero);
-    let drawing = state.drawn && st.state == Some(State::PsRangedPowerAim);
+    // The string is pulled by the draw (`PS_Ranged_PowerAim`) and stays pulled while the full
+    // draw is held (`PS_Ranged_Aim_Loop` of a bow); the shot lets it go.
+    let drawing = state.drawn
+        && (st.state == Some(State::PsRangedPowerAim)
+            || (st.state == Some(State::PsRangedAimLoop) && kind == Use::Bow));
     let base = b.actor.clone();
     let want_clip = format!("{base}_{}", if drawing { "Cock" } else { "Relax" });
     if b.clip != want_clip && spawner.library.has_motion(&want_clip) {
@@ -696,7 +946,15 @@ pub(super) fn bow_sync(
         }
     }
     if drawing {
-        anim.seek(st.state_time);
+        // `PS_Ranged_PowerAim` pulls the string for the length of the clip; in the aim loop it
+        // stays at the end of it.
+        let held = if st.state == Some(State::PsRangedAimLoop) {
+            gothic_projectile::aim::clips::bow::POWER_RAISE
+        } else {
+            st.state_time
+                .min(gothic_projectile::aim::clips::bow::POWER_RAISE)
+        };
+        anim.seek(held);
     }
     let _ = time;
 }

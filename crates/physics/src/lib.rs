@@ -15,16 +15,22 @@ pub mod profile;
 pub mod ragdoll;
 pub mod relax;
 
+#[cfg(test)]
+mod raycast_oracle_tests;
+
 pub use controller::{CharacterController, Gait, Landing, MoveCommand, MoveMode, StepReport};
 pub use movement::{ModeChange, MovementMode};
 pub use profile::{ControllerConfig, MovementProfile, fall_damage};
 
 use glam::Vec3;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 pub type Tri = [Vec3; 3];
 
 const GRID: f32 = 400.0;
+const RAY_DDA_MAX_STEPS: usize = 16_384;
+const RAY_DDA_MAX_COORD_CM: f32 = 10_000_000.0;
 
 #[derive(Default)]
 struct Chunk {
@@ -41,6 +47,127 @@ pub struct CollisionWorld {
 
 fn cell(v: f32) -> i32 {
     (v / GRID).floor() as i32
+}
+
+fn raycast_legacy_enabled() -> bool {
+    static LEGACY: OnceLock<bool> = OnceLock::new();
+    // Keep a process-start A/B switch without per-ray environment parsing.
+    *LEGACY.get_or_init(|| std::env::var("GR_RAYCAST_LEGACY").is_ok_and(|value| value == "1"))
+}
+
+/// Cells touched by a finite XZ segment, expanded by a one-cell halo. The halo is deliberately
+/// wider than the query's 1 cm rectangle margin, including gridline and corner contacts.
+fn ray_dda_cells(origin: Vec3, end: Vec3) -> Option<Vec<(i32, i32)>> {
+    if !origin.is_finite()
+        || !end.is_finite()
+        || origin.x.abs() > RAY_DDA_MAX_COORD_CM
+        || origin.z.abs() > RAY_DDA_MAX_COORD_CM
+        || end.x.abs() > RAY_DDA_MAX_COORD_CM
+        || end.z.abs() > RAY_DDA_MAX_COORD_CM
+    {
+        return None;
+    }
+
+    let dx = end.x as f64 - origin.x as f64;
+    let dz = end.z as f64 - origin.z as f64;
+    if dx == 0.0 || dz == 0.0 {
+        return None;
+    }
+
+    let mut cx = cell(origin.x);
+    let mut cz = cell(origin.z);
+    let end_cx = cell(end.x);
+    let end_cz = cell(end.z);
+    let cell_steps = cx.abs_diff(end_cx) as usize + cz.abs_diff(end_cz) as usize + 1;
+    if cell_steps > RAY_DDA_MAX_STEPS {
+        return None;
+    }
+
+    let step_x = dx.signum() as i32;
+    let step_z = dz.signum() as i32;
+    let delta_x = GRID as f64 / dx.abs();
+    let delta_z = GRID as f64 / dz.abs();
+    let boundary_x = if step_x > 0 {
+        (cx as f64 + 1.0) * GRID as f64
+    } else {
+        cx as f64 * GRID as f64
+    };
+    let boundary_z = if step_z > 0 {
+        (cz as f64 + 1.0) * GRID as f64
+    } else {
+        cz as f64 * GRID as f64
+    };
+    let mut next_x = (boundary_x - origin.x as f64) / dx;
+    let mut next_z = (boundary_z - origin.z as f64) / dz;
+    let mut traversed = Vec::with_capacity(cell_steps);
+    traversed.push((cx, cz));
+
+    while cx != end_cx || cz != end_cz {
+        let can_x = cx != end_cx;
+        let can_z = cz != end_cz;
+        if can_x && (!can_z || next_x < next_z) {
+            cx = cx.checked_add(step_x)?;
+            next_x += delta_x;
+        } else if can_z && (!can_x || next_z < next_x) {
+            cz = cz.checked_add(step_z)?;
+            next_z += delta_z;
+        } else {
+            // At a corner, step both axes. The halo below also covers both side-adjacent cells.
+            cx = cx.checked_add(step_x)?;
+            cz = cz.checked_add(step_z)?;
+            next_x += delta_x;
+            next_z += delta_z;
+        }
+        traversed.push((cx, cz));
+        if traversed.len() > RAY_DDA_MAX_STEPS {
+            return None;
+        }
+    }
+
+    let mut cells = Vec::with_capacity(traversed.len().saturating_mul(9));
+    for (x, z) in traversed {
+        for ox in -1..=1 {
+            for oz in -1..=1 {
+                cells.push((x.checked_add(ox)?, z.checked_add(oz)?));
+            }
+        }
+    }
+    cells.sort_unstable();
+    cells.dedup();
+    Some(cells)
+}
+
+fn prefer_ray_dda(origin: Vec3, end: Vec3, lo: Vec3, hi: Vec3) -> bool {
+    if !origin.is_finite()
+        || !end.is_finite()
+        || !lo.is_finite()
+        || !hi.is_finite()
+        || origin.x.abs() > RAY_DDA_MAX_COORD_CM
+        || origin.z.abs() > RAY_DDA_MAX_COORD_CM
+        || end.x.abs() > RAY_DDA_MAX_COORD_CM
+        || end.z.abs() > RAY_DDA_MAX_COORD_CM
+    {
+        return false;
+    }
+    let dx = (end.x - origin.x).abs();
+    let dz = (end.z - origin.z).abs();
+    if !dx.is_finite() || !dz.is_finite() || dx == 0.0 || dz == 0.0 {
+        return false;
+    }
+    let width = cell(hi.x).abs_diff(cell(lo.x)) as u64 + 1;
+    let depth = cell(hi.z).abs_diff(cell(lo.z)) as u64 + 1;
+    if width <= 3 || depth <= 3 {
+        return false;
+    }
+    let area = width.saturating_mul(depth);
+    let x_steps = (dx as f64 / GRID as f64).ceil() as u64;
+    let z_steps = (dz as f64 / GRID as f64).ceil() as u64;
+    // Each axis crossing adds at most three new cells to the union of 3x3 halos; a
+    // diagonal crossing adds at most five while consuming two axis steps. Add two
+    // endpoint crossings to cover exact grid-boundary starts/ends conservatively.
+    let axis_steps = x_steps.saturating_add(z_steps).saturating_add(2);
+    let halo_bound = axis_steps.saturating_mul(3).saturating_add(9);
+    area > 64 && area > halo_bound
 }
 
 impl CollisionWorld {
@@ -121,11 +248,55 @@ impl CollisionWorld {
         }
     }
 
-    /// Nearest hit distance along a normalised direction (double-sided).
+    fn query_ray_with_mode(&self, origin: Vec3, end: Vec3, use_dda: bool, out: &mut Vec<Tri>) {
+        let lo = origin.min(end) - 1.0;
+        let hi = origin.max(end) + 1.0;
+        let cells = if use_dda && prefer_ray_dda(origin, end, lo, hi) {
+            ray_dda_cells(origin, end)
+        } else {
+            None
+        };
+        let Some(cells) = cells else {
+            self.query(lo, hi, out);
+            return;
+        };
+
+        out.clear();
+        let mut seen = Vec::new();
+        for cell in cells {
+            if let Some(list) = self.grid.get(&cell) {
+                seen.extend_from_slice(list);
+            }
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        for (chunk, index) in seen {
+            let tri = self.chunks[&chunk].tris[index as usize];
+            let tri_lo = tri[0].min(tri[1]).min(tri[2]);
+            let tri_hi = tri[0].max(tri[1]).max(tri[2]);
+            if tri_lo.cmple(hi).all() && tri_hi.cmpge(lo).all() {
+                out.push(tri);
+            }
+        }
+    }
+
+    /// Nearest hit distance along a normalised direction (double-sided), using the legacy
+    /// rectangle broadphase.
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        self.raycast_with_mode(origin, dir, max, false)
+    }
+
+    /// Nearest hit distance along a normalised direction (double-sided), opting into the
+    /// conservative XZ DDA broadphase for long diagonal rays. Set `GR_RAYCAST_LEGACY=1` before
+    /// process start to force the legacy broadphase for A/B comparison.
+    pub fn raycast_accelerated(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        self.raycast_with_mode(origin, dir, max, !raycast_legacy_enabled())
+    }
+
+    fn raycast_with_mode(&self, origin: Vec3, dir: Vec3, max: f32, use_dda: bool) -> Option<f32> {
         let end = origin + dir * max;
         let mut tris = Vec::new();
-        self.query(origin.min(end) - 1.0, origin.max(end) + 1.0, &mut tris);
+        self.query_ray_with_mode(origin, end, use_dda, &mut tris);
         tris.iter()
             .filter_map(|t| ray_triangle(origin, dir, t))
             .filter(|d| *d <= max)
@@ -165,9 +336,19 @@ impl CollisionWorld {
 
     /// Nearest hit along a normalised direction with the (up-facing) triangle normal.
     pub fn raycast_hit(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
+        self.raycast_hit_with_mode(origin, dir, max, false)
+    }
+
+    fn raycast_hit_with_mode(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        max: f32,
+        use_dda: bool,
+    ) -> Option<(f32, Vec3)> {
         let end = origin + dir * max;
         let mut tris = Vec::new();
-        self.query(origin.min(end) - 1.0, origin.max(end) + 1.0, &mut tris);
+        self.query_ray_with_mode(origin, end, use_dda, &mut tris);
         let mut best: Option<(f32, Vec3)> = None;
         for t in &tris {
             if let Some(d) = ray_triangle(origin, dir, t)

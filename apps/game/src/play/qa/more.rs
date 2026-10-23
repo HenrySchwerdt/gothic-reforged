@@ -9,7 +9,7 @@ use gothic_sim::types::ActorId;
 use std::sync::Arc;
 
 pub(super) type Goal = Arc<dyn Fn(&mut Cx) -> Option<Vec3> + Send + Sync>;
-type Pred = Arc<dyn Fn(&mut Cx) -> bool + Send + Sync>;
+pub(super) type Pred = Arc<dyn Fn(&mut Cx) -> bool + Send + Sync>;
 
 const DIGITS: [KeyCode; 9] = [
     KeyCode::Digit1,
@@ -100,6 +100,22 @@ pub fn approach(sc: &mut Sc, label: &str, goal: Goal, stop: f32, aim_pitch: f32,
         if ok(cx) {
             Poll::Done
         } else if cx.t > 10.0 {
+            let hero = cx.player().ctrl.position;
+            let dist = goal(cx).map(|p| (p - hero).length());
+            cx.note(format!(
+                "focus of {l}: target {:?}, hero {hero:?}, distance to the goal {dist:?}, hero state {:?}, focused object {:?}",
+                cx.play().target,
+                cx.core().0.sim.hero_script_state().0,
+                match cx.play().target {
+                    Some(crate::walk::play::Target::Object(i)) => cx
+                        .world
+                        .resource::<crate::walk::play::objects::WorldObjects>()
+                        .list
+                        .get(i)
+                        .map(|o| (o.def.name.clone(), o.pos_cm)),
+                    _ => None,
+                }
+            ));
             Poll::Fail(format!("{l} never became the focus"))
         } else {
             Poll::Wait
