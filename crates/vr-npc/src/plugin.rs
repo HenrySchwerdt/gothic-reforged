@@ -152,14 +152,26 @@ fn blocked(world: &gothic_vr::gothic_physics::CollisionWorld, feet: Vec3) -> boo
     )
 }
 
+/// Ground height below `(x, z)`. The ragdoll asks once per joint and substep, and every question is a raycast
+/// against the level's triangle soup, so answers are memoised on a 20 cm grid (cell centre) for the lifetime of the
+/// closure (one NPC, one step). On Quest this cost ~100 ms per frame for three orcs without the cache.
 fn ground_fn(world: Option<&VrWorld>, near_y: f32) -> impl Fn(f32, f32) -> f32 + '_ {
+    const CELL: f32 = 0.2;
+    let cache = std::cell::RefCell::new(Vec::<((i32, i32), f32)>::with_capacity(32));
     move |x, z| {
-        world
+        let key = ((x / CELL).floor() as i32, (z / CELL).floor() as i32);
+        if let Some(&(_, y)) = cache.borrow().iter().find(|(k, _)| *k == key) {
+            return y;
+        }
+        let (cx, cz) = ((key.0 as f32 + 0.5) * CELL, (key.1 as f32 + 0.5) * CELL);
+        let y = world
             .and_then(|w| {
-                w.0.ground_below(Vec3::new(x, near_y + 1.0, z) * gothic_vr::CM_PER_M, 300.0)
+                w.0.ground_below(Vec3::new(cx, near_y + 1.0, cz) * gothic_vr::CM_PER_M, 300.0)
                     .map(|y| y / gothic_vr::CM_PER_M)
             })
-            .unwrap_or(0.0)
+            .unwrap_or(0.0);
+        cache.borrow_mut().push((key, y));
+        y
     }
 }
 
