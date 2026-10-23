@@ -4,15 +4,18 @@
 
 The delivered RenderPerf package below remains unchanged. Source `53f16f5` adds
 default-OFF `GR_SPT_FLIP_LEAF_RENDER_V=1`: only generated leaf UVs flip after
-calibration; fronds, billboard, geometry and shading inputs stay unchanged. Public
+calibration; fronds, billboard, geometry and other shading inputs stay unchanged. Public
 mixed frond/leaf generation invariants passed with the formats suite (101 passed,
 1 ignored), `.local/spt-leaf-render-v-tests.log`. This is not a native convention fix.
-ONE root GNU viewer release build session2300 is RUNNING; log
-`.local/pc-leaf-uv-only-probe-build.log`. Root must confirm actual exit0 before
-wind_clock copies a new immutable artifact or starts the prepared ignored
-`.local/leaf-uv-only-probe-runner.ps1`. Planned single default/new-flag pair uses
-GR_NOWIND1, 1280x720, fixed apple/aspen/oak views and controlled wind times; the
-old atlas-wide flip must be absent. No performance benchmark or package change.
+Root GNU viewer release build2300 exited0,9m33s; log
+`.local/pc-leaf-uv-only-probe-build.log`. New private immutable artifact SHA
+`d4b0c1d417690a759c5cd672d984fd8ca0ff51275c935d2d6457f8e672f757a1` is under
+`.local/leaf-uv-only-probe/`. First startup rejected GR_NOWIND combined with
+--wind-shot-times before images; failed logs preserved under comparison/default.
+wind_clock is now authorized ONE valid pair under fresh comparison-fixed-wind:
+active wind held at matching synthetic times, GR_RES1280x720 only for baseline,
+candidate adds GR_SPT_FLIP_LEAF_RENDER_V1. Fixed apple/aspen/oak views; no NOWIND
+or old atlas-wide flag. Await root image review. No benchmark or package change.
 REA objdump was unavailable on Windows; bounded local LLVM disassembly and
 provenance are now recorded in `docs/research/SPT_NATIVE_UV_EVIDENCE.md`. Candidate
 output fields are not proven UVs; SDK remapping remains unresolved. No Ghidra reimport.

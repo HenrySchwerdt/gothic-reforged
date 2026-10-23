@@ -105,5 +105,34 @@ indirect calls, upstream inputs, and the output vertex layout remain unresolved.
 fallback is analyst-run local disassembly, not an REA observation, and it does not
 resolve the earlier full-import timeout.
 
+### Focused Ghidra analysis of the synthetic carrier
+
+The existing Ghidra 12.1.4 provider was available with no target open. It analyzed only
+the same 4,608-byte synthetic carrier above, SHA-256
+`abece80faddb5aaa4793fef5b9f2b5f6cd8385563dc3da44a9f58ea7c515223f`, at the mapped
+function entry `0x10204ee0`; the original `Engine.dll` was not reopened. Ghidra observed
+the function body through `0x10205d44`, with non-contiguous body ranges, and labeled the
+function `entry` because the carrier has no original symbol table. The retained REA
+Evidence ID is `ev_32cd025b70a4b6fc436291463c81fe9524e37b1d870448ac3c356b525b2f1ce5`.
+
+Ghidra pseudocode shows repeated output records with a `0x3c`-byte stride. In the leaf
+path, the field at record offset `0x30` is assigned a float converted from the low two
+bits of a per-entry source byte. That same byte participates in an indexed lookup that
+reaches a 16-byte record in a separate array. The field at offset `0x34` receives a
+4-byte value from a per-index auxiliary array/pointer table; the assignment itself shows
+no arithmetic. This gives a bounded dataflow link between a 0..3 per-entry value and one
+output field, but it does
+not establish that either field is a TEXCOORD, identify which selector denotes which
+quad corner, or show how the auxiliary value was created. The Ghidra value-flow record is
+truncated, and 93 calls lack resolved targets. Consequently this evidence still cannot
+rule out an upstream V remap or prove original corner-to-atlas association.
+
+The full retained Ghidra Evidence bundle and provider-neutral snapshot are ignored files
+at `.local/research/leaf-native/leaf-carrier-ghidra-evidence.json` and
+`.local/research/leaf-native/leaf-carrier-snapshot-ghidra-01.json`, respectively. They
+include provider output only for the synthetic carrier. No native function body is
+copied into this tracked note, and the snapshot is not an analysis of the complete
+original `Engine.dll`.
+
 Extracted shader sources and all original assets remain under ignored `.local/`; no
 decompiled function bodies or original asset data are included here.
