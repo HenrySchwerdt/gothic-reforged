@@ -48,8 +48,11 @@ The smoke frame-time summaries are diagnostic only and are not a controlled spee
 
 `GR_LEAF_FLUTTER` is an opt-in, startup-cached multiplier for the leaf flutter amplitude input.
 Unset or invalid values use `1`; accepted values are finite `0..=4`. `0` disables flutter,
-`0.5` halves it, and `1` preserves the existing material value. It applies only to `TreeLeaves`;
-branch sway, geometry, wind phases, and the shared clock are unchanged. Forward and depth/shadow
+`0.5` halves it, and `1` preserves the existing material value. It applies only to `TreeLeaves`.
+This material path also contains generated frond cards when a species has them, since
+the generator merges fronds and leaves into `TreeGeometry.cards`. It is not a
+per-species or frond-excluding selector.
+Branch sway, geometry, wind phases, and the shared clock are unchanged. Forward and depth/shadow
 prepass use the same wind helper and material parameter. This is a diagnostic control, not a claim
 about SpeedTree amplitude semantics or evidence that stronger flutter caused the observed leaf
 appearance.

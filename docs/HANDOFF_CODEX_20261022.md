@@ -1,5 +1,33 @@
 # Gothic Reforged — current Codex handoff
 
+## USER PRIORITY CORRECTION — gameplay and PR integration
+
+On2026-10-23 the user explicitly rejected further leaf/cosmetic work and reported:
+Digit1 does not draw the sword, gray model rims, overly broad NPC/quest dialog and
+teaching offers, missing quests and original-style game startup/loading. Stop leaf
+work. Previous smoke results do not establish playability. The user expressly
+authorized merging the existing PRs; remote integration is now in scope.
+
+GitHub merged: PR74=30b0cd3e59a2ef8d55c5e159e5c145033c55e27c,
+PR72=5ad6505f8d6e46f4a87bdc2239ec93e5d400e72e,
+PR73=3746f941c32a33bc9f2d559a65c24c5ac6e4f3cd,
+PR71=5110fefbbea7682cb9b5c15b570c9fea45868642,
+PR64=68e500948213ef7564d217a32c4f9cbe9bccf9bb.
+Remaining PR62/63/65/66 have conflicts; integrate deliberately while preserving
+local fixes and Claude work. These remote merges are not in the delivered EXE yet.
+
+Local in-progress changes: water_renderer disabled unconditional actor rim light
+in gmat.rs (source evidence original rim was permutation-gated). wind_clock owns
+six gameplay/sim/runtime files for canonical Teach subject membership, stale-choice
+revalidation, and save-load canonical-subject rehydration. Do NOT seed TeachEnabled
+from legacy npcs.json's lossy false values. wind_stability owns a new default-combat
+Digit1 QA path; existing melee QA uses Space, so the reported key was not covered.
+The default kit does assign sword to slot1; no guessed input fix has been made.
+Package README wrongly says Space jumps (actual default Space weapon, Alt jump).
+No new build/test/runtime job yet; coordinate ONE validation/build after source freeze.
+Keep root, foreign worktrees, saves and original installation intact. Heartbeat prompt
+was updated to gameplay-first; no further leaf captures/builds are authorized.
+
 ## Completed flutter-only probe
 
 Root reviewed the new default-1 `GR_LEAF_FLUTTER` diagnostic: finite0..4, cached

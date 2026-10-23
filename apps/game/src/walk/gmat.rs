@@ -1043,7 +1043,9 @@ fn convert_standard(
                 converted.add(CharMaterial {
                     params: CharParams {
                         tint: src.base_color.to_linear().to_vec4(),
-                        misc: Vec4::new(cutoff, 0.65, 2.2, 1.0),
+                        // Original rim lighting is permutation-gated; StandardMaterial carries
+                        // no evidence that this source material used the rim permutation.
+                        misc: Vec4::new(cutoff, 0.65, 2.2, 0.0),
                         sun,
                         sh,
                         lights: char_lights().0,
