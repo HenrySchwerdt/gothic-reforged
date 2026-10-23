@@ -6,7 +6,7 @@ use bevy::{
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
-        AsBindGroup, BufferDescriptor, BufferUsages, Face, MapMode, PollType,
+        AsBindGroup, BufferDescriptor, BufferUsages, Face, FragmentState, MapMode, PollType,
         RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     },
     render::{
@@ -836,6 +836,25 @@ impl Material for GothicMaterial {
                     }
                 }
             }
+        }
+        // Bevy 0.20 can omit the fragment stage from depth-only prepasses for opaque
+        // materials: its fragment-required test accounts for MAY_DISCARD, but visibility-range
+        // dithering is introduced separately by the mesh key. Keep the same dither in depth as
+        // color for those pipelines by supplying our no-color-output prepass fragment only when
+        // the prepass otherwise has none. Normal/deferred/motion prepasses keep their own stage.
+        if is_prepass_pipeline
+            && descriptor.fragment.is_none()
+            && key
+                .mesh_key
+                .intersects(bevy::pbr::MeshPipelineKey::VISIBILITY_RANGE_DITHER)
+            && let Some(shader) = GOTHIC_PREPASS_FS.get()
+        {
+            descriptor.fragment = Some(FragmentState {
+                shader: shader.clone(),
+                shader_defs: descriptor.vertex.shader_defs.clone(),
+                entry_point: Some("fragment".into()),
+                targets: Vec::new(),
+            });
         }
         Ok(())
     }

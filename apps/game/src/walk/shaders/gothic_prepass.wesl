@@ -12,6 +12,7 @@ import bevy_render::globals::Globals;
 import package::walk::shaders::gothic_wind::wind_offset;
 
 const F_FADE: u32 = 256u;
+const F_MASK: u32 = 64u;
 
 // Bevy's prepass view layout places Globals at binding 1; the forward layout uses 11.
 @group(0) @binding(1) var<uniform> globals: Globals;
@@ -135,9 +136,11 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 @if(VISIBILITY_RANGE_DITHER)
     visibility_range_dither(in.position, in.visibility_range_dither);
 
-    let a = textureSample(tex_a0, samp, in.uv * params.scale_a.xy).a;
-    if a < params.misc.z {
-        discard;
+    if (params.flags & F_MASK) != 0u {
+        let a = textureSample(tex_a0, samp, in.uv * params.scale_a.xy).a;
+        if a < params.misc.z {
+            discard;
+        }
     }
     if (params.flags & F_FADE) != 0u && foliage_fade_discards(
         in.world_position.xyz,
@@ -156,9 +159,11 @@ fn fragment(in: VertexOutput) {
 @if(VISIBILITY_RANGE_DITHER)
     visibility_range_dither(in.position, in.visibility_range_dither);
 
-    let a = textureSample(tex_a0, samp, in.uv * params.scale_a.xy).a;
-    if a < params.misc.z {
-        discard;
+    if (params.flags & F_MASK) != 0u {
+        let a = textureSample(tex_a0, samp, in.uv * params.scale_a.xy).a;
+        if a < params.misc.z {
+            discard;
+        }
     }
     if (params.flags & F_FADE) != 0u && foliage_fade_discards(
         in.world_position.xyz,
