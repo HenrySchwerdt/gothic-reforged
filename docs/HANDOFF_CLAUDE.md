@@ -107,3 +107,7 @@ Fertig (geprüft): Materialien/Texturen (xshmat), VFS + Weltindex, Spieldaten (S
 Bei Sitzungsende evtl. unfertig (Arbeitsbaum prüfen!): crates/animation (Blending/Locomotion/Crowd), Terrain-Blending/Vegetation/Wasser (walk.rs/world_loader.rs), crates/sim (Kampf/KI).
 
 Nächster Schritt: Integration — Held+Animation in Ardea, NPCs aus npcs.json mit Routinen, Ansprechen (E) → crates/ui Dialog + crates/audio Voice, Quest-Log; danach Kampf aus crates/sim. Screenshots unter .local/milestones/.
+
+## VR (Stand 23.10.2026)
+
+Übergabe für die Sitzung auf dem Spiele-PC: `docs/vr/PC_HANDOFF.md` (was fertig ist, was zum Testen im Headset und im Spiel fehlt, was die Installation braucht).
