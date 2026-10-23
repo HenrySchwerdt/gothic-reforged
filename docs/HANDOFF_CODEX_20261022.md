@@ -1,5 +1,22 @@
 # Gothic Reforged — current Codex handoff
 
+## Active leaf diagnostic
+
+The delivered RenderPerf package below remains unchanged. Source `53f16f5` adds
+default-OFF `GR_SPT_FLIP_LEAF_RENDER_V=1`: only generated leaf UVs flip after
+calibration; fronds, billboard, geometry and shading inputs stay unchanged. Public
+mixed frond/leaf generation invariants passed with the formats suite (101 passed,
+1 ignored), `.local/spt-leaf-render-v-tests.log`. This is not a native convention fix.
+ONE root GNU viewer release build session2300 is RUNNING; log
+`.local/pc-leaf-uv-only-probe-build.log`. Root must confirm actual exit0 before
+wind_clock copies a new immutable artifact or starts the prepared ignored
+`.local/leaf-uv-only-probe-runner.ps1`. Planned single default/new-flag pair uses
+GR_NOWIND1, 1280x720, fixed apple/aspen/oak views and controlled wind times; the
+old atlas-wide flip must be absent. No performance benchmark or package change.
+REA objdump was unavailable on Windows; bounded local LLVM disassembly and
+provenance are now recorded in `docs/research/SPT_NATIVE_UV_EVIDENCE.md`. Candidate
+output fields are not proven UVs; SDK remapping remains unresolved. No Ghidra reimport.
+
 Updated 2026-10-23 04:04 UTC. The complete previous handoff was preserved byte-for-byte at
 [`docs/research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md`](research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md)
 (SHA-256 `e7d85d3c96a505ffb3ec0d76b08127078aa7a3a18aaa0c7249339b9be12b088f`). It contains stale
@@ -62,7 +79,7 @@ Do not edit the primary checkout `C:\Users\PowerTower\dev\gothic-reforged`, othe
 worktrees, delivered Desktop packages, or Cloud/Claude branches. Treat
 `D:\SteamLibrary\steamapps\common\Gothic 3` as read-only. Keep generated evidence under ignored
 `.local/`; never commit original assets or decompiled bodies. Check `git status`, active processes
-and agents before starting work; no builds, game runs or agents are active at this checkpoint.
+and agents before starting work. The active-work section supersedes older delivery job states.
 
 For an intentional release rebuild, use the reviewed environment and exact command; do not add
 `--target`, which suppresses the required host `RUSTFLAGS`:

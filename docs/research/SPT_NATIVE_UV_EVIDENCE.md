@@ -65,5 +65,45 @@ selected. It also does not reveal how the SPT/SDK populated vertex UVs or whethe
 creation remapped leaf rectangles before the shader input. Runtime UV orientation therefore
 remains unresolved.
 
+## Bounded `CreateLeafGeometry` native fallback
+
+The retained REA evidence bundle had no records, and a focused
+`inspect_with_objdump` request returned `ERR_REA_WINDOWS_NATIVE` without an Evidence
+ID. To avoid another full `Engine.dll` import after the earlier Ghidra import timed out,
+a local LLVM objdump was run only on a synthetic PE carrier containing the verified
+`.text` range for `CreateLeafGeometry`. The read-only source binary was
+`D:\SteamLibrary\steamapps\common\Gothic 3\Engine.dll`, SHA-256
+`ac0fb50520deb4e9acde483d15f257492fc8158adc0cb7357dc88363a8ece54c`. With image base
+`0x10000000`, the function entry VA `0x10204ee0` maps to RVA and file offset
+`0x204ee0`. The extracted range is `[RVA 0x204ee0, 0x205d50)` (3,696 bytes), ending at
+the next named export. Its bytes match the source range; the disassembly observes
+`retl $0x8` at VA `0x10205d42`, followed by INT3 padding through `0x10205d4f`.
+
+The bounded tool was LLVM `llvm-objdump.exe`, LLVM 23.1.3, invoked with
+`-d --no-show-raw-insn` on the synthetic carrier. Disassembly SHA-256:
+`ffede3721559fbee1e5ab01cc193c1edfe2f95e2adb0013336347d1fef1f30f6`. The extracted
+range SHA-256 is `21bba42a611c3ad8c1da00775cfe8e3ab3e4765adce3b002a1b37b9bb9f1799d`.
+The ignored evidence artifacts are under
+`.local/research/leaf-native/`: `engine-CreateLeafGeometry-carrier.json` records the
+parent PE/RVA/file-offset mapping and hashes; `engine-CreateLeafGeometry-range.bin` is
+the extracted byte range; `engine-CreateLeafGeometry-carrier.exe` is the analyst-created
+carrier; and `engine-CreateLeafGeometry-objdump.txt` plus
+`engine-CreateLeafGeometry-objdump-evidence.json` retain output and tool provenance.
+The carrier was not executed. No original file was modified and no original content or
+disassembly body is committed.
+
+The function writes scalar values at output offsets `0x30` and `0x34`; on the inspected
+float load/store paths, a loaded float reaches the store without visible intervening
+float arithmetic. The disassembly does not establish that these fields are TEXCOORD
+components, nor their corner association. No clearly referenced, format-identifiable
+`D3DVERTEXELEMENT9` declaration table was found in this function, so no adjacent table
+was extracted. A pointer literal (`0x1043d440`) is passed to an unresolved indirect call
+near the function tail, but the available code does not identify its type or purpose;
+it was not treated as a declaration-table reference. These bounded observations do not
+prove that the SDK never remaps V:
+indirect calls, upstream inputs, and the output vertex layout remain unresolved. This
+fallback is analyst-run local disassembly, not an REA observation, and it does not
+resolve the earlier full-import timeout.
+
 Extracted shader sources and all original assets remain under ignored `.local/`; no
 decompiled function bodies or original asset data are included here.
