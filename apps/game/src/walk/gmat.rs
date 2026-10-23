@@ -85,7 +85,8 @@ pub struct GothicParams {
     pub uv_d_rot: Vec4,
     pub uv_n_scroll: Vec4,
     pub uv_n_rot: Vec4,
-    /// Wind: x mode (see [`WindMode`]), y tree height in local units, z leaf card size (m).
+    /// Wind: x mode (see [`WindMode`]), y tree height in local units, z leaf card size (m),
+    /// w leaf flutter scale (`GR_LEAF_FLUTTER`, 1 = default).
     pub wind_mat: Vec4,
     /// Vegetation wave: xy angular wave numbers (1/cm), zw phase rates (rad/s).
     pub veg: Vec4,
