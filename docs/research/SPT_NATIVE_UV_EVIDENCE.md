@@ -98,12 +98,26 @@ float arithmetic. The disassembly does not establish that these fields are TEXCO
 components, nor their corner association. No clearly referenced, format-identifiable
 `D3DVERTEXELEMENT9` declaration table was found in this function, so no adjacent table
 was extracted. A pointer literal (`0x1043d440`) is passed to an unresolved indirect call
-near the function tail, but the available code does not identify its type or purpose;
-it was not treated as a declaration-table reference. These bounded observations do not
-prove that the SDK never remaps V:
+near the function tail; a later bounded read identifies it as a string, not a vertex
+declaration table. These bounded observations do not prove that the SDK never remaps V:
 indirect calls, upstream inputs, and the output vertex layout remain unresolved. This
 fallback is analyst-run local disassembly, not an REA observation, and it does not
 resolve the earlier full-import timeout.
+
+### Bounded read of the referenced literal
+
+The address `0x1043d440` is passed as an argument by the function near
+`0x10205bd7` to an unresolved indirect call at `0x10205bde`. A single 256-byte read was
+made after verifying the same original PE SHA-256 and mapping RVA `0x43d440` into the
+readable, initialized `.rdata` section at file offset `0x43d440`. The bytes begin with
+the ASCII diagnostic string `eCGfxIndexData::UnlockBuffer - m_pAPIIndexData==NULL !`;
+therefore this literal is not a `D3DVERTEXELEMENT9` table. No adjacent bytes were read.
+The raw bytes and mapping/hash manifest are retained under ignored
+`.local/research/leaf-native/engine-1043d440-256.bin` and
+`.local/research/leaf-native/engine-1043d440-read-manifest.json`; the 256-byte read SHA-256
+is `b7c55fd212d48c732a91c48f131e0fd36f725c8a1b9b818198ea659eef06762b`. This
+disambiguates only that one pointer; it does not identify any other declaration table or
+settle the meaning of the output-record fields.
 
 ### Focused Ghidra analysis of the synthetic carrier
 
@@ -121,9 +135,9 @@ bits of a per-entry source byte. That same byte participates in an indexed looku
 reaches a 16-byte record in a separate array. The field at offset `0x34` receives a
 4-byte value from a per-index auxiliary array/pointer table; the assignment itself shows
 no arithmetic. This gives a bounded dataflow link between a 0..3 per-entry value and one
-output field, but it does
-not establish that either field is a TEXCOORD, identify which selector denotes which
-quad corner, or show how the auxiliary value was created. The Ghidra value-flow record is
+output field, but it does not establish that either field is a TEXCOORD, identify which
+selector denotes which quad corner, or show how the auxiliary value was created. The
+Ghidra value-flow record is
 truncated, and 93 calls lack resolved targets. Consequently this evidence still cannot
 rule out an upstream V remap or prove original corner-to-atlas association.
 

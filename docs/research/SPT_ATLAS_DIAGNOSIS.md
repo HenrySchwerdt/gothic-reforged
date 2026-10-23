@@ -78,3 +78,49 @@ VFS match logs, leaf records, the fresh base DDS and numerical summaries live un
 ignored `.local/qa/tree-diagnostic/`. The previously exported atlas thumbnail remains
 read-only at `C:/Users/PowerTower/dev/gothic-reforged/.local/scratch/`.
 No original game assets or generated images are committed.
+
+## Controlled leaf-only UV diagnostic, 2026-10-23
+
+Source `53f16f5fcece7ddf9a2c9323e5068ddb0f0c2bfd` adds default-OFF
+`GR_SPT_FLIP_LEAF_RENDER_V=1`. Unlike the older atlas-wide switch above, it flips
+only generated leaf-card V after the unflipped calibration probe. Frond UVs, geometry,
+normals, indices, bark and crown metrics remain unchanged in the synthetic mixed
+frond/leaf test; the formats suite passed 101 tests with 1 ignored. Runtime-derived
+colors and billboard output were not directly test-asserted; their code paths are unchanged.
+
+One GNU viewer release built in 9m33s, log `.local/pc-leaf-uv-only-probe-build.log`.
+The immutable private EXE SHA-256 is
+`d4b0c1d417690a759c5cd672d984fd8ca0ff51275c935d2d6457f8e672f757a1`.
+It does not replace the validated Desktop RenderPerf package.
+The initial GR_NOWIND plus --wind-shot-times startup was rejected before images;
+failed logs remain under `.local/leaf-uv-only-probe/comparison/default/`.
+
+The successful pair is under `.local/leaf-uv-only-probe/comparison-fixed-wind/`.
+Both runs used the three poses above, 1280x720, and active wind held at synthetic
+times 3600.000000000, 3600.016666667 and 3600.033333333 seconds. The baseline child
+had only `GR_RES=1280x720`; the candidate added only `GR_SPT_FLIP_LEAF_RENDER_V=1`.
+All other GR overrides, including NOWIND and the older atlas-wide switch, were absent.
+Both exited0, grounded360/360 and had no fatal renderer markers. CPU selected and
+captured current/previous wind records matched within and between variants; these
+are not GPU readbacks, a jitter test or a performance measurement.
+
+Root visually reviewed all six `default/shot-{apple,aspen,oak}.png` and
+`leaf-v-only/shot-{apple,aspen,oak}.png` images. The apple view becomes much denser
+and greener; the aspen view looks brighter/denser. The oak-labeled view changes
+texture appearance with some thinner-looking crowns. This isolates an effect of
+leaf UV sampling without the older calibration confound, but density is not proof
+of original-game fidelity. Both switches remain default-OFF.
+
+Historical loader records near the first two poses name `S_GSApple_01` and
+`S_EuropeanAspen_01`, respectively. Apple/Composite01 payloads were previously
+VFS-matched; aspen's parsed record names Composite02 without an equivalent retained
+VFS-match log. The nearest oak-named record for the third pose is `L_PinOak_01`,
+30 m away in X/Z, with nearer non-oak records and no exact retained atlas mapping.
+These are nearby candidates, not identification of the mesh dominating each view.
+Exact metadata, environments and records are in `summary.json` and `observations.md`.
+
+The bounded native investigation in `SPT_NATIVE_UV_EVIDENCE.md` found indexed
+per-corner dataflow but did not establish TEXCOORD semantics or the SDK's V convention.
+One final literal pointer proved to be an ASCII diagnostic string. No additional
+native scan, unchanged full-binary import, build, or capture is pending. Further
+work needs independent intended-sprite and corner-association evidence.

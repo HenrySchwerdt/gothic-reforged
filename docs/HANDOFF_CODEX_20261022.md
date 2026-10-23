@@ -12,15 +12,24 @@ Root GNU viewer release build2300 exited0,9m33s; log
 `d4b0c1d417690a759c5cd672d984fd8ca0ff51275c935d2d6457f8e672f757a1` is under
 `.local/leaf-uv-only-probe/`. First startup rejected GR_NOWIND combined with
 --wind-shot-times before images; failed logs preserved under comparison/default.
-wind_clock is now authorized ONE valid pair under fresh comparison-fixed-wind:
-active wind held at matching synthetic times, GR_RES1280x720 only for baseline,
-candidate adds GR_SPT_FLIP_LEAF_RENDER_V1. Fixed apple/aspen/oak views; no NOWIND
-or old atlas-wide flag. Await root image review. No benchmark or package change.
-REA objdump was unavailable on Windows; bounded local LLVM disassembly and
-provenance are now recorded in `docs/research/SPT_NATIVE_UV_EVIDENCE.md`. Candidate
-output fields are not proven UVs; SDK remapping remains unresolved. No Ghidra reimport.
+The valid pair completed under `.local/leaf-uv-only-probe/comparison-fixed-wind/`:
+matching synthetic wind times, GR_RES1280x720 only for baseline, candidate adds
+GR_SPT_FLIP_LEAF_RENDER_V1; no NOWIND or old atlas-wide flag. Both exited0,
+grounded360/360, with matching CPU selected/captured wind records. Root reviewed all
+six requested images: apple and aspen views look denser, while the oak-labeled view
+changes ambiguously and some crowns look thinner. Nearby historical loader records
+are not rendered-object identity proof. Keep BOTH V-flip switches default-OFF.
+See `docs/research/SPT_ATLAS_DIAGNOSIS.md` for protocol and evidence limits.
+No benchmark, desktop package change, jitter claim or native-fidelity conclusion.
+REA objdump was unavailable on Windows; bounded local LLVM disassembly and one
+successful Ghidra analysis of a NEW 4608-byte synthetic carrier are retained. The
+unchanged full Engine.dll was not reimported. Output-field semantics remain unproven;
+one final 256-byte literal read identified a diagnostic string, not a vertex table.
+Native provider closed; own agents finished, no compiler/game/native job pending.
+Do not repeat these captures/build/native reads. A future fidelity change needs
+independent intended-sprite/corner-association evidence, not density alone.
 
-Updated 2026-10-23 04:04 UTC. The complete previous handoff was preserved byte-for-byte at
+Updated 2026-10-23 04:44 UTC. The complete previous handoff was preserved byte-for-byte at
 [`docs/research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md`](research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md)
 (SHA-256 `e7d85d3c96a505ffb3ec0d76b08127078aa7a3a18aaa0c7249339b9be12b088f`). It contains stale
 “RUNNING” checkpoints and abandoned proposals; use it only as historical evidence, never resume
