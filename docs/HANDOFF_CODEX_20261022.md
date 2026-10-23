@@ -1,5 +1,33 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+## Latest bounded renderer diagnosis — 2026-10-23 00:28 UTC
+
+All own agents idle/completed; root checked no cargo/rustc/game processes before
+this note. No new build or source behavior change. Delivered AimPerf EXE below
+is unchanged. Historical RUNNING notes below are superseded by delivered status.
+
+White/checker patches: controlled same-EXE1280x720 overview at wind3600 and pose
+15,140,90,0,-0.55. Tree hide and foliage hide leave patches; static hide removes
+them with broad static scene. GR_DUMP baseline vs GR_NOCULL largely removes
+checkers but raises visible meshes2295->5261 and may overlay LODs: diagnostic,
+NOT fix or same-quality speedup. Root viewed actual category/close/NOCULL PNGs.
+All captures exit0/grounded360/360; CPU wind/pose records match; no GPU readback.
+Evidence `.local/qa/white-patches/`, tracked `docs/research/WHITE_PATCH_DIAGNOSIS.md`.
+Baseline dump29materials alltex0present; no mapping to patch. NOCULL has zeroDUMP
+because code bypasses the dump itself (inside GR_NOCULL-absent branch).
+
+Narrow source audit found no visibility-dither computation/def mismatch; root
+cross-checked pinnedBevy0.20 propagation. Separate confirmed discrepancy:
+prepass always alpha-tests against misc.z(default0.5); forward only F_MASK.
+Opaque low-alpha materials could disagree; actual patch material/alpha unknown.
+Do not claim cause/fix or blindly alter defaults. Next bounded probe: single
+GR_LODG shift at same pose/time, then identify actual mesh/material/alpha/pipeline
+before a targeted code change, tests, newrelease and finalQA. No duplicate runs.
+
+Quota00:25UTC primary83%used/weekly29%, reset03:15:16UTC; preserve>=5%reserve.
+Avoid new full build/asset-wide analysis before concrete attribution/budget.
+Heartbeat remains active for unfinished renderer/leaf/VR work; unchanged silent.
+
 ## Delivered PC milestone — 2026-10-23 00:09 UTC
 
 NEW Desktop package (old packages preserved):
