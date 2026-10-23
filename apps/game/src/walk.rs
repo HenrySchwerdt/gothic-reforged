@@ -37,12 +37,23 @@ use gothic_physics::{CharacterController, CollisionWorld, ControllerConfig};
 use gothic_world::{StreamingSettings, TileStreamer};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     time::Instant,
 };
 
 /// Gothic-space origin: the Ardea city centre (cm).
 const ORIGIN: Vec3 = Vec3::new(92_400.0, 0.0, -11_000.0);
+
+fn leaf_flutter_scale() -> f32 {
+    static SCALE: OnceLock<f32> = OnceLock::new();
+    *SCALE.get_or_init(|| {
+        std::env::var("GR_LEAF_FLUTTER")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite() && (0.0..=4.0).contains(value))
+            .unwrap_or(1.0)
+    })
+}
 const CM: f32 = 0.01;
 const EYE_HEIGHT_CM: f32 = 165.0;
 
@@ -897,10 +908,15 @@ fn surface_material(
     let mut params = GothicParams::default();
     if wind_mode != gmat::WindMode::None {
         // Leaf cards are about 3 % of the tree height (metres).
+        let flutter_scale = if wind_mode == gmat::WindMode::TreeLeaves {
+            leaf_flutter_scale()
+        } else {
+            1.0
+        };
         params.wind_mat = Vec4::new(
             wind_mode as i32 as f32,
             data.wind_height,
-            data.wind_height * CM * 0.03,
+            data.wind_height * CM * 0.03 * flutter_scale,
             0.0,
         );
     }

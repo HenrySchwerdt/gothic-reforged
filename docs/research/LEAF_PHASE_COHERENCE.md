@@ -43,3 +43,13 @@ captures are adjacent. Root inspected baseline leaf0 and candidate leaf0/leaf3. 
 foliage remains and no temporal improvement is established. These repeated poses wait
 for stable streaming, but the advancing wind phases and capture intervals are not matched.
 The smoke frame-time summaries are diagnostic only and are not a controlled speedup test.
+
+## Leaf-flutter amplitude diagnostic
+
+`GR_LEAF_FLUTTER` is an opt-in, startup-cached multiplier for the leaf flutter amplitude input.
+Unset or invalid values use `1`; accepted values are finite `0..=4`. `0` disables flutter,
+`0.5` halves it, and `1` preserves the existing material value. It applies only to `TreeLeaves`;
+branch sway, geometry, wind phases, and the shared clock are unchanged. Forward and depth/shadow
+prepass use the same wind helper and material parameter. This is a diagnostic control, not a claim
+about SpeedTree amplitude semantics or evidence that stronger flutter caused the observed leaf
+appearance. No runtime comparison has been performed for this switch.

@@ -1,5 +1,15 @@
 # Gothic Reforged — current Codex handoff
 
+## Active flutter-only probe
+
+Root reviewed the new default-1 `GR_LEAF_FLUTTER` diagnostic: finite0..4, cached
+on first tree-leaf material creation; invalid/unset=>1. It scales only material
+wind_mat.z for TreeLeaves; no shader, geometry, branch-sway or clock changes.
+One private release build is authorized next, followed by ONE same-EXE fixed-time
+pair (absent vs0) at the aspen camera. No UV flip/NOWIND, benchmark or packaging.
+wind_clock prepares only the ignored runner until root confirms actual build exit0.
+Do not launch duplicate builds; record the root build session before continuing.
+
 ## Latest APK packaging audit
 
 Read-only follow-up found the old APK script also selects the wrong workspace and
