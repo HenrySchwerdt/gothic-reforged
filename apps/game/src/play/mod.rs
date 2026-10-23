@@ -35,6 +35,8 @@ mod saves;
 mod script;
 mod shots;
 mod souls;
+mod souls_hud;
+mod souls_wire;
 mod teleport;
 mod triggers;
 mod uibridge;
