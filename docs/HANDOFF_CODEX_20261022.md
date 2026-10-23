@@ -1,14 +1,23 @@
 # Gothic Reforged — current Codex handoff
 
-## Active flutter-only probe
+## Completed flutter-only probe
 
 Root reviewed the new default-1 `GR_LEAF_FLUTTER` diagnostic: finite0..4, cached
 on first tree-leaf material creation; invalid/unset=>1. It scales only material
 wind_mat.z for TreeLeaves; no shader, geometry, branch-sway or clock changes.
-One private release build is authorized next, followed by ONE same-EXE fixed-time
-pair (absent vs0) at the aspen camera. No UV flip/NOWIND, benchmark or packaging.
-wind_clock prepares only the ignored runner until root confirms actual build exit0.
-Do not launch duplicate builds; record the root build session before continuing.
+Private source5f69e5a built6m55s, root session35688 CLOSED actualexit0; log
+`.local/pc-leaf-flutter-probe-build.log`. Immutable EXE SHA
+`65fb8bb5fb05f4d2413d381abc3132d6e4788ce6f3af9beda9c7e099355644cd` under
+`.local/leaf-flutter-probe/artifacts/`. ONE same-EXE pair completed at the aspen
+camera, synthetic3600/3600.125/3600.25; default GR_RES1280x720 only, candidate
+adds GR_LEAF_FLUTTER0. No UV flip/NOWIND, benchmark, combat QA or packaging.
+Both exit0/grounded360/360; selected/captured CPU wind records match within/between
+variants, no fatal renderer markers, own runtime saves0. Root reviewed all six
+images; subtle visual differences do not establish a jitter fix. Default remains1.
+Full evidence/limits: `docs/research/LEAF_PHASE_COHERENCE.md` and ignored
+`.local/leaf-flutter-probe/comparison/summary.json`. All own jobs finished.
+Do not repeat build/captures. Next jitter work needs a temporal measurement that
+separates wind displacement, alpha sampling and unrelated scene animation.
 
 ## Latest APK packaging audit
 
@@ -181,7 +190,7 @@ Earlier global-DDA failures, water and renderer audits, failed QA, screenshots, 
 history and detailed checkpoints remain in the archived handoff above. Use those logs as evidence,
 not as instructions to repeat stale jobs.
 
-At 2026-10-23 04:46 UTC, account quota was last reported at 48% used (weekly38%); the next reset was expected
+At 2026-10-23 05:46 UTC, account quota was last reported at 61% used (weekly40%); the next reset was expected
 around 08:18 UTC. Recheck the actual limit before expensive work; do not spend the remaining reserve
 on broad analysis. The continuation heartbeat remains active for leaf fidelity, renderer and VR
 work; stay quiet while status is unchanged and notify only on a meaningful result, failure or
