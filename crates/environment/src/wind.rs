@@ -181,10 +181,12 @@ impl SpeedTreeWind {
             .to_radians()
     }
 
-    /// Trunk/branch vibration angle (radians) at strength `s`: the angle range interpolated
-    /// together with the amplitude factor of `VibrationLow/High` (x 10) [I].
+    /// Trunk/branch vibration angle (radians) at strength `s`: the angle range (degrees)
+    /// interpolated together with the amplitude factor of `VibrationLow/High` [I]. (An earlier
+    /// extra x 10 made whole crowns tremble by decimetres; the plain product keeps the tremble
+    /// at about a centimetre in calm air on a 15 m tree.)
     pub fn vibration_angle(&self, s: f32) -> f32 {
-        let a = |i: usize, amp: f32| self.vibration_angles[i].to_radians() * amp * 10.0;
+        let a = |i: usize, amp: f32| self.vibration_angles[i].to_radians() * amp;
         lerp(a(0, self.vibration_low[1]), a(1, self.vibration_high[1]), s)
     }
 
@@ -229,21 +231,25 @@ impl SpeedTreeWind {
         off.clamp(-0.35 * height * weight, 0.35 * height * weight)
     }
 
-    /// Leaf flutter amplitude (radians) at strength `s`: rocking plus rustling terms
-    /// (`LeafRocking*` / `LeafRustling*`, interpolated low -> high with the leaf exponent) [I].
+    /// Leaf flutter angles (radians) at strength `s`: the `LeafRockingAngles` /
+    /// `LeafRustlingAngles` range in degrees, like every other angle of the entity, times the
+    /// `LeafRocking` / `LeafRustling` factor, both interpolated low -> high with the leaf
+    /// exponent [I]. World defaults: about 0.3 degrees in calm air, 2 in a gust, 4 at full
+    /// strength. (Reading the angles as plain card fractions shook the cards by up to a quarter
+    /// of their size.)
     pub fn leaf_angles(&self, s: f32) -> (f32, f32) {
         let k = s.max(0.0).powf(self.leaf_strength_exponent);
-        let rock = lerp(self.leaf_rocking[0], self.leaf_rocking_high[0], k)
-            / self.leaf_rocking_high[0].max(1e-3);
-        let rust = lerp(self.leaf_rustling[0], self.leaf_rustling_high[0], k)
-            / self.leaf_rustling_high[0].max(1e-3);
+        let rock = lerp(self.leaf_rocking[0], self.leaf_rocking_high[0], k);
+        let rust = lerp(self.leaf_rustling[0], self.leaf_rustling_high[0], k);
         (
-            lerp(self.leaf_rocking_angles[0], self.leaf_rocking_angles[1], k) * rock,
+            lerp(self.leaf_rocking_angles[0], self.leaf_rocking_angles[1], k).to_radians() * rock,
             lerp(
                 self.leaf_rustling_angles[0],
                 self.leaf_rustling_angles[1],
                 k,
-            ) * rust,
+            )
+            .to_radians()
+                * rust,
         )
     }
 

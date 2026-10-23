@@ -26,7 +26,7 @@ use gothic_vr_melee::{
     hitzones_from_body,
 };
 use gothic_vr_physics::props::PropSpec;
-use gothic_vr_physics::{PhysicsHand, VrLayer, spawn_prop};
+use gothic_vr_physics::{PhysicsHand, spawn_prop};
 
 /// A VR opponent.
 #[derive(Component, Debug, Clone)]
@@ -117,7 +117,7 @@ pub fn spawn_npc(
             NpcBone { npc, bone },
             RigidBody::Kinematic,
             Collider::capsule(radius, (len - radius).max(0.01)),
-            CollisionLayers::new(VrLayer::Body, [VrLayer::Hand, VrLayer::World]),
+            gothic_vr_melee::body_layers(),
             bone_transform(a, b),
             Name::new(format!("NpcBone{:?}", bone.1)),
         ));

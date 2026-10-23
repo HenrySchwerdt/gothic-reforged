@@ -36,6 +36,7 @@ mod moves2;
 mod npc_ai;
 mod ranged;
 mod scenarios;
+mod souls_wire;
 mod world;
 
 pub const CM: f32 = 0.01;

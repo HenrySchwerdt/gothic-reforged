@@ -28,7 +28,7 @@ struct GothicParams {
     uv_n_scroll: vec4<f32>,
     uv_n_rot: vec4<f32>,
     // Wind (see gothic_vertex.wesl). x: mode (0 none, 1 vegetation wave, 2 tree, 3 tree leaves),
-    // y: tree height in local units, z: leaf card size (m), w: unused.
+    // y: tree height in local units, z: leaf card size (m), w: leaf flutter scale (1 = default).
     wind_mat: vec4<f32>,
     // Vegetation wave: xy angular wave numbers (1/cm), zw phase rates (rad/s).
     veg: vec4<f32>,
