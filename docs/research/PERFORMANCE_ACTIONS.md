@@ -46,11 +46,14 @@ These are instrumented diagnostic spans and frame timings, not shipping-performa
 are inclusive and must not be summed as disjoint costs. The trace run averages were 15.672 ms / GPU
 4.222 ms default and 6.535 ms / GPU 1.304 ms with the flag, so the large timing shift is not a valid
 release gain claim. The separate smoke-walk traveled 1642 cm versus 890 cm and is not workload parity.
-Source audit explains this limitation: smoke uses360 uncapped Update steps with each
-`time.delta_secs().min(0.1)`, but prints a literal "in6s" without accumulating stage-2
-elapsed time (`walk.rs` smoke stage2). Faster rendering can therefore integrate less
-simulated time in those360steps. Grounded360/360 is a step-count result; do not infer
-movement-speed differences from distance/6. The analytical camera benchmark avoids this driver.
+Source audit explains this limitation: smoke stops stage 2 after360 Update samples; `player_motion`
+uses `time.delta_secs().min(0.1)` and stage duration is not accumulated. The current source reports
+distance across the sampled-frame count instead of a fixed duration. Position samples are taken
+after motion, so 360 samples span 359 intervals between the reported endpoints. Faster rendering can
+therefore integrate less simulated time in those samples. Grounded360/360 is a step-count result;
+do not infer movement-speed differences from distance per sample. Previously delivered EXEs still
+print the stale literal "in6s"; no elapsed-time instrumentation or rebuild was done here. The
+analytical camera benchmark avoids this driver.
 Release A/B and QA are complete on build source `cb909ff3494e29f41533930190dd7fd9cbc46739`
 (log `.local/pc-direct-render-release-build.log`), packaged from clean HEAD
 `3716a5552c80928bd89ef633d8ff9809f9b71804`. On one EXE hash

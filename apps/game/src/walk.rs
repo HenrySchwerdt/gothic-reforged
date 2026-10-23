@@ -1957,7 +1957,8 @@ fn smoke_script(
             }
         }
         2 => {
-            // Walk forward for 6 s through the real collision to prove the controller.
+            // Walk forward for 360 Update samples through the real collision to prove the
+            // controller.
             let p = player.ctrl.position;
             let g = player.ctrl.grounded;
             smoke.walk_log.push((p, g));
@@ -1972,8 +1973,9 @@ fn smoke_script(
                     hi = hi.max(p.y);
                 }
                 eprintln!(
-                    "WALK TEST: moved {:.0} cm horizontally in 6 s, height {:.0} -> {:.0} (range {:.0}..{:.0}), grounded {}/{} frames",
+                    "WALK TEST: moved {:.0} cm horizontally across {} sampled frames, height {:.0} -> {:.0} (range {:.0}..{:.0}), grounded {}/{} frames",
                     Vec3::new(end.x - start.x, 0.0, end.z - start.z).length(),
+                    smoke.walk_log.len(),
                     start.y,
                     end.y,
                     lo,

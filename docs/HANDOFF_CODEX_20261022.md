@@ -1,5 +1,15 @@
 # Gothic Reforged — current Codex handoff
 
+## Latest reporting correction
+
+Source-only smoke log correction: `WALK TEST` now reports the actual sampled-frame
+count instead of the false literal "in 6 s". Stage2 still collects360 post-motion
+samples, spanning359 endpoint intervals; movement, timestep and stage transitions
+are unchanged. Root reviewed the format arguments and diff; `git diff --check`
+passed. No build/test/game run was needed for this reporting-only edit. Delivered
+EXEs retain their old wording. See `docs/research/PERFORMANCE_ACTIONS.md`.
+No own agent/compiler/game job is pending; do not rebuild just for this log text.
+
 ## Active leaf diagnostic
 
 The delivered RenderPerf package below remains unchanged. Source `53f16f5` adds
@@ -29,7 +39,7 @@ Native provider closed; own agents finished, no compiler/game/native job pending
 Do not repeat these captures/build/native reads. A future fidelity change needs
 independent intended-sprite/corner-association evidence, not density alone.
 
-Updated 2026-10-23 04:44 UTC. The complete previous handoff was preserved byte-for-byte at
+Updated 2026-10-23 04:51 UTC. The complete previous handoff was preserved byte-for-byte at
 [`docs/research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md`](research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md)
 (SHA-256 `e7d85d3c96a505ffb3ec0d76b08127078aa7a3a18aaa0c7249339b9be12b088f`). It contains stale
 “RUNNING” checkpoints and abandoned proposals; use it only as historical evidence, never resume
@@ -146,7 +156,7 @@ Earlier global-DDA failures, water and renderer audits, failed QA, screenshots, 
 history and detailed checkpoints remain in the archived handoff above. Use those logs as evidence,
 not as instructions to repeat stale jobs.
 
-At 2026-10-23 03:59 UTC, account quota was last reported at 20% used; the next reset was expected
+At 2026-10-23 04:46 UTC, account quota was last reported at 48% used (weekly38%); the next reset was expected
 around 08:18 UTC. Recheck the actual limit before expensive work; do not spend the remaining reserve
 on broad analysis. The continuation heartbeat remains active for leaf fidelity, renderer and VR
 work; stay quiet while status is unchanged and notify only on a meaningful result, failure or
