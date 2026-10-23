@@ -1,3 +1,27 @@
+## Active performance follow-up — 2026-10-23 03:26 UTC
+
+Quota reset confirmed0%used03:18UTC. DitherFix remains delivered/unchanged below.
+Normal corrected-release baseline COMPLETE: sole runner session53465exit0, 4samehash
+Camera runs1280x720 warmup30+sample20, cleanchildGRonlyRES. Avg10.16-10.35ms,
+p9511.33-12.03ms, GPUavg2.84-2.94ms, all12752entities/1541visible. Route20s2mradius,
+camera_only_no_hero_no_physics; no fullgame performance guarantee. Harness nominal
+baseline/candidate labels use SAMEec1fcchash; variationNOTspeedup. Ownignored evidence
+`.local/bench-dither-fixed-baseline/`, environmentproof `.local/dither-fixed-baseline-child-gr-environment.json`.
+
+ONE root-owned GNU viewer,trace build39345RUNNING, `.local/pc-dither-perf-trace-build.log`,
+compiledsource558b9de. Only source addition is EXACT GR_NO_INDIRECT_DRAWING=1 opt-in
+spawn-time camera component; defaultOFF. No quality/shadow/cascade/resolution changes.
+This tests Bevy preprocessing/culling path, not a production optimization yet.
+Oldtrace suggests prepare_preprocess_bind_groups/ShadowbinCPU costs; freshtrace needed.
+Do NOT interpret trace/debug frame times as shipping timings or sum nested spans.
+
+wind_clock sole runtime runner prepares ignoredtrace runner whilebuildruns; MUST
+waitrootdefinitiveexit0. NewimmutablediagnosticEXE +OWNisolatedruntime, no writesinto
+deliveredpackages/primary. Firstcontrolledwind3600/3600.016667 overview+close normal
+vsflag; rootimageapprovalbeforetrace. Then20ssample/30warmup Camera --bench-gpu --trace
+normalvsflag; no probes/ablation. No newgames/perfmeasurements duringcompilerload.
+Desktoppackages preserved. Agentswater_rendererdocs-only, wind_stabilitycompleted.
+
 ## Static dither fix delivered — 2026-10-23 00:50 UTC
 
 New package: `C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261023-DitherFix/`.

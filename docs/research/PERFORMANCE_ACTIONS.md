@@ -7,6 +7,29 @@ worktree, so this note uses those supplied summary values. They do not isolate a
 below. No code was changed and no new profile or build was run; these are ranked hypotheses, not
 newly proven bottlenecks.
 
+## Corrected renderer fixed-camera baseline (2026-10-23)
+
+`.local/bench-dither-fixed-baseline/summary.json` records four interleaved runs (A/B/A/B),
+30 s settled-world warmup and 20 s measurement at 1280x720, using source commit
+`09332fc78a01005db5c2c42f6e57ee0dbae76abe` and executable SHA-256
+`ec1fcc0688e64ddd09091702c84a6e11dafcba5d337e8f88eb627e0b52e9bf94`. Both nominal variants
+used that same executable, so the measured `-0.35%` average difference (10.2595 to 10.2236 ms)
+is run-to-run variation, not a speedup comparison. Per-run averages were 10.1674 / 10.3516 ms
+for baseline and 10.1596 / 10.2877 ms for candidate. Baseline/candidate median p50 / p95 was
+10.0176 / 11.6265 and 9.9814 / 11.7087 ms; whole-frame GPU average was 2.8630 / 2.9236 ms.
+Runs recorded 1,933–1,969 frames and 12,752 entities; visible meshes were 1,545–1,546 at route
+start and 1,541 at end. The analytical camera-only route used a 10 s period and 2 m radius (4 m
+maximum displacement), with no hero or physics. The runtime was
+`C:\Users\PowerTower\Desktop\GothicReforged-Codex-20261023-DitherFix\runtime`; the child
+environment recorded only `GR_RES=1280x720`, with no aim-pick or raycast comparison switch
+enabled. GPU timing is whole-frame aggregate, not per-pass attribution.
+
+The older retained trace below remains a historical lead only. One corrected-source trace build is
+in progress at source `558b9de`; it includes the default-off `GR_NO_INDIRECT_DRAWING=1` diagnostic
+switch. Build log: `.local/pc-dither-perf-trace-build.log`. Do not treat its instrumented timings as
+shipping performance; use the trace for CPU span attribution and follow with a release A/B if a
+candidate change is identified.
+
 ## 1. Shadow pass mesh-bin work
 
 `PERFORMANCE.md` already has direct trace evidence from an earlier run: shadow bin instance-buffer
