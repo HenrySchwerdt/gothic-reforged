@@ -67,16 +67,30 @@ pub fn analyse(md: &MeshData) -> Option<GripFrame> {
         hi = hi.max(*p);
     }
     let ext = hi - lo;
-    let long = if ext.x >= ext.y && ext.x >= ext.z { Vec3::X } else if ext.y >= ext.z { Vec3::Y } else { Vec3::Z };
+    let long = if ext.x >= ext.y && ext.x >= ext.z {
+        Vec3::X
+    } else if ext.y >= ext.z {
+        Vec3::Y
+    } else {
+        Vec3::Z
+    };
     // Tip = the end of the long axis that is farther from the mesh origin (handle end is near the origin).
     let (a_lo, a_hi) = (lo.dot(long), hi.dot(long));
     let sign = if a_hi.abs() >= a_lo.abs() { 1.0 } else { -1.0 };
     let blade = long * sign;
     let along = |p: Vec3| p.dot(blade);
-    let (pommel, tip) = if sign > 0.0 { (a_lo, a_hi) } else { (-a_hi, -a_lo) };
+    let (pommel, tip) = if sign > 0.0 {
+        (a_lo, a_hi)
+    } else {
+        (-a_hi, -a_lo)
+    };
     // Perpendicular basis for cross-section measurements.
     let (u, w) = {
-        let a = if blade.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+        let a = if blade.x.abs() < 0.9 {
+            Vec3::X
+        } else {
+            Vec3::Y
+        };
         let u = blade.cross(a).normalize();
         (u, blade.cross(u))
     };
@@ -106,8 +120,16 @@ pub fn analyse(md: &MeshData) -> Option<GripFrame> {
     }
     let guard = pommel + guard_i as f32 * slice;
     // Handle vertices: behind the guard, away from the pommel ball and the guard itself.
-    let handle: Vec<Vec3> = pts.iter().copied().filter(|p| along(*p) < guard - 1.0 && along(*p) > pommel + 1.5).collect();
-    let handle = if handle.len() >= 6 { handle } else { pts.iter().copied().filter(|p| along(*p) < guard).collect() };
+    let handle: Vec<Vec3> = pts
+        .iter()
+        .copied()
+        .filter(|p| along(*p) < guard - 1.0 && along(*p) > pommel + 1.5)
+        .collect();
+    let handle = if handle.len() >= 6 {
+        handle
+    } else {
+        pts.iter().copied().filter(|p| along(*p) < guard).collect()
+    };
     let mut handle_axis = principal_axis(&handle);
     if handle_axis.dot(blade) < 0.0 {
         handle_axis = -handle_axis;
@@ -119,11 +141,15 @@ pub fn analyse(md: &MeshData) -> Option<GripFrame> {
     // Blade cross-section: vertices in the central blade zone.
     let blade_pts: Vec<(f32, f32)> = pts
         .iter()
-        .filter(|p| along(**p) > guard + 0.2 * (tip - guard) && along(**p) < tip - 0.15 * (tip - guard))
+        .filter(|p| {
+            along(**p) > guard + 0.2 * (tip - guard) && along(**p) < tip - 0.15 * (tip - guard)
+        })
         .map(|p| (p.dot(u), p.dot(w)))
         .collect();
     let n = blade_pts.len().max(1) as f32;
-    let (mu, mw) = blade_pts.iter().fold((0.0, 0.0), |a, p| (a.0 + p.0, a.1 + p.1));
+    let (mu, mw) = blade_pts
+        .iter()
+        .fold((0.0, 0.0), |a, p| (a.0 + p.0, a.1 + p.1));
     let (mu, mw) = (mu / n, mw / n);
     let (mut suu, mut sww, mut suw) = (0.0f32, 0.0f32, 0.0f32);
     for (pu, pw) in &blade_pts {
@@ -135,14 +161,30 @@ pub fn analyse(md: &MeshData) -> Option<GripFrame> {
     let ang = 0.5 * (2.0 * suw).atan2(suu - sww);
     let edge = (u * ang.cos() + w * ang.sin()).normalize();
     let flat = blade.cross(edge).normalize();
-    Some(GripFrame { blade, edge, flat, center, handle_axis, tip, pommel, guard })
+    Some(GripFrame {
+        blade,
+        edge,
+        flat,
+        center,
+        handle_axis,
+        tip,
+        pommel,
+        guard,
+    })
 }
 
 impl GripFrame {
     /// Mesh-space frame of the gothic data mirrored across X (the engine-space convention of skeletons and clips).
     pub fn mirrored(&self) -> GripFrame {
         let m = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
-        GripFrame { blade: m(self.blade), edge: m(self.edge), flat: -m(self.flat), center: m(self.center), handle_axis: m(self.handle_axis), ..*self }
+        GripFrame {
+            blade: m(self.blade),
+            edge: m(self.edge),
+            flat: -m(self.flat),
+            center: m(self.center),
+            handle_axis: m(self.handle_axis),
+            ..*self
+        }
     }
 
     /// Prop-frame visual transform for a mesh spawned mirrored (`Ardea::spawn_static_mirrored`):
@@ -153,6 +195,10 @@ impl GripFrame {
         // Target: blade -> -Z, edge -> -Y, flat -> (-Z) x (-Y) = -X.
         let to = Mat3::from_cols(Vec3::NEG_Z, Vec3::NEG_Y, Vec3::NEG_X);
         let rot = Quat::from_mat3(&(to * from.transpose())).normalize();
-        Transform { translation: -(rot * (mir.center * unit)), rotation: rot, scale: Vec3::splat(unit) }
+        Transform {
+            translation: -(rot * (mir.center * unit)),
+            rotation: rot,
+            scale: Vec3::splat(unit),
+        }
     }
 }

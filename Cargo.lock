@@ -2468,6 +2468,8 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
+ "serde",
+ "termcolor",
  "unicode-width",
 ]
 
@@ -3795,6 +3797,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-quest"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "android_log-sys",
+ "anyhow",
+ "bevy",
+ "gothic-animation",
+ "gothic-cook",
+ "gothic-environment",
+ "gothic-formats",
+ "gothic-physics",
+ "gothic-render-rules",
+ "gothic-sim",
+ "gothic-vr",
+ "gothic-vr-archery",
+ "gothic-vr-melee",
+ "gothic-vr-npc",
+ "gothic-vr-physics",
+ "gothic-xr-quest",
+ "log",
+ "texture2ddecoder",
+]
+
+[[package]]
 name = "gothic-questbot"
 version = "0.1.0"
 dependencies = [
@@ -3971,35 +3998,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gothic-vr-bridge"
-version = "0.1.0"
-dependencies = [
- "avian3d",
- "bevy",
- "glam",
- "gothic-formats",
- "gothic-gameplay",
- "gothic-physics",
- "gothic-runtime",
- "gothic-sim",
- "gothic-vr",
- "gothic-vr-melee",
- "gothic-vr-physics",
-]
-
-[[package]]
-name = "gothic-vr-interact"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "glam",
- "gothic-runtime",
- "gothic-sim",
- "gothic-vr",
- "serde",
-]
-
-[[package]]
 name = "gothic-vr-melee"
 version = "0.1.0"
 dependencies = [
@@ -4036,36 +4034,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "gothic-vr-sandbox"
-version = "0.1.0"
-dependencies = [
- "avian3d",
- "bevy",
- "gothic-vr",
- "gothic-vr-archery",
- "gothic-vr-melee",
- "gothic-vr-npc",
- "gothic-vr-physics",
-]
-
-[[package]]
-name = "gothic-vr-ui"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "glam",
- "gothic-ui",
- "gothic-vr",
- "serde",
-]
-
-[[package]]
 name = "gothic-world"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "gothic-portcov",
  "serde",
+]
+
+[[package]]
+name = "gothic-xr-quest"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "android_log-sys",
+ "android_system_properties",
+ "anyhow",
+ "ash",
+ "bevy",
+ "log",
+ "openxr",
+ "wgpu",
 ]
 
 [[package]]
@@ -6706,6 +6695,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
+]
+
+[[package]]
 name = "texture2ddecoder"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7526,12 +7524,15 @@ dependencies = [
  "hashbrown 0.17.1",
  "js-sys",
  "log",
+ "naga",
+ "parking_lot",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
  "smallvec",
  "static_assertions",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "wgpu-core",
  "wgpu-hal",
@@ -7565,6 +7566,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.17",
  "wgpu-core-deps-apple",
+ "wgpu-core-deps-emscripten",
  "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
@@ -7577,6 +7579,15 @@ name = "wgpu-core-deps-apple"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "061f3d319a40d39d00b1ecc2c33b89fe21d4e6fe01859df3500a3a8ecccd6b68"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-emscripten"
+version = "30.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d98b86cf4abf524a902dd35f18ca6a3f08fc2ae9847c8f10b48e30491b1f0b86"
 dependencies = [
  "wgpu-hal",
 ]

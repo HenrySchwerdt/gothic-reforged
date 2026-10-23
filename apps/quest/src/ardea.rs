@@ -11,7 +11,9 @@ use bevy::camera::primitives::Aabb;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AstcBlock, AstcChannel, Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{
+    AstcBlock, AstcChannel, Extent3d, TextureDimension, TextureFormat,
+};
 use gothic_cook::material::{FLAG_NO_LIGHTING, KIND_WATER, NONE_U32};
 use gothic_cook::mesh::{Indices as CIdx, MeshData};
 use gothic_cook::texture::{TEX_SRGB, TexFormat, TextureData};
@@ -19,8 +21,8 @@ use gothic_cook::{AssetId, Cache};
 use gothic_xr_quest::knob_f32;
 
 use crate::locomotion::{CM, Physics};
-use gothic_vr::{VrPlayer, VrWorld};
 use crate::qmat::{QParams, QuestMaterial};
+use gothic_vr::{VrPlayer, VrWorld};
 
 /// Sample colour textures raw (gamma space) for the original-shading shader.
 pub const GAMMA_SPACE: bool = true;
@@ -53,19 +55,33 @@ pub fn update_lod(
     eyes: Query<&GlobalTransform, With<gothic_xr_quest::XrEye>>,
     mut q: Query<(&mut Lod, &mut Mesh3d, &mut Visibility, &mut TriCount)>,
 ) {
-    let Some(eye) = eyes.iter().next() else { return };
+    let Some(eye) = eyes.iter().next() else {
+        return;
+    };
     let cam = eye.translation() * CM;
     for (mut l, mut mesh, mut vis, mut tc) in &mut q {
         let d = (l.center - cam).length();
         let hide = d > l.cull_end;
         if hide != l.hidden {
             l.hidden = hide;
-            *vis = if hide { Visibility::Hidden } else { Visibility::Inherited };
+            *vis = if hide {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
         }
         if hide || l.levels <= 1 {
             continue;
         }
-        let stage = if d > l.stage_d[0] { if l.levels > 2 && d > l.stage_d[1] { 2 } else { 1 } } else { 0 };
+        let stage = if d > l.stage_d[0] {
+            if l.levels > 2 && d > l.stage_d[1] {
+                2
+            } else {
+                1
+            }
+        } else {
+            0
+        };
         // 5 % hysteresis against flicker at the boundary.
         let cur = l.cur;
         let edge = |i: usize| l.stage_d[i];
@@ -113,7 +129,9 @@ pub fn data_dir() -> Option<PathBuf> {
     }
     cands.push("/sdcard/Android/data/dev.gothicreforged.questtest/files/ardea".into());
     cands.push(".local/quest/ardea-pack".into());
-    cands.into_iter().find(|p| p.join("manifest.json").is_file())
+    cands
+        .into_iter()
+        .find(|p| p.join("manifest.json").is_file())
 }
 
 pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
@@ -124,8 +142,16 @@ pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
     let mut pending = Vec::new();
     for cx in ((c[0] - r) / 10_000.0).floor() as i32..=((c[0] + r) / 10_000.0).floor() as i32 {
         for cz in ((c[1] - r) / 10_000.0).floor() as i32..=((c[1] + r) / 10_000.0).floor() as i32 {
-            let (mx, mz) = ((cx as f32 + 0.5) * 10_000.0 - c[0], (cz as f32 + 0.5) * 10_000.0 - c[1]);
-            if cache.root().join(format!("cells/{cx}_{cz}.gcell")).is_file() && (mx * mx + mz * mz).sqrt() < r + 7_100.0 {
+            let (mx, mz) = (
+                (cx as f32 + 0.5) * 10_000.0 - c[0],
+                (cz as f32 + 0.5) * 10_000.0 - c[1],
+            );
+            if cache
+                .root()
+                .join(format!("cells/{cx}_{cz}.gcell"))
+                .is_file()
+                && (mx * mx + mz * mz).sqrt() < r + 7_100.0
+            {
                 pending.push((cx, cz, mx * mx + mz * mz));
             }
         }
@@ -134,10 +160,18 @@ pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
     let pending = pending.into_iter().map(|p| (p.0, p.1)).collect();
     let world = app.world_mut();
     let root = world
-        .spawn((WorldRoot, Transform::from_scale(Vec3::splat(1.0 / CM)), Visibility::default()))
+        .spawn((
+            WorldRoot,
+            Transform::from_scale(Vec3::splat(1.0 / CM)),
+            Visibility::default(),
+        ))
         .id();
     let white = world.resource_mut::<Assets<Image>>().add(Image::new_fill(
-        Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         &[255, 255, 255, 255],
         TextureFormat::Rgba8Unorm,
@@ -162,7 +196,10 @@ pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
         unlit: gothic_xr_quest::knob("unlit_world").as_deref() == Some("1"),
     });
     let f = crate::qmat::fog_color();
-    world.insert_resource(gothic_xr_quest::XrSettings { clear: Color::srgb(f.x, f.y, f.z), ..default() });
+    world.insert_resource(gothic_xr_quest::XrSettings {
+        clear: Color::srgb(f.x, f.y, f.z),
+        ..default()
+    });
     let _ = world;
     crate::locomotion::init(app, Vec3::new(focus.x, 20_000.0, focus.z));
     app.add_systems(Update, (stream_cells, report, update_lod));
@@ -179,7 +216,11 @@ fn build_image(t: &TextureData) -> Option<(Image, Vec2)> {
     let format = match t.format() {
         TexFormat::Astc6x6 => TextureFormat::Astc {
             block: AstcBlock::B6x6,
-            channel: if srgb && !GAMMA_SPACE { AstcChannel::UnormSrgb } else { AstcChannel::Unorm },
+            channel: if srgb && !GAMMA_SPACE {
+                AstcChannel::UnormSrgb
+            } else {
+                AstcChannel::Unorm
+            },
         },
         TexFormat::Rgba8 => {
             if srgb && !GAMMA_SPACE {
@@ -197,11 +238,19 @@ fn build_image(t: &TextureData) -> Option<(Image, Vec2)> {
     let (pw, ph, uvs) = match t.format() {
         TexFormat::Astc6x6 => {
             let (pw, ph) = (h.width.div_ceil(6) * 6, h.height.div_ceil(6) * 6);
-            (pw, ph, Vec2::new(h.width as f32 / pw as f32, h.height as f32 / ph as f32))
+            (
+                pw,
+                ph,
+                Vec2::new(h.width as f32 / pw as f32, h.height as f32 / ph as f32),
+            )
         }
         _ => (h.width, h.height, Vec2::ONE),
     };
-    img.texture_descriptor.size = Extent3d { width: pw, height: ph, depth_or_array_layers: 1 };
+    img.texture_descriptor.size = Extent3d {
+        width: pw,
+        height: ph,
+        depth_or_array_layers: 1,
+    };
     img.texture_descriptor.dimension = TextureDimension::D2;
     img.texture_descriptor.format = format;
     img.texture_descriptor.mip_level_count = h.mip_count.max(1);
@@ -240,14 +289,33 @@ pub fn mirror_mesh_x(m: &mut Mesh) {
 
 fn build_mesh(md: &MeshData, s: &gothic_cook::mesh::SubmeshRec, lod: usize) -> (Mesh, u32) {
     let vs = md.submesh_vertices(s);
-    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vs.iter().map(|v| v.pos).collect::<Vec<_>>());
-    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vs.iter().map(|v| v.normal).collect::<Vec<_>>());
-    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vs.iter().map(|v| v.uv).collect::<Vec<_>>());
+    let mut m = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    m.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vs.iter().map(|v| v.pos).collect::<Vec<_>>(),
+    );
+    m.insert_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        vs.iter().map(|v| v.normal).collect::<Vec<_>>(),
+    );
+    m.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        vs.iter().map(|v| v.uv).collect::<Vec<_>>(),
+    );
     m.insert_attribute(
         Mesh::ATTRIBUTE_COLOR,
         vs.iter()
-            .map(|v| [v.color[0] as f32 / 255.0, v.color[1] as f32 / 255.0, v.color[2] as f32 / 255.0, v.color[3] as f32 / 255.0])
+            .map(|v| {
+                [
+                    v.color[0] as f32 / 255.0,
+                    v.color[1] as f32 / 255.0,
+                    v.color[2] as f32 / 255.0,
+                    v.color[3] as f32 / 255.0,
+                ]
+            })
             .collect::<Vec<[f32; 4]>>(),
     );
     let idx = md.indices(s, lod);
@@ -276,10 +344,16 @@ impl Ardea {
         qmats: &mut Assets<QuestMaterial>,
         images: &mut Assets<Image>,
     ) -> bool {
-        let Ok(md) = self.cache.load_mesh(AssetId::of(mesh_name)) else { return false };
-        let holder = commands.spawn((local, Visibility::default(), ChildOf(parent))).id();
+        let Ok(md) = self.cache.load_mesh(AssetId::of(mesh_name)) else {
+            return false;
+        };
+        let holder = commands
+            .spawn((local, Visibility::default(), ChildOf(parent)))
+            .id();
         for s in md.submeshes() {
-            let Some(q) = self.qmaterial(s.material, qmats, images) else { continue };
+            let Some(q) = self.qmaterial(s.material, qmats, images) else {
+                continue;
+            };
             let (mesh, _) = build_mesh(&md, s, 0);
             commands.spawn((
                 Mesh3d(meshes.add(mesh)),
@@ -306,10 +380,16 @@ impl Ardea {
         qmats: &mut Assets<QuestMaterial>,
         images: &mut Assets<Image>,
     ) -> bool {
-        let Ok(md) = self.cache.load_mesh(AssetId::of(mesh_name)) else { return false };
-        let holder = commands.spawn((local, Visibility::default(), ChildOf(parent))).id();
+        let Ok(md) = self.cache.load_mesh(AssetId::of(mesh_name)) else {
+            return false;
+        };
+        let holder = commands
+            .spawn((local, Visibility::default(), ChildOf(parent)))
+            .id();
         for s in md.submeshes() {
-            let Some(q) = self.qmaterial(s.material, qmats, images) else { continue };
+            let Some(q) = self.qmaterial(s.material, qmats, images) else {
+                continue;
+            };
             let (mut mesh, _) = build_mesh(&md, s, 0);
             mirror_mesh_x(&mut mesh);
             let (lo, hi) = (Vec3::from(s.bounds_min), Vec3::from(s.bounds_max));
@@ -326,7 +406,11 @@ impl Ardea {
 
     /// Diffuse texture (and its UV scale) of a cooked shader material (`.xshmat`), for actor materials whose own
     /// layer carries no texture (heads: the skin texture lives in the shared material).
-    pub fn shader_diffuse(&mut self, id: u64, images: &mut Assets<Image>) -> Option<(Handle<Image>, Vec2)> {
+    pub fn shader_diffuse(
+        &mut self,
+        id: u64,
+        images: &mut Assets<Image>,
+    ) -> Option<(Handle<Image>, Vec2)> {
         if id == 0 {
             return None;
         }
@@ -340,7 +424,11 @@ impl Ardea {
         self.white.clone()
     }
 
-    pub fn texture(&mut self, id: u64, images: &mut Assets<Image>) -> Option<(Handle<Image>, Vec2)> {
+    pub fn texture(
+        &mut self,
+        id: u64,
+        images: &mut Assets<Image>,
+    ) -> Option<(Handle<Image>, Vec2)> {
         if id == 0 {
             return None;
         }
@@ -375,20 +463,46 @@ impl Ardea {
         let texscale = tex.as_ref().map_or(Vec2::ONE, |t| t.1);
         let masked = rec.mask_reference != NONE_U32;
         let l1 = rec.layers[1];
-        let blend = rec.flags & gothic_cook::material::FLAG_VERTEX_BLEND != 0 && rec.layer_count >= 2;
-        let tex_b = if blend { self.texture(l1.tex[0], images) } else { None };
+        let blend =
+            rec.flags & gothic_cook::material::FLAG_VERTEX_BLEND != 0 && rec.layer_count >= 2;
+        let tex_b = if blend {
+            self.texture(l1.tex[0], images)
+        } else {
+            None
+        };
         let mut params = QParams::new(
-                Vec3::new(l.tint[0].max(0.05), l.tint[1].max(0.05), l.tint[2].max(0.05)),
-                Vec2::new(l.scale[0][0], l.scale[0][1]) * texscale,
-                if masked { (rec.mask_reference as f32 / 255.0).max(0.05) } else { 0.0 },
-            );
+            Vec3::new(
+                l.tint[0].max(0.05),
+                l.tint[1].max(0.05),
+                l.tint[2].max(0.05),
+            ),
+            Vec2::new(l.scale[0][0], l.scale[0][1]) * texscale,
+            if masked {
+                (rec.mask_reference as f32 / 255.0).max(0.05)
+            } else {
+                0.0
+            },
+        );
         if let Some((_, sb)) = &tex_b {
             params.misc.y = 1.0;
             params.uv_scale_b = Vec4::new(l1.scale[0][0] * sb.x, l1.scale[0][1] * sb.y, 0.0, 0.0);
-            params.tint_b = Vec3::new(l1.tint[0].max(0.05), l1.tint[1].max(0.05), l1.tint[2].max(0.05)).extend(1.0);
+            params.tint_b = Vec3::new(
+                l1.tint[0].max(0.05),
+                l1.tint[1].max(0.05),
+                l1.tint[2].max(0.05),
+            )
+            .extend(1.0);
         }
-        let da = if l.tex[1] != 0 { self.texture(l.tex[1], images) } else { None };
-        let db = if blend && l1.tex[1] != 0 { self.texture(l1.tex[1], images) } else { None };
+        let da = if l.tex[1] != 0 {
+            self.texture(l.tex[1], images)
+        } else {
+            None
+        };
+        let db = if blend && l1.tex[1] != 0 {
+            self.texture(l1.tex[1], images)
+        } else {
+            None
+        };
         if let Some((_, sd)) = &da {
             params.flags.x = 1.0;
             params.uv_scale_d.x = l.scale[1][0] * sd.x;
@@ -435,11 +549,17 @@ impl Ardea {
         let texscale = tex.as_ref().map_or(Vec2::ONE, |t| t.1);
         let tex = tex.map(|t| t.0);
         let mut m = StandardMaterial {
-            base_color: Color::srgb(l.tint[0].max(0.05), l.tint[1].max(0.05), l.tint[2].max(0.05)),
+            base_color: Color::srgb(
+                l.tint[0].max(0.05),
+                l.tint[1].max(0.05),
+                l.tint[2].max(0.05),
+            ),
             base_color_texture: tex,
             perceptual_roughness: 1.0,
             reflectance: 0.04,
-            uv_transform: bevy::math::Affine2::from_scale(Vec2::new(l.scale[0][0], l.scale[0][1]) * texscale),
+            uv_transform: bevy::math::Affine2::from_scale(
+                Vec2::new(l.scale[0][0], l.scale[0][1]) * texscale,
+            ),
             unlit: rec.flags & FLAG_NO_LIGHTING != 0 || self.unlit,
             ..default()
         };
@@ -468,9 +588,13 @@ fn stream_cells(
     let t0 = Instant::now();
     let budget_ms = 5.0;
     while t0.elapsed().as_secs_f32() * 1e3 < budget_ms {
-        let Some((cx, cz)) = a.pending.first().copied() else { break };
+        let Some((cx, cz)) = a.pending.first().copied() else {
+            break;
+        };
         a.pending.remove(0);
-        let Ok(Some(cell)) = a.cache.load_cell(cx, cz) else { continue };
+        let Ok(Some(cell)) = a.cache.load_cell(cx, cz) else {
+            continue;
+        };
         let mut tris: Vec<[Vec3; 3]> = cell
             .collision_triangles()
             .map(|t| [Vec3::from(t[0]), Vec3::from(t[1]), Vec3::from(t[2])])
@@ -480,7 +604,9 @@ fn stream_cells(
             if i.collision == 0 {
                 continue;
             }
-            let Some(cm) = a.cache.collision(i.collision) else { continue };
+            let Some(cm) = a.cache.collision(i.collision) else {
+                continue;
+            };
             let c = i.transform;
             let m = Mat4::from_cols(
                 Vec3::from(c[0]).extend(0.0),
@@ -493,7 +619,9 @@ fn stream_cells(
                 tris.push([v(t[0]), v(t[1]), v(t[2])]);
             }
         }
-        vrworld.0.insert_chunk((((cx as i64) << 32) | (cz as u32 as i64)) as u64, tris);
+        vrworld
+            .0
+            .insert_chunk((((cx as i64) << 32) | (cz as u32 as i64)) as u64, tris);
         let root = a.root;
         let focus = a.focus;
         let (lod_scale, cull_scale) = (a.lod_scale, a.cull_scale);
@@ -512,7 +640,9 @@ fn stream_cells(
             jobs.push((i.mesh, m, false));
         }
         for (mesh_id, m, is_terrain) in jobs {
-            let Ok(md) = a.cache.load_mesh(AssetId(mesh_id)) else { continue };
+            let Ok(md) = a.cache.load_mesh(AssetId(mesh_id)) else {
+                continue;
+            };
             let hdr = md.header();
             let (bmin, bmax) = (Vec3::from(hdr.bounds_min), Vec3::from(hdr.bounds_max));
             let scale = m.x_axis.truncate().length().max(1e-3);
@@ -523,8 +653,12 @@ fn stream_cells(
             let end = if is_terrain {
                 f32::MAX
             } else {
-                gothic_render_rules::cull::distance_band(radius, gothic_render_rules::cull::screen_cull_factor(0) / cull_scale.max(0.01)).1
-                    .clamp(3_000.0, 25_000.0)
+                gothic_render_rules::cull::distance_band(
+                    radius,
+                    gothic_render_rules::cull::screen_cull_factor(0) / cull_scale.max(0.01),
+                )
+                .1
+                .clamp(3_000.0, 25_000.0)
             };
             if dist0 > end + 2_000.0 {
                 continue;
@@ -532,7 +666,10 @@ fn stream_cells(
             let names = md.material_names();
             for (si, s) in md.submeshes().iter().enumerate() {
                 // Distant-LOD proxy atlas submeshes overlap the real geometry (same rule as the desktop loader).
-                if names.get(si).is_some_and(|n| n.to_ascii_lowercase().contains("world_lowpoly")) {
+                if names
+                    .get(si)
+                    .is_some_and(|n| n.to_ascii_lowercase().contains("world_lowpoly"))
+                {
                     continue;
                 }
                 let cheap = a.cheap;
@@ -544,8 +681,13 @@ fn stream_cells(
                 if smat.is_none() && qmat.is_none() {
                     continue;
                 }
-                let levels = if is_terrain { 1 } else { (s.lod_count as usize).clamp(1, 3) };
-                let stage_d = gothic_render_rules::lod::stage_distances(radius, levels, lod_scale, 1.0);
+                let levels = if is_terrain {
+                    1
+                } else {
+                    (s.lod_count as usize).clamp(1, 3)
+                };
+                let stage_d =
+                    gothic_render_rules::lod::stage_distances(radius, levels, lod_scale, 1.0);
                 let mut handles: [Option<Handle<Mesh>>; 3] = [None, None, None];
                 let mut tris = [0u32; 3];
                 for lod in 0..levels {
@@ -561,7 +703,11 @@ fn stream_cells(
                     handles[lod] = Some(h);
                     tris[lod] = md.indices(s, lod).len() as u32 / 3;
                 }
-                let stage = stage_d.iter().filter(|d| dist0 > **d).count().min(levels - 1);
+                let stage = stage_d
+                    .iter()
+                    .filter(|d| dist0 > **d)
+                    .count()
+                    .min(levels - 1);
                 let aabb = Aabb::from_min_max(Vec3::from(s.bounds_min), Vec3::from(s.bounds_max));
                 let mut ec = commands.spawn((
                     Mesh3d(handles[stage].clone().unwrap()),
@@ -572,7 +718,10 @@ fn stream_cells(
                     Lod {
                         handles,
                         tris,
-                        stage_d: [stage_d.first().copied().unwrap_or(f32::MAX), stage_d.get(1).copied().unwrap_or(f32::MAX)],
+                        stage_d: [
+                            stage_d.first().copied().unwrap_or(f32::MAX),
+                            stage_d.get(1).copied().unwrap_or(f32::MAX),
+                        ],
                         levels: levels as u8,
                         cur: stage as u8,
                         center,
@@ -595,10 +744,16 @@ fn stream_cells(
     // Release the player once the ground below the start exists.
     if !phys.ready && a.cells_done > 0 {
         let p = player.ctrl.position;
-        if let Some(y) = vrworld.0.ground_below(Vec3::new(p.x, 50_000.0, p.z), 100_000.0) {
+        if let Some(y) = vrworld
+            .0
+            .ground_below(Vec3::new(p.x, 50_000.0, p.z), 100_000.0)
+        {
             player.ctrl.teleport(Vec3::new(p.x, y + 20.0, p.z));
             phys.ready = true;
-            info!("[ardea] ground found at y={y:.0} cm after {} cells", a.cells_done);
+            info!(
+                "[ardea] ground found at y={y:.0} cm after {} cells",
+                a.cells_done
+            );
         }
     }
 }
@@ -651,13 +806,31 @@ fn host_astc(t: &TextureData) -> Option<(Image, Vec2)> {
     let (pw, ph) = (h.width.div_ceil(6) * 6, h.height.div_ceil(6) * 6);
     let mut px = vec![0u32; (pw * ph) as usize];
     let need = ((pw / 6) * (ph / 6) * 16) as usize;
-    texture2ddecoder::decode_astc(t.data().get(..need)?, pw as usize, ph as usize, 6, 6, &mut px).ok()?;
+    texture2ddecoder::decode_astc(
+        t.data().get(..need)?,
+        pw as usize,
+        ph as usize,
+        6,
+        6,
+        &mut px,
+    )
+    .ok()?;
     let mut rgba = Vec::with_capacity(px.len() * 4);
     for p in px {
         let [b, g, r, a] = p.to_le_bytes();
         rgba.extend_from_slice(&[r, g, b, a]);
     }
-    let mut img = Image::new(Extent3d { width: pw, height: ph, depth_or_array_layers: 1 }, TextureDimension::D2, rgba, TextureFormat::Rgba8Unorm, RenderAssetUsages::RENDER_WORLD);
+    let mut img = Image::new(
+        Extent3d {
+            width: pw,
+            height: ph,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        rgba,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
     img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
         address_mode_v: ImageAddressMode::Repeat,
@@ -665,5 +838,8 @@ fn host_astc(t: &TextureData) -> Option<(Image, Vec2)> {
         min_filter: ImageFilterMode::Linear,
         ..default()
     });
-    Some((img, Vec2::new(h.width as f32 / pw as f32, h.height as f32 / ph as f32)))
+    Some((
+        img,
+        Vec2::new(h.width as f32 / pw as f32, h.height as f32 / ph as f32),
+    ))
 }

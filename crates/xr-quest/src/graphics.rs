@@ -172,8 +172,12 @@ pub fn init_graphics(
             .context("xrCreateVulkanDeviceKHR")?
             .map_err(|e| anyhow!("vkCreateDevice via OpenXR failed: {e}"))?
     };
-    let vk_device =
-        unsafe { ash::Device::load(vk_instance.fp_v1_0(), vk::Device::from_raw(vk_device_raw as _)) };
+    let vk_device = unsafe {
+        ash::Device::load(
+            vk_instance.fp_v1_0(),
+            vk::Device::from_raw(vk_device_raw as _),
+        )
+    };
     let vk_device_ptr = vk_device.handle().as_raw() as *const c_void;
 
     let open_device = unsafe {
@@ -281,7 +285,8 @@ pub fn wrap_swapchain_image(
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
             wgpu::TextureUses::UNINITIALIZED,

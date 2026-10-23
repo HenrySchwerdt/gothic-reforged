@@ -45,8 +45,20 @@ impl ClipSet {
     pub fn load(path: &Path, qrig: &ActorRig, family: &str) -> Option<Self> {
         let pack = ClipPack::load(path).ok()?;
         let names = qrig.names.clone();
-        let parent: Vec<u16> = qrig.parent.iter().map(|&p| if p < 0 { rig::NONE } else { p as u16 }).collect();
-        let bind: Vec<Trs> = qrig.bind_local.iter().map(|t| Trs { t: t.translation, r: t.rotation, s: t.scale }).collect();
+        let parent: Vec<u16> = qrig
+            .parent
+            .iter()
+            .map(|&p| if p < 0 { rig::NONE } else { p as u16 })
+            .collect();
+        let bind: Vec<Trs> = qrig
+            .bind_local
+            .iter()
+            .map(|t| Trs {
+                t: t.translation,
+                r: t.rotation,
+                s: t.scale,
+            })
+            .collect();
         let mut rig = Rig::from_parts(family, names, parent, bind);
         rig.family = family.to_string();
         let rig = Arc::new(rig);
@@ -56,8 +68,19 @@ impl ClipSet {
             let binding = Arc::new(ClipBinding::new(&rig, &pc.clip));
             clips.insert(pc.clip.name.to_lowercase(), (Arc::new(pc.clip), binding));
         }
-        let qnode = rig.names.iter().map(|n| qrig.by_name.get(n).copied()).collect();
-        let mut set = Self { rig, plan, clips, qnode, fix: Quat::IDENTITY, n_quest: qrig.names.len() };
+        let qnode = rig
+            .names
+            .iter()
+            .map(|n| qrig.by_name.get(n).copied())
+            .collect();
+        let mut set = Self {
+            rig,
+            plan,
+            clips,
+            qnode,
+            fix: Quat::IDENTITY,
+            n_quest: qrig.names.len(),
+        };
         // Facing of the clips' model space, measured on the family's idle clip like the desktop animator does.
         if let Some(idle) = set.find("ambient_loop") {
             let mut model = vec![Affine3A::IDENTITY; set.rig.names.len()];
@@ -84,7 +107,10 @@ impl ClipSet {
 
     /// Nominal ground speed (m/s) of a locomotion clip, from the trailing number of its name.
     pub fn nominal_speed(&self, key: &str) -> f32 {
-        self.clips.get(key).map_or(0.0, |c| trailing_speed(&c.0.name)) / 100.0
+        self.clips
+            .get(key)
+            .map_or(0.0, |c| trailing_speed(&c.0.name))
+            / 100.0
     }
 
     /// Weighted pose (`(clip key, time, weight)` layers) in slot space.
@@ -92,11 +118,17 @@ impl ClipSet {
         let mut pose = self.rig.rest.clone();
         let mut acc = 0.0f32;
         for &(key, t, w) in layers {
-            let Some((clip, binding)) = self.clips.get(key) else { continue };
+            let Some((clip, binding)) = self.clips.get(key) else {
+                continue;
+            };
             if w <= 1e-4 {
                 continue;
             }
-            let t = if clip.looping { clip.wrap(t) } else { t.clamp(0.0, clip.duration) };
+            let t = if clip.looping {
+                clip.wrap(t)
+            } else {
+                t.clamp(0.0, clip.duration)
+            };
             if acc <= 0.0 {
                 binding.sample(clip, &self.rig.rest, t, &mut pose);
             } else {
@@ -136,7 +168,13 @@ pub struct Gait {
 
 impl Gait {
     /// `pos` metres (world), `yaw` the body yaw. Returns the leg-override weight and layer list.
-    pub fn update(&mut self, set: &ClipSet, pos: Vec3, yaw: f32, dt: f32) -> (f32, Vec<(String, f32, f32)>) {
+    pub fn update(
+        &mut self,
+        set: &ClipSet,
+        pos: Vec3,
+        yaw: f32,
+        dt: f32,
+    ) -> (f32, Vec<(String, f32, f32)>) {
         let dt = dt.max(1e-3);
         if let Some(p) = self.prev {
             let v = (pos - p) / dt;
@@ -153,7 +191,11 @@ impl Gait {
             return (0.0, vec![]);
         }
         // Direction weights (forward is -Z in the body frame).
-        let d = if self.speed > 1e-3 { local / self.speed } else { Vec3::NEG_Z };
+        let d = if self.speed > 1e-3 {
+            local / self.speed
+        } else {
+            Vec3::NEG_Z
+        };
         let (wf, wb, wl, wr) = ((-d.z).max(0.0), d.z.max(0.0), (-d.x).max(0.0), d.x.max(0.0));
         let s = (wf + wb + wl + wr).max(1e-3);
         // Walk to run between 1.4 and 2.8 m/s.
@@ -164,7 +206,12 @@ impl Gait {
             if gw <= 0.0 {
                 continue;
             }
-            for (dir, dw) in [("n_fwd", wf), ("n_back", wb), ("n_left", wl), ("n_right", wr)] {
+            for (dir, dw) in [
+                ("n_fwd", wf),
+                ("n_back", wb),
+                ("n_left", wl),
+                ("n_right", wr),
+            ] {
                 let w = gw * dw / s;
                 if w <= 0.0 {
                     continue;
@@ -214,7 +261,9 @@ impl OneShot {
             return None;
         }
         let fade = 0.08f32;
-        let w = (self.t / fade).min(1.0).min(((self.len - self.t) / fade).clamp(0.0, 1.0));
+        let w = (self.t / fade)
+            .min(1.0)
+            .min(((self.len - self.t) / fade).clamp(0.0, 1.0));
         Some((key, self.t, w))
     }
 }

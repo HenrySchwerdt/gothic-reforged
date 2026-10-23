@@ -10,8 +10,8 @@ use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
-use gothic_cook::actor::ActorNodeRec;
 use gothic_cook::AssetId;
+use gothic_cook::actor::ActorNodeRec;
 
 use crate::ardea::Ardea;
 use crate::qmat::{QParams, QuestMaterial};
@@ -32,7 +32,15 @@ pub struct ActorRig {
 
 impl ActorRig {
     pub fn empty() -> Self {
-        Self { root: Entity::PLACEHOLDER, by_name: Default::default(), names: vec![], parent: vec![], bind_local: vec![], bind_global: vec![], joints: vec![] }
+        Self {
+            root: Entity::PLACEHOLDER,
+            by_name: Default::default(),
+            names: vec![],
+            parent: vec![],
+            bind_local: vec![],
+            bind_global: vec![],
+            joints: vec![],
+        }
     }
 }
 
@@ -108,11 +116,27 @@ pub fn spawn_body(
         }
     }
     for i in 0..n {
-        let p = if parent[i] >= 0 { joints[parent[i] as usize] } else { root };
+        let p = if parent[i] >= 0 {
+            joints[parent[i] as usize]
+        } else {
+            root
+        };
         commands.entity(joints[i]).insert(ChildOf(p));
     }
-    let by_name = names.iter().enumerate().map(|(i, nm)| (nm.clone(), i)).collect();
-    let rig = ActorRig { root, by_name, names, parent, bind_local, bind_global, joints };
+    let by_name = names
+        .iter()
+        .enumerate()
+        .map(|(i, nm)| (nm.clone(), i))
+        .collect();
+    let rig = ActorRig {
+        root,
+        by_name,
+        names,
+        parent,
+        bind_local,
+        bind_global,
+        joints,
+    };
     add_part(commands, a, &data, &rig, opts, meshes, qmats, images, inv);
     Some(rig)
 }
@@ -175,36 +199,70 @@ fn add_part(
         .iter()
         .map(|nm| rig.by_name.get(nm).map_or(rig.root, |&i| rig.joints[i]))
         .collect();
-    let ibp = inv.add(SkinnedMeshInverseBindposes::from(part_global.iter().map(|m| m.inverse()).collect::<Vec<_>>()));
+    let ibp = inv.add(SkinnedMeshInverseBindposes::from(
+        part_global.iter().map(|m| m.inverse()).collect::<Vec<_>>(),
+    ));
     let amats = data.materials();
     let verts = data.vertices();
     let idx = data.indices();
-    let layers = if opts.hide_from_eyes { RenderLayers::layer(1) } else { RenderLayers::layer(0).with(1) };
+    let layers = if opts.hide_from_eyes {
+        RenderLayers::layer(1)
+    } else {
+        RenderLayers::layer(0).with(1)
+    };
     for sub in data.submeshes() {
         let vs = &verts[sub.first_vertex as usize..(sub.first_vertex + sub.vertex_count) as usize];
         let is = &idx[sub.first_index as usize..(sub.first_index + sub.index_count) as usize];
-        let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vs.iter().map(|v| [-v.pos[0], v.pos[1], v.pos[2]]).collect::<Vec<_>>());
-        m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vs.iter().map(|v| [-v.normal[0], v.normal[1], v.normal[2]]).collect::<Vec<_>>());
-        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vs.iter().map(|v| v.uv).collect::<Vec<_>>());
+        let mut m = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        m.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vs.iter()
+                .map(|v| [-v.pos[0], v.pos[1], v.pos[2]])
+                .collect::<Vec<_>>(),
+        );
+        m.insert_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            vs.iter()
+                .map(|v| [-v.normal[0], v.normal[1], v.normal[2]])
+                .collect::<Vec<_>>(),
+        );
+        m.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            vs.iter().map(|v| v.uv).collect::<Vec<_>>(),
+        );
         m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0f32; 4]; vs.len()]);
         if sub.skinned != 0 {
-            m.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(vs.iter().map(|v| v.joints).collect()));
+            m.insert_attribute(
+                Mesh::ATTRIBUTE_JOINT_INDEX,
+                VertexAttributeValues::Uint16x4(vs.iter().map(|v| v.joints).collect()),
+            );
             m.insert_attribute(
                 Mesh::ATTRIBUTE_JOINT_WEIGHT,
                 vs.iter()
-                    .map(|v| [v.weights[0] as f32 / 255.0, v.weights[1] as f32 / 255.0, v.weights[2] as f32 / 255.0, v.weights[3] as f32 / 255.0])
+                    .map(|v| {
+                        [
+                            v.weights[0] as f32 / 255.0,
+                            v.weights[1] as f32 / 255.0,
+                            v.weights[2] as f32 / 255.0,
+                            v.weights[3] as f32 / 255.0,
+                        ]
+                    })
                     .collect::<Vec<[f32; 4]>>(),
             );
         }
         m.insert_indices(Indices::U32(is.to_vec()));
         let am = amats.get(sub.material as usize);
         let mut from_shader = false;
-        let tex = am.and_then(|am| a.texture(am.diffuse_tex, images)).or_else(|| {
-            let t = am.and_then(|am| a.shader_diffuse(am.shader_material, images));
-            from_shader = t.is_some();
-            t
-        });
+        let tex = am
+            .and_then(|am| a.texture(am.diffuse_tex, images))
+            .or_else(|| {
+                let t = am.and_then(|am| a.shader_diffuse(am.shader_material, images));
+                from_shader = t.is_some();
+                t
+            });
         let (th, ts) = match tex {
             Some((h, s)) => (Some(h), s),
             None => (Some(a.white_image()), Vec2::ONE),
@@ -212,7 +270,9 @@ fn add_part(
         let tint = if th.is_some() && (from_shader || am.is_some_and(|am| am.diffuse_tex != 0)) {
             Vec3::ONE
         } else {
-            am.map_or(Vec3::splat(0.6), |am| Vec3::new(am.diffuse[0], am.diffuse[1], am.diffuse[2]))
+            am.map_or(Vec3::splat(0.6), |am| {
+                Vec3::new(am.diffuse[0], am.diffuse[1], am.diffuse[2])
+            })
         };
         let mat = qmats.add(QuestMaterial {
             params: QParams::new(tint, ts, if opts.cutout { 0.4 } else { 0.0 }),
@@ -223,12 +283,27 @@ fn add_part(
             two_sided: true,
         });
         let node = sub.node as usize;
-        let mut e = commands.spawn((Mesh3d(meshes.add(m)), MeshMaterial3d(mat), Transform::IDENTITY, NoFrustumCulling, layers.clone()));
+        let mut e = commands.spawn((
+            Mesh3d(meshes.add(m)),
+            MeshMaterial3d(mat),
+            Transform::IDENTITY,
+            NoFrustumCulling,
+            layers.clone(),
+        ));
         if sub.skinned != 0 {
-            e.insert((SkinnedMesh { inverse_bindposes: ibp.clone(), joints: joint_entities.clone() }, ChildOf(rig.root)));
+            e.insert((
+                SkinnedMesh {
+                    inverse_bindposes: ibp.clone(),
+                    joints: joint_entities.clone(),
+                },
+                ChildOf(rig.root),
+            ));
         } else if node < joint_entities.len() {
             // Rigid part: attached to its node, vertices are in model space.
-            e.insert((Transform::from_matrix(part_global[node].inverse()), ChildOf(joint_entities[node])));
+            e.insert((
+                Transform::from_matrix(part_global[node].inverse()),
+                ChildOf(joint_entities[node]),
+            ));
         } else {
             e.insert(ChildOf(rig.root));
         }

@@ -8,7 +8,11 @@ fn main() -> anyhow::Result<()> {
         for n in lib.static_mesh_names(&needle).iter().take(60) {
             println!("mesh  {n}");
         }
-        for n in lib.actor_names(|a| a.to_lowercase().contains(&needle.to_lowercase())).iter().take(40) {
+        for n in lib
+            .actor_names(|a| a.to_lowercase().contains(&needle.to_lowercase()))
+            .iter()
+            .take(40)
+        {
             println!("actor {n}");
             for p in lib.texture_problems(n) {
                 println!("   problem {p}");

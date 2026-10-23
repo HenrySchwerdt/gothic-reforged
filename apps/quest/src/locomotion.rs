@@ -5,7 +5,7 @@
 //! poses. Collision is the `VrWorld` triangle world the Ardea streamer fills.
 use bevy::prelude::*;
 use gothic_vr::locomotion::ComfortSettings;
-use gothic_vr::{ExternalLocomotion, PendingXrFrame, Pose, VrPlayer, VrSet, VrWorld, XrFrame};
+use gothic_vr::{PendingXrFrame, Pose, VrPlayer, VrSet, VrWorld, XrFrame};
 use gothic_xr_quest::{XrFrameData, XrRig};
 
 pub const CM: f32 = 100.0;
@@ -60,9 +60,13 @@ impl Physics {
 /// Inserts the player, the collision world and the locomotion state (feet position in cm).
 pub fn init(app: &mut App, start_cm: Vec3) {
     let head = Pose::new(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+    let comfort = ComfortSettings {
+        room_scale: false,
+        teleport: false,
+        ..ComfortSettings::default()
+    };
     app.insert_resource(VrWorld::default())
-        .insert_resource(VrPlayer::new(start_cm / CM, ComfortSettings::default(), &head))
-        .insert_resource(ExternalLocomotion)
+        .insert_resource(VrPlayer::new(start_cm / CM, comfort, &head))
         .insert_resource(Physics::new(start_cm));
 }
 
@@ -71,7 +75,11 @@ pub struct LocomotionPlugin;
 impl Plugin for LocomotionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, feed_vr_frame.in_set(VrSet::Backend))
-            .add_systems(Update, locomote.in_set(VrSet::Locomotion));
+            .add_systems(Last, play_vr_haptics)
+            .add_systems(
+                Update,
+                locomote.after(VrSet::Locomotion).before(VrSet::Body),
+            );
     }
 }
 
@@ -81,18 +89,47 @@ fn feed_vr_frame(frame: Res<XrFrameData>, mut pending: ResMut<PendingXrFrame>) {
         return;
     }
     let pose = |t: &Transform| Pose::new(t.translation, t.rotation);
-    let mut f = XrFrame { head: pose(&frame.head), ..default() };
+    let mut f = XrFrame {
+        head: pose(&frame.head),
+        ..default()
+    };
     for (i, h) in frame.hands.iter().enumerate() {
         let c = &mut f.hands[i];
         c.pose = h.active.then(|| pose(&h.grip));
         c.trigger = h.trigger;
         c.grip = h.squeeze;
-        c.thumbstick = h.stick;
-        c.primary = h.primary;
+        // The workspace `gothic-vr` comfort locomotion (no ExternalLocomotion switch any more) runs every frame
+        // too; it must see no stick / jump input, otherwise the capsule would move twice. `locomote` below reads
+        // the raw `XrFrameData` instead.
+        c.thumbstick = Vec2::ZERO;
+        c.primary = i == 0 && h.primary;
         c.secondary = h.secondary;
         c.stick_click = h.stick_click;
+        c.angular_velocity = h.angular_velocity;
     }
     pending.0 = Some(f);
+}
+
+/// Plays the workspace `gothic-vr` haptic messages (melee hits, clashes, grabs, bow) on the Quest controllers through the
+/// OpenXR output action. The crate's own player is bypassed (External backend), so the same per-hand mixer is run here.
+fn play_vr_haptics(
+    time: Res<Time<Real>>,
+    mut reader: MessageReader<gothic_vr::HapticMessage>,
+    mut mixer: Local<gothic_vr::haptics::HapticMixer>,
+) {
+    let now = time.elapsed_secs();
+    for gothic_vr::HapticMessage(p) in reader.read() {
+        mixer.push(*p, now);
+    }
+    let gain = gothic_xr_quest::knob_f32("haptic", 1.0).clamp(0.0, 3.0);
+    for p in mixer.take(now) {
+        let hand = if p.hand == gothic_vr::Hand::Left {
+            0
+        } else {
+            1
+        };
+        gothic_xr_quest::haptic_pulse_ex(hand, p.amplitude * gain, p.duration, p.frequency);
+    }
 }
 
 pub static LOCO_US: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -100,7 +137,10 @@ pub static LOCO_US: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32:
 struct Timer(std::time::Instant);
 impl Drop for Timer {
     fn drop(&mut self) {
-        LOCO_US.store(self.0.elapsed().as_micros() as u32, std::sync::atomic::Ordering::Relaxed);
+        LOCO_US.store(
+            self.0.elapsed().as_micros() as u32,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 
@@ -135,7 +175,8 @@ fn locomote(
     if phys.frames == 2 || frame.recenters != phys.aligned_recenters || click_edge || lifted {
         let (hyaw, _, _) = frame.head.rotation.to_euler(EulerRot::YXZ);
         t.rotation = Quat::from_rotation_y(want_yaw - hyaw);
-        let head_h = t.rotation * Vec3::new(frame.head.translation.x, 0.0, frame.head.translation.z);
+        let head_h =
+            t.rotation * Vec3::new(frame.head.translation.x, 0.0, frame.head.translation.z);
         let p = player.ctrl.position;
         phys.offset = Vec3::new(-head_h.x, 0.0, -head_h.z);
         t.translation = Vec3::new(p.x / CM, p.y / CM, p.z / CM) + phys.offset;
@@ -157,7 +198,13 @@ fn locomote(
         let head_cm = t.transform_point(frame.head.translation) * CM;
         let inner = world.0.capsule_blocked(head_cm, head_cm, 10.0);
         let outer = world.0.capsule_blocked(head_cm, head_cm, 22.0);
-        phys.fade_target = if inner { 1.0 } else if outer { 0.5 } else { 0.0 };
+        phys.fade_target = if inner {
+            1.0
+        } else if outer {
+            0.5
+        } else {
+            0.0
+        };
     }
     {
         let k = (frame.dt * 8.0).min(1.0);
@@ -182,13 +229,30 @@ fn locomote(
     }
 
     if phys.frames % 72 == 0 {
-        info!("[loco] left_stick=({:.2},{:.2}) right_stick=({:.2},{:.2}) squeeze=({:.2},{:.2}) ready={} grounded={} pos_cm=({:.0},{:.0},{:.0})", left.x, left.y, right.x, right.y, frame.hands[0].squeeze, frame.hands[1].squeeze, phys.ready, player.ctrl.grounded, player.ctrl.position.x, player.ctrl.position.y, player.ctrl.position.z);
+        info!(
+            "[loco] left_stick=({:.2},{:.2}) right_stick=({:.2},{:.2}) squeeze=({:.2},{:.2}) ready={} grounded={} pos_cm=({:.0},{:.0},{:.0})",
+            left.x,
+            left.y,
+            right.x,
+            right.y,
+            frame.hands[0].squeeze,
+            frame.hands[1].squeeze,
+            phys.ready,
+            player.ctrl.grounded,
+            player.ctrl.position.x,
+            player.ctrl.position.y,
+            player.ctrl.position.z
+        );
     }
     if phys.ready {
         let (yaw, _, _) = frame.head.rotation.to_euler(EulerRot::YXZ);
         let dir = t.rotation * Quat::from_rotation_y(yaw) * Vec3::new(left.x, 0.0, -left.y);
         let mag = left.length().min(1.0);
-        let wish = if mag > 0.15 { dir.normalize_or_zero() * mag * 600.0 } else { Vec3::ZERO };
+        let wish = if mag > 0.15 {
+            dir.normalize_or_zero() * mag * 600.0
+        } else {
+            Vec3::ZERO
+        };
         let a = frame.hands[1].primary;
         let jump = a && !phys.jump_prev;
         phys.jump_prev = a;
@@ -212,7 +276,10 @@ fn locomote(
             // Collision for that spot is not resident (edge of the streamed area, or a cell still loading): never
             // fall into the void. Undo the move like an invisible wall and keep the character standing.
             let p = ctrl.position;
-            if was_grounded && !ctrl.grounded && world.0.ground_below(p + Vec3::Y * 150.0, 2_500.0).is_none() {
+            if was_grounded
+                && !ctrl.grounded
+                && world.0.ground_below(p + Vec3::Y * 150.0, 2_500.0).is_none()
+            {
                 ctrl.position = prev;
                 ctrl.vertical_speed = 0.0;
                 ctrl.grounded = true;

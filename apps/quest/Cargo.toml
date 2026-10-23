@@ -11,17 +11,17 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 gothic-xr-quest = { path = "../../crates/xr-quest" }
-bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_asset", "bevy_camera"] }
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_asset", "bevy_camera", "debug"] }
 anyhow.workspace = true
 log = "0.4"
 gothic-cook = { path = "../../crates/cook", default-features = false }
 gothic-physics = { path = "../../crates/physics" }
 gothic-render-rules = { path = "../../crates/render-rules" }
-gothic-vr = { path = "../../.local/vendor/crates/vr" }
-gothic-vr-physics = { path = "../../.local/vendor/crates/vr-physics" }
-gothic-vr-melee = { path = "../../.local/vendor/crates/vr-melee" }
-gothic-vr-archery = { path = "../../.local/vendor/crates/vr-archery" }
-gothic-vr-npc = { path = "../../.local/vendor/crates/vr-npc" }
+gothic-vr = { path = "../../crates/vr", default-features = false }
+gothic-vr-physics = { path = "../../crates/vr-physics" }
+gothic-vr-melee = { path = "../../crates/vr-melee" }
+gothic-vr-archery = { path = "../../crates/vr-archery" }
+gothic-vr-npc = { path = "../../crates/vr-npc" }
 gothic-sim = { path = "../../crates/sim" }
 gothic-animation = { path = "../../crates/animation" }
 gothic-formats = { path = "../../crates/formats" }

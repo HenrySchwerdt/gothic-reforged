@@ -7,7 +7,7 @@ license.workspace = true
 description = "VR foundation: tracked head/hands input, desktop fallback, stereo rig, comfort locomotion and full-body IK"
 
 [dependencies]
-bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "3d_bevy_render", "bevy_winit", "multi_threaded", "bevy_gizmos", "default_font", "x11"] }
+bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "multi_threaded", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_camera", "bevy_window", "bevy_gizmos"] }
 gothic-physics = { path = "../physics" }
 gothic-runtime = { path = "../runtime" }
 gothic-sim = { path = "../sim" }
@@ -19,6 +19,9 @@ openxr = { version = "=0.22.0", default-features = false, features = ["loaded"],
 libc = { version = "0.2", optional = true }
 
 [features]
+default = ["desktop"]
+# Desktop window, emulator and full 3D render stack. Off for the Quest (NativeActivity, no winit).
+desktop = ["bevy/3d_bevy_render", "bevy/bevy_winit", "bevy/default_font", "bevy/x11"]
 openxr = ["dep:openxr", "dep:libc"]
 
 [lints.rust]

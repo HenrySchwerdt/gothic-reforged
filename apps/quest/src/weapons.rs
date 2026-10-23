@@ -9,12 +9,12 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use gothic_vr::{Hand, Pose, VrBody, VrButton, VrInputRes, VrPlayer, VrWorld, XrHand, XrHead};
-use std::collections::HashMap;
 use gothic_vr_archery::{FlyingArrow, HeldArrow};
 use gothic_vr_melee::{HitzoneSet, PlayerAvatar, spawn_dummy};
 use gothic_vr_physics::avian3d::prelude::*;
 use gothic_vr_physics::props::{self, PropKind};
 use gothic_vr_physics::{HandSet, Held, Prop, VrLayer, spawn_prop};
+use std::collections::HashMap;
 
 use crate::actor::{PartOptions, spawn_body};
 use crate::ardea::Ardea;
@@ -43,7 +43,18 @@ impl Plugin for WeaponsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (spawn_weapons.run_if(resource_exists::<Ardea>), holster_return, weapon_recall, grab_haptics, bow_haptics, holster_feedback, ground_follow, quiver_follow, dummy_visuals, arrow_visuals),
+            (
+                spawn_weapons.run_if(resource_exists::<Ardea>),
+                holster_return,
+                weapon_recall,
+                grab_haptics,
+                bow_haptics,
+                holster_feedback,
+                ground_follow,
+                quiver_follow,
+                dummy_visuals,
+                arrow_visuals,
+            ),
         )
         .add_systems(Startup, tune_archery)
         .add_systems(FixedUpdate, holster_pin.before(HandSet::Grab))
@@ -73,12 +84,19 @@ struct BodyFrame {
 impl BodyFrame {
     fn new(head: &Transform, feet: Vec3, body: Option<&VrBody>) -> Self {
         let (hy, _, _) = head.rotation.to_euler(EulerRot::YXZ);
-        let yaw = body.and_then(|b| b.pose.as_ref()).map_or(hy, |p| p.body_yaw);
-        Self { feet, eye: (head.translation.y - feet.y).clamp(1.0, 2.1), yaw: Quat::from_rotation_y(yaw) }
+        let yaw = body
+            .and_then(|b| b.pose.as_ref())
+            .map_or(hy, |p| p.body_yaw);
+        Self {
+            feet,
+            eye: (head.translation.y - feet.y).clamp(1.0, 2.1),
+            yaw: Quat::from_rotation_y(yaw),
+        }
     }
     /// Body-local point (x right, height as a fraction of eye height, z back) to world.
     fn at(&self, x: f32, y_frac: f32, z_back: f32) -> Vec3 {
-        Vec3::new(self.feet.x, self.feet.y + y_frac * self.eye, self.feet.z) + self.yaw * Vec3::new(x, 0.0, z_back)
+        Vec3::new(self.feet.x, self.feet.y + y_frac * self.eye, self.feet.z)
+            + self.yaw * Vec3::new(x, 0.0, z_back)
     }
 }
 
@@ -91,7 +109,11 @@ fn zone(frame: &BodyFrame, slot: &str) -> (Transform, f32) {
     match slot {
         "Slot_Bow" => {
             let p = frame.at(-0.15, 0.84, 0.14);
-            (Transform::from_translation(p).with_rotation(frame.yaw * Quat::from_rotation_z(0.30)), 0.28)
+            (
+                Transform::from_translation(p)
+                    .with_rotation(frame.yaw * Quat::from_rotation_z(0.30)),
+                0.28,
+            )
         }
         _ => {
             // Grip at the hip, blade hanging down and back.
@@ -99,7 +121,11 @@ fn zone(frame: &BodyFrame, slot: &str) -> (Transform, f32) {
             // below horizontal) so the tip stays above the knee.
             let p = frame.at(-0.20, 0.62, 0.0);
             let dir = frame.yaw * Vec3::new(-0.10, -0.35, 0.93).normalize();
-            (Transform::from_translation(p).with_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, dir)), 0.24)
+            (
+                Transform::from_translation(p)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, dir)),
+                0.24,
+            )
         }
     }
 }
@@ -116,7 +142,14 @@ fn zone_set(frame: &BodyFrame, slot: &str) -> Vec<(Vec3, f32)> {
 
 /// Holster zone for a standing player (`feet`, `eye` = eye height above the feet, torso `yaw` about Y), for tools.
 pub fn holster_zone(feet: Vec3, eye: f32, yaw: f32, slot: &str) -> (Transform, f32) {
-    zone(&BodyFrame { feet, eye, yaw: Quat::from_rotation_y(yaw) }, slot)
+    zone(
+        &BodyFrame {
+            feet,
+            eye,
+            yaw: Quat::from_rotation_y(yaw),
+        },
+        slot,
+    )
 }
 
 #[derive(Component)]
@@ -135,9 +168,20 @@ fn holster_pin(
     input: Res<VrInputRes>,
     head: Query<&Transform, (With<XrHead>, Without<XrHand>)>,
     hands: Query<(&Transform, &XrHand), Without<XrHead>>,
-    mut props: Query<(Entity, &HolsterHome, &Held, Option<&Holstered>, &mut Position, &mut Rotation, &mut LinearVelocity, &mut AngularVelocity)>,
+    mut props: Query<(
+        Entity,
+        &HolsterHome,
+        &Held,
+        Option<&Holstered>,
+        &mut Position,
+        &mut Rotation,
+        &mut LinearVelocity,
+        &mut AngularVelocity,
+    )>,
 ) {
-    let (Some(player), Ok(head)) = (player, head.single()) else { return };
+    let (Some(player), Ok(head)) = (player, head.single()) else {
+        return;
+    };
     let frame = BodyFrame::new(head, player.ctrl.position / 100.0, body.as_deref());
     for (e, home, held, holstered, mut pos, mut rot, mut lv, mut av) in &mut props {
         if holstered.is_none() {
@@ -152,7 +196,9 @@ fn holster_pin(
         // the physics grab sees it at distance zero): no precision needed at the body.
         let zs = zone_set(&frame, home.slot);
         let draw = hands.iter().find(|(ht, h)| {
-            h.tracked && input.0.held(h.hand, VrButton::Grip) && zs.iter().any(|(c, r)| ht.translation.distance(*c) < *r)
+            h.tracked
+                && input.0.held(h.hand, VrButton::Grip)
+                && zs.iter().any(|(c, r)| ht.translation.distance(*c) < *r)
         });
         if let Some((ht, h)) = draw {
             pos.0 = ht.translation;
@@ -179,7 +225,9 @@ fn holster_return(
     head: Query<&Transform, (With<XrHead>, Without<HolsterHome>)>,
     props: Query<(Entity, &HolsterHome, &Held, &Transform), Without<Holstered>>,
 ) {
-    let (Some(player), Ok(head)) = (player, head.single()) else { return };
+    let (Some(player), Ok(head)) = (player, head.single()) else {
+        return;
+    };
     let frame = BodyFrame::new(head, player.ctrl.position / 100.0, body.as_deref());
     for (e, home, held, t) in &props {
         if held.count() > 0 {
@@ -212,7 +260,9 @@ fn weapon_recall(
         }
         let w = lost.entry(e).or_insert(0.0);
         *w += time.delta_secs();
-        let far = t.translation.distance(feet) > 6.0 || t.translation.y < feet.y - 1.5 || !t.translation.is_finite();
+        let far = t.translation.distance(feet) > 6.0
+            || t.translation.y < feet.y - 1.5
+            || !t.translation.is_finite();
         if *w > 2.0 || far {
             commands.entity(e).insert(Holstered);
             lost.remove(&e);
@@ -265,7 +315,16 @@ fn bow_haptics(
 #[allow(clippy::type_complexity)]
 fn weapon_stabilize(
     hands: Query<(&gothic_vr_physics::PhysicsHand, &Position, &Rotation), Without<HolsterHome>>,
-    mut props: Query<(&Held, &mut Position, &mut Rotation, &mut LinearVelocity, &mut AngularVelocity), With<HolsterHome>>,
+    mut props: Query<
+        (
+            &Held,
+            &mut Position,
+            &mut Rotation,
+            &mut LinearVelocity,
+            &mut AngularVelocity,
+        ),
+        With<HolsterHome>,
+    >,
 ) {
     let max_ang = gothic_xr_quest::knob_f32("max_ang_vel", 25.0);
     let max_lin = gothic_xr_quest::knob_f32("max_lin_vel", 25.0);
@@ -278,7 +337,12 @@ fn weapon_stabilize(
         if held.count() == 0 {
             continue;
         }
-        let Some((_, hp, hr)) = hands.iter().find(|(h, _, _)| held.hands[h.hand.index()].is_some()) else { continue };
+        let Some((_, hp, hr)) = hands
+            .iter()
+            .find(|(h, _, _)| held.hands[h.hand.index()].is_some())
+        else {
+            continue;
+        };
         let ang = rot.0.angle_between(hr.0);
         if pos.0.distance(hp.0) > 0.30 || ang > 1.05 {
             pos.0 = hp.0;
@@ -291,7 +355,10 @@ fn weapon_stabilize(
 }
 
 /// A pulse when a hand takes hold of a weapon or lets go.
-fn grab_haptics(mut state: Local<HashMap<Entity, [bool; 2]>>, props: Query<(Entity, &Held), With<HolsterHome>>) {
+fn grab_haptics(
+    mut state: Local<HashMap<Entity, [bool; 2]>>,
+    props: Query<(Entity, &Held), With<HolsterHome>>,
+) {
     for (e, held) in &props {
         let now = [held.hands[0].is_some(), held.hands[1].is_some()];
         let old = state.insert(e, now).unwrap_or([false; 2]);
@@ -311,13 +378,26 @@ fn holster_feedback(
     body: Option<Res<VrBody>>,
     head: Query<&Transform, (With<XrHead>, Without<ZoneMarker>, Without<Scabbard>)>,
     hands: Query<(&Transform, &XrHand), (Without<XrHead>, Without<ZoneMarker>, Without<Scabbard>)>,
-    mut markers: Query<(&ZoneMarker, &mut Transform), (Without<Scabbard>, Without<XrHand>, Without<XrHead>)>,
-    mut scab: Query<&mut Transform, (With<Scabbard>, Without<ZoneMarker>, Without<XrHand>, Without<XrHead>)>,
+    mut markers: Query<
+        (&ZoneMarker, &mut Transform),
+        (Without<Scabbard>, Without<XrHand>, Without<XrHead>),
+    >,
+    mut scab: Query<
+        &mut Transform,
+        (
+            With<Scabbard>,
+            Without<ZoneMarker>,
+            Without<XrHand>,
+            Without<XrHead>,
+        ),
+    >,
     mut state: Local<HashMap<&'static str, [bool; 2]>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
     holstered: Query<&HolsterHome, With<Holstered>>,
 ) {
-    let (Some(player), Ok(head)) = (player, head.single()) else { return };
+    let (Some(player), Ok(head)) = (player, head.single()) else {
+        return;
+    };
     let frame = BodyFrame::new(head, player.ctrl.position / 100.0, body.as_deref());
     for (m, mut t) in &mut markers {
         let (z, _radius) = zone(&frame, m.slot);
@@ -341,7 +421,11 @@ fn holster_feedback(
             st[k] = inside;
         }
         if let Some(mut mat) = mats.get_mut(&m.mat) {
-            mat.base_color = if any { Color::srgba(1.0, 0.85, 0.2, 0.9) } else { Color::srgba(0.8, 0.8, 0.8, 0.35) };
+            mat.base_color = if any {
+                Color::srgba(1.0, 0.85, 0.2, 0.9)
+            } else {
+                Color::srgba(0.8, 0.8, 0.8, 0.35)
+            };
         }
     }
     let (z, _) = zone(&frame, "Slot_MeleeBackRight");
@@ -376,7 +460,10 @@ fn spawn_weapons(
         GroundBox,
         RigidBody::Static,
         Collider::cuboid(40.0, 1.0, 40.0),
-        CollisionLayers::new(VrLayer::World, [VrLayer::Hand, VrLayer::Prop, VrLayer::Body]),
+        CollisionLayers::new(
+            VrLayer::World,
+            [VrLayer::Hand, VrLayer::Prop, VrLayer::Body],
+        ),
         Transform::from_translation(feet - Vec3::Y * 0.5),
     ));
 
@@ -394,23 +481,60 @@ fn spawn_weapons(
             g.visual(0.01)
         })
         .unwrap_or_else(|| Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)).with_scale(Vec3::splat(0.01)));
-    let sword = spawn_prop(&mut commands, &props::sword(), Pose::new(feet + Vec3::new(0.0, 1.0, 0.5), Quat::IDENTITY));
-    commands.entity(sword).insert((Holstered, HolsterHome { slot: "Slot_MeleeBackRight", visual: sword_vis }, Visibility::default()));
-    a.spawn_static_mirrored(&mut commands, "g3_weapon_1h_sword_orcslayer_01.xcmsh", sword, sword_vis, &mut meshes, &mut qmats, &mut images);
+    let sword = spawn_prop(
+        &mut commands,
+        &props::sword(),
+        Pose::new(feet + Vec3::new(0.0, 1.0, 0.5), Quat::IDENTITY),
+    );
+    commands.entity(sword).insert((
+        Holstered,
+        HolsterHome {
+            slot: "Slot_MeleeBackRight",
+            visual: sword_vis,
+        },
+        Visibility::default(),
+    ));
+    a.spawn_static_mirrored(
+        &mut commands,
+        "g3_weapon_1h_sword_orcslayer_01.xcmsh",
+        sword,
+        sword_vis,
+        &mut meshes,
+        &mut qmats,
+        &mut images,
+    );
 
     // Bow (actor, mirrored): stave native Z -> prop Y, shoot direction -X (mirrored) -> prop -Z.
     let bow_rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y));
     let bow_vis = Transform::from_rotation(bow_rot).with_scale(Vec3::splat(0.01));
-    let bow = spawn_prop(&mut commands, &props::bow(), Pose::new(feet + Vec3::new(0.3, 1.0, 0.5), Quat::IDENTITY));
-    commands.entity(bow).insert((Holstered, HolsterHome { slot: "Slot_Bow", visual: bow_vis }, Visibility::default()));
-    let holder = commands.spawn((bow_vis, Visibility::default(), ChildOf(bow))).id();
-    let bowroot = commands.spawn((Transform::IDENTITY, Visibility::default(), ChildOf(holder))).id();
+    let bow = spawn_prop(
+        &mut commands,
+        &props::bow(),
+        Pose::new(feet + Vec3::new(0.3, 1.0, 0.5), Quat::IDENTITY),
+    );
+    commands.entity(bow).insert((
+        Holstered,
+        HolsterHome {
+            slot: "Slot_Bow",
+            visual: bow_vis,
+        },
+        Visibility::default(),
+    ));
+    let holder = commands
+        .spawn((bow_vis, Visibility::default(), ChildOf(bow)))
+        .id();
+    let bowroot = commands
+        .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(holder)))
+        .id();
     let _ = spawn_body(
         &mut commands,
         &mut a,
         "it_weapon_ranged_bow_hunting_01.xact",
         bowroot,
-        PartOptions { cutout: false, hide_from_eyes: false },
+        PartOptions {
+            cutout: false,
+            hide_from_eyes: false,
+        },
         &mut meshes,
         &mut qmats,
         &mut images,
@@ -419,19 +543,48 @@ fn spawn_weapons(
     // The holder carries the visual transform already; undo the actor's own root scale (the actor is spawned in
     // centimetres, the holder scales by 0.01).
     // Quiver (visual only; the archery logic derives its position from the head).
-    spawn_quiver(&mut commands, &mut a, &mut meshes, &mut qmats, &mut images, &mut std_mats);
+    spawn_quiver(
+        &mut commands,
+        &mut a,
+        &mut meshes,
+        &mut qmats,
+        &mut images,
+        &mut std_mats,
+    );
 
     // Visible holsters: a marker per zone (lights up when a hand is inside).
     for slot in ["Slot_MeleeBackRight", "Slot_Bow"] {
-        let mat = std_mats.add(StandardMaterial { base_color: Color::srgba(0.8, 0.8, 0.8, 0.35), unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
-        commands.spawn((ZoneMarker { slot, mat: mat.clone() }, Mesh3d(meshes.add(Sphere::new(1.0))), MeshMaterial3d(mat), Transform::IDENTITY));
+        let mat = std_mats.add(StandardMaterial {
+            base_color: Color::srgba(0.8, 0.8, 0.8, 0.35),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        commands.spawn((
+            ZoneMarker {
+                slot,
+                mat: mat.clone(),
+            },
+            Mesh3d(meshes.add(Sphere::new(1.0))),
+            MeshMaterial3d(mat),
+            Transform::IDENTITY,
+        ));
     }
 
     // Targets: training dummies (melee) near the start, archery targets further on.
     let fwd = Vec3::NEG_Z;
-    for (right, ahead) in [(-2.0f32, 4.0f32), (2.0, 5.0), (0.0, 10.0), (3.0, 20.0), (-3.0, 30.0)] {
+    for (right, ahead) in [
+        (-2.0f32, 4.0f32),
+        (2.0, 5.0),
+        (0.0, 10.0),
+        (3.0, 20.0),
+        (-3.0, 30.0),
+    ] {
         let p = feet + fwd * ahead + Vec3::X * right;
-        let g = world.0.ground_below(Vec3::new(p.x, p.y + 3.0, p.z) * 100.0, 800.0).map_or(feet.y, |y| y / 100.0);
+        let g = world
+            .0
+            .ground_below(Vec3::new(p.x, p.y + 3.0, p.z) * 100.0, 800.0)
+            .map_or(feet.y, |y| y / 100.0);
         spawn_dummy(&mut commands, Vec3::new(p.x, g, p.z));
     }
     info!("[weapons] spawned sword, bow and dummies");
@@ -444,7 +597,10 @@ fn ground_follow(
 ) {
     let Some(player) = player else { return };
     let p = player.ctrl.position / 100.0;
-    let g = world.0.ground_below(Vec3::new(p.x, p.y + 1.0, p.z) * 100.0, 400.0).map_or(p.y, |y| y / 100.0);
+    let g = world
+        .0
+        .ground_below(Vec3::new(p.x, p.y + 1.0, p.z) * 100.0, 400.0)
+        .map_or(p.y, |y| y / 100.0);
     for mut t in &mut q {
         t.translation = Vec3::new(p.x, g - 0.5, p.z);
     }
@@ -456,7 +612,11 @@ fn quiver_follow(
 ) {
     let Ok(h) = head.single() else { return };
     let pose = Pose::new(h.translation, h.rotation);
-    let c = gothic_vr_archery::bow::Quiver { offset: Vec3::new(0.12, -0.12, 0.16), radius: 0.26 }.center(&pose, Hand::Right);
+    let c = gothic_vr_archery::bow::Quiver {
+        offset: Vec3::new(0.12, -0.12, 0.16),
+        radius: 0.26,
+    }
+    .center(&pose, Hand::Right);
     for mut t in &mut q {
         t.translation = c - Vec3::Y * 0.1;
         t.rotation = Quat::from_rotation_y(pose.yaw()) * Quat::from_rotation_z(-0.2);
@@ -472,7 +632,11 @@ fn dummy_visuals(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mat = mats.add(StandardMaterial { base_color: Color::srgb(0.75, 0.62, 0.35), unlit: true, ..default() });
+    let mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.62, 0.35),
+        unlit: true,
+        ..default()
+    });
     for (e, set) in &sets {
         if npcs.get(e).is_ok() {
             continue;
@@ -505,7 +669,15 @@ fn arrow_visuals(
         let vis = Transform::from_translation(Vec3::new(0.0, 0.0, -0.375))
             .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
             .with_scale(Vec3::splat(s));
-        let ok = a.spawn_static(&mut commands, "g3_weapons_ranged_bow_arrow_01.xcmsh", e, vis, &mut meshes, &mut qmats, &mut images);
+        let ok = a.spawn_static(
+            &mut commands,
+            "g3_weapons_ranged_bow_arrow_01.xcmsh",
+            e,
+            vis,
+            &mut meshes,
+            &mut qmats,
+            &mut images,
+        );
         if !ok {
             let _ = PropKind::Arrow;
         }
@@ -522,18 +694,47 @@ pub fn spawn_quiver(
     images: &mut Assets<Image>,
     std_mats: &mut Assets<StandardMaterial>,
 ) -> Entity {
-    let root = commands.spawn((QuiverVisual, Transform::IDENTITY, Visibility::default())).id();
+    let root = commands
+        .spawn((QuiverVisual, Transform::IDENTITY, Visibility::default()))
+        .id();
     commands.spawn((
         Mesh3d(meshes.add(Cylinder::new(0.055, 0.42))),
-        MeshMaterial3d(std_mats.add(StandardMaterial { base_color: Color::srgb(0.20, 0.12, 0.07), unlit: true, ..default() })),
+        MeshMaterial3d(std_mats.add(StandardMaterial {
+            base_color: Color::srgb(0.20, 0.12, 0.07),
+            unlit: true,
+            ..default()
+        })),
         Transform::IDENTITY,
         ChildOf(root),
     ));
-    for (i, (dx, dz, tilt)) in [(0.02f32, 0.0f32, 0.05f32), (-0.025, 0.01, -0.08), (0.0, 0.03, 0.02), (0.03, -0.025, 0.1), (-0.01, -0.03, -0.04)].into_iter().enumerate() {
-        let rot = Quat::from_rotation_z(tilt) * Quat::from_rotation_x(tilt * 0.5) * Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::Y);
+    for (i, (dx, dz, tilt)) in [
+        (0.02f32, 0.0f32, 0.05f32),
+        (-0.025, 0.01, -0.08),
+        (0.0, 0.03, 0.02),
+        (0.03, -0.025, 0.1),
+        (-0.01, -0.03, -0.04),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let rot = Quat::from_rotation_z(tilt)
+            * Quat::from_rotation_x(tilt * 0.5)
+            * Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::Y);
         let _ = i;
-        let vis = Transform { translation: Vec3::new(dx, -0.19, dz), rotation: rot, scale: Vec3::splat(0.006) };
-        a.spawn_static_mirrored(commands, "g3_weapons_ranged_bow_arrow_01.xcmsh", root, vis, meshes, qmats, images);
+        let vis = Transform {
+            translation: Vec3::new(dx, -0.19, dz),
+            rotation: rot,
+            scale: Vec3::splat(0.006),
+        };
+        a.spawn_static_mirrored(
+            commands,
+            "g3_weapons_ranged_bow_arrow_01.xcmsh",
+            root,
+            vis,
+            meshes,
+            qmats,
+            images,
+        );
     }
     root
 }

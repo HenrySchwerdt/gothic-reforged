@@ -11,7 +11,7 @@ bevy = { workspace = true, features = ["std", "async_executor", "bevy_log", "bev
 glam = { version = "0.33", features = ["serde"] }
 serde.workspace = true
 gothic-ui = { path = "../ui" }
-gothic-vr = { path = "../vr" }
+gothic-vr = { path = "../vr", default-features = false }
 
 [lints]
 workspace = true

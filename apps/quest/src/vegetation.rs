@@ -30,7 +30,9 @@ use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
-use bevy::render::render_resource::{AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
+use bevy::render::render_resource::{
+    AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
 use bevy::shader::{Shader, ShaderRef};
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use gothic_cook::material::{KIND_WATER, MaterialRec, NONE_U32};
@@ -72,11 +74,23 @@ static VEG_SHADER: std::sync::OnceLock<Handle<Shader>> = std::sync::OnceLock::ne
 
 /// Wind / response constants shared by all vegetation materials (`eCVegetationAdmin::Invalidate`, ge3.INI).
 fn wind_consts() -> (Vec4, Vec4) {
-    use gothic_environment::wind::{GRASS_RESPONSE_INTENSITY, GRASS_RESPONSE_RANGE, VegetationWind};
+    use gothic_environment::wind::{
+        GRASS_RESPONSE_INTENSITY, GRASS_RESPONSE_RANGE, VegetationWind,
+    };
     let v = VegetationWind::original();
     (
-        Vec4::new(v.wave_number[0], v.wave_number[1], v.phase_rate[0], v.phase_rate[1]),
-        Vec4::new(v.amplitude[0], v.amplitude[1], GRASS_RESPONSE_RANGE, GRASS_RESPONSE_INTENSITY),
+        Vec4::new(
+            v.wave_number[0],
+            v.wave_number[1],
+            v.phase_rate[0],
+            v.phase_rate[1],
+        ),
+        Vec4::new(
+            v.amplitude[0],
+            v.amplitude[1],
+            GRASS_RESPONSE_RANGE,
+            GRASS_RESPONSE_INTENSITY,
+        ),
     )
 }
 
@@ -106,10 +120,14 @@ pub struct VegMaterial {
 
 impl Material for VegMaterial {
     fn vertex_shader() -> ShaderRef {
-        VEG_SHADER.get().map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
+        VEG_SHADER
+            .get()
+            .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
     fn fragment_shader() -> ShaderRef {
-        VEG_SHADER.get().map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
+        VEG_SHADER
+            .get()
+            .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
     fn enable_prepass() -> bool {
         false
@@ -187,7 +205,13 @@ fn mat_key(rec: &MaterialRec) -> u64 {
     let l = rec.layers[0];
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (l.tex[0], rec.mask_reference).hash(&mut h);
-    for f in [l.tint[0], l.tint[1], l.tint[2], l.scale[0][0], l.scale[0][1]] {
+    for f in [
+        l.tint[0],
+        l.tint[1],
+        l.tint[2],
+        l.scale[0][0],
+        l.scale[0][1],
+    ] {
         f.to_bits().hash(&mut h);
     }
     h.finish()
@@ -204,7 +228,10 @@ fn load_brush(cache: &Cache, id: u64) -> Option<Brush> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            if names.get(i).is_some_and(|n| n.to_ascii_lowercase().contains("world_lowpoly")) {
+            if names
+                .get(i)
+                .is_some_and(|n| n.to_ascii_lowercase().contains("world_lowpoly"))
+            {
                 return None;
             }
             let rec = cache.material(s.material)?;
@@ -213,11 +240,22 @@ fn load_brush(cache: &Cache, id: u64) -> Option<Brush> {
             }
             tris0 += md.indices(s, 0).len() as u32 / 3;
             has_lod |= md.indices(s, 0).len() != md.indices(s, 2).len();
-            Some(BrushSub { mat_key: mat_key(&rec), rec })
+            Some(BrushSub {
+                mat_key: mat_key(&rec),
+                rec,
+            })
         })
         .collect();
     let (lo, hi) = (Vec3::from(hdr.bounds_min), Vec3::from(hdr.bounds_max));
-    Some(Brush { md, subs, y_min: lo.y, height: hi.y - lo.y, radius: (hi - lo).length() * 0.5, tris0, has_lod })
+    Some(Brush {
+        md,
+        subs,
+        y_min: lo.y,
+        height: hi.y - lo.y,
+        radius: (hi - lo).length() * 0.5,
+        tris0,
+        has_lod,
+    })
 }
 
 // --- chunk build (worker thread) -------------------------------------------------------------------------------------
@@ -256,10 +294,16 @@ fn build_chunk(brushes: &Brushes, insts: &[Inst], level: usize, density: f32) ->
         if density < 1.0 && h01(n as u32) >= density {
             continue;
         }
-        let Some(b) = brushes.map.get(&inst.mesh) else { continue };
+        let Some(b) = brushes.map.get(&inst.mesh) else {
+            continue;
+        };
         count += 1;
         // The engine scales (x, y, x): `scale[1]` is the height (`eCVegetation_GridNode::CacheInGeometry`).
-        let xf = Mat4::from_scale_rotation_translation(Vec3::new(inst.scale[0], inst.scale[1], inst.scale[0]), inst.rot, inst.pos);
+        let xf = Mat4::from_scale_rotation_translation(
+            Vec3::new(inst.scale[0], inst.scale[1], inst.scale[0]),
+            inst.rot,
+            inst.pos,
+        );
         let tint = [
             ((inst.color >> 16) & 255) as f32 / 255.0,
             ((inst.color >> 8) & 255) as f32 / 255.0,
@@ -267,9 +311,15 @@ fn build_chunk(brushes: &Brushes, insts: &[Inst], level: usize, density: f32) ->
         ];
         for (si, s) in b.md.submeshes().iter().enumerate() {
             let Some(bs) = &b.subs[si] else { continue };
-            let part = parts.entry(bs.mat_key).or_insert_with(|| PartBuf { rec: bs.rec, lo: Vec3::MAX, hi: Vec3::MIN, ..default() });
+            let part = parts.entry(bs.mat_key).or_insert_with(|| PartBuf {
+                rec: bs.rec,
+                lo: Vec3::MAX,
+                hi: Vec3::MIN,
+                ..default()
+            });
             let vs = b.md.submesh_vertices(s);
-            let idx = b.md.indices(s, level.min((s.lod_count as usize).max(1) - 1));
+            let idx =
+                b.md.indices(s, level.min((s.lod_count as usize).max(1) - 1));
             scratch.clear();
             scratch.resize(vs.len(), u32::MAX);
             for k in 0..idx.len() {
@@ -282,10 +332,15 @@ fn build_chunk(brushes: &Brushes, insts: &[Inst], level: usize, density: f32) ->
                     part.hi = part.hi.max(wp);
                     part.pos.push(wp.to_array());
                     // Ground cover shades like the ground it stands on: blend the normal toward up (desktop loader).
-                    let n = xf.transform_vector3(Vec3::from(v.normal)).normalize_or_zero();
-                    part.nrm.push((Vec3::Y + n * 0.1).normalize_or_zero().to_array());
+                    let n = xf
+                        .transform_vector3(Vec3::from(v.normal))
+                        .normalize_or_zero();
+                    part.nrm
+                        .push((Vec3::Y + n * 0.1).normalize_or_zero().to_array());
                     part.uv.push(v.uv);
-                    let w = gothic_environment::wind::vegetation_weight(v.pos[1], b.y_min, b.height, inst.wind);
+                    let w = gothic_environment::wind::vegetation_weight(
+                        v.pos[1], b.y_min, b.height, inst.wind,
+                    );
                     part.col.push([
                         v.color[0] as f32 / 255.0 * tint[0],
                         v.color[1] as f32 / 255.0 * tint[1],
@@ -297,9 +352,15 @@ fn build_chunk(brushes: &Brushes, insts: &[Inst], level: usize, density: f32) ->
             }
         }
     }
-    let mut parts: Vec<_> = parts.into_iter().filter(|(_, p)| !p.idx.is_empty()).collect();
+    let mut parts: Vec<_> = parts
+        .into_iter()
+        .filter(|(_, p)| !p.idx.is_empty())
+        .collect();
     parts.sort_by_key(|(k, _)| *k);
-    ChunkBuild { parts, instances: count }
+    ChunkBuild {
+        parts,
+        instances: count,
+    }
 }
 
 // --- resources / streaming -------------------------------------------------------------------------------------------
@@ -369,24 +430,38 @@ impl Plugin for VegPlugin {
         embedded_asset!(app, "shaders/veg.wesl");
         let _ = VEG_SHADER.set(load_embedded_asset!(app, "shaders/veg.wesl"));
         app.add_plugins(MaterialPlugin::<VegMaterial>::default());
-        let Some(dir) = crate::ardea::data_dir() else { return };
+        let Some(dir) = crate::ardea::data_dir() else {
+            return;
+        };
         if !dir.join("veg").is_dir() {
-            log::warn!("[veg] no veg/ directory in {} (run examples/pack_veg)", dir.display());
+            log::warn!(
+                "[veg] no veg/ directory in {} (run examples/pack_veg)",
+                dir.display()
+            );
             return;
         }
         let Ok(cache) = Cache::open(&dir) else { return };
         let quality = knob_f32("veg_quality", QUEST_QUALITY as f32) as u8;
         let view_range = gothic_render_rules::vegetation::view_range(quality);
-        let fade_start = gothic_render_rules::vegetation::fade_start(view_range, (FADE_START_FRACTION - 0.65) / 0.10);
+        let fade_start = gothic_render_rules::vegetation::fade_start(
+            view_range,
+            (FADE_START_FRACTION - 0.65) / 0.10,
+        );
         // Brush meshes: every mesh id referenced by any veg file, read once.
         let mut cells = HashMap::new();
         let mut ids: std::collections::BTreeSet<u64> = Default::default();
         if let Ok(rd) = std::fs::read_dir(dir.join("veg")) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
-                let Some(stem) = name.strip_suffix(".gveg") else { continue };
-                let Some((a, b)) = stem.split_once('_') else { continue };
-                let (Ok(cx), Ok(cz)) = (a.parse::<i32>(), b.parse::<i32>()) else { continue };
+                let Some(stem) = name.strip_suffix(".gveg") else {
+                    continue;
+                };
+                let Some((a, b)) = stem.split_once('_') else {
+                    continue;
+                };
+                let (Ok(cx), Ok(cz)) = (a.parse::<i32>(), b.parse::<i32>()) else {
+                    continue;
+                };
                 cells.insert((cx, cz), false);
                 if let Ok(bytes) = std::fs::read(e.path()) {
                     for r in bytes.get(8..).unwrap_or(&[]).chunks_exact(REC) {
@@ -403,12 +478,31 @@ impl Plugin for VegPlugin {
         }
         if knob("veg_dump").is_some() {
             for (id, b) in &map {
-                let t = |l: usize| b.md.submeshes().iter().map(|s| b.md.indices(s, l).len() as u32 / 3).sum::<u32>();
-                log::info!("[veg] brush {id:016x} radius {:.0} cm tris lod0/1/2 = {}/{}/{}", b.radius, t(0), t(1), t(2));
+                let t = |l: usize| {
+                    b.md.submeshes()
+                        .iter()
+                        .map(|s| b.md.indices(s, l).len() as u32 / 3)
+                        .sum::<u32>()
+                };
+                log::info!(
+                    "[veg] brush {id:016x} radius {:.0} cm tris lod0/1/2 = {}/{}/{}",
+                    b.radius,
+                    t(0),
+                    t(1),
+                    t(2)
+                );
             }
         }
-        log::info!("[veg] {} cells with ground cover, {} brush meshes, view range {view_range} cm (fade from {fade_start})", cells.len(), map.len());
-        let root = app.world_mut().query_filtered::<Entity, With<WorldRoot>>().iter(app.world()).next();
+        log::info!(
+            "[veg] {} cells with ground cover, {} brush meshes, view range {view_range} cm (fade from {fade_start})",
+            cells.len(),
+            map.len()
+        );
+        let root = app
+            .world_mut()
+            .query_filtered::<Entity, With<WorldRoot>>()
+            .iter(app.world())
+            .next();
         let Some(root) = root else {
             log::warn!("[veg] Ardea world root missing (add VegPlugin after ardea::build)");
             return;
@@ -429,7 +523,12 @@ impl Plugin for VegPlugin {
             stats: VegStats::default(),
             viewer: Vec3::splat(1e9),
         });
-        app.add_systems(Update, (veg_update, veg_report).chain().run_if(resource_exists::<Veg>));
+        app.add_systems(
+            Update,
+            (veg_update, veg_report)
+                .chain()
+                .run_if(resource_exists::<Veg>),
+        );
     }
 }
 
@@ -442,7 +541,11 @@ fn box_dist(p: Vec3, lo: Vec3, hi: Vec3) -> f32 {
 impl Veg {
     /// Resident chunks / instances / triangles per band of nearest-point distance (cm) from the viewer: `(lo, hi, ..)`.
     pub fn bands(&self, edges: &[f32]) -> Vec<(f32, f32, usize, u64, u64)> {
-        let mut out: Vec<(f32, f32, usize, u64, u64)> = edges.iter().enumerate().map(|(i, e)| (*e, edges.get(i + 1).copied().unwrap_or(f32::MAX), 0, 0, 0)).collect();
+        let mut out: Vec<(f32, f32, usize, u64, u64)> = edges
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (*e, edges.get(i + 1).copied().unwrap_or(f32::MAX), 0, 0, 0))
+            .collect();
         for c in self.chunks.values() {
             let Some(r) = &c.resident else { continue };
             let d = box_dist(self.viewer, c.lo, c.hi);
@@ -455,7 +558,13 @@ impl Veg {
         out
     }
 
-    fn material(&mut self, rec: &MaterialRec, a: &mut Ardea, mats: &mut Assets<VegMaterial>, images: &mut Assets<Image>) -> Handle<VegMaterial> {
+    fn material(
+        &mut self,
+        rec: &MaterialRec,
+        a: &mut Ardea,
+        mats: &mut Assets<VegMaterial>,
+        images: &mut Assets<Image>,
+    ) -> Handle<VegMaterial> {
         let key = mat_key(rec);
         if let Some(h) = self.mats.get(&key) {
             return h.clone();
@@ -467,18 +576,36 @@ impl Veg {
         let fog = qmat::fog_color();
         let masked = rec.mask_reference != NONE_U32;
         // Ground cover is always alpha tested (desktop: forced mask, 0.4 when the material has none or a tiny reference).
-        let cutoff = if masked && rec.mask_reference as f32 / 255.0 >= 0.05 { rec.mask_reference as f32 / 255.0 } else { 0.4 };
+        let cutoff = if masked && rec.mask_reference as f32 / 255.0 >= 0.05 {
+            rec.mask_reference as f32 / 255.0
+        } else {
+            0.4
+        };
         let (veg, amp) = wind_consts();
         let m = VegMaterial {
             params: VParams {
-                tint: if tex.is_some() { Vec4::new(l.tint[0].max(0.05), l.tint[1].max(0.05), l.tint[2].max(0.05), 1.0) } else { Vec4::new(0.5, 0.5, 0.5, 1.0) },
+                tint: if tex.is_some() {
+                    Vec4::new(
+                        l.tint[0].max(0.05),
+                        l.tint[1].max(0.05),
+                        l.tint[2].max(0.05),
+                        1.0,
+                    )
+                } else {
+                    Vec4::new(0.5, 0.5, 0.5, 1.0)
+                },
                 uv_scale: Vec4::new(l.scale[0][0] * uvs.x, l.scale[0][1] * uvs.y, 0.0, 0.0),
                 sun_dir: sun_dir.extend(0.0),
                 sun_col: sun_col.extend(0.0),
                 sh,
                 fog_col: fog.extend(1.0),
                 misc: Vec4::new(cutoff, self.fade_start * 0.01, self.view_range * 0.01, 0.0),
-                fog: Vec4::new(knob_f32("fog_start", 120.0), knob_f32("fog_end", 420.0), 0.0, 0.0),
+                fog: Vec4::new(
+                    knob_f32("fog_start", 120.0),
+                    knob_f32("fog_end", 420.0),
+                    0.0,
+                    0.0,
+                ),
                 veg,
                 veg_amp: amp,
                 player: Vec4::new(EYE_HEIGHT_M, 0.0, 0.0, 0.0),
@@ -527,7 +654,11 @@ fn veg_update(
     }
     let viewer = sum / n as f32 * CM;
     v.viewer = viewer;
-    let (view, load_r, unload_r) = (v.view_range, v.view_range * LOAD_FACTOR, v.view_range * UNLOAD_FACTOR);
+    let (view, load_r, unload_r) = (
+        v.view_range,
+        v.view_range * LOAD_FACTOR,
+        v.view_range * UNLOAD_FACTOR,
+    );
 
     // 1. Cell data on demand (one cell per frame): the chunks of a cell exist while the viewer is within unload range.
     let cell_keys: Vec<(i32, i32)> = v.cells.keys().copied().collect();
@@ -538,12 +669,19 @@ fn veg_update(
         let d = box_dist(viewer, lo, hi);
         let loaded = v.cells[&(cx, cz)];
         if !loaded && d < load_r {
-            let bytes = std::fs::read(v.dir.join(format!("veg/{cx}_{cz}.gveg"))).unwrap_or_default();
+            let bytes =
+                std::fs::read(v.dir.join(format!("veg/{cx}_{cz}.gveg"))).unwrap_or_default();
             let insts = parse_gveg(&bytes);
             let mut by_chunk: HashMap<(i32, i32), Vec<Inst>> = HashMap::new();
             for i in insts {
                 if v.brushes.map.contains_key(&i.mesh) {
-                    by_chunk.entry(((i.pos.x / CHUNK_CM).floor() as i32, (i.pos.z / CHUNK_CM).floor() as i32)).or_default().push(i);
+                    by_chunk
+                        .entry((
+                            (i.pos.x / CHUNK_CM).floor() as i32,
+                            (i.pos.z / CHUNK_CM).floor() as i32,
+                        ))
+                        .or_default()
+                        .push(i);
                 }
             }
             let (lod_scale, far, view) = (v.lod_scale, v.far_density, v.view_range);
@@ -610,12 +748,19 @@ fn veg_update(
     // 2. Poll finished builds (one spawn per frame bounds the upload cost).
     let t0 = std::time::Instant::now();
     let mut spawned = false;
-    let keys: Vec<(i32, i32)> = v.chunks.iter().filter(|(_, c)| c.task.is_some()).map(|(k, _)| *k).collect();
+    let keys: Vec<(i32, i32)> = v
+        .chunks
+        .iter()
+        .filter(|(_, c)| c.task.is_some())
+        .map(|(k, _)| *k)
+        .collect();
     for k in keys {
         if spawned {
             break;
         }
-        let Some((mut task, level)) = v.chunks.get_mut(&k).and_then(|c| c.task.take()) else { continue };
+        let Some((mut task, level)) = v.chunks.get_mut(&k).and_then(|c| c.task.take()) else {
+            continue;
+        };
         let Some(build) = check_ready(&mut task) else {
             v.chunks.get_mut(&k).unwrap().task = Some((task, level));
             continue;
@@ -625,7 +770,14 @@ fn veg_update(
         if d > unload_r {
             continue;
         }
-        let holder = commands.spawn((VegChunkRoot, Transform::IDENTITY, Visibility::Inherited, ChildOf(root))).id();
+        let holder = commands
+            .spawn((
+                VegChunkRoot,
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                ChildOf(root),
+            ))
+            .id();
         let (mut tris, mut nparts) = (0u32, 0u32);
         for (_, part) in build.parts {
             let mat = {
@@ -635,7 +787,10 @@ fn veg_update(
             let t = part.idx.len() as u32 / 3;
             tris += t;
             nparts += 1;
-            let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+            let mut m = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::RENDER_WORLD,
+            );
             m.insert_attribute(Mesh::ATTRIBUTE_POSITION, part.pos);
             m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, part.nrm);
             m.insert_attribute(Mesh::ATTRIBUTE_UV_0, part.uv);
@@ -659,7 +814,13 @@ fn veg_update(
         if let Some(old) = c.resident.take() {
             commands.entity(old.entity).despawn();
         }
-        c.resident = Some(Resident { entity: holder, level, visible: true, tris, parts: nparts });
+        c.resident = Some(Resident {
+            entity: holder,
+            level,
+            visible: true,
+            tris,
+            parts: nparts,
+        });
         v.stats.builds += 1;
         let _ = build.instances;
         spawned = true;
@@ -681,12 +842,20 @@ fn veg_update(
             }
             let show = d < view;
             let cur = c.resident.as_ref().map(|r| r.level);
-            let w = if c.stage_d.is_empty() { 0 } else { level_for(c, d, cur) };
+            let w = if c.stage_d.is_empty() {
+                0
+            } else {
+                level_for(c, d, cur)
+            };
             if let Some(r) = &mut c.resident {
                 if show != r.visible {
                     r.visible = show;
                     if let Ok(mut vi) = vis.get_mut(r.entity) {
-                        *vi = if show { Visibility::Inherited } else { Visibility::Hidden };
+                        *vi = if show {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        };
                     }
                 }
                 if show {
@@ -715,17 +884,32 @@ fn veg_update(
             break;
         }
         let c = &v.chunks[&k];
-        let thin = if !c.mesh_lod && level >= 1 { v.far_density } else { 1.0 };
+        let thin = if !c.mesh_lod && level >= 1 {
+            v.far_density
+        } else {
+            1.0
+        };
         let (brushes, insts, density) = (v.brushes.clone(), c.insts.clone(), v.density * thin);
-        let task = pool.spawn(async move { build_chunk(&brushes, &insts, level as usize, density) });
+        let task =
+            pool.spawn(async move { build_chunk(&brushes, &insts, level as usize, density) });
         v.chunks.get_mut(&k).unwrap().task = Some((task, level));
         in_flight += 1;
     }
     let _ = &v.cache;
 }
 
-fn veg_report(mut v: ResMut<Veg>, time: Res<Time>, mut acc: Local<f32>, parts: Query<(&ViewVisibility, &TriCount, &ChildOf), With<MeshMaterial3d<VegMaterial>>>) {
-    let mut s = VegStats { builds: v.stats.builds, despawns: v.stats.despawns, max_spawn_ms: v.stats.max_spawn_ms, ..default() };
+fn veg_report(
+    mut v: ResMut<Veg>,
+    time: Res<Time>,
+    mut acc: Local<f32>,
+    parts: Query<(&ViewVisibility, &TriCount, &ChildOf), With<MeshMaterial3d<VegMaterial>>>,
+) {
+    let mut s = VegStats {
+        builds: v.stats.builds,
+        despawns: v.stats.despawns,
+        max_spawn_ms: v.stats.max_spawn_ms,
+        ..default()
+    };
     for c in v.chunks.values() {
         if let Some(r) = &c.resident {
             s.chunks += 1;
@@ -750,7 +934,16 @@ fn veg_report(mut v: ResMut<Veg>, time: Res<Time>, mut acc: Local<f32>, parts: Q
     let s = &v.stats;
     log::info!(
         "[veg] chunks={} visible={} building={} instances={} tris={} visible_tris={} visible_draws={} builds={} despawns={} max_spawn_ms={:.2}",
-        s.chunks, s.chunks_visible, s.building, s.instances, s.tris, s.tris_visible, s.draws_visible, s.builds, s.despawns, s.max_spawn_ms
+        s.chunks,
+        s.chunks_visible,
+        s.building,
+        s.instances,
+        s.tris,
+        s.tris_visible,
+        s.draws_visible,
+        s.builds,
+        s.despawns,
+        s.max_spawn_ms
     );
 }
 

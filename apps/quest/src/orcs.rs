@@ -29,13 +29,21 @@ pub struct OrcVisual {
 #[derive(Resource, Default)]
 pub struct OrcClips(pub Option<crate::anim::ClipSet>);
 
-const ORC_SCALE: f32 = 1.12;
+/// The orc rig is posed at its own size (bind height 196 cm): no extra scale (was 1.12, compounding the squash).
+const ORC_SCALE: f32 = 1.0;
 
 pub struct OrcsPlugin;
 
 impl Plugin for OrcsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<OrcClips>().add_systems(Update, (spawn_orcs.run_if(resource_exists::<Ardea>), drive_orcs, npc_prof));
+        app.init_resource::<OrcClips>().add_systems(
+            Update,
+            (
+                spawn_orcs.run_if(resource_exists::<Ardea>),
+                drive_orcs,
+                npc_prof,
+            ),
+        );
     }
 }
 
@@ -62,52 +70,115 @@ fn spawn_orcs(
         warn!("[orcs] no gamedata (items.json/orcs.json) in the pack: no orcs");
         return;
     };
-    let n: usize = gothic_xr_quest::knob("orcs").and_then(|v| v.parse().ok()).unwrap_or(3);
+    let n: usize = gothic_xr_quest::knob("orcs")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
     let feet = player.ctrl.position / 100.0;
     // Orcs wait on the far side of the plaza, facing the player's start.
     for i in 0..n {
         let ang = (i as f32 - (n as f32 - 1.0) * 0.5) * 0.5;
         let p = feet + Quat::from_rotation_y(ang) * Vec3::new(0.0, 0.0, -14.0);
-        let g = world.0.ground_below(Vec3::new(p.x, p.y + 3.0, p.z) * 100.0, 1500.0).map_or(feet.y, |y| y / 100.0);
+        let g = world
+            .0
+            .ground_below(Vec3::new(p.x, p.y + 3.0, p.z) * 100.0, 1500.0)
+            .map_or(feet.y, |y| y / 100.0);
         let pos = Vec3::new(p.x, g, p.z);
         let yaw = (p.x - feet.x).atan2(p.z - feet.z); // face the player (-Z forward convention of vr-npc)
-        let npc = spawn_npc(&mut commands, pos, yaw, Some(&props::two_handed_sword()), 1000 + i as u64);
+        let npc = spawn_npc(
+            &mut commands,
+            pos,
+            yaw,
+            Some(&props::two_handed_sword()),
+            1000 + i as u64,
+        );
         gc.new_orc(npc);
-        let root = commands.spawn((Transform::from_scale(Vec3::splat(0.01 * ORC_SCALE)), Visibility::default())).id();
-        let opts = PartOptions { cutout: false, hide_from_eyes: false };
-        let Some(rig) = spawn_body(&mut commands, &mut a, "g3_orc_body_warrior.xact", root, opts, &mut meshes, &mut qmats, &mut images, &mut inv) else {
+        let root = commands
+            .spawn((
+                Transform::from_scale(Vec3::splat(0.01 * ORC_SCALE)),
+                Visibility::default(),
+            ))
+            .id();
+        let opts = PartOptions {
+            cutout: false,
+            hide_from_eyes: false,
+        };
+        let Some(rig) = spawn_body(
+            &mut commands,
+            &mut a,
+            "g3_orc_body_warrior.xact",
+            root,
+            opts,
+            &mut meshes,
+            &mut qmats,
+            &mut images,
+            &mut inv,
+        ) else {
             warn!("[orcs] orc body actor missing in the pack");
             commands.entity(root).despawn();
             return;
         };
-        let _ = spawn_part(&mut commands, &mut a, "g3_orc_head_head01.xact", &rig, PartOptions { cutout: true, hide_from_eyes: false }, &mut meshes, &mut qmats, &mut images, &mut inv);
+        let _ = spawn_part(
+            &mut commands,
+            &mut a,
+            "g3_orc_head_head01.xact",
+            &rig,
+            PartOptions {
+                cutout: true,
+                hide_from_eyes: false,
+            },
+            &mut meshes,
+            &mut qmats,
+            &mut images,
+            &mut inv,
+        );
         // The weapon is attached the way the original does it (gCInventorySlot bone `Slot_RightHand_Weapon` of the
         // skeleton, identity offset, mesh mirrored like the actors): no extra rotation.
         match rig.by_name.get("Slot_RightHand_Weapon") {
             Some(&si) => {
-                let ok = a.spawn_static_mirrored(&mut commands, "g3_weapon_orc_halberd_01.xcmsh", rig.joints[si], Transform::IDENTITY, &mut meshes, &mut qmats, &mut images);
+                let ok = a.spawn_static_mirrored(
+                    &mut commands,
+                    "g3_weapon_orc_halberd_01.xcmsh",
+                    rig.joints[si],
+                    Transform::IDENTITY,
+                    &mut meshes,
+                    &mut qmats,
+                    &mut images,
+                );
                 if !ok {
                     warn!("[orcs] weapon mesh missing");
                 }
             }
             None => warn!("[orcs] orc skeleton has no Slot_RightHand_Weapon"),
         }
-        // The orc's feet are taller than the human-sized ragdoll's (ankle height 6 cm): lift the ground its ankles
-        // rest on so the boots stand on the floor instead of sinking into it.
-        if let Some(&fi) = rig.by_name.get("Orc_Left_Foot_Foot_1") {
-            let ankle_m = rig.bind_global[fi].w_axis.y * 0.01 * ORC_SCALE;
-            let lift = (ankle_m - 0.06 + 0.02).max(0.0);
-            info!("[orcs] foot lift {lift:.3} m (bind ankle height {ankle_m:.3} m)");
-            commands.entity(npc).entry::<VrNpc>().and_modify(move |mut n| n.foot_lift = lift);
-        }
-        let rt = Retarget::new(&rig, "Orc");
+        // NOTE: the vendored vr-npc had `foot_lift` (raise the ragdoll ground for the orc's taller boots); the workspace
+        // crate does not, so orcs stand slightly sunk until vr-npc grows an equivalent.
+        let mut rt = Retarget::new(&rig, "Orc");
+        rt.keep_bind_lengths = true;
         if !*clips_loaded {
             *clips_loaded = true;
-            let set = crate::hero::ardea_clips_path("clips_orc.grcp").and_then(|p| crate::anim::ClipSet::load(&p, &rig, "Orc"));
-            info!("[orcs] clip set: {}", if set.is_some() { "loaded" } else { "missing (ragdoll only)" });
+            let set = crate::hero::ardea_clips_path("clips_orc.grcp")
+                .and_then(|p| crate::anim::ClipSet::load(&p, &rig, "Orc"));
+            info!(
+                "[orcs] clip set: {}",
+                if set.is_some() {
+                    "loaded"
+                } else {
+                    "missing (ragdoll only)"
+                }
+            );
             commands.insert_resource(OrcClips(set));
         }
-        commands.spawn((OrcVisual { npc, rig, rt, gait: Default::default(), hit: Default::default(), idle_t: 0.0 }, Transform::IDENTITY));
+        commands.spawn((
+            OrcVisual {
+                npc,
+                rig,
+                rt,
+                gait: Default::default(),
+                hit: Default::default(),
+                idle_t: 0.0,
+            },
+            Transform::IDENTITY,
+        ));
     }
     info!("[orcs] spawned {n} orc raiders");
     let _ = HAND_RADIUS;
@@ -130,7 +201,10 @@ fn drive_orcs(
         // The physical weapon prop's frame is the OpenXR grip frame (blade -Z = little finger -> thumb), so its
         // rotation drives the right hand through the same analytic hand mapping as the player's controllers: the
         // visible weapon (attached to Slot_RightHand_Weapon, identity) then points where the collision prop does.
-        let grip = n.weapon.and_then(|w| weapons.get(w).ok()).map(|t| t.rotation);
+        let grip = n
+            .weapon
+            .and_then(|w| weapons.get(w).ok())
+            .map(|t| t.rotation);
         let mut ov = None;
         if let Some(set) = &clips.0 {
             let yaw = Quat::from_rotation_y(pose.body_yaw);
@@ -148,7 +222,11 @@ fn drive_orcs(
                 o.hit.start(set, needle);
             }
             let standing = n.ragdoll.stance() == gothic_vr_npc::ragdoll::Stance::Standing;
-            let (gw, layers) = if standing { o.gait.update(set, n.ai.root, pose.body_yaw, dt) } else { (0.0, vec![]) };
+            let (gw, layers) = if standing {
+                o.gait.update(set, n.ai.root, pose.body_yaw, dt)
+            } else {
+                (0.0, vec![])
+            };
             let shot = o.hit.update(dt);
             let n_nodes = o.rig.names.len();
             let mut rot = vec![None; n_nodes];
@@ -168,10 +246,19 @@ fn drive_orcs(
                     any = true;
                 }
                 if gw > 0.0 && !layers.is_empty() {
-                    let refs: Vec<(&str, f32, f32)> = layers.iter().map(|(k, t, w)| (k.as_str(), *t, *w)).collect();
+                    let refs: Vec<(&str, f32, f32)> = layers
+                        .iter()
+                        .map(|(k, t, w)| (k.as_str(), *t, *w))
+                        .collect();
                     let walk = set.sample_world(&refs, yaw);
                     for side in ["Left", "Right"] {
-                        for part in ["Leg_Hip_1", "Leg_Leg_1", "Leg_Leg_2", "Foot_Foot_1", "Foot_Toe_1"] {
+                        for part in [
+                            "Leg_Hip_1",
+                            "Leg_Leg_1",
+                            "Leg_Leg_2",
+                            "Foot_Foot_1",
+                            "Foot_Toe_1",
+                        ] {
                             if let Some(&i) = o.rig.by_name.get(&format!("Orc_{side}_{part}")) {
                                 if let (Some(w), Some(base)) = (walk[i], rot[i]) {
                                     rot[i] = Some(base.slerp(w, gw));
@@ -194,8 +281,20 @@ fn drive_orcs(
                 ov = Some(crate::anim::PoseOverride { rot, weight });
             }
         }
-        let ground = if ov.is_some() { Some(n.ai.root.y) } else { None };
-        o.rt.apply(&o.rig, &mut joints, &pose, None, [None, if ov.is_some() { None } else { grip }], ORC_SCALE, None, [[0.0; 2], [1.0, 0.7]], ov.as_ref(), ground);
+        // Always stand the orc's own (taller) legs on the ground: the human-sized ragdoll pelvis is lower.
+        let ground = Some(n.ai.root.y);
+        o.rt.apply(
+            &o.rig,
+            &mut joints,
+            &pose,
+            None,
+            [None, if ov.is_some() { None } else { grip }],
+            ORC_SCALE,
+            None,
+            [[0.0; 2], [1.0, 0.7]],
+            ov.as_ref(),
+            ground,
+        );
     }
 }
 
@@ -205,7 +304,5 @@ fn npc_prof(time: Res<Time<Real>>, mut last: Local<f32>) {
         return;
     }
     *last = time.elapsed_secs();
-    use std::sync::atomic::Ordering::Relaxed;
-    let p = &gothic_vr_npc::plugin::NPC_PROF_US;
-    info!("[npc-prof] think={:.1}ms animate={:.1}ms interact={:.1}ms sync={:.1}ms (per second)", p[1].swap(0, Relaxed) as f32 / 1e3, p[2].swap(0, Relaxed) as f32 / 1e3, p[3].swap(0, Relaxed) as f32 / 1e3, p[4].swap(0, Relaxed) as f32 / 1e3);
+    info!("[npc-prof] unavailable in workspace vr-npc");
 }

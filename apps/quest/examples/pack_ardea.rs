@@ -14,8 +14,14 @@ fn main() -> Result<()> {
     let mut region = Region::by_name("ardea").unwrap();
     region.radius = radius;
     let (c0, r) = (region.center, region.radius);
-    let (cx0, cx1) = (((c0[0] - r) / 10000.0).floor() as i32, ((c0[0] + r) / 10000.0).floor() as i32);
-    let (cz0, cz1) = (((c0[1] - r) / 10000.0).floor() as i32, ((c0[1] + r) / 10000.0).floor() as i32);
+    let (cx0, cx1) = (
+        ((c0[0] - r) / 10000.0).floor() as i32,
+        ((c0[0] + r) / 10000.0).floor() as i32,
+    );
+    let (cz0, cz1) = (
+        ((c0[1] - r) / 10000.0).floor() as i32,
+        ((c0[1] + r) / 10000.0).floor() as i32,
+    );
     std::fs::create_dir_all(out.join("cells"))?;
     std::fs::create_dir_all(out.join("meshes"))?;
     std::fs::create_dir_all(out.join("textures"))?;
@@ -26,7 +32,10 @@ fn main() -> Result<()> {
     for cx in cx0..=cx1 {
         for cz in cz0..=cz1 {
             if let Some(cell) = cache.load_cell(cx, cz)? {
-                std::fs::copy(root.join(format!("cells/{cx}_{cz}.gcell")), out.join(format!("cells/{cx}_{cz}.gcell")))?;
+                std::fs::copy(
+                    root.join(format!("cells/{cx}_{cz}.gcell")),
+                    out.join(format!("cells/{cx}_{cz}.gcell")),
+                )?;
                 ncell += 1;
                 for i in cell.instances() {
                     meshes.insert(i.mesh);
@@ -67,12 +76,17 @@ fn main() -> Result<()> {
     for t in &texs {
         let src = root.join(format!("textures/{}.gtex", AssetId(*t).hex()));
         if src.is_file() {
-            std::fs::copy(&src, out.join(format!("textures/{}.gtex", AssetId(*t).hex())))?;
+            std::fs::copy(
+                &src,
+                out.join(format!("textures/{}.gtex", AssetId(*t).hex())),
+            )?;
             ntex += 1;
         }
     }
     std::fs::copy(root.join("materials.gmat"), out.join("materials.gmat"))?;
     std::fs::write(out.join("manifest.json"), b"{}")?;
-    println!("cells {ncell} (x {cx0}..{cx1}, z {cz0}..{cz1}) instances {inst} terrain refs {terr} meshes {nmesh} (missing {missing}) textures {ntex}");
+    println!(
+        "cells {ncell} (x {cx0}..{cx1}, z {cz0}..{cz1}) instances {inst} terrain refs {terr} meshes {nmesh} (missing {missing}) textures {ntex}"
+    );
     Ok(())
 }

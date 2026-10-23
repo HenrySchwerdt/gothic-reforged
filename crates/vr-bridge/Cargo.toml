@@ -13,13 +13,16 @@ glam = { version = "0.33", features = ["serde"] }
 gothic-physics = { path = "../physics" }
 gothic-runtime = { path = "../runtime" }
 gothic-sim = { path = "../sim" }
-gothic-vr = { path = "../vr" }
+gothic-vr = { path = "../vr", default-features = false }
 gothic-vr-physics = { path = "../vr-physics" }
 gothic-vr-melee = { path = "../vr-melee" }
 
 [dev-dependencies]
 gothic-gameplay = { path = "../gameplay" }
 gothic-formats = { path = "../formats" }
+gothic-animation = { path = "../animation" }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

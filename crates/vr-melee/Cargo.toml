@@ -10,7 +10,7 @@ description = "Blade & Sorcery-style physical melee: swept blade/blunt/pierce co
 bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
 glam = { version = "0.33", features = ["serde"] }
 serde.workspace = true
-gothic-vr = { path = "../vr" }
+gothic-vr = { path = "../vr", default-features = false }
 gothic-vr-physics = { path = "../vr-physics" }
 avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "default-collider", "xpbd_joints", "parallel", "debug-plugin"] }
 

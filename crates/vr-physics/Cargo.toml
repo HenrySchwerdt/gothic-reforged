@@ -11,7 +11,7 @@ bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
 avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "default-collider", "xpbd_joints", "parallel", "debug-plugin"] }
 glam = "0.33"
 serde.workspace = true
-gothic-vr = { path = "../vr" }
+gothic-vr = { path = "../vr", default-features = false }
 
 [lints]
 workspace = true

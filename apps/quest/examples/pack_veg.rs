@@ -17,7 +17,10 @@ fn sector_of(document: &str) -> Option<(f32, f32)> {
     let rest = &document[at + 2..];
     let (x, rest) = rest.split_once('y')?;
     let (_, rest) = rest.split_once('z')?;
-    let z: String = rest.chars().take_while(|c| *c == '-' || c.is_ascii_digit()).collect();
+    let z: String = rest
+        .chars()
+        .take_while(|c| *c == '-' || c.is_ascii_digit())
+        .collect();
     Some((x.parse().ok()?, z.parse().ok()?))
 }
 
@@ -34,7 +37,9 @@ fn main() -> Result<()> {
         .filter(|(p, _)| p.ends_with("_cstat.node"))
         .filter_map(|(p, s)| {
             let (x, z) = sector_of(p)?;
-            ((x - center[0]).abs() <= radius + 10_000.0 && (z - center[1]).abs() <= radius + 10_000.0).then(|| (p.to_string(), s))
+            ((x - center[0]).abs() <= radius + 10_000.0
+                && (z - center[1]).abs() <= radius + 10_000.0)
+                .then(|| (p.to_string(), s))
         })
         .collect();
     println!("{} cstat documents near Ardea", docs.len());
@@ -43,17 +48,25 @@ fn main() -> Result<()> {
     let mut per_mesh: HashMap<String, usize> = HashMap::new();
     for (path, slot) in docs {
         let Ok(bytes) = vfs.read(slot) else { continue };
-        let Ok(v) = vegetation::extract(&bytes) else { continue };
+        let Ok(v) = vegetation::extract(&bytes) else {
+            continue;
+        };
         for area in &v.areas {
             let Some(grid) = &area.grid else { continue };
-            let by_id: HashMap<u16, &vegetation::BrushMesh> = area.meshes.iter().map(|m| (m.mesh_id, m)).collect();
+            let by_id: HashMap<u16, &vegetation::BrushMesh> =
+                area.meshes.iter().map(|m| (m.mesh_id, m)).collect();
             for e in &grid.entries {
-                let Some(m) = by_id.get(&e.mesh_id) else { continue };
+                let Some(m) = by_id.get(&e.mesh_id) else {
+                    continue;
+                };
                 let (gx, gz) = (e.position[0], e.position[2]);
                 if ((gx - center[0]).powi(2) + (gz - center[1]).powi(2)).sqrt() > radius + 7_100.0 {
                     continue;
                 }
-                let cell = ((gx / 10_000.0).floor() as i32, (gz / 10_000.0).floor() as i32);
+                let cell = (
+                    (gx / 10_000.0).floor() as i32,
+                    (gz / 10_000.0).floor() as i32,
+                );
                 // Left-handed Gothic space -> Bevy: mirror X (a reflection flips the y/z quaternion parts).
                 let pos = [-e.position[0], e.position[1], e.position[2]];
                 let q = [e.rotation[0], -e.rotation[1], -e.rotation[2], e.rotation[3]];
@@ -92,7 +105,11 @@ fn main() -> Result<()> {
         std::fs::write(pack.join(format!("veg/{cx}_{cz}.gveg")), out)?;
         total += recs.len();
     }
-    println!("{} cells with ground cover, {total} instances, {} brush meshes", cells.len(), brush.len());
+    println!(
+        "{} cells with ground cover, {total} instances, {} brush meshes",
+        cells.len(),
+        brush.len()
+    );
     // Brush meshes + textures from the cooked cache.
     std::fs::create_dir_all(pack.join("meshes"))?;
     std::fs::create_dir_all(pack.join("textures"))?;
@@ -103,7 +120,10 @@ fn main() -> Result<()> {
         let id = AssetId::of(name);
         let src = root.join(format!("meshes/{}.gmsh", id.hex()));
         if !src.is_file() {
-            println!("MISSING brush mesh in cache: {name} ({} instances)", per_mesh[name]);
+            println!(
+                "MISSING brush mesh in cache: {name} ({} instances)",
+                per_mesh[name]
+            );
             missing += 1;
             continue;
         }
@@ -123,7 +143,10 @@ fn main() -> Result<()> {
     for t in &texs {
         let src = root.join(format!("textures/{}.gtex", AssetId(*t).hex()));
         if src.is_file() {
-            std::fs::copy(&src, pack.join(format!("textures/{}.gtex", AssetId(*t).hex())))?;
+            std::fs::copy(
+                &src,
+                pack.join(format!("textures/{}.gtex", AssetId(*t).hex())),
+            )?;
             ntex += 1;
         }
     }
@@ -133,7 +156,10 @@ fn main() -> Result<()> {
     for (n, c) in counts.iter().take(40) {
         println!("  {c:7} {n}");
     }
-    println!("textures {ntex}/{} copied, {missing} brush meshes missing", texs.len());
+    println!(
+        "textures {ntex}/{} copied, {missing} brush meshes missing",
+        texs.len()
+    );
     let _ = Path::new("");
     Ok(())
 }

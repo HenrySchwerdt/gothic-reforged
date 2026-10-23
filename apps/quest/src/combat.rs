@@ -37,8 +37,10 @@ pub struct GothicCombat {
 
 impl GothicCombat {
     pub fn load(dir: &Path) -> Option<Self> {
-        let items = ItemDb::from_json(&std::fs::read_to_string(dir.join("items.json")).ok()?).ok()?;
-        let npcs = NpcFile::from_json(&std::fs::read_to_string(dir.join("orcs.json")).ok()?).ok()?;
+        let items =
+            ItemDb::from_json(&std::fs::read_to_string(dir.join("items.json")).ok()?).ok()?;
+        let npcs =
+            NpcFile::from_json(&std::fs::read_to_string(dir.join("orcs.json")).ok()?).ok()?;
         let cfg = SimConfig::default();
         let mut hero = Actor::hero(ActorId(0), &cfg);
         if let Some(sword) = items.get("It_1H_OrcSlayer_01") {
@@ -61,7 +63,9 @@ impl GothicCombat {
 
     /// Creates the Gothic actor behind an orc entity.
     pub fn new_orc(&mut self, e: Entity) {
-        let Some(rec) = &self.orc_template else { return };
+        let Some(rec) = &self.orc_template else {
+            return;
+        };
         let id = ActorId(self.next_id);
         self.next_id += 1;
         let mut a = rec.to_actor(id, &self.cfg, &self.items);
@@ -104,7 +108,11 @@ fn apply_melee(
     for h in hits.read() {
         let gc = &mut **gc;
         // Haptics: a blow you land (scaled by impact speed) or take.
-        let amp = if Some(h.victim) == me { 1.0 } else { (0.25 + h.impact_speed / 8.0).clamp(0.25, 1.0) };
+        let amp = if Some(h.victim) == me {
+            1.0
+        } else {
+            (0.25 + h.impact_speed / 8.0).clamp(0.25, 1.0)
+        };
         gothic_xr_quest::haptic_pulse(0, amp);
         gothic_xr_quest::haptic_pulse(1, amp);
         if Some(h.victim) == me {
@@ -114,10 +122,15 @@ fn apply_melee(
                 continue;
             }
             last_hit.insert(att_e, now);
-            let Some(orc) = gc.actors.get(&att_e) else { continue };
+            let Some(orc) = gc.actors.get(&att_e) else {
+                continue;
+            };
             let attack = Attack::melee(orc);
             let out = resolve_hit(&gc.cfg, &mut gc.rng, orc, &mut gc.hero, &attack);
-            info!("[combat] orc hits hero: damage {} hp {} result {:?}", out.damage, gc.hero.hp, out.result);
+            info!(
+                "[combat] orc hits hero: damage {} hp {} result {:?}",
+                out.damage, gc.hero.hp, out.result
+            );
             if gc.hero.hp <= 0 {
                 gc.hero_deaths += 1;
                 gc.hero.refresh(&gc.cfg);
@@ -125,21 +138,34 @@ fn apply_melee(
                 let p = player.ctrl.position;
                 player.ctrl.teleport(p + Vec3::Y * 50.0);
                 fade.0 = 1.0;
-                info!("[combat] the hero fell and got back up (deaths {})", gc.hero_deaths);
+                info!(
+                    "[combat] the hero fell and got back up (deaths {})",
+                    gc.hero_deaths
+                );
             }
         } else if h.attacker == me {
             // The hero hit something.
             if last_hit.get(&h.victim).is_some_and(|t| now - t < 0.35) {
                 continue;
             }
-            let Some(victim) = gc.actors.get_mut(&h.victim) else { continue };
+            let Some(victim) = gc.actors.get_mut(&h.victim) else {
+                continue;
+            };
             last_hit.insert(h.victim, now);
             let mut attack = Attack::melee(&gc.hero);
-            attack.head_hit = matches!(h.bone, gothic_vr_melee::Bone::Head | gothic_vr_melee::Bone::Neck);
+            attack.head_hit = matches!(
+                h.bone,
+                gothic_vr_melee::Bone::Head | gothic_vr_melee::Bone::Neck
+            );
             let hero = gc.hero.clone();
             let out = resolve_hit(&gc.cfg, &mut gc.rng, &hero, victim, &attack);
-            info!("[combat] hero hits orc: damage {} hp {} result {:?}", out.damage, victim.hp, out.result);
-            if (victim.hp <= 0 || out.killed() || out.defeated()) && let Ok(mut n) = npcs.get_mut(h.victim) {
+            info!(
+                "[combat] hero hits orc: damage {} hp {} result {:?}",
+                out.damage, victim.hp, out.result
+            );
+            if (victim.hp <= 0 || out.killed() || out.defeated())
+                && let Ok(mut n) = npcs.get_mut(h.victim)
+            {
                 n.ragdoll.set_stance(Stance::Fallen);
                 n.ai.cooldown = f32::INFINITY;
                 victim.ai_mode = AiMode::Dead;
@@ -162,7 +188,9 @@ fn apply_arrows(
     };
     for h in hits.read() {
         let gc = &mut **gc;
-        let Some(victim) = gc.actors.get_mut(&h.victim) else { continue };
+        let Some(victim) = gc.actors.get_mut(&h.victim) else {
+            continue;
+        };
         // Gothic: arrow damage scales with the draw time (0.2..1.0); the hunting bow's damage is the ammo figure.
         let mut ammo = gc.items.get("Arrow").cloned().unwrap_or_default();
         if let Some(bow) = gc.items.get("It_Bow_Hunting") {
@@ -172,8 +200,13 @@ fn apply_arrows(
         let attack = Attack::projectile(&ammo, mult);
         let hero = gc.hero.clone();
         let out = resolve_hit(&gc.cfg, &mut gc.rng, &hero, victim, &attack);
-        info!("[combat] arrow hits orc: damage {} hp {} (draw {:.2})", out.damage, victim.hp, h.draw_factor);
-        if (victim.hp <= 0 || out.killed() || out.defeated()) && let Ok(mut n) = npcs.get_mut(h.victim) {
+        info!(
+            "[combat] arrow hits orc: damage {} hp {} (draw {:.2})",
+            out.damage, victim.hp, h.draw_factor
+        );
+        if (victim.hp <= 0 || out.killed() || out.defeated())
+            && let Ok(mut n) = npcs.get_mut(h.victim)
+        {
             n.ragdoll.set_stance(Stance::Fallen);
             n.ai.cooldown = f32::INFINITY;
             victim.ai_mode = AiMode::Dead;

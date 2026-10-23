@@ -31,6 +31,9 @@ pub struct Retarget {
     fix: Quat,
     /// Limb bones whose child bone translation is rescaled to the IK segment length.
     limb_child: Vec<Option<usize>>,
+    /// Keep the rig's own bind bone lengths (orcs): the IK/ragdoll skeleton has hero proportions, stretching the orc
+    /// limbs to it squashed them ~10 % (orc bind height 196 cm vs hero 178 cm). Bones only aim, never stretch.
+    pub keep_bind_lengths: bool,
     /// Bind-pose distance (cm) from this bone to its limb child.
     limb_len_cm: Vec<f32>,
     /// Nodes between a limb bone and its child (child first, the bone itself excluded): their translations carry the
@@ -49,7 +52,11 @@ pub struct Retarget {
 /// Bind-pose facing of a skeleton in mirrored model space, same rule as `crates/animation` `Rig::facing_in_pose`:
 /// pelvis-side spine to head for creatures (mostly horizontal), otherwise left foot to left toe.
 fn bind_facing(rig: &ActorRig) -> Vec3 {
-    let find = |suffix: &str| rig.names.iter().position(|n| n.to_lowercase().ends_with(suffix));
+    let find = |suffix: &str| {
+        rig.names
+            .iter()
+            .position(|n| n.to_lowercase().ends_with(suffix))
+    };
     let at = |i: usize| rig.bind_global[i].w_axis.truncate();
     let horizontal = |d: Vec3| {
         let h = Vec3::new(d.x, 0.0, d.z);
@@ -96,7 +103,25 @@ fn grip_anatomy(grip: Quat, right: bool) -> Mat3 {
 
 impl Retarget {
     pub fn empty() -> Self {
-        Self { drive: vec![], rest_dir: vec![], order: vec![], rest_rot: vec![], pelvis_bind_cm: Vec3::ZERO, slot: Default::default(), hand_local: [None; 2], fix: Quat::from_rotation_y(PI), limb_child: vec![], limb_len_cm: vec![], limb_path: vec![], head_node: None, palm_local: [None; 2], foot_nodes: vec![], ankle_bind_cm: 0.0, fingers: vec![] }
+        Self {
+            drive: vec![],
+            rest_dir: vec![],
+            order: vec![],
+            rest_rot: vec![],
+            pelvis_bind_cm: Vec3::ZERO,
+            slot: Default::default(),
+            hand_local: [None; 2],
+            fix: Quat::from_rotation_y(PI),
+            limb_child: vec![],
+            keep_bind_lengths: false,
+            limb_len_cm: vec![],
+            limb_path: vec![],
+            head_node: None,
+            palm_local: [None; 2],
+            foot_nodes: vec![],
+            ankle_bind_cm: 0.0,
+            fingers: vec![],
+        }
     }
 
     /// `prefix` is `Hero` or `Orc`; `toe` the toe suffix (`Toe_1` / `Toe1_1`).
@@ -119,14 +144,24 @@ impl Retarget {
         }
         set(format!("{prefix}_Head_Head_1"), Drive::Head);
         for (side, sh, el, ha, hip, kn, an, hidx) in [
-            ("Left", ShoulderL, ElbowL, HandL, HipL, KneeL, AnkleL, 0usize),
-            ("Right", ShoulderR, ElbowR, HandR, HipR, KneeR, AnkleR, 1usize),
+            (
+                "Left", ShoulderL, ElbowL, HandL, HipL, KneeL, AnkleL, 0usize,
+            ),
+            (
+                "Right", ShoulderR, ElbowR, HandR, HipR, KneeR, AnkleR, 1usize,
+            ),
         ] {
-            set(format!("{prefix}_{side}_Arm_Shoulder_1"), Drive::Aim(Chest, sh));
+            set(
+                format!("{prefix}_{side}_Arm_Shoulder_1"),
+                Drive::Aim(Chest, sh),
+            );
             set(format!("{prefix}_{side}_Arm_Arm_1"), Drive::Aim(sh, el));
             set(format!("{prefix}_{side}_Arm_Arm_2"), Drive::Aim(el, ha));
             set(format!("{prefix}_{side}_Hand_Hand_1"), Drive::Hand(hidx));
-            set(format!("{prefix}_{side}_Leg_Hip_1"), Drive::Aim(Pelvis, hip));
+            set(
+                format!("{prefix}_{side}_Leg_Hip_1"),
+                Drive::Aim(Pelvis, hip),
+            );
             set(format!("{prefix}_{side}_Leg_Leg_1"), Drive::Aim(hip, kn));
             set(format!("{prefix}_{side}_Leg_Leg_2"), Drive::Aim(kn, an));
         }
@@ -139,24 +174,59 @@ impl Retarget {
             }
         };
         for k in 1..=4 {
-            link(format!("{prefix}_Spine_Spine_{k}"), format!("{prefix}_Spine_Spine_{}", k + 1));
+            link(
+                format!("{prefix}_Spine_Spine_{k}"),
+                format!("{prefix}_Spine_Spine_{}", k + 1),
+            );
         }
-        link(format!("{prefix}_Spine_Spine_5"), format!("{prefix}_Head_Neck_1"));
-        link(format!("{prefix}_Head_Neck_1"), format!("{prefix}_Head_Neck_2"));
-        link(format!("{prefix}_Head_Neck_2"), format!("{prefix}_Head_Neck_3"));
-        link(format!("{prefix}_Head_Neck_3"), format!("{prefix}_Head_Head_1"));
+        link(
+            format!("{prefix}_Spine_Spine_5"),
+            format!("{prefix}_Head_Neck_1"),
+        );
+        link(
+            format!("{prefix}_Head_Neck_1"),
+            format!("{prefix}_Head_Neck_2"),
+        );
+        link(
+            format!("{prefix}_Head_Neck_2"),
+            format!("{prefix}_Head_Neck_3"),
+        );
+        link(
+            format!("{prefix}_Head_Neck_3"),
+            format!("{prefix}_Head_Head_1"),
+        );
         for side in ["Left", "Right"] {
-            link(format!("{prefix}_{side}_Arm_Shoulder_1"), format!("{prefix}_{side}_Arm_Arm_1"));
-            link(format!("{prefix}_{side}_Arm_Arm_1"), format!("{prefix}_{side}_Arm_Arm_2"));
-            link(format!("{prefix}_{side}_Arm_Arm_2"), format!("{prefix}_{side}_Hand_Hand_1"));
-            link(format!("{prefix}_{side}_Leg_Hip_1"), format!("{prefix}_{side}_Leg_Leg_1"));
-            link(format!("{prefix}_{side}_Leg_Leg_1"), format!("{prefix}_{side}_Leg_Leg_2"));
-            link(format!("{prefix}_{side}_Leg_Leg_2"), format!("{prefix}_{side}_Foot_Foot_1"));
+            link(
+                format!("{prefix}_{side}_Arm_Shoulder_1"),
+                format!("{prefix}_{side}_Arm_Arm_1"),
+            );
+            link(
+                format!("{prefix}_{side}_Arm_Arm_1"),
+                format!("{prefix}_{side}_Arm_Arm_2"),
+            );
+            link(
+                format!("{prefix}_{side}_Arm_Arm_2"),
+                format!("{prefix}_{side}_Hand_Hand_1"),
+            );
+            link(
+                format!("{prefix}_{side}_Leg_Hip_1"),
+                format!("{prefix}_{side}_Leg_Leg_1"),
+            );
+            link(
+                format!("{prefix}_{side}_Leg_Leg_1"),
+                format!("{prefix}_{side}_Leg_Leg_2"),
+            );
+            link(
+                format!("{prefix}_{side}_Leg_Leg_2"),
+                format!("{prefix}_{side}_Foot_Foot_1"),
+            );
         }
         let mut rest_dir = vec![Vec3::X; n];
         for i in 0..n {
             if let Some(Drive::Aim(..)) = drive[i] {
-                let d = tail[i].map(|t| (rig.bind_global[t].w_axis.truncate() - rig.bind_global[i].w_axis.truncate()));
+                let d = tail[i].map(|t| {
+                    (rig.bind_global[t].w_axis.truncate() - rig.bind_global[i].w_axis.truncate())
+                });
                 match d {
                     Some(d) if d.length() > 0.5 => rest_dir[i] = d.normalize(),
                     _ => drive[i] = None,
@@ -174,18 +244,39 @@ impl Retarget {
         };
         let mut order: Vec<usize> = (0..n).collect();
         order.sort_by_key(|&i| depth(i));
-        let rest_rot: Vec<Quat> = rig.bind_global.iter().map(|m| Quat::from_mat4(m).normalize()).collect();
+        let rest_rot: Vec<Quat> = rig
+            .bind_global
+            .iter()
+            .map(|m| Quat::from_mat4(m).normalize())
+            .collect();
         let pelvis_node = rig
             .by_name
             .get(&format!("{prefix}_Spine_Spine_1"))
             .copied()
-            .or_else(|| rig.by_name.get(&format!("{prefix}_Spine_Spine_ROOT")).copied())
+            .or_else(|| {
+                rig.by_name
+                    .get(&format!("{prefix}_Spine_Spine_ROOT"))
+                    .copied()
+            })
             .unwrap_or(0);
         let pelvis_bind_cm = rig.bind_global[pelvis_node].w_axis.truncate();
-        let slot_names: [&'static str; 6] =
-            ["Slot_MeleeBackLeft", "Slot_MeleeBackRight", "Slot_Bow", "Slot_RightHand_Weapon", "Slot_LeftHand_Weapon", "Slot_AxeBack"];
-        let slot = slot_names.iter().filter_map(|s| rig.by_name.get(*s).map(|&i| (*s, i))).collect();
-        let pos = |name: &str| rig.by_name.get(name).map(|&i| rig.bind_global[i].w_axis.truncate());
+        let slot_names: [&'static str; 6] = [
+            "Slot_MeleeBackLeft",
+            "Slot_MeleeBackRight",
+            "Slot_Bow",
+            "Slot_RightHand_Weapon",
+            "Slot_LeftHand_Weapon",
+            "Slot_AxeBack",
+        ];
+        let slot = slot_names
+            .iter()
+            .filter_map(|s| rig.by_name.get(*s).map(|&i| (*s, i)))
+            .collect();
+        let pos = |name: &str| {
+            rig.by_name
+                .get(name)
+                .map(|&i| rig.bind_global[i].w_axis.truncate())
+        };
         let mut hand_local = [None; 2];
         for (k, side) in ["Left", "Right"].into_iter().enumerate() {
             let hand = format!("{prefix}_{side}_Hand_Hand_1");
@@ -206,7 +297,14 @@ impl Retarget {
         let mut limb_len_cm = vec![0.0; n];
         let mut limb_path: Vec<Vec<usize>> = vec![Vec::new(); n];
         for side in ["Left", "Right"] {
-            for part in ["Arm_Shoulder_1", "Arm_Arm_1", "Arm_Arm_2", "Leg_Hip_1", "Leg_Leg_1", "Leg_Leg_2"] {
+            for part in [
+                "Arm_Shoulder_1",
+                "Arm_Arm_1",
+                "Arm_Arm_2",
+                "Leg_Hip_1",
+                "Leg_Leg_1",
+                "Leg_Leg_2",
+            ] {
                 if let Some(&i) = rig.by_name.get(&format!("{prefix}_{side}_{part}")) {
                     if let (Some(Drive::Aim(..)), Some(c)) = (drive[i], tail[i]) {
                         limb_child[i] = Some(c);
@@ -217,7 +315,9 @@ impl Retarget {
                             q = rig.parent[q as usize];
                         }
                         limb_path[i] = path;
-                        limb_len_cm[i] = (rig.bind_global[c].w_axis.truncate() - rig.bind_global[i].w_axis.truncate()).length();
+                        limb_len_cm[i] = (rig.bind_global[c].w_axis.truncate()
+                            - rig.bind_global[i].w_axis.truncate())
+                        .length();
                     }
                 }
             }
@@ -228,14 +328,30 @@ impl Retarget {
         let mut fingers: Vec<Option<(usize, Vec3, f32, u8)>> = vec![None; n];
         for (k, side) in ["Left", "Right"].into_iter().enumerate() {
             let hand = format!("{prefix}_{side}_Hand_Hand_1");
-            let (Some(&hi), Some(al)) = (rig.by_name.get(&hand), hand_local[k]) else { continue };
+            let (Some(&hi), Some(al)) = (rig.by_name.get(&hand), hand_local[k]) else {
+                continue;
+            };
             let t_model = rest_rot[hi] * al.col(1);
             let axis_model = if k == 0 { t_model } else { -t_model };
             for fnum in 1..=5 {
                 for (j, deg) in [(1, 70.0f32), (2, 80.0), (3, 50.0)] {
-                    if let Some(&fi) = rig.by_name.get(&format!("{prefix}_{side}_Hand_Finger{fnum}_{j}")) {
-                        let (deg, kind) = if fnum == 1 { (deg * 0.4, 0u8) } else if fnum == 2 { (deg, 1u8) } else { (deg, 2u8) };
-                        fingers[fi] = Some((k, (rest_rot[fi].inverse() * axis_model).normalize(), deg.to_radians(), kind));
+                    if let Some(&fi) = rig
+                        .by_name
+                        .get(&format!("{prefix}_{side}_Hand_Finger{fnum}_{j}"))
+                    {
+                        let (deg, kind) = if fnum == 1 {
+                            (deg * 0.4, 0u8)
+                        } else if fnum == 2 {
+                            (deg, 1u8)
+                        } else {
+                            (deg, 2u8)
+                        };
+                        fingers[fi] = Some((
+                            k,
+                            (rest_rot[fi].inverse() * axis_model).normalize(),
+                            deg.to_radians(),
+                            kind,
+                        ));
                     }
                 }
             }
@@ -244,15 +360,46 @@ impl Retarget {
         let mut palm_local = [None; 2];
         for (k, side) in ["Left", "Right"].into_iter().enumerate() {
             let hand = format!("{prefix}_{side}_Hand_Hand_1");
-            let roots: Vec<Vec3> = (2..=5).filter_map(|f| pos(&format!("{prefix}_{side}_Hand_Finger{f}_1"))).collect();
-            if let (Some(w), Some(&hi), false) = (pos(&hand), rig.by_name.get(&hand), roots.is_empty()) {
+            let roots: Vec<Vec3> = (2..=5)
+                .filter_map(|f| pos(&format!("{prefix}_{side}_Hand_Finger{f}_1")))
+                .collect();
+            if let (Some(w), Some(&hi), false) =
+                (pos(&hand), rig.by_name.get(&hand), roots.is_empty())
+            {
                 let kc = roots.iter().copied().sum::<Vec3>() / roots.len() as f32;
                 palm_local[k] = Some(rest_rot[hi].inverse() * ((kc - w) * 0.55));
             }
         }
-        let foot_nodes: Vec<usize> = ["Left", "Right"].iter().filter_map(|s| rig.by_name.get(&format!("{prefix}_{s}_Foot_Foot_1")).copied()).collect();
-        let ankle_bind_cm = foot_nodes.first().map_or(0.0, |&f| rig.bind_global[f].w_axis.y);
-        Self { drive, rest_dir, order, rest_rot, pelvis_bind_cm, slot, hand_local, fix, limb_child, limb_len_cm, limb_path, head_node, palm_local, foot_nodes, ankle_bind_cm, fingers }
+        let foot_nodes: Vec<usize> = ["Left", "Right"]
+            .iter()
+            .filter_map(|s| {
+                rig.by_name
+                    .get(&format!("{prefix}_{s}_Foot_Foot_1"))
+                    .copied()
+            })
+            .collect();
+        let ankle_bind_cm = foot_nodes
+            .first()
+            .map_or(0.0, |&f| rig.bind_global[f].w_axis.y);
+        Self {
+            drive,
+            rest_dir,
+            order,
+            rest_rot,
+            pelvis_bind_cm,
+            slot,
+            hand_local,
+            fix,
+            limb_child,
+            keep_bind_lengths: false,
+            limb_len_cm,
+            limb_path,
+            head_node,
+            palm_local,
+            foot_nodes,
+            ankle_bind_cm,
+            fingers,
+        }
     }
 
     /// Where the hand bone (wrist) must be so that the visible palm centre sits at the controller's grip position
@@ -318,7 +465,11 @@ impl Retarget {
             let parent_rw = if p >= 0 { rw[p as usize] } else { r_root };
             let base_rest = r_root * self.rest_rot[i];
             let local_t = rig.bind_local[i].translation * tscale[i];
-            let wp_i = if p >= 0 { wp[p as usize] + parent_rw * (local_t * wscale) } else { root_t + r_root * (local_t * wscale) };
+            let wp_i = if p >= 0 {
+                wp[p as usize] + parent_rw * (local_t * wscale)
+            } else {
+                root_t + r_root * (local_t * wscale)
+            };
             wp[i] = wp_i;
             let aimed = match self.drive[i] {
                 Some(Drive::Aim(a, b)) => {
@@ -334,7 +485,7 @@ impl Retarget {
                     } else {
                         if let Some(c) = self.limb_child[i] {
                             let bind = self.limb_len_cm[i] * wscale;
-                            if bind > 1e-4 {
+                            if bind > 1e-4 && !self.keep_bind_lengths {
                                 let r = (len / bind).clamp(0.4, 2.5);
                                 tscale[c] = r;
                                 for &q in &self.limb_path[i] {
@@ -349,7 +500,9 @@ impl Retarget {
                 Some(Drive::Head) => head_rot.map(|h| h * (self.fix * self.rest_rot[i])),
                 Some(Drive::Hand(k)) => match (hand_rot[k], self.hand_local[k]) {
                     // Rb * A_local = A_world  =>  Rb = A_world * A_local^-1 (both bases share their handedness).
-                    (Some(g), Some(al)) => Some(Quat::from_mat3(&(grip_anatomy(g, k == 1) * al.inverse())).normalize()),
+                    (Some(g), Some(al)) => {
+                        Some(Quat::from_mat3(&(grip_anatomy(g, k == 1) * al.inverse())).normalize())
+                    }
                     _ => None,
                 },
                 None => None,
@@ -392,7 +545,11 @@ impl Retarget {
         // Stand on the ground: put the lowest ankle at ground height + the bind ankle height (clip-driven legs are as long
         // as the original skeleton, the IK pose is not).
         if let (Some(g), false) = (ground, self.foot_nodes.is_empty()) {
-            let low = self.foot_nodes.iter().map(|&f| wp[f].y).fold(f32::MAX, f32::min);
+            let low = self
+                .foot_nodes
+                .iter()
+                .map(|&f| wp[f].y)
+                .fold(f32::MAX, f32::min);
             root_t.y += g + self.ankle_bind_cm * wscale - low;
         }
         if let (Some(target), Some(h)) = (head_anchor, self.head_node) {

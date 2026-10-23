@@ -5,7 +5,9 @@ use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     reflect::TypePath,
-    render::render_resource::{AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError},
+    render::render_resource::{
+        AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    },
     shader::{Shader, ShaderRef},
 };
 use gothic_xr_quest::knob_f32;
@@ -81,7 +83,12 @@ impl QParams {
             sun_col: sun_col.extend(0.0),
             sh,
             fog_col: fog_color().extend(1.0),
-            misc: Vec4::new(cutoff, 0.0, knob_f32("fog_start", 120.0), knob_f32("fog_end", 420.0)),
+            misc: Vec4::new(
+                cutoff,
+                0.0,
+                knob_f32("fog_start", 120.0),
+                knob_f32("fog_end", 420.0),
+            ),
             uv_scale_d: Vec4::ONE,
             flags: Vec4::ZERO,
         }
@@ -95,7 +102,9 @@ pub struct QKey {
 
 impl From<&QuestMaterial> for QKey {
     fn from(m: &QuestMaterial) -> Self {
-        Self { two_sided: m.two_sided }
+        Self {
+            two_sided: m.two_sided,
+        }
     }
 }
 
@@ -118,7 +127,9 @@ pub struct QuestMaterial {
 
 impl Material for QuestMaterial {
     fn fragment_shader() -> ShaderRef {
-        QUEST_FS.get().map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
+        QUEST_FS
+            .get()
+            .map_or(ShaderRef::Default, |h| ShaderRef::Handle(h.clone()))
     }
     fn enable_prepass() -> bool {
         false
@@ -132,7 +143,11 @@ impl Material for QuestMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = if key.bind_group_data.two_sided { None } else { Some(Face::Back) };
+        descriptor.primitive.cull_mode = if key.bind_group_data.two_sided {
+            None
+        } else {
+            Some(Face::Back)
+        };
         Ok(())
     }
 }

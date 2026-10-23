@@ -8,8 +8,14 @@ fn main() -> anyhow::Result<()> {
     let fam = args.get(1).map(String::as_str).unwrap_or("Orc");
     let filter = args.get(2).map(|s| s.to_lowercase());
     for (name, m) in lib.catalog.motions(fam) {
-        if filter.as_ref().is_none_or(|f| name.to_lowercase().contains(f)) {
-            println!("{name}  [{} {} {} {} {} {}]", m.pose, m.left, m.right, m.action, m.phase, m.dir);
+        if filter
+            .as_ref()
+            .is_none_or(|f| name.to_lowercase().contains(f))
+        {
+            println!(
+                "{name}  [{} {} {} {} {} {}]",
+                m.pose, m.left, m.right, m.action, m.phase, m.dir
+            );
         }
     }
     Ok(())

@@ -2,8 +2,8 @@
 //! cooked cache (mirrored like the world), driven by the cloud full-body IK (`VrBody`) through the generic
 //! retargeter. The head mesh lives on render layer 1 only, so the player's own eyes never see inside it.
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::RenderLayers;
 use bevy::camera::RenderTarget;
+use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -35,7 +35,16 @@ pub struct HeroPlugin;
 
 impl Plugin for HeroPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (spawn_hero.run_if(not(resource_exists::<Hero>)).run_if(resource_exists::<Ardea>), drive_hero.after(VrSet::Body)).chain());
+        app.add_systems(
+            Update,
+            (
+                spawn_hero
+                    .run_if(not(resource_exists::<Hero>))
+                    .run_if(resource_exists::<Ardea>),
+                drive_hero.after(VrSet::Body),
+            )
+                .chain(),
+        );
     }
 }
 
@@ -49,17 +58,54 @@ fn spawn_hero(
     mut inv: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut std_mats: ResMut<Assets<StandardMaterial>>,
 ) {
-    let root = commands.spawn((HeroRoot, Transform::from_scale(Vec3::splat(0.01)), Visibility::default())).id();
-    let body = PartOptions { cutout: false, hide_from_eyes: false };
-    let Some(rig) = spawn_body(&mut commands, &mut a, "g3_hero_body_player.xact", root, body, &mut meshes, &mut qmats, &mut images, &mut inv) else {
+    let root = commands
+        .spawn((
+            HeroRoot,
+            Transform::from_scale(Vec3::splat(0.01)),
+            Visibility::default(),
+        ))
+        .id();
+    let body = PartOptions {
+        cutout: false,
+        hide_from_eyes: false,
+    };
+    let Some(rig) = spawn_body(
+        &mut commands,
+        &mut a,
+        "g3_hero_body_player.xact",
+        root,
+        body,
+        &mut meshes,
+        &mut qmats,
+        &mut images,
+        &mut inv,
+    ) else {
         error!("hero body actor missing in the data pack");
         commands.entity(root).despawn();
         // Stop retrying every frame.
-        commands.insert_resource(Hero { rig: ActorRig::empty(), rt: Retarget::empty() });
+        commands.insert_resource(Hero {
+            rig: ActorRig::empty(),
+            rt: Retarget::empty(),
+        });
         return;
     };
-    let head = PartOptions { cutout: true, hide_from_eyes: true };
-    if spawn_part(&mut commands, &mut a, "g3_head_hero_hero_01.xact", &rig, head, &mut meshes, &mut qmats, &mut images, &mut inv).is_none() {
+    let head = PartOptions {
+        cutout: true,
+        hide_from_eyes: true,
+    };
+    if spawn_part(
+        &mut commands,
+        &mut a,
+        "g3_head_hero_hero_01.xact",
+        &rig,
+        head,
+        &mut meshes,
+        &mut qmats,
+        &mut images,
+        &mut inv,
+    )
+    .is_none()
+    {
         warn!("hero head actor missing in the data pack");
     }
     let rt = Retarget::new(&rig, "Hero");
@@ -69,8 +115,18 @@ fn spawn_hero(
     }
     let clips = ardea_clips_path("clips_hero.grcp");
     let set = clips.and_then(|p| crate::anim::ClipSet::load(&p, &rig, "Hero"));
-    info!("[hero] clip set: {}", if set.is_some() { "loaded" } else { "missing (IK legs only)" });
-    commands.insert_resource(HeroAnim { set, gait: Default::default() });
+    info!(
+        "[hero] clip set: {}",
+        if set.is_some() {
+            "loaded"
+        } else {
+            "missing (IK legs only)"
+        }
+    );
+    commands.insert_resource(HeroAnim {
+        set,
+        gait: Default::default(),
+    });
     commands.insert_resource(Hero { rig, rt });
 }
 
@@ -84,14 +140,34 @@ pub fn ardea_clips_path(name: &str) -> Option<std::path::PathBuf> {
 }
 
 /// A render-to-texture "mirror": a camera in front of the player looking back at the avatar, shown on a quad.
-fn spawn_mirror(commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<StandardMaterial>) {
-    let size = Extent3d { width: 512, height: 512, depth_or_array_layers: 1 };
-    let mut img = Image::new_fill(size, TextureDimension::D2, &[0, 0, 0, 255], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
-    img.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
+fn spawn_mirror(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    mats: &mut Assets<StandardMaterial>,
+) {
+    let size = Extent3d {
+        width: 512,
+        height: 512,
+        depth_or_array_layers: 1,
+    };
+    let mut img = Image::new_fill(
+        size,
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    img.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
     let handle = images.add(img);
     commands.spawn((
         Camera3d::default(),
-        Camera { order: -1, clear_color: ClearColorConfig::Custom(Color::srgb(0.3, 0.35, 0.45)), ..default() },
+        Camera {
+            order: -1,
+            clear_color: ClearColorConfig::Custom(Color::srgb(0.3, 0.35, 0.45)),
+            ..default()
+        },
         RenderTarget::Image(handle.clone().into()),
         RenderLayers::layer(0).with(1),
         bevy::core_pipeline::tonemapping::Tonemapping::None,
@@ -100,7 +176,11 @@ fn spawn_mirror(commands: &mut Commands, images: &mut Assets<Image>, meshes: &mu
     ));
     commands.spawn((
         Mesh3d(meshes.add(Rectangle::new(1.2, 1.2))),
-        MeshMaterial3d(mats.add(StandardMaterial { base_color_texture: Some(handle), unlit: true, ..default() })),
+        MeshMaterial3d(mats.add(StandardMaterial {
+            base_color_texture: Some(handle),
+            unlit: true,
+            ..default()
+        })),
         MirrorQuad,
         Transform::IDENTITY,
     ));
@@ -120,10 +200,40 @@ fn drive_hero(
     body: Res<VrBody>,
     head: Query<&Transform, (With<XrHead>, Without<XrHand>)>,
     hands: Query<(&Transform, &XrHand), Without<XrHead>>,
-    phys_hands: Query<(&Transform, &gothic_vr_physics::PhysicsHand), (Without<XrHand>, Without<XrHead>)>,
-    mut joints: Query<&mut Transform, (Without<XrHand>, Without<XrHead>, Without<MirrorCam>, Without<MirrorQuad>)>,
-    mut mirror: Query<&mut Transform, (With<MirrorCam>, Without<MirrorQuad>, Without<XrHand>, Without<XrHead>)>,
-    mut quad: Query<&mut Transform, (With<MirrorQuad>, Without<MirrorCam>, Without<XrHand>, Without<XrHead>)>,
+    phys_hands: Query<
+        (&Transform, &gothic_vr_physics::PhysicsHand),
+        (Without<XrHand>, Without<XrHead>),
+    >,
+    mut joints: Query<
+        &mut Transform,
+        (
+            Without<XrHand>,
+            Without<XrHead>,
+            Without<MirrorCam>,
+            Without<MirrorQuad>,
+            Without<gothic_vr_physics::PhysicsHand>,
+        ),
+    >,
+    mut mirror: Query<
+        &mut Transform,
+        (
+            With<MirrorCam>,
+            Without<MirrorQuad>,
+            Without<XrHand>,
+            Without<XrHead>,
+            Without<gothic_vr_physics::PhysicsHand>,
+        ),
+    >,
+    mut quad: Query<
+        &mut Transform,
+        (
+            With<MirrorQuad>,
+            Without<MirrorCam>,
+            Without<XrHand>,
+            Without<XrHead>,
+            Without<gothic_vr_physics::PhysicsHand>,
+        ),
+    >,
 ) {
     let Some(hero) = hero else { return };
     let Some(pose) = &body.pose else { return };
@@ -159,8 +269,14 @@ fn drive_hero(
         place_trunk(&mut pose, head_p0, r);
     }
     let pose = &pose;
-    let scale = hero.rt.torso_bind_m(&hero.rig).map_or(1.0, |b| (torso0 / b).clamp(0.6, 1.6));
-    let curl = [[frame.hands[0].squeeze, frame.hands[0].trigger], [frame.hands[1].squeeze, frame.hands[1].trigger]];
+    let scale = hero
+        .rt
+        .torso_bind_m(&hero.rig)
+        .map_or(1.0, |b| (torso0 / b).clamp(0.6, 1.6));
+    let curl = [
+        [frame.hands[0].squeeze, frame.hands[0].trigger],
+        [frame.hands[1].squeeze, frame.hands[1].trigger],
+    ];
     // Legs: original walk/run clips by body-local velocity once the player moves (IK legs when standing).
     let mut ov = None;
     if let Some(a) = anim.as_deref_mut()
@@ -169,11 +285,20 @@ fn drive_hero(
         let pos = pose.get(gothic_vr::body::Joint::Pelvis);
         let (w, layers) = a.gait.update(set, pos, pose.body_yaw, time.delta_secs());
         if w > 0.0 && !layers.is_empty() {
-            let refs: Vec<(&str, f32, f32)> = layers.iter().map(|(k, t, wt)| (k.as_str(), *t, *wt)).collect();
+            let refs: Vec<(&str, f32, f32)> = layers
+                .iter()
+                .map(|(k, t, wt)| (k.as_str(), *t, *wt))
+                .collect();
             let rot = set.sample_world(&refs, Quat::from_rotation_y(pose.body_yaw));
             let mut weight = vec![0.0; rot.len()];
             for side in ["Left", "Right"] {
-                for part in ["Leg_Hip_1", "Leg_Leg_1", "Leg_Leg_2", "Foot_Foot_1", "Foot_Toe_1"] {
+                for part in [
+                    "Leg_Hip_1",
+                    "Leg_Leg_1",
+                    "Leg_Leg_2",
+                    "Foot_Foot_1",
+                    "Foot_Toe_1",
+                ] {
                     if let Some(&i) = hero.rig.by_name.get(&format!("Hero_{side}_{part}")) {
                         weight[i] = w;
                     }
@@ -191,16 +316,30 @@ fn drive_hero(
             pose2.joints[joint.index()] = w;
         }
     }
-    hero.rt.apply(&hero.rig, &mut joints, &pose2, head_rot, hand_rot, scale, None, curl, ov.as_ref(), None);
+    hero.rt.apply(
+        &hero.rig,
+        &mut joints,
+        &pose2,
+        head_rot,
+        hand_rot,
+        scale,
+        None,
+        curl,
+        ov.as_ref(),
+        None,
+    );
     // Mirror: 2.2 m in front of the avatar (its facing), camera looks back at it.
     let fwd = Quat::from_rotation_y(pose.body_yaw) * Vec3::NEG_Z;
     let base = pose.get(gothic_vr::body::Joint::Pelvis);
     if let Ok(mut c) = mirror.single_mut() {
         let at = Vec3::new(base.x, base.y + 0.5, base.z) + fwd * 2.6;
-        *c = Transform::from_translation(at).looking_at(Vec3::new(base.x, base.y + 0.45, base.z), Vec3::Y);
+        *c = Transform::from_translation(at)
+            .looking_at(Vec3::new(base.x, base.y + 0.45, base.z), Vec3::Y);
     }
     if let Ok(mut q) = quad.single_mut() {
-        let at = Vec3::new(base.x, 1.5, base.z) + fwd * 2.2 + Quat::from_rotation_y(pose.body_yaw) * Vec3::new(1.6, 0.0, 0.0);
+        let at = Vec3::new(base.x, 1.5, base.z)
+            + fwd * 2.2
+            + Quat::from_rotation_y(pose.body_yaw) * Vec3::new(1.6, 0.0, 0.0);
         *q = Transform::from_translation(at).looking_at(Vec3::new(base.x, 1.5, base.z), Vec3::Y);
         q.rotate_y(std::f32::consts::PI);
     }
@@ -217,7 +356,14 @@ pub fn place_trunk(pose: &mut gothic_vr::body::BodyPose, eye: Vec3, head_rot: Qu
     let fwd = Quat::from_rotation_y(pose.body_yaw) * Vec3::NEG_Z;
     let pivot = eye + head_rot * EYE_TO_NECK - fwd * TORSO_BACK;
     let delta = pivot - pose.get(Joint::Neck);
-    for j in [Joint::Pelvis, Joint::Spine, Joint::Chest, Joint::Neck, Joint::ShoulderL, Joint::ShoulderR] {
+    for j in [
+        Joint::Pelvis,
+        Joint::Spine,
+        Joint::Chest,
+        Joint::Neck,
+        Joint::ShoulderL,
+        Joint::ShoulderR,
+    ] {
         pose.joints[j.index()] += delta;
     }
 }
