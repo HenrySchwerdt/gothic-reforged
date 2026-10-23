@@ -1,4 +1,26 @@
-## Active performance follow-up — 2026-10-23 03:26 UTC
+## Active release A/B preparation — 2026-10-23 03:43 UTC
+
+Tracebuild39345exit0/9m12s, source558b9de1a4bc039b6e02987dc3943c8639db2b89,
+immutable75c76b2301e9442dce27fd6b50dbf572bf44f906b896464ef60ebe96720a570f.
+Ownruntime/evidence `.local/dither-fixed-trace/`. NormalvsNoIndirectDrawing fixed
+wind/pose pairsPASS, rootviewed4PNGs noobviousgeometry/shadowloss/checkers. Small
+pixeldiffsnotexactidentity. Smoke movement1642vs890cm differs; no movementparityclaim.
+Actualtrace pair: Queuewrite_buffer1125.8->18calls/frame,4.713->0.426ms; default
+Shadowbin3.259ms andprepare_preprocess_bind_groups3.095ms amongtop40, notcandidate.
+Defaulttrace15.672ms/GPU4.222 vsflag6.535/GPU1.304 is DIAGNOSTICONLY, NOTreleasegain.
+
+ONE root GNU viewer releasebuild27838RUNNING sourcecb909ff, log
+`.local/pc-direct-render-release-build.log`. Windowscamera nowdefaultNoIndirect;
+exactGR_NO_INDIRECT_DRAWING=0reference,1candidate; otherplatformdefaultunchanged.
+No shadow/cascade/resolution/quality change. PROVISIONAL untilreleaseA/B/QA/images.
+Benchscript8677336 adds -CompareIndirectDrawing, requiresCamera+sameEXEhash and
+sets0/1; cleanenvwrapperstillrequired. No productionEXE/package changed yet.
+wind_clock preparesOWNnewimmutable+runtime-root sidecar runner, mustwaitROOTactual
+exit0 beforegames. Firstnormaldefaultfixedsmoke2shots/rootview, then37QAdefault,
+then4sameEXEcameraA/B30warmup+20sample, norepeatedQA before newreason. No games or
+measurementsduringcompilerload. Failedrunsremain. water_rendererdocs-only.
+
+## Completed baseline / trace preparation — 2026-10-23 03:26 UTC
 
 Quota reset confirmed0%used03:18UTC. DitherFix remains delivered/unchanged below.
 Normal corrected-release baseline COMPLETE: sole runner session53465exit0, 4samehash

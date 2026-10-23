@@ -24,11 +24,33 @@ maximum displacement), with no hero or physics. The runtime was
 environment recorded only `GR_RES=1280x720`, with no aim-pick or raycast comparison switch
 enabled. GPU timing is whole-frame aggregate, not per-pass attribution.
 
-The older retained trace below remains a historical lead only. One corrected-source trace build is
-in progress at source `558b9de`; it includes the default-off `GR_NO_INDIRECT_DRAWING=1` diagnostic
-switch. Build log: `.local/pc-dither-perf-trace-build.log`. Do not treat its instrumented timings as
-shipping performance; use the trace for CPU span attribution and follow with a release A/B if a
-candidate change is identified.
+The earlier retained trace below remains a historical lead only. The corrected-source indirect-
+drawing trace is now complete; its paired measurements and pending release validation are recorded
+in the next section. Instrumented timings are for CPU-span attribution, not shipping performance.
+
+## Fresh fixed-camera indirect-drawing trace (2026-10-23)
+
+The completed diagnostic pair is in `.local/dither-fixed-trace/trace/{default,no-indirect}/bench.json`.
+Both runs used the same trace/debug executable built from source
+`558b9de1a4bc039b6e02987dc3943c8639db2b89` (SHA-256
+`75c76b2301e9442dce27fd6b50dbf572bf44f906b896464ef60ebe96720a570f`). At 1280x720, each used a
+30 s settled-world warmup followed by a 20 s analytical camera-only route; the only child environment
+change was `GR_NO_INDIRECT_DRAWING=1` for `no-indirect`. `Queue::write_buffer` fell from 1125.8
+calls/frame (4.713 ms/frame) to 18.0 (0.426 ms/frame). In the default trace,
+`write_binned_instance_buffers<Shadow>` was 3.259 ms/frame and
+`prepare_preprocess_bind_groups` 3.095 ms/frame; neither appears in the candidate top 40. Their
+absence there does not establish zero cost. Root reviewed the fixed-view images: no obvious geometry,
+shadow or checker loss, though small pixel differences remain.
+
+These are instrumented diagnostic spans and frame timings, not shipping-performance results; spans
+are inclusive and must not be summed as disjoint costs. The trace run averages were 15.672 ms / GPU
+4.222 ms default and 6.535 ms / GPU 1.304 ms with the flag, so the large timing shift is not a valid
+release gain claim. The separate smoke-walk traveled 1642 cm versus 890 cm and is not workload parity.
+Release A/B and QA are pending on build source `cb909ff` (log
+`.local/pc-direct-render-release-build.log`): compare the same executable with
+`GR_NO_INDIRECT_DRAWING=0` reference and `=1` candidate, then inspect release images and run QA before
+packaging. The harness switch is `scripts/bench-renderer.ps1 -CompareIndirectDrawing` (commit
+`8677336`); no release package is validated yet.
 
 ## 1. Shadow pass mesh-bin work
 
@@ -84,7 +106,7 @@ indicates they are material to the steady-state baseline.
 
 The committed analytical camera workload was used to compare the shared-focus buffer against the old per-material focus path. Immutable artifacts and provenance are in `D:/gr-wt/codex-renderer/.local/artifacts/gothic-reforged-camera-{oldfocus,focus}.exe`; source snapshots/manifests and the reverse-patch proof are summarized in `docs/HANDOFF_CODEX_20261022.md`. The 1280x720 A/B/A/B run used 30s settled-world warmup, 20s per sample, two repetitions, output `.local/bench-grass-focus-camera/summary.json`. Per pair, average/p95/GPU ms old→shared: 11.6661/12.8463/3.3069→11.2035/12.2293/3.2022, then 11.7172/12.9147/3.3681→11.2142/12.2673/3.1892. Run medians changed −4.13% average (11.6917→11.2088ms), p95 12.8805→12.2483ms, GPU average 3.3375→3.1957ms. The route followed the same 10s-period, 2m-radius loop; 21 expected/actual samples per run stayed within 3.85µm position residual and zero quaternion-component residual. Entity count matched at 12,752; start visible meshes differed by at most five (0.32%), final counts by two or fewer. `observer_cm` returns `Player.fly_pos` in fly mode, which `grass_focus` consumes, so this route does exercise the moving 2cm-gated grass-focus updates. It bypasses hero/controller physics and hides the hero; it is not whole-game movement parity. Two repetitions give only a small descriptive estimate, not high-confidence causal proof. The earlier generic walking comparison’s 3.69% average reduction is not causal evidence: its route endpoints and visible-mesh counts differed materially.
 
-### Next bottleneck trace
+### Historical trace procedure
 
 Once the wind probe source is frozen, combine it and trace support into one optimized build rather than linking a trace-only binary and then rebuilding. The existing app feature is `trace = ["viewer", "bevy/trace", "bevy/debug"]`; `--trace` is installed before the Bevy app, and the benchmark resets span counters when measurement begins. Bevy 0.20 function systems emit INFO `system` spans with a `name` field, which the app table keys as `system:<name>`; check for the wind-probe/system spans in the output rather than assuming they are present. Use the reviewed GNU environment and target:
 
