@@ -552,10 +552,16 @@ fn setup(
         NotShadowCaster,
         SkyDome,
     ));
-    // Diagnostic A/B for Bevy's indirect rendering path. Sample once at camera creation; the
-    // component must be present before the camera is first extracted by the render world.
-    let no_indirect_drawing = std::env::var("GR_NO_INDIRECT_DRAWING")
-        .is_ok_and(|value| value == "1");
+    // Bevy's non-indirect path reduced measured Windows PC CPU render overhead without obvious
+    // losses in the checked views. This is a platform-specific default, not a universal performance claim
+    // or a VR result. Sample once at spawn because NoIndirectDrawing must be present before the
+    // camera is first extracted: exact 0 forces indirect mode, exact 1 forces non-indirect mode,
+    // and unset/invalid values use the Windows-only default.
+    let no_indirect_drawing = match std::env::var("GR_NO_INDIRECT_DRAWING").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => cfg!(target_os = "windows"),
+    };
     let cam = commands
         .spawn((
             Camera3d::default(),
