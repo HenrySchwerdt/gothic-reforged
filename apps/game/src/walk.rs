@@ -552,6 +552,10 @@ fn setup(
         NotShadowCaster,
         SkyDome,
     ));
+    // Diagnostic A/B for Bevy's indirect rendering path. Sample once at camera creation; the
+    // component must be present before the camera is first extracted by the render world.
+    let no_indirect_drawing = std::env::var("GR_NO_INDIRECT_DRAWING")
+        .is_ok_and(|value| value == "1");
     let cam = commands
         .spawn((
             Camera3d::default(),
@@ -577,6 +581,13 @@ fn setup(
             PlayerCamera,
         ))
         .id();
+    if no_indirect_drawing {
+        // This insert follows the spawn in the same deferred command queue, before the camera
+        // is visible to extraction; it is not a live render-mode toggle.
+        commands
+            .entity(cam)
+            .insert(bevy::render::view::NoIndirectDrawing);
+    }
     if std::env::var_os("GR_NOBLOOM").is_none() {
         commands.entity(cam).insert(post::BloomPost::original());
         // The HDR exposure curve of the original needs the unclamped scene.
