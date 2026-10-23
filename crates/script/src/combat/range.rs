@@ -11,6 +11,7 @@ use crate::predicates::is_in_fist_mode;
 /// get-up attack 120; power, sprint and whirl 180; the three quick attacks 60; the stumble
 /// family 100.
 pub fn combat_move_length(species: Species, mv: Action) -> Option<i32> {
+    gothic_portcov::hit!("combat_move_length");
     if species == Species::Zombie && mv == Action::Attack {
         return Some(150);
     }
@@ -80,6 +81,7 @@ pub fn attack_range(
     _victim: EntityId,
     mv: Action,
 ) -> i32 {
+    gothic_portcov::hit!("attack_range");
     let species = host.species(attacker);
     let len = combat_move_length(species, mv).unwrap_or(120);
     base_reach(host, attacker, mv) + len
@@ -88,6 +90,7 @@ pub fn attack_range(
 /// Port of `GetCloseRange` (S:4eb70): stop distance of the approach (600 for the big
 /// monsters, else 500).
 pub fn close_range(host: &dyn ScriptHost, npc: EntityId) -> i32 {
+    gothic_portcov::hit!("close_range");
     if matches!(
         host.species(npc),
         Species::Troll | Species::Trex | Species::Dragon
@@ -100,6 +103,7 @@ pub fn close_range(host: &dyn ScriptHost, npc: EntityId) -> i32 {
 
 /// Port of `GetCombatWalkMode` (S:1b060): how fast the NPC closes in (1 slow, 2 walk, 3 run).
 pub fn combat_walk_mode(host: &dyn ScriptHost, npc: EntityId) -> u8 {
+    gothic_portcov::hit!("combat_walk_mode");
     if host.attack_reason(npc) == AttackReason::Prey {
         return 3;
     }

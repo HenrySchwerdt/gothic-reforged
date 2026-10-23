@@ -122,3 +122,66 @@ Findings:
   core's own `teleport` only moves party members (waypoints `Teleport_<City>` are registered with the core).
 * Not covered: routine catch-up when a frozen character re-enters the range (see PORT_NOTES, simulation),
   quest NPCs far away exist in the core only after the hero came near them once.
+
+## Input, bow and magic wiring (engine ports E50..E52 in `--play`)
+
+Wired: `crates/input` (Controls=Standard table, mapper timings, key router, `UserOptions.ini`
+`[Options.Controls]` via `gothic_ui::ControlSettings`, `ApplyControls` rebuilds the mapper),
+`crates/projectile` (shots through `Sim::shot_views`, `set_hero_aim`), `crates/camera` aim pick.
+Debug switches: `GR_INPUT_DEBUG=1` (messages and orders), `GR_RANGED_DEBUG=1` (hero state
+changes, shot spawn / km/h / impact / gone).
+
+| Scenario | Result | Findings / fixes |
+| --- | --- | --- |
+| controls_basic | PASS | Q / E turn the camera only (49 deg camera, 0 deg body in 0.6 s), Shift walks (run 400, walk 150 cm/s), a double tap is no dodge, the left button without a weapon is the use key and attacks nothing |
+| magic_bow | PASS (counters and projected-position checks) | Bugs fixed on the way: key `6` is `Quick6` = slot 6 (`QuickUse n` is named after its key, key 0 = slot 10); the click that captures the cursor was also a game click; `aim_at` of the harness oscillated (gain); the sim held every hero action for a placeholder second (`AiCommand::Action secs 1`): the arrow left 1 s after the release, the missile 1 s after the key. Now the raise clip lengths of `projectile::aim::clips` (Aim 0.4 s, cast 0.8 / quick 0.16 / power 0.92 s), the shot spawns at once and recovery follows (0.4 s bow, 0.6 s crossbow, Cast_Hit + Cast_Recover); hand glow: `StopEffects` now ends every emitter of the effect (looping glow stayed after the spell was put away); shots are drawn from `shot_views` every frame (spell: `..._projectile_01` effect on the moving entity, arrow: `Arrow` mesh), impacts start `..._impact_01` / target effects and sounds |
+| shaman_duel | see the log | orc shaman from the world data, hero with the bow; prints state / mana every 10 s |
+| hud_focus | see the log | focus label (`gothic_ui::FocusLabel`) |
+
+Visual assertions (harness `visual_watch`): projected shot positions inside the screen during
+flight (fireball 7 frames at 7 m, arrow while flying and stuck), the hero's body parts visible in
+every aim / cast frame, the bow actor visible inside the screen. Open: bow actor orientation /
+offset at `Slot_LeftHand_Weapon`, crosshair texture (`G3_HUD_CrosssHair.tga`), camera numbers
+and clip names of the aim, to be set from the capture of the original (`.local/ref/ranged_magic`).
+
+### Decompile / trace findings used for the aim (2026-10-21)
+
+* `PS_Ranged` (Script_Game 0x100837e0) calls `PSCamera::EnableSpecialBowMode`; the runtime trace
+  of the original (`.local/ref/ranged_magic/trace*.jsonl`, `Cam.SpecialBow`) shows it is always
+  called with `on = 0` and no other function of Game.dll or the script calls it: the special bow
+  mode is never switched on, the hero stays visible while aiming (the earlier port note was
+  wrong). `play/cam.rs` keeps it off (`SPECIAL_BOW_HIDES_HERO`).
+* Camera: `PS_Ranged` -> `SetMode(Ranged)`, trace `req=2`: wished distance 300, fov 60.6.
+* Crosshair: `PS_Ranged_Aim` -> `GUI2::ShowCrossHair(true)` (fade 200 ms,
+  `AnimateWindow(AW_BLEND)`, Game 0x1007d970), `gCHUDCrossHair` is a 32x32 static (minimum 8x8)
+  with `G3_HUD_CrosssHair.tga` (`FUN_100a6b30`), `SetCrossHairSize` resizes and centres it
+  (`FUN_100a6bf0`); the tile is `g3_hud_icons_00` rect 405,138 40x40 of `g3.igl`.
+* Motions: `Hero_Stand_Bow_Arrow_P0_Hold_Begin/Hold_End_N_Fwd` on drawing the bow
+  (`HoldRight_*` for melee weapons), aim clips `..._Aim_Raise_O_Fwd` (slot 4) and `_O_Down`
+  (slot 5), as ported.
+* Slots: `gCInventorySlot::GetBone` (ported in `gameplay::inventory::slot`): bow = left hand
+  (`Slot_LeftHand_Weapon`, back `Slot_Bow`), arrow = right hand; the script holds a spell rune in
+  the RIGHT-hand stack (`PS_Magic`: `HoldInventoryStacks{right, left: -1}`, `cast.rs` reads
+  `Slot::RightHand`). The user remembers the cast from the left hand; the decompiled script says
+  right. Not changed; to be decided with the animation data (which arm the `Cast_*` clips move).
+* Spell targets: spells with `SpellTarget = focus` take the focus entity (`PS_Magic_Loop`), all
+  others fly free along the forward axis; the host now passes the focus entity (not the nearest
+  character) to `CastSpell` / `ReleaseRanged`.
+* Open: the traces never reached an aim (the hero was knocked out); the projectile spawn bone,
+  aim camera offsets and the bow actor's slot offset (now a quarter turn about X, chosen by
+  `bow_pose` against the four axis turns [I]) are not verified against the original.
+
+### Cast hand, spawn point, perf (follow-up)
+
+* Cast clip data (`crates/animation/examples/cast_probe.rs`, rotation travel of the arm chains):
+  `Hero_Stand_None_Cast_P0_Cast_Raise` (0.80 s) moves the left arm 609 deg and the right 173 deg;
+  `Cast_Hit` (0.28 s) the right arm 325 deg and the left 159 deg; `Cast_Recover` left 492 / right 374.
+  The stance token is `None_Cast` (left hand none, right hand cast), the rune sits in the right-hand
+  slot (`PS_Magic`), the `eff_magic_*` effects link to the owner entity (`TargetEntity`, no bone in
+  g3.efm). So the wind-up is left-hand dominated and the throw (`Hit`, when the missile leaves) is the
+  right hand: the missile now starts at `Slot_RightHand_Weapon` (`Sim::set_hero_hand`).
+* Perf: per-frame writes of change-detected resources removed (`CoreRes` for the aim, `PlayerHeading`
+  / `MapData` of the UI feed, crosshair UI nodes while hidden, bow visibility). Not measured with the
+  `trace` feature here.
+* YouTube reference: `yt-dlp` is not installed and was not installed; the only original reference is
+  the user's screenshot (`.local/ref/orig-bow-aim-user.png`), compared in `.local/qa/compare_ranged_still.png`.

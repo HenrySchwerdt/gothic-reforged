@@ -25,10 +25,13 @@ use gothic_runtime::CoreRes;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
+mod melee;
 mod more;
 mod more2;
 mod more3;
+mod ranged;
 mod scenarios;
+mod souls_wire;
 mod world;
 
 pub const CM: f32 = 0.01;
@@ -321,6 +324,7 @@ fn run(world: &mut World) {
         if qa.finished {
             if qa.exit_at.is_some_and(|t| now >= t) {
                 let fail = qa.st.checks.iter().any(|c| !c.ok);
+                gothic_portcov::dump();
                 world.write_message(AppExit::from_code(u8::from(fail)));
                 qa.exit_at = Some(f32::MAX);
             }
@@ -542,6 +546,11 @@ impl Cx<'_> {
         send_button(self.world, self.st, b, false);
     }
     /// Press now, release next frame.
+    /// The original use key: the left button (talk, take, open) while no weapon is drawn.
+    pub fn use_key(&mut self) {
+        self.mouse_click(MouseButton::Left);
+    }
+
     pub fn mouse_click(&mut self, b: MouseButton) {
         send_button(self.world, self.st, b, true);
         self.st.buttons_next.push(b);
@@ -736,7 +745,7 @@ impl Cx<'_> {
         let dp = pitch - pit;
         if self.cursor_grabbed() {
             // player.yaw -= dx * 0.0025; pitch -= dy * 0.0025.
-            self.mouse_motion(Vec2::new(-dy * 0.4 / 0.0025, -dp * 0.4 / 0.0025));
+            self.mouse_motion(Vec2::new(-dy * 0.2 / 0.0024, -dp * 0.2 / 0.0024));
         } else {
             let mut p = self.world.resource_mut::<Player>();
             p.yaw += dy * 0.4;
@@ -753,7 +762,6 @@ impl Cx<'_> {
         let dist = flat(goal - hero).length();
         if dist <= stop {
             self.key_up(KeyCode::KeyW);
-            self.key_up(KeyCode::ShiftLeft);
             return Poll::Done;
         }
         if flat(hero).distance(flat(self.st.walk_ref)) > 60.0 || self.t < 0.05 {
@@ -773,9 +781,7 @@ impl Cx<'_> {
         let aim = hero + dir * 1000.0;
         self.aim_at(aim, -0.15);
         self.key_down(KeyCode::KeyW);
-        if run {
-            self.key_down(KeyCode::ShiftLeft);
-        }
+        let _ = run;
         Poll::Wait
     }
 

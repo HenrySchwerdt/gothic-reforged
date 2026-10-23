@@ -5,7 +5,6 @@ use super::pose::Posed;
 use super::{HeroActor, Mode, PlayState, ScriptInput};
 use crate::walk::{Collision, Player, PlayerCamera, setup, update_camera};
 use bevy::audio::SpatialListener;
-use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use gothic_camera::{
@@ -17,6 +16,8 @@ use gothic_runtime::CoreRes;
 use gothic_sim::item::WeaponMode;
 
 const CM: f32 = 0.01;
+/// Enable `enable_special_bow_mode` while a bow aims (hero fades out within 0.5 s).
+const SPECIAL_BOW_HIDES_HERO: bool = false;
 /// Height of the hero's local node box (cm) [I: PC_Hero template].
 const HERO_BOX_HEIGHT: f32 = 175.0;
 /// A hero displacement above this per frame is a teleport (cm).
@@ -35,6 +36,8 @@ pub struct PlayCam {
     wanted: CameraMode,
     after_cinematic: bool,
     first_person: bool,
+    options_rev: Option<u32>,
+    special_bow: bool,
 }
 
 pub fn register(app: &mut App) {
@@ -51,6 +54,8 @@ pub fn register(app: &mut App) {
         wanted: CameraMode::Normal,
         after_cinematic: false,
         first_person: false,
+        options_rev: None,
+        special_bow: false,
     })
     .add_systems(Startup, add_listener.after(setup))
     .add_systems(
@@ -91,10 +96,13 @@ fn wanted_mode(player: &Player, state: &PlayState, core: &CoreRes, posed: bool) 
     if posed {
         return CameraMode::Interaction;
     }
-    let weapon = if state.drawn {
-        core.0.sim.actor(core.0.hero).equipment.weapon_mode()
-    } else {
-        WeaponMode::None
+    // `PSCamera::SetMode` is called by the combat tasks: the hero's script task decides.
+    let weapon = match core.0.sim.hero_script_state().0 {
+        Some(gothic_sim::script::routine::state::State::PsMelee) => WeaponMode::Melee,
+        Some(gothic_sim::script::routine::state::State::PsRanged) => WeaponMode::Ranged,
+        Some(gothic_sim::script::routine::state::State::PsMagic) => WeaponMode::Magic,
+        _ if state.drawn => core.0.sim.actor(core.0.hero).equipment.weapon_mode(),
+        _ => WeaponMode::None,
     };
     match weapon {
         WeaponMode::Melee => CameraMode::Melee,
@@ -105,15 +113,15 @@ fn wanted_mode(player: &Player, state: &PlayState, core: &CoreRes, posed: bool) 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn play_camera(
+pub(super) fn play_camera(
     time: Res<Time>,
     mut player: ResMut<Player>,
     collision: Res<Collision>,
     core: Res<CoreRes>,
     script: Res<ScriptInput>,
     keys: Res<ButtonInput<KeyCode>>,
-    motion: Res<AccumulatedMouseMotion>,
-    scroll: Res<AccumulatedMouseScroll>,
+    frame: Res<super::controls::InputFrame>,
+    ranged: Res<super::ranged::RangedView>,
     cursor: Query<&CursorOptions, With<PrimaryWindow>>,
     ui: Res<gothic_ui::UiState>,
     mut cam_res: ResMut<PlayCam>,
@@ -136,6 +144,13 @@ fn play_camera(
     let dt = time.delta_secs().min(0.1);
     let hero_pos = player.ctrl.position;
     let c = &mut *cam_res;
+    if c.options_rev != Some(frame.rev) {
+        // `[Options.Controls]`: mouse sensitivity and smoothing.
+        c.state
+            .config
+            .set_mouse_options(frame.options.sensitivity, frame.options.smoothing);
+        c.options_rev = Some(frame.rev);
+    }
     let mode_now = player.ctrl.machine.mode();
     let speed = player.ctrl.velocity.length();
     let hero = HeroView {
@@ -144,7 +159,11 @@ fn play_camera(
         head: None,
         moving: speed > 20.0,
         speed,
-        in_combat: state.drawn,
+        in_combat: state.drawn
+            || matches!(
+                core.0.sim.hero_script_state().0,
+                Some(gothic_sim::script::routine::state::State::PsMelee)
+            ),
         ranged: state.drawn
             && core.0.sim.actor(core.0.hero).equipment.weapon_mode() == WeaponMode::Ranged,
         down: state.hero_down,
@@ -213,21 +232,38 @@ fn play_camera(
         .single()
         .is_ok_and(|o| o.grab_mode != CursorGrabMode::None);
     let free = grabbed && !ui.is_open() && !in_dialog && !script.active;
-    let toggle = keys.just_pressed(KeyCode::KeyV);
+    let toggle = keys.just_pressed(KeyCode::KeyV) || frame.first_person;
     if toggle {
         c.first_person = !c.first_person;
     }
     let input = CameraInput {
         dt,
         hero,
-        look: if free { motion.delta } else { Vec2::ZERO },
-        zoom: if free { scroll.delta.y } else { 0.0 },
-        look_back: false,
+        look: if free {
+            Vec2::new(frame.look.x, frame.look.y)
+        } else {
+            Vec2::ZERO
+        },
+        zoom: if free { frame.zoom } else { 0.0 },
+        look_back: frame.look_back,
         toggle_first_person: toggle,
         gui_open: ui.is_open(),
         invert_y: false,
         dialog: dialog_pair,
     };
+    // The aim states of the bow use the special bow mode (the body fades, the weapon stays).
+    // The special bow mode fades the body out (`gCCameraAI_PS::OnProcess`); the user report and
+    // the capture of the original keep the hero visible while aiming, so the mode stays off
+    // until `.local/ref/ranged_magic/SPEC.md` says otherwise.
+    let want_special = SPECIAL_BOW_HIDES_HERO && ranged.aiming;
+    if want_special != c.special_bow {
+        c.special_bow = want_special;
+        c.state.enable_special_bow_mode(want_special);
+    }
+    if frame.reset_camera {
+        let heading = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
+        c.state.reset(&hero, heading);
+    }
     if script.active && !in_dialog {
         // The smoke script steers the view through yaw / pitch.
         c.state.set_orbit(player.yaw, -player.pitch);
@@ -242,6 +278,8 @@ fn play_camera(
         p.near = (out.z_near * CM).max(0.01);
     }
     state.hide_hero = out.hide_hero || out.hero_alpha < HIDE_ALPHA;
+    // First person and the special bow mode hide the body but keep the held items.
+    state.keep_items = state.hide_hero && out.items_visible;
     // The follow camera owns yaw / pitch (movement keys are relative to the view).
     if !in_dialog && !script.active {
         player.yaw = c.state.view_yaw();

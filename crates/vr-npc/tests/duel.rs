@@ -133,7 +133,8 @@ fn a_hard_player_hit_staggers_or_fells_the_npc() {
     assert!(log.hits.iter().any(|h| h.victim == npc), "{:?}", log.hits);
     assert!(
         log.stances.iter().any(|s| *s != Stance::Standing),
-        "the hit moved the ragdoll off balance"
+        "the hit moved the ragdoll off balance {:?}",
+        log.hits
     );
     assert!(log.phases.contains(&Phase::Disabled));
 }

@@ -35,6 +35,7 @@ pub enum Synth {
 /// the ingredients are consumed and the result (`ResultAmount`, one when zero) is added. The
 /// hero's voice line and the HUD event follow the outcome.
 pub fn synthesize(host: &mut dyn ScriptHost, p: EntityId, id: i32) -> Synth {
+    gothic_portcov::hit!("synthesize");
     let Some(recipe) = host.recipe(id) else {
         return Synth::Unknown;
     };
@@ -83,6 +84,7 @@ pub fn fried_form(template: &str) -> Option<&'static str> {
 /// Port of `OnPlayerFryStack` (S:6a740): fry `amount` pieces of raw meat. Items that cannot be
 /// fried are left alone; returns the number fried.
 pub fn fry_stack(host: &mut dyn ScriptHost, p: EntityId, template: &str, amount: u32) -> u32 {
+    gothic_portcov::hit!("fry_stack");
     let Some(fried) = fried_form(template) else {
         return 0;
     };
@@ -103,6 +105,7 @@ pub fn fry_stack(host: &mut dyn ScriptHost, p: EntityId, template: &str, amount:
 /// (the only transformation the hero's HUD offers); the stacks are rearranged afterwards by the
 /// host.
 pub fn transform_stack(host: &mut dyn ScriptHost, p: EntityId, template: &str, amount: u32) -> u32 {
+    gothic_portcov::hit!("transform_stack");
     fry_stack(host, p, template, amount)
 }
 

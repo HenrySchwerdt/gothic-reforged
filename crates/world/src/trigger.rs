@@ -341,6 +341,7 @@ impl TriggerRuntime {
         source: EntityId,
         contact: &Contact,
     ) {
+        gothic_portcov::hit!("on_touch");
         if self.triggers.get(&owner).is_some_and(|t| t.def.react_touch) {
             self.activate(env, now, owner, Some(source), EventType::Touch, contact, 0);
         }
@@ -348,6 +349,7 @@ impl TriggerRuntime {
 
     /// Port of `eCTrigger_PS::OnUntouch` (Engine:0x1007dab0).
     pub fn on_untouch(&mut self, env: &TriggerEnv, now: f64, owner: EntityId, source: EntityId) {
+        gothic_portcov::hit!("on_untouch");
         if self.triggers.get(&owner).is_some_and(|t| t.def.react_touch) {
             self.deactivate(env, now, owner, Some(source), EventType::Untouch, 0);
         }
@@ -362,6 +364,7 @@ impl TriggerRuntime {
         source: EntityId,
         contact: &Contact,
     ) {
+        gothic_portcov::hit!("on_intersect");
         if self
             .triggers
             .get(&owner)
@@ -388,6 +391,7 @@ impl TriggerRuntime {
         owner: EntityId,
         source: Option<EntityId>,
     ) {
+        gothic_portcov::hit!("on_trigger");
         self.deliver(env, now, owner, source, EventType::Trigger, 0);
     }
 
@@ -399,6 +403,7 @@ impl TriggerRuntime {
         owner: EntityId,
         source: Option<EntityId>,
     ) {
+        gothic_portcov::hit!("on_untrigger");
         self.deliver(env, now, owner, source, EventType::Untrigger, 0);
     }
 
@@ -411,6 +416,7 @@ impl TriggerRuntime {
         attacker: EntityId,
         damage: i32,
     ) {
+        gothic_portcov::hit!("on_damage");
         let Some(t) = self.triggers.get(&owner) else {
             return;
         };
@@ -430,6 +436,7 @@ impl TriggerRuntime {
     /// Port of `eCTrigger_PS::Trigger(name)` (Engine:0x1007da20): fire the triggers whose
     /// `trigger_name` equals `name`.
     pub fn trigger_by_name(&mut self, env: &TriggerEnv, now: f64, name: &str) {
+        gothic_portcov::hit!("trigger_by_name");
         let owners: Vec<EntityId> = self
             .triggers
             .iter()
@@ -444,6 +451,7 @@ impl TriggerRuntime {
     /// Port of `eCTrigger_PS::OnEnterProcessingRange` (Engine:0x1007e120): triggers that react
     /// to the processing range fire for their own entity.
     pub fn on_enter_processing_range(&mut self, env: &TriggerEnv, now: f64, owner: EntityId) {
+        gothic_portcov::hit!("on_enter_processing_range");
         if self
             .triggers
             .get(&owner)
@@ -463,6 +471,7 @@ impl TriggerRuntime {
 
     /// Port of `eCTrigger_PS::OnCacheIn` (Engine:0x1007e160).
     pub fn on_cache_in(&mut self, env: &TriggerEnv, now: f64, owner: EntityId) {
+        gothic_portcov::hit!("on_cache_in");
         if self
             .triggers
             .get(&owner)
@@ -523,6 +532,7 @@ impl TriggerRuntime {
         damage: i32,
         depth: u32,
     ) {
+        gothic_portcov::hit!("filter");
         let target = self
             .triggers
             .get(&owner)
@@ -566,6 +576,7 @@ impl TriggerRuntime {
         source: Option<EntityId>,
         contact: &Contact,
     ) -> bool {
+        gothic_portcov::hit!("can_be_activated");
         let Some(t) = self.triggers.get(&owner) else {
             return false;
         };
@@ -641,6 +652,7 @@ impl TriggerRuntime {
         contact: &Contact,
         depth: u32,
     ) {
+        gothic_portcov::hit!("activate");
         if depth > MAX_CHAIN || !self.can_be_activated(env, now, owner, source, contact) {
             return;
         }
@@ -719,6 +731,7 @@ impl TriggerRuntime {
         ev: EventType,
         depth: u32,
     ) {
+        gothic_portcov::hit!("deactivate");
         let Some(t) = self.triggers.get(&owner) else {
             return;
         };
@@ -824,6 +837,7 @@ impl TriggerRuntime {
         source: Option<EntityId>,
         depth: u32,
     ) {
+        gothic_portcov::hit!("list_activate");
         let Some(TriggerKind::List(l)) = self.triggers.get(&owner).map(|t| t.def.kind.clone())
         else {
             return;
@@ -918,6 +932,7 @@ impl TriggerRuntime {
     /// Port of `eCTrigger_PS::OnProcess` (Engine:0x1007db00) and `eCTriggerList_PS::OnTimer`:
     /// delayed firings, auto-untriggers and list timers whose time has come.
     pub fn process(&mut self, env: &TriggerEnv, now: f64) {
+        gothic_portcov::hit!("process");
         let owners: Vec<EntityId> = self.triggers.keys().copied().collect();
         for o in owners {
             let Some(t) = self.triggers.get(&o) else {

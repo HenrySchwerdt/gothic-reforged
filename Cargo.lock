@@ -3551,6 +3551,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "gothic-formats",
+ "gothic-portcov",
  "serde_json",
 ]
 
@@ -3562,6 +3563,7 @@ dependencies = [
  "bevy",
  "gothic-formats",
  "gothic-gameplay",
+ "gothic-portcov",
  "lewton",
 ]
 
@@ -3583,6 +3585,7 @@ dependencies = [
  "glam",
  "gothic-formats",
  "gothic-physics",
+ "gothic-portcov",
 ]
 
 [[package]]
@@ -3644,6 +3647,7 @@ name = "gothic-environment"
 version = "0.1.0"
 dependencies = [
  "gothic-formats",
+ "gothic-portcov",
 ]
 
 [[package]]
@@ -3652,6 +3656,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "flate2",
+ "gothic-portcov",
  "proptest",
  "serde",
 ]
@@ -3664,6 +3669,7 @@ dependencies = [
  "bevy",
  "gothic-environment",
  "gothic-formats",
+ "gothic-portcov",
 ]
 
 [[package]]
@@ -3672,6 +3678,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gothic-formats",
+ "gothic-portcov",
  "serde",
  "serde_json",
 ]
@@ -3690,6 +3697,9 @@ dependencies = [
 [[package]]
 name = "gothic-input"
 version = "0.1.0"
+dependencies = [
+ "gothic-portcov",
+]
 
 [[package]]
 name = "gothic-inspector"
@@ -3758,6 +3768,7 @@ dependencies = [
  "gothic-cook",
  "gothic-formats",
  "gothic-physics",
+ "gothic-portcov",
 ]
 
 [[package]]
@@ -3765,7 +3776,12 @@ name = "gothic-physics"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "gothic-portcov",
 ]
+
+[[package]]
+name = "gothic-portcov"
+version = "0.1.0"
 
 [[package]]
 name = "gothic-projectile"
@@ -3773,6 +3789,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "gothic-formats",
+ "gothic-portcov",
 ]
 
 [[package]]
@@ -3812,11 +3829,14 @@ dependencies = [
  "gothic-fx",
  "gothic-gameplay",
  "gothic-importer",
+ "gothic-input",
  "gothic-mods",
  "gothic-mods-script",
  "gothic-modtool",
  "gothic-nav",
  "gothic-physics",
+ "gothic-portcov",
+ "gothic-projectile",
  "gothic-render-rules",
  "gothic-runtime",
  "gothic-sim",
@@ -3839,6 +3859,9 @@ dependencies = [
 [[package]]
 name = "gothic-render-rules"
 version = "0.1.0"
+dependencies = [
+ "gothic-portcov",
+]
 
 [[package]]
 name = "gothic-runtime"
@@ -3852,6 +3875,7 @@ dependencies = [
  "gothic-gameplay",
  "gothic-nav",
  "gothic-physics",
+ "gothic-portcov",
  "gothic-sim",
  "gothic-world",
  "serde",
@@ -3861,6 +3885,9 @@ dependencies = [
 [[package]]
 name = "gothic-script"
 version = "0.1.0"
+dependencies = [
+ "gothic-portcov",
+]
 
 [[package]]
 name = "gothic-sim"
@@ -3870,6 +3897,7 @@ dependencies = [
  "glam",
  "gothic-formats",
  "gothic-gameplay",
+ "gothic-portcov",
  "gothic-projectile",
  "gothic-script",
  "serde",
@@ -3895,6 +3923,7 @@ dependencies = [
  "gothic-formats",
  "gothic-gameplay",
  "gothic-input",
+ "gothic-portcov",
  "serde_json",
 ]
 
@@ -4030,6 +4059,7 @@ name = "gothic-world"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "gothic-portcov",
  "serde",
 ]
 

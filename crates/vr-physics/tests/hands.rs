@@ -295,3 +295,102 @@ fn hands_exist_per_side() {
     let sides: Vec<Hand> = q.iter(rig.app.world()).map(|h| h.hand).collect();
     assert!(sides.contains(&Hand::Left) && sides.contains(&Hand::Right));
 }
+
+/// Largest angle (rad) between the held sword and where the tracked hand says it should be,
+/// while the wrist twists back and forth at `rate` rad/s about the blade and across it.
+fn twist_error(rate: f32) -> f32 {
+    let (mut rig, sword) = hand_over(props::sword());
+    rig.grip(Hand::Right, true);
+    let lift = Vec3::new(0.2, 1.4, -0.4);
+    rig.set_hand(Hand::Right, Pose::new(lift, LYING.rotation));
+    rig.step(90);
+    // The grip as held now (sword relative to the tracked hand).
+    let rel = LYING.rotation.inverse() * rig.transform(sword).rotation;
+    let mut worst: f32 = 0.0;
+    for i in 0..180 {
+        let t = i as f32 / common::HZ as f32;
+        // 1 Hz back and forth, peak angular speed `rate`.
+        let w = std::f32::consts::TAU;
+        let a = rate / w * (w * t).sin();
+        let turn = Quat::from_rotation_z(a) * Quat::from_rotation_x(0.5 * a);
+        let target = turn * LYING.rotation;
+        rig.set_hand(Hand::Right, Pose::new(lift, target));
+        rig.step(1);
+        if i > 20 {
+            let want = target * rel;
+            worst = worst.max(rig.transform(sword).rotation.angle_between(want));
+        }
+    }
+    worst
+}
+
+#[test]
+fn held_sword_follows_fast_wrist_turns() {
+    let slow = twist_error(2.0);
+    let fast = twist_error(8.0);
+    println!(
+        "wrist twist error: 2 rad/s {:.1} deg, 8 rad/s {:.1} deg",
+        slow.to_degrees(),
+        fast.to_degrees()
+    );
+    assert!(slow.to_degrees() < 6.0, "slow twist {}", slow.to_degrees());
+    assert!(fast.to_degrees() < 20.0, "fast twist {}", fast.to_degrees());
+}
+
+/// Both hands on the two-hander's handle, right hand leading.
+fn two_hands_on(rig: &mut Rig, sword: Entity) -> f32 {
+    let over = above_handle(rig, sword, 0.15);
+    rig.set_hand(Hand::Left, over);
+    rig.step(60);
+    rig.grip(Hand::Right, true);
+    rig.step(2);
+    rig.grip(Hand::Left, true);
+    rig.step(2);
+    let held = rig.app.world().get::<Held>(sword).unwrap().clone();
+    held.hands[1].unwrap().distance(held.hands[0].unwrap())
+}
+
+fn hand_of(rig: &mut Rig, hand: Hand) -> PhysicsHand {
+    let mut q = rig.app.world_mut().query::<&PhysicsHand>();
+    q.iter(rig.app.world())
+        .find(|h| h.hand == hand)
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn second_hand_aims_the_blade_without_fighting_the_first() {
+    let (mut rig, sword) = hand_over(props::two_handed_sword());
+    let gap = two_hands_on(&mut rig, sword);
+    assert!(!hand_of(&mut rig, Hand::Right).held.unwrap().secondary);
+    assert!(hand_of(&mut rig, Hand::Left).held.unwrap().secondary);
+    // Tilt the hands' line 35 degrees up and to the side while both controllers keep their
+    // rotation unchanged: only the line between the hands may decide where the blade points.
+    let lead = Vec3::new(0.15, 1.3, -0.35);
+    let line = (Quat::from_rotation_y(0.4) * Quat::from_rotation_x(0.6) * Vec3::Z).normalize();
+    rig.set_hand(Hand::Right, Pose::new(lead, LYING.rotation));
+    rig.set_hand(Hand::Left, Pose::new(lead + line * gap, Quat::IDENTITY));
+    rig.step(150);
+    let held = rig.app.world().get::<Held>(sword).unwrap().clone();
+    let t = rig.transform(sword);
+    let along = (t.rotation * (held.hands[0].unwrap() - held.hands[1].unwrap())).normalize();
+    assert!(along.dot(line) > 0.97, "grip line {along} vs hands {line}");
+    let spin = rig
+        .app
+        .world()
+        .get::<gothic_vr_physics::avian3d::prelude::AngularVelocity>(sword)
+        .unwrap()
+        .0;
+    assert!(spin.length() < 0.3, "settled, not spinning: {spin}");
+    // Letting go with the leading hand: the left hand takes over and keeps holding.
+    rig.grip(Hand::Right, false);
+    rig.step(2);
+    let left = hand_of(&mut rig, Hand::Left).held.unwrap();
+    assert!(!left.secondary);
+    rig.step(90);
+    let grip = rig.transform(sword).transform_point(left.anchor);
+    assert!(
+        grip.distance(rig.hand_pos(Hand::Left)) < 0.02,
+        "still in the left hand"
+    );
+}

@@ -36,6 +36,7 @@ const STATUS_POISON: u32 = 4;
 ///
 /// 5 s for the player and the player's party, 20 s after an arena defeat, 30 s otherwise.
 pub fn unconscious_secs(host: &dyn ScriptHost, npc: EntityId) -> f32 {
+    gothic_portcov::hit!("unconscious_secs");
     let player = host.player();
     if npc == player || host.party_leader(npc) == player {
         5.0
@@ -50,6 +51,7 @@ pub fn unconscious_secs(host: &dyn ScriptHost, npc: EntityId) -> f32 {
 /// of the character. The engine part (animation, collision group, look-at) is the host's
 /// `reset_character`; the script-visible part clears the frozen status.
 pub fn reset_all(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("reset_all");
     host.reset_character(npc);
     host.set_status_bits(npc, crate::damage::STATUS_FROZEN, false);
 }
@@ -57,6 +59,7 @@ pub fn reset_all(host: &mut dyn ScriptHost, npc: EntityId) {
 /// Port of `DropHandItems` (S:24d10): droppable weapons in the hands fall to the ground, the
 /// hands are emptied.
 pub fn drop_hand_items(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("drop_hand_items");
     for slot in [Slot::RightHand, Slot::LeftHand] {
         if is_droppable_weapon(host, npc, slot) {
             host.drop_slot(npc, slot);
@@ -68,6 +71,7 @@ pub fn drop_hand_items(host: &mut dyn ScriptHost, npc: EntityId) {
 /// Port of `RemoveNonCombatItems` (S:24ef0): put away whatever is in the hands unless it is a
 /// weapon pose (tool-idle, melee, ranged or magic ready).
 pub fn remove_non_combat_items(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("remove_non_combat_items");
     use crate::helpers::{HandClass, hand_class};
     let class = hand_class(
         host.slot_use_type(npc, Slot::LeftHand),
@@ -120,6 +124,7 @@ fn player_side(host: &dyn ScriptHost, who: EntityId) -> bool {
 /// leaves the combat group), tells the quest manager, applies the Talchef retaliation, pays XP
 /// once if the player's side killed it, notifies the enclave and cleans up the loot.
 pub fn kill(host: &mut dyn ScriptHost, victim: EntityId, killer: EntityId) -> bool {
+    gothic_portcov::hit!("kill");
     let player = host.player();
     let now = host.playing_time();
     host.set_last_fight_timestamp(victim, now);
@@ -159,6 +164,7 @@ pub fn kill(host: &mut dyn ScriptHost, victim: EntityId, killer: EntityId) -> bo
 /// Port of `CleanUpPlunderInv` (S:1c380): a dead Demon keeps nothing; everything but a summoned
 /// creature gets its plunder regenerated from the treasure sets.
 pub fn clean_up_plunder(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("clean_up_plunder");
     if host.species(npc) == Species::Demon {
         host.delete_unequipped_stacks(npc);
     }
@@ -175,6 +181,7 @@ pub fn clean_up_plunder(host: &mut dyn ScriptHost, npc: EntityId) {
 /// the player's side collects the victim's XP once, the victim's fight result against the player
 /// becomes `Lost`, its combat state and attack reason clear.
 pub fn defeat(host: &mut dyn ScriptHost, victim: EntityId, attacker: EntityId) -> bool {
+    gothic_portcov::hit!("defeat");
     let player = host.player();
     let reason = host.attack_reason(victim);
     if matches!(
@@ -311,6 +318,7 @@ pub const UNCONSCIOUS_END: &[Step] = &[Custom(unconscious_end)];
 /// Port of the fall-damage rule of `OnMovementModeChanged` (S:adbf0): `floor(160 * (t - 0.9)^2)`
 /// for a fall of `t` seconds, 0 up to 0.9 s.
 pub fn fall_damage(t: f32) -> i32 {
+    gothic_portcov::hit!("fall_damage");
     if t <= 0.9 {
         0
     } else {
@@ -325,6 +333,7 @@ pub fn fall_damage(t: f32) -> i32 {
 /// halves the damage (and the host plays `ZS_Acrobat`). A character that cannot be killed stays
 /// at 1 hit point; others at 0 hit points die (`ZS_RagDollDead`). Returns the damage dealt.
 pub fn land_from_fall(host: &mut dyn ScriptHost, npc: EntityId, t: f32) -> i32 {
+    gothic_portcov::hit!("land_from_fall");
     if host.has_status(npc, 0x80)
         || (npc == host.player() && host.cheat_god())
         || host.species(npc) == Species::Bloodfly

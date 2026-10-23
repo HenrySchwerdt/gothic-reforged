@@ -67,6 +67,7 @@ pub fn hand_spell(host: &dyn ScriptHost, caster: EntityId) -> Option<SpellInfo> 
 /// (the god cheat pays for everything; Ice Golems never check; a Goblin with `ExtendedContent`
 /// never charges), otherwise a plain `Cast`.
 pub fn get_cast_action(host: &dyn ScriptHost, caster: EntityId) -> Action {
+    gothic_portcov::hit!("get_cast_action");
     let Some(spell) = hand_spell(host, caster) else {
         return Action::None;
     };
@@ -102,6 +103,7 @@ const DAYLIGHT: (f32, f32) = (6.0, 20.0);
 /// target. A refusal makes the grunt `StartSayDoesntWork` (and a fizzle effect); a lack of mana
 /// only fizzles.
 pub fn can_cast(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) -> bool {
+    gothic_portcov::hit!("can_cast");
     let Some(spell) = hand_spell(host, caster) else {
         return false;
     };
@@ -159,6 +161,7 @@ pub fn start_cast_phase(
     stack: i32,
     phase: Phase,
 ) {
+    gothic_portcov::hit!("start_cast_phase");
     let name = host.stack_spell(caster, stack);
     let spell = host.spell(&name);
     host.emit_magic(MagicEvent::Phase {
@@ -240,6 +243,7 @@ pub fn start_cast_phase(
 ///
 /// Port of `_AI_Cast` (S:38710), `_AI_Cast_Begin` (S:38ae0) and `_AI_Cast_Execute` (S:39180).
 pub fn run_cast(host: &mut dyn ScriptHost, caster: EntityId, power: bool) -> i32 {
+    gothic_portcov::hit!("run_cast");
     let stack = host.find_stack_index(caster, Slot::RightHand);
     if stack < 0 {
         return 0;
@@ -266,6 +270,7 @@ pub fn run_cast(host: &mut dyn ScriptHost, caster: EntityId, power: bool) -> i32
 /// Port of `MagicInstant` (S:52c40): the spell acts at once; its `FuncOnTargetHit` is called with
 /// the caster as `self` and the target as `other`.
 pub fn magic_instant(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId, stack: i32) {
+    gothic_portcov::hit!("magic_instant");
     let Some(spell) = host.spell(&host.cast_spell(caster)) else {
         return;
     };
@@ -284,6 +289,7 @@ pub fn magic_projectile(
     target: EntityId,
     _stack: i32,
 ) {
+    gothic_portcov::hit!("magic_projectile");
     let Some(spell) = host.spell(&host.cast_spell(caster)) else {
         return;
     };
@@ -322,6 +328,7 @@ pub fn magic_projectile(
 /// caster), owned by the caster, then call `FuncOnTargetHit`. A second `Smn_Light` replaces the
 /// first.
 pub fn magic_summon(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId, stack: i32) {
+    gothic_portcov::hit!("magic_summon");
     let Some(spell) = host.spell(&host.cast_spell(caster)) else {
         return;
     };

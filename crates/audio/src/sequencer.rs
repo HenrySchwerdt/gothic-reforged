@@ -326,12 +326,14 @@ impl Sequencer {
 
     /// Port of gCMusicSequencer::SetAcceptTriggers: while off every trigger is ignored.
     pub fn set_accept_triggers(&mut self, accept: bool) {
+        gothic_portcov::hit!("set_accept_triggers");
         self.accept = accept;
     }
 
     /// Port of gCMusicSequencer::IsInState (Game:0x100fde20): every non-empty field of the
     /// trigger equals the state (and a requested variation equals the playing one).
     pub fn in_state(&self, lib: &MusicLibrary, t: &Trigger) -> bool {
+        gothic_portcov::hit!("in_state");
         let same = |want: &str, have: &str| want.is_empty() || want.eq_ignore_ascii_case(have);
         let variation_ok = t.variation.is_empty()
             || self.current_fragment().is_some_and(|f| {
@@ -346,6 +348,7 @@ impl Sequencer {
 
     /// Port of gCMusicSequencer::Trigger (Game:0x100febd0) and ExecuteTrigger (0x100fec60).
     pub fn trigger(&mut self, lib: &MusicLibrary, t: &Trigger) -> Vec<Action> {
+        gothic_portcov::hit!("trigger");
         let mut out = Vec::new();
         if !self.accept {
             return out;
@@ -438,6 +441,7 @@ impl Sequencer {
     /// `FUN_100fda80`: empty fields come from the state; when nothing matches the variation, then
     /// the daytime, the location and finally the situation are replaced by their defaults.
     pub fn find_fragment(&mut self, lib: &MusicLibrary, t: &Trigger) -> Option<usize> {
+        gothic_portcov::hit!("find_fragment");
         let fill = |want: &str, have: &str| {
             if want.is_empty() {
                 have.to_owned()
@@ -480,6 +484,7 @@ impl Sequencer {
     /// Port of gCMusicFragmentList::SelectFragment (Game:0x100f98d0): take an unmarked match,
     /// mark it, reset the marks of the group once all were played.
     fn select(&mut self, matches: &[usize]) -> Option<usize> {
+        gothic_portcov::hit!("select");
         if matches.is_empty() {
             return None;
         }
@@ -558,6 +563,7 @@ impl Sequencer {
     /// Port of gCMusicFragment::FindLink / FindNextExit on the synthetic link grid: due time (ms
     /// on the primary channel) of the exit the trigger asks for.
     fn exit_time(&self, lib: &MusicLibrary, time: ExitTime, stinger_ms: f64) -> Option<f64> {
+        gothic_portcov::hit!("exit_time");
         let cur = self.chans[self.primary]?;
         let frag = &lib.fragments[cur.fragment];
         let end = (f64::from(frag.duration_ms) - stinger_ms).max(cur.pos_ms);
@@ -597,6 +603,7 @@ impl Sequencer {
         exit_connector: i32,
         entrance_connector: i32,
     ) -> Option<usize> {
+        gothic_portcov::hit!("find_transition");
         let by = |connect_in: i32, connect_out: i32| -> Vec<usize> {
             lib.transitions
                 .iter()
@@ -634,6 +641,7 @@ impl Sequencer {
 
     /// Port of gCMusicSequencer::StartDueEvents (Game:0x100fe920).
     fn start_due_events(&mut self, lib: &MusicLibrary, out: &mut Vec<Action>) {
+        gothic_portcov::hit!("start_due_events");
         loop {
             let now = self.chans[self.primary].map_or(f64::INFINITY, |c| c.pos_ms);
             let Some(first) = self.events.first() else {
@@ -673,6 +681,7 @@ impl Sequencer {
         stinger: bool,
         out: &mut Vec<Action>,
     ) {
+        gothic_portcov::hit!("execute_fragment");
         self.waiting_for_begin = false;
         let free = 1 - self.primary;
         let had_music = self.chans[self.primary].is_some();
@@ -723,6 +732,7 @@ impl Sequencer {
     /// Port of Execute(transition event) (Game:0x100feb10): the stinger plays on its own
     /// channel and fades the old fragment (and later the new one).
     fn execute_transition(&mut self, lib: &MusicLibrary, transition: usize, out: &mut Vec<Action>) {
+        gothic_portcov::hit!("execute_transition");
         let src = self.chans[self.primary].map(|_| self.primary as Channel);
         self.stinger = Some(Stinger {
             transition,
@@ -739,6 +749,7 @@ impl Sequencer {
 
     /// Port of Execute(stop event): all channels stop, events are cleared.
     fn execute_stop(&mut self, out: &mut Vec<Action>) {
+        gothic_portcov::hit!("execute_stop");
         for (i, c) in self.chans.iter_mut().enumerate() {
             if c.take().is_some() {
                 out.push(Action::Stop {
@@ -763,6 +774,7 @@ impl Sequencer {
     /// it repeats) and the old music is left at the end of the fragment. A cue
     /// (`NextVariation == -1`) hands over to the exploration music instead.
     fn trigger_follow(&mut self, lib: &MusicLibrary, fragment: usize) {
+        gothic_portcov::hit!("trigger_follow");
         let f = &lib.fragments[fragment];
         let next = f.next_variation.trim();
         let mut t = Trigger {
@@ -805,6 +817,7 @@ impl Sequencer {
 
     /// Port of gCMusicChannel::UpdateEnvelope / ApplyFadeVolume (Game:0x100fc4f0/0x100fc560).
     fn update_envelope(&mut self, lib: &MusicLibrary, out: &mut Vec<Action>) {
+        gothic_portcov::hit!("update_envelope");
         let Some(s) = self.stinger else { return };
         let tr = &lib.transitions[s.transition];
         if s.pos_ms >= f64::from(tr.duration_ms) {
@@ -849,6 +862,7 @@ impl Sequencer {
     /// Port of gCMusicSequencer::UpdateChannels (Game:0x100fdf40): when the primary channel ran
     /// out nothing is playing any more and everything stops.
     fn update_channels(&mut self, lib: &MusicLibrary, out: &mut Vec<Action>) {
+        gothic_portcov::hit!("update_channels");
         let Some(c) = self.chans[self.primary] else {
             return;
         };

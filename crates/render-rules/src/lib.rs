@@ -15,6 +15,7 @@ pub mod lod {
     /// bounding sphere relative to the screen, `pi * (r / z)^2` clamped to `[0, 1]`, with `z` the
     /// depth along the camera forward axis (not field-of-view dependent).
     pub fn area_factor(radius: f32, depth: f32) -> f32 {
+        gothic_portcov::hit!("area_factor");
         let z = if depth == 0.0 { 1e-5 } else { depth };
         (std::f32::consts::PI * (radius / z).powi(2)).clamp(0.0, 1.0)
     }
@@ -22,6 +23,7 @@ pub mod lod {
     /// Port of `eCFrustumDatabase::CalculateLoDArea` (0x101a2f00): LoD input is the database's
     /// global LoD factor x area factor x entity LoD scale x entity-type LoD scale.
     pub fn lod_input(global: f32, area: f32, entity_scale: f32, type_scale: f32) -> f32 {
+        gothic_portcov::hit!("lod_input");
         global * area * entity_scale * type_scale
     }
 
@@ -34,6 +36,7 @@ pub mod lod {
     /// Port of `eCRenderContextMesh::CalculateLoDStage` (0x101d9080). `stages` is the number of
     /// LoD meshes the visual has (0 or 1 means always stage 0).
     pub fn lod_stage(input: f32, stages: usize) -> usize {
+        gothic_portcov::hit!("lod_stage");
         if stages <= 1 || input > UPPER[0] {
             return 0;
         }
@@ -84,6 +87,7 @@ pub mod cull {
     /// `threshold` = entity scale x database screen-cull factor x entity-type scale. Returns the
     /// fade-out value in `[0, 1]`; anything below 1 means the object is drawn in the alpha list.
     pub fn small_object_fade(area: f32, threshold: f32) -> f32 {
+        gothic_portcov::hit!("small_object_fade");
         if area <= 0.0 {
             return 0.0;
         }
@@ -163,6 +167,7 @@ pub mod lights {
     /// distance from the light to the surface of the object's bounding sphere (0 inside); lights
     /// beyond their range weigh 0.
     pub fn weight_sphere(light: &StaticLight, centre: [f32; 3], radius: f32) -> f32 {
+        gothic_portcov::hit!("weight_sphere");
         let d2: f32 = (0..3)
             .map(|i| (light.position[i] - centre[i]).powi(2))
             .sum();
@@ -184,6 +189,7 @@ pub mod lights {
     /// smooth fall-off `2 (1 - 3 t^2 + 2 t^3)` times the cosine of the incidence angle
     /// (`param_2 = d cos`). 0 beyond the range.
     pub fn intensity(distance: f32, range: f32, cosine: f32) -> f32 {
+        gothic_portcov::hit!("intensity");
         if distance > range || distance <= 0.0 {
             return 0.0;
         }
@@ -199,6 +205,7 @@ pub mod lights {
         box_max: [f32; 3],
         lights: impl IntoIterator<Item = StaticLight>,
     ) -> Packet {
+        gothic_portcov::hit!("packet");
         let centre: [f32; 3] = std::array::from_fn(|i| 0.5 * (box_min[i] + box_max[i]));
         let radius = 0.5
             * (0..3)

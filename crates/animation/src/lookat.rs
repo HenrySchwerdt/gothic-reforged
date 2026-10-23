@@ -85,6 +85,7 @@ impl LookAtSet {
     /// Port of eCVisualAnimation_PS::SetLookAtConstraint (Engine:0x10032750): one constraint
     /// per node name; setting an existing one replaces limits and speed and resets its state.
     pub fn set_constraint(&mut self, node: &str, min: Vec3, max: Vec3, speed: f32) {
+        gothic_portcov::hit!("set_constraint");
         let setup = LookAtSetup { min, max, speed };
         match self.constraints.iter_mut().find(|c| c.node == node) {
             Some(c) => {
@@ -102,6 +103,7 @@ impl LookAtSet {
 
     /// Port of eCVisualAnimation_PS::RemoveLookAtConstraint (Engine:0x10032890).
     pub fn remove_constraint(&mut self, node: &str) -> bool {
+        gothic_portcov::hit!("remove_constraint");
         match self.constraints.iter().position(|c| c.node == node) {
             Some(i) => {
                 self.constraints.remove(i);
@@ -113,11 +115,13 @@ impl LookAtSet {
 
     /// Port of ClearLookAtConstraints (Engine:0x10032180).
     pub fn clear(&mut self) {
+        gothic_portcov::hit!("clear");
         self.constraints.clear();
     }
 
     /// Port of eCLookAtConstraint::Enable (Engine:0x1002afa0) for every constraint.
     pub fn enable_all(&mut self, enabled: bool) {
+        gothic_portcov::hit!("enable_all");
         for c in &mut self.constraints {
             c.enabled = enabled;
         }

@@ -181,10 +181,12 @@ impl SpeedTreeWind {
             .to_radians()
     }
 
-    /// Trunk/branch vibration angle (radians) at strength `s`: the angle range interpolated
-    /// together with the amplitude factor of `VibrationLow/High` (x 10) [I].
+    /// Trunk/branch vibration angle (radians) at strength `s`: the angle range (degrees)
+    /// interpolated together with the amplitude factor of `VibrationLow/High` [I]. (An earlier
+    /// extra x 10 made whole crowns tremble by decimetres; the plain product keeps the tremble
+    /// at about a centimetre in calm air on a 15 m tree.)
     pub fn vibration_angle(&self, s: f32) -> f32 {
-        let a = |i: usize, amp: f32| self.vibration_angles[i].to_radians() * amp * 10.0;
+        let a = |i: usize, amp: f32| self.vibration_angles[i].to_radians() * amp;
         lerp(a(0, self.vibration_low[1]), a(1, self.vibration_high[1]), s)
     }
 
@@ -200,32 +202,38 @@ impl SpeedTreeWind {
         let s = self.strength_at(t);
         let bend = self.bend_angle(s).sin();
         let osc = 0.75 + 0.25 * (TAU * (self.vibration_hz(s) * t + phase)).sin();
-        let vib = self.vibration_angle(s).sin()
-            * (TAU * (self.vibration_hz(s) * 3.0 * t + phase * 7.0)).sin();
+        let vib =
+            self.vibration_angle(s).sin() * (TAU * (self.vibration_hz(s) * t + phase * 7.0)).sin();
         let off = height * weight * (bend * osc + vib);
         off.clamp(-0.35 * height * weight, 0.35 * height * weight)
     }
 
-    /// Leaf flutter amplitude (radians) at strength `s`: rocking plus rustling terms
-    /// (`LeafRocking*` / `LeafRustling*`, interpolated low -> high with the leaf exponent) [I].
+    /// Leaf flutter angles (radians) at strength `s`: the `LeafRockingAngles` /
+    /// `LeafRustlingAngles` range in degrees, like every other angle of the entity, times the
+    /// `LeafRocking` / `LeafRustling` factor, both interpolated low -> high with the leaf
+    /// exponent [I]. World defaults: about 0.3 degrees in calm air, 2 in a gust, 4 at full
+    /// strength. (Reading the angles as plain card fractions shook the cards by up to a quarter
+    /// of their size.)
     pub fn leaf_angles(&self, s: f32) -> (f32, f32) {
         let k = s.max(0.0).powf(self.leaf_strength_exponent);
-        let rock = lerp(self.leaf_rocking[0], self.leaf_rocking_high[0], k)
-            / self.leaf_rocking_high[0].max(1e-3);
-        let rust = lerp(self.leaf_rustling[0], self.leaf_rustling_high[0], k)
-            / self.leaf_rustling_high[0].max(1e-3);
+        let rock = lerp(self.leaf_rocking[0], self.leaf_rocking_high[0], k);
+        let rust = lerp(self.leaf_rustling[0], self.leaf_rustling_high[0], k);
         (
-            lerp(self.leaf_rocking_angles[0], self.leaf_rocking_angles[1], k) * rock,
+            lerp(self.leaf_rocking_angles[0], self.leaf_rocking_angles[1], k).to_radians() * rock,
             lerp(
                 self.leaf_rustling_angles[0],
                 self.leaf_rustling_angles[1],
                 k,
-            ) * rust,
+            )
+            .to_radians()
+                * rust,
         )
     }
 
-    /// Displacement (metres) of a leaf-card vertex along the card normal at time `t`;
-    /// `leaf_size` is the card edge in metres and `phase` a per-vertex random phase.
+    /// Displacement (metres) of a leaf card along its normal at time `t`: the card edge
+    /// (`leaf_size`, metres) rocked by the leaf angles. `phase` must be the same for all
+    /// vertices of a card (the shader derives it from a slowly varying function of position),
+    /// otherwise the corners move against each other and the card wobbles.
     pub fn leaf_offset(&self, t: f32, leaf_size: f32, phase: f32) -> f32 {
         let s = self.strength_at(t);
         let (rock, rust) = self.leaf_angles(s);
@@ -241,8 +249,8 @@ impl SpeedTreeWind {
         ) / 100.0;
         leaf_size
             * 0.5
-            * (rock * (TAU * (f_rock * t + phase)).sin()
-                + rust * (TAU * (f_rust * t + phase * 3.0)).sin())
+            * (rock.sin() * (TAU * (f_rock * t + phase)).sin()
+                + rust.sin() * (TAU * (f_rust * t + phase * 3.0)).sin())
     }
 }
 
@@ -403,5 +411,35 @@ mod tests {
         assert!(calm < 0.35 * 10.0);
         // The leaf flutter scales with the leaf size.
         assert!(w.leaf_offset(0.37, 0.4, 0.2).abs() <= w.leaf_offset(0.37, 0.8, 0.2).abs() + 1e-9);
+    }
+
+    /// Amplitude and speed bounds that keep trees calm (the vertex stage in
+    /// `apps/game/src/walk/shaders/gothic_vertex.wesl` mirrors these formulas): a 15 m tree with
+    /// 0.45 m leaf cards in the world's wind, sampled over two minutes with gusts.
+    #[test]
+    fn tree_motion_stays_calm() {
+        let w = SpeedTreeWind::default();
+        let (height, card) = (15.0, 0.45);
+        let mut tremble: f32 = 0.0;
+        let mut flutter: f32 = 0.0;
+        for i in 0..12_000 {
+            let t = i as f32 * 0.01;
+            let s = w.strength_at(t);
+            // The fast part of the crown sway (bend excluded): vibration only.
+            tremble = tremble.max(height * w.vibration_angle(s).sin().abs());
+            flutter = flutter.max(w.leaf_offset(t, card, 0.3).abs());
+            assert!(w.vibration_hz(s) <= 4.0);
+        }
+        assert!(tremble < 0.08, "crown tremble {tremble} m");
+        assert!(flutter < 0.02, "leaf flutter {flutter} m");
+        // Calm air still moves the leaves a little.
+        let still = SpeedTreeWind {
+            gust_strength: [0.0, 0.0],
+            ..w
+        };
+        let calm = (0..300)
+            .map(|i| still.leaf_offset(i as f32 * 0.01, card, 0.0).abs())
+            .fold(0.0f32, f32::max);
+        assert!(calm > 0.0005, "calm flutter {calm} m");
     }
 }

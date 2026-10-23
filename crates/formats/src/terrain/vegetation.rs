@@ -248,6 +248,7 @@ fn brush_mesh(bytes: &[u8], strings: &Strings, o: &ParsedObject) -> Result<Brush
 /// (0x1027e350): `u16 version`, `f32` node size, a `bCRect` (4 x f32), `u32` node count, then per
 /// node `u32 index` + (`u16 version`, `bCBox` 6 x f32, `u32 n`, `n x 44` bytes of entries).
 fn read_grid(bytes: &[u8], start: usize, limit: usize) -> Result<VegetationGrid> {
+    gothic_portcov::hit!("read_grid");
     let mut cur = Cursor::with_range(bytes, start, limit)?;
     let _version = cur.u16()?;
     let node_size = cur.f32()?;

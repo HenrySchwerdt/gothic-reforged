@@ -73,6 +73,7 @@ const ORC_PARTY_USES: &[UseType] = &[UseType::OrcDance, UseType::OrcDrum, UseTyp
 /// and `Roam` give `ZS_Monster`) or ambles (`ZS_Ambient`). `use_type == None` means the NPC has
 /// no destination point.
 pub fn task_for_use_type(species: Species, use_type: UseType) -> State {
+    gothic_portcov::hit!("task_for_use_type");
     match species {
         Species::Human => HUMAN_TASKS
             .iter()
@@ -102,6 +103,7 @@ pub fn task_for_use_type(species: Species, use_type: UseType) -> State {
 /// waiting, else `ZS_FollowPlayer`; a controlled follower of another NPC `ZS_FollowNPC`;
 /// otherwise the destination point's use type via [`task_for_use_type`].
 pub fn select_routine_task(host: &mut dyn ScriptHost, npc: EntityId) -> State {
+    gothic_portcov::hit!("select_routine_task");
     host.set_current_target(npc, EntityId::NONE);
     let player = host.player();
     let task = if host.arena_active(npc) {
@@ -138,6 +140,7 @@ pub fn select_routine_task(host: &mut dyn ScriptHost, npc: EntityId) -> State {
 /// `MaxUsers` defaults to the number of interact points and the NPC's own current slot does not
 /// count against it); a point with a user other than the NPC is taken.
 pub fn is_free_destination(host: &dyn ScriptHost, npc: EntityId, point: EntityId) -> bool {
+    gothic_portcov::hit!("is_free_destination");
     if point.is_none() || host.point_use_type(point) == UseType::None {
         return false;
     }
@@ -175,6 +178,7 @@ pub fn set_current_destination_point(
     npc: EntityId,
     new_point: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("set_current_destination_point");
     let old = host.destination_point(npc);
     if old == new_point && (new_point.is_none() || host.point_user(new_point) == npc) {
         return false;
@@ -249,6 +253,7 @@ const RESERVE_ON_PASS: &[UseType] = &[
 /// point. Capacity is `MaxUsers - UserCount >= party size` (party members of the NPC itself
 /// count as users; the NPC leading the player counts as none).
 pub fn select_routine_destination(host: &mut dyn ScriptHost, npc: EntityId) -> Destination {
+    gothic_portcov::hit!("select_routine_destination");
     use crate::enums::AnchorType;
     if host.arena_active(npc) {
         return Destination::Skipped;
@@ -348,6 +353,7 @@ pub const HEAL_SELF_BELOW_PERCENT: i32 = 61;
 /// Port of `CanHealSelf` (S:a66b0): the NPC leading the player can always heal; Mages and
 /// Paladins heal by spell; everyone else needs an `It_Potion_Health`.
 pub fn can_heal_self(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("can_heal_self");
     if host.party_leader(host.player()) == npc {
         return true;
     }
@@ -366,6 +372,7 @@ pub fn can_heal_self(host: &dyn ScriptHost, npc: EntityId) -> bool {
 /// target is cleared on every branch that changes task. The off-screen travel part of the DLL
 /// (`StartGoto` for NPCs outside processing range) is host work and not modelled [I].
 pub fn continue_routine(host: &mut dyn ScriptHost, npc: EntityId) -> Resume {
+    gothic_portcov::hit!("continue_routine");
     match host.ai_mode(npc) {
         AiMode::Dead => {
             host.set_current_target(npc, EntityId::NONE);
@@ -412,6 +419,7 @@ pub fn continue_routine(host: &mut dyn ScriptHost, npc: EntityId) -> Resume {
 /// belongs to an anchor goes straight back to `ContinueRoutine`; an NPC working a free-standing
 /// point takes a break (`ZS_Break`).
 pub fn have_a_break(host: &mut dyn ScriptHost, npc: EntityId) -> Resume {
+    gothic_portcov::hit!("have_a_break");
     let point = host.destination_point(npc);
     if point.is_some() && host.point_anchor(point).is_some() {
         continue_routine(host, npc)
@@ -426,6 +434,7 @@ pub fn have_a_break(host: &mut dyn ScriptHost, npc: EntityId) -> Resume {
 /// Scavenger, Bison, Rhino and Pig eat the ground with 80 percent, Boar, Deer and Cow with 50
 /// percent; every other species and the remaining rolls give the plain `Ambient` action.
 pub fn ambient_action(host: &mut dyn ScriptHost, npc: EntityId) -> Action {
+    gothic_portcov::hit!("ambient_action");
     let chance = match host.species(npc) {
         Species::Scavenger | Species::Bison | Species::Rhino | Species::Pig => 80,
         Species::Boar | Species::Deer | Species::Cow => 50,
@@ -444,6 +453,7 @@ pub fn ambient_action(host: &mut dyn ScriptHost, npc: EntityId) -> Action {
 /// The DLL refuses (returns false) when `AIMode == 6` (`Talk`); every other NPC gets a
 /// `FullStop` and, in range, `ContinueRoutine`.
 pub fn send_to_arena(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("send_to_arena");
     if host.ai_mode(npc) == AiMode::Talk {
         return false;
     }
@@ -456,11 +466,13 @@ pub fn send_to_arena(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 
 /// Port of `Rtn_Monster` (S:86a10): entry for monsters: just resume the routine.
 pub fn rtn_monster(host: &mut dyn ScriptHost, npc: EntityId) -> Resume {
+    gothic_portcov::hit!("rtn_monster");
     continue_routine(host, npc)
 }
 
 /// Port of `Rtn_Dead` (S:86a80): entry for dead NPCs: AI mode Dead and `ZS_Dead`.
 pub fn rtn_dead(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("rtn_dead");
     host.set_ai_mode(npc, AiMode::Dead);
     host.set_task(npc, State::Dead);
 }
@@ -469,6 +481,7 @@ pub fn rtn_dead(host: &mut dyn ScriptHost, npc: EntityId) {
 /// then picks `PS_Ghost` (status bit 0x80), else by weapon mode `PS_Melee`, `PS_Ranged`,
 /// `PS_Magic` or `PS_Normal`. `weapon_mode` is the remembered `LastWeaponConfig` (0..=3).
 pub fn rtn_player(host: &mut dyn ScriptHost, npc: EntityId, weapon_mode: u32) {
+    gothic_portcov::hit!("rtn_player");
     host.set_ai_mode(npc, AiMode::Routine);
     host.set_ransacked(npc, false);
     let task = if host.has_status(npc, 0x80) {

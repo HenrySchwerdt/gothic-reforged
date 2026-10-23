@@ -31,6 +31,7 @@ pub const MOB_LEASH: f32 = 62000.0;
 /// members are ranked in party order and the distance is `(rank + 3) * 150`. An NPC that is not
 /// ranked (not in the party) keeps 500.
 pub fn follow_distance(host: &dyn ScriptHost, npc: EntityId) -> f32 {
+    gothic_portcov::hit!("follow_distance");
     let player = host.player();
     let rank = host
         .party_members(player)
@@ -189,6 +190,7 @@ pub const FOLLOW_NPC_LOOP: &[Step] = &[Custom(follow_npc_loop)];
 /// forgets the player, says "TooFarFromMeetingPoint" and resumes its routine. Returns true if it
 /// changed the NPC's task.
 pub fn on_follow_player(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_follow_player");
     let player = host.player();
     let within = follow_distance(host, npc);
     if host.distance(npc, player) <= within {
@@ -226,6 +228,7 @@ pub fn on_follow_player(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `OnFollowNPC` (S:13790), the per-tick callback of `ZS_FollowNPC`: stop walking once
 /// within the follow distance of the leader.
 pub fn on_follow_npc(host: &mut dyn ScriptHost, npc: EntityId) {
+    gothic_portcov::hit!("on_follow_npc");
     let leader = host.party_leader(npc);
     if leader.is_some() && host.distance(npc, leader) <= follow_distance(host, npc) {
         host.stop_ai_goto(npc);
@@ -236,6 +239,7 @@ pub fn on_follow_npc(host: &mut dyn ScriptHost, npc: EntityId) {
 /// lags more than 10 m behind (out of sight, or farther from the destination than the guide),
 /// stop and wait.
 pub fn on_guide_player(host: &mut dyn ScriptHost, guide: EntityId) -> bool {
+    gothic_portcov::hit!("on_guide_player");
     let player = host.player();
     if host.distance(guide, player) <= GUIDE_WAIT_DISTANCE {
         return false;

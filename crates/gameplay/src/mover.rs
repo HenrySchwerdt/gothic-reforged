@@ -58,6 +58,7 @@ impl Mover {
     /// Port of gCMover_PS::Open (Game:0x1a7780): ignored while already opening. A closing
     /// mover reverses from where it is; `instant` jumps to the open pose.
     pub fn open(&mut self, instant: bool) -> Option<MoverAction> {
+        gothic_portcov::hit!("open");
         if self.state == MoverState::Opening {
             return None;
         }
@@ -84,6 +85,7 @@ impl Mover {
 
     /// Port of gCMover_PS::Close (Game:0x1a7a70).
     pub fn close(&mut self, instant: bool) -> Option<MoverAction> {
+        gothic_portcov::hit!("close");
         if self.state == MoverState::Closing {
             return None;
         }
@@ -111,6 +113,7 @@ impl Mover {
     /// Port of gCMover_PS::Toggle (Game:0x1a7130): open what is closed or closing, close
     /// what is open or opening.
     pub fn toggle(&mut self) -> Option<MoverAction> {
+        gothic_portcov::hit!("toggle");
         match self.state {
             MoverState::Open | MoverState::Opening => self.close(false),
             MoverState::Closed | MoverState::Closing => self.open(false),
@@ -121,6 +124,7 @@ impl Mover {
     /// speed has dropped to zero (it ran to its end). With `rest == 0` the finished motions end
     /// in the opposite state (as decompiled; see the module notes).
     pub fn motion_stopped(&mut self) -> Option<MoverAction> {
+        gothic_portcov::hit!("motion_stopped");
         let (state, open) = match (self.state, self.rest == 0) {
             (MoverState::Opening, true) => (MoverState::Closed, false),
             (MoverState::Opening, false) => (MoverState::Open, true),
@@ -138,6 +142,7 @@ impl Mover {
     /// Port of gCDoor_PS::OnNotifyPropertyValueChangedExitEx (Game:0xcc020), `Status`: a door
     /// whose status is 0 is open, otherwise closed.
     pub fn set_door_status(&mut self, status: i32) {
+        gothic_portcov::hit!("set_door_status");
         self.state = if status == 0 {
             MoverState::Open
         } else {
@@ -153,6 +158,7 @@ impl Mover {
     /// Port of gCDoor_PS::SetIsOpen (Game:0xcbf80): the door status for an open flag
     /// (0 = open, 1 = closed).
     pub fn door_status(open: bool) -> i32 {
+        gothic_portcov::hit!("door_status");
         if open { 0 } else { 1 }
     }
 }

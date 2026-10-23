@@ -32,6 +32,7 @@ fn exempt(host: &dyn ScriptHost, npc: EntityId, enclave: EntityId) -> bool {
 
 /// Port of `GetPlayerCrime` (S:36fd0): the crime the NPC remembers.
 pub fn get_player_crime(host: &dyn ScriptHost, npc: EntityId) -> PlayerCrime {
+    gothic_portcov::hit!("get_player_crime");
     host.last_player_crime(npc)
 }
 
@@ -45,6 +46,7 @@ pub fn set_attack_reason(
     other: EntityId,
     reason: AttackReason,
 ) -> bool {
+    gothic_portcov::hit!("set_attack_reason");
     if host.ai_mode(npc) == AiMode::Combat
         && host.current_target(npc) == other
         && reason.raw() < host.attack_reason(npc).raw()
@@ -69,6 +71,7 @@ pub fn memorize_player_crime(
     other: EntityId,
     crime: PlayerCrime,
 ) -> bool {
+    gothic_portcov::hit!("memorize_player_crime");
     if other != host.player() || host.npc_type(npc) == NpcType::Friend || crime == PlayerCrime::None
     {
         return false;
@@ -96,6 +99,7 @@ pub fn memorize_enclave_crime(
     other: EntityId,
     crime: PlayerCrime,
 ) -> bool {
+    gothic_portcov::hit!("memorize_enclave_crime");
     if other != host.player() {
         return false;
     }
@@ -129,6 +133,7 @@ pub fn add_enclave_theft_count(
     other: EntityId,
     amount: i32,
 ) -> bool {
+    gothic_portcov::hit!("add_enclave_theft_count");
     if other != host.player() {
         return false;
     }
@@ -163,6 +168,7 @@ pub fn change_enclave_status(
     enclave: EntityId,
     new: EnclaveStatus,
 ) -> bool {
+    gothic_portcov::hit!("change_enclave_status");
     if host.enclave_status(enclave) == new {
         return false;
     }
@@ -215,6 +221,7 @@ pub fn change_enclave_status(
 /// exempt NPCs never notify; a fleeing enclave ignores everything. [I: the DLL's member counting
 /// was only partly readable; the head count and the ten-member limit are as read.]
 pub fn notify_enclave(host: &mut dyn ScriptHost, witness: EntityId, mode: u32) -> bool {
+    gothic_portcov::hit!("notify_enclave");
     let enclave = host.enclave(witness);
     if enclave.is_none() || exempt(host, witness, enclave) {
         return false;

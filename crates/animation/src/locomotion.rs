@@ -88,6 +88,9 @@ pub struct LocomotionInput {
     pub grounded: bool,
     pub stance: Stance,
     pub sneak: bool,
+    /// The guard is up (`AniState::Parade`): the clips of the `Parade` pose
+    /// (`Hero_Parade_<L>_<R>_P0_Move_...`).
+    pub parade: bool,
     /// Signed yaw from the current facing to the desired facing, radians, positive is
     /// counter-clockwise seen from above (left). Triggers turn-in-place when standing.
     pub turn_error: f32,
@@ -102,6 +105,7 @@ impl Default for LocomotionInput {
             grounded: true,
             stance: Stance::Unarmed,
             sneak: false,
+            parade: false,
             turn_error: 0.0,
             gait: None,
         }
@@ -147,6 +151,7 @@ pub struct LocoKey {
     pub dir: MoveDir,
     pub stance: Stance,
     pub sneak: bool,
+    pub parade: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -218,6 +223,7 @@ impl Locomotion {
                 dir: MoveDir::Fwd,
                 stance: Stance::Unarmed,
                 sneak: false,
+                parade: false,
             },
             ground_speed: 0.0,
             playing: None,
@@ -239,6 +245,7 @@ impl Locomotion {
         let mut next = LocoKey {
             stance: input.stance,
             sneak: input.sneak,
+            parade: input.parade,
             ..prev
         };
         if !input.grounded {
@@ -380,7 +387,9 @@ pub fn resolve_motion<'a>(
     if (l, r) != ("None", "None") {
         hands.push(("None", "None"));
     }
-    let poses: &[&str] = if key.sneak && key.kind != MoveKind::Jump {
+    let poses: &[&str] = if key.parade && key.kind != MoveKind::Jump {
+        &["Parade", "Stand"]
+    } else if key.sneak && key.kind != MoveKind::Jump {
         &["Sneak", "Stand"]
     } else {
         &["Stand"]
@@ -533,6 +542,7 @@ mod tests {
             dir: MoveDir::Fwd,
             stance,
             sneak,
+            parade: false,
         };
         // Run with a sword has no run clip in this set: walk with the sword wins over
         // running unarmed.

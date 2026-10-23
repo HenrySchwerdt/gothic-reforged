@@ -27,7 +27,7 @@ struct GothicParams {
     uv_n_scroll: vec4<f32>,
     uv_n_rot: vec4<f32>,
     // Wind (see gothic_vertex.wesl). x: mode (0 none, 1 vegetation wave, 2 tree, 3 tree leaves),
-    // y: tree height in local units, z: leaf card size (m), w: unused.
+    // y: tree height in local units, z: leaf card size (m), w: leaf flutter scale (1 = default).
     wind_mat: vec4<f32>,
     // Vegetation wave: xy angular wave numbers (1/cm), zw phase rates (rad/s).
     veg: vec4<f32>,
@@ -105,23 +105,24 @@ fn wind_offset(wp: vec3<f32>, normal: vec3<f32>, weight: f32, m: mat4x4<f32>, t:
     let bend = sin(params.wind[1].z * mix(params.wind[2].x, params.wind[2].y, s) * pow(max(s, 0.0001), params.wind[1].w));
     let hz = clamp(mix(params.wind[3].x, params.wind[3].y, s) / 100.0, 0.1, 4.0);
     let osc = 0.75 + 0.25 * sin(TAU * (hz * t + seed));
-    let vib = sin(mix(params.wind[2].z, params.wind[2].w, s)) * sin(TAU * (hz * 3.0 * t + seed * 7.0));
+    let vib = sin(mix(params.wind[2].z, params.wind[2].w, s)) * sin(TAU * (hz * t + seed * 7.0));
     let lim = 0.35 * height * weight;
     let sway = clamp(height * weight * (bend * osc + vib), -lim, lim);
     let dir = vec3<f32>(sin(params.wind[3].z), 0.0, cos(params.wind[3].z));
     var off = dir * sway;
     if mode > 2.5 {
-        // Leaf rocking and rustling: flutter of the cards along their normal.
+        // Leaf rocking and rustling (`SpeedTreeWind::leaf_offset`): the card edge rocked by the
+        // leaf angles (degrees in the entity, radians here) times the rocking / rustling factor.
         let k = pow(max(s, 0.0001), params.wind[3].w);
-        let rock = mix(params.wind[4].x, params.wind[4].y, k) / max(params.wind[4].y, 0.001)
-            * mix(params.wind[4].z, params.wind[4].w, k);
-        let rust = mix(params.wind[5].x, params.wind[5].y, k) / max(params.wind[5].y, 0.001)
-            * mix(params.wind[5].z, params.wind[5].w, k);
+        let rock = radians(mix(params.wind[4].z, params.wind[4].w, k)) * mix(params.wind[4].x, params.wind[4].y, k);
+        let rust = radians(mix(params.wind[5].z, params.wind[5].w, k)) * mix(params.wind[5].x, params.wind[5].y, k);
         let f_rock = mix(params.wind[6].x, params.wind[6].y, s) / 100.0;
         let f_rust = mix(params.wind[6].z, params.wind[6].w, s) / 100.0;
-        let ph = fract(dot(wp.xz, vec2<f32>(0.37, 0.29)) + seed);
-        let flutter = params.wind_mat.z * 0.5
-            * (rock * sin(TAU * (f_rock * t + ph)) + rust * sin(TAU * (f_rust * t + ph * 3.0)));
+        // One phase per card: it may only vary slowly over the crown (a few hundredths of a
+        // cycle across a card), else the corners of a card move against each other.
+        let ph = fract(dot(wp.xz, vec2<f32>(0.031, 0.023)) + seed);
+        let flutter = params.wind_mat.z * 0.5 * params.wind_mat.w
+            * (sin(rock) * sin(TAU * (f_rock * t + ph)) + sin(rust) * sin(TAU * (f_rust * t + ph * 3.0)));
         off = off + normal * flutter;
     }
     return off;

@@ -52,11 +52,63 @@ pub struct PlayerTables {
     recipes: BTreeMap<i32, Recipe>,
     recipe_items: BTreeMap<String, SkillCategory>,
     blade_items: BTreeSet<String>,
-    /// The hero is busy (an animation plays) until this simulation time.
-    pub busy_until_ms: u64,
     pub(crate) books: [i32; 3],
     boulders: BTreeMap<u32, gothic_script::player::api::BoulderClass>,
+    /// The player's action queue (`DAT_10118d54` of the script DLL): `(gEAction id, focus)`.
+    pub(crate) queue: std::collections::VecDeque<(u32, EntityId)>,
+    /// `PSFocus::GetFocusEntity(melee)`: the engine's focus search, fed by the host each frame.
+    pub melee_focus: EntityId,
+    /// `PSFocus::GetFocusEntity()`.
+    pub focus: EntityId,
+    /// `PSFocus.CurrentMode`, `FocusLookAtMode`, `EnableRangeRating` as the script wrote them.
+    pub focus_modes: (u32, u32, bool),
+    /// The camera is in first person (`PSCamera::IsInFirstPerson`), fed by the host.
+    pub first_person: bool,
+    /// The camera mode the script asked for (`PSCamera::SetMode`).
+    pub camera_mode: u32,
+    /// A movement key is held (`DAT_10118aac`), fed by the host.
+    pub movement_key: bool,
+    /// `PSPlayerMemory.LastWeaponConfig`.
+    pub weapon_config: u32,
+    /// The AI instructions the hero's states queued and the engine has not started yet.
+    pub(crate) pending: std::collections::VecDeque<AiCommand>,
+    /// The instruction the hero is executing.
+    pub(crate) exec: HeroExec,
+    /// Sequence number of the last instruction handed to the host.
+    pub(crate) seq: u32,
+    /// The host plays the hero's animations and reports back ([`Sim::hero_move_hit`],
+    /// [`Sim::hero_exec_done`], [`Sim::hero_hold_swap`]). Without it (headless runs) combat
+    /// moves have no clip: a `Hit` step lands at once and every instruction ends immediately.
+    pub host_drives: bool,
 }
+
+/// The instruction of the hero that is running.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) enum HeroExec {
+    #[default]
+    Idle,
+    /// `sAIWaitInstr` and the placeholder durations of animations the host does not drive.
+    Wait { until_ms: u64 },
+    /// `sAICombatMoveInstr`, waiting for the host.
+    Move {
+        seq: u32,
+        action: se::Action,
+        hit_phase: bool,
+        target: Option<ActorId>,
+        deadline_ms: u64,
+    },
+    /// `_AI_HoldInventoryItems`, waiting for the host.
+    Hold {
+        seq: u32,
+        right: i32,
+        left: i32,
+        swapped: bool,
+        deadline_ms: u64,
+    },
+}
+
+/// A host that never answers must not freeze the hero: an instruction ends by itself after this.
+const EXEC_TIMEOUT_MS: u64 = 8_000;
 
 impl ScriptTables {
     /// Register an interact object at `pos` and return its entity.
@@ -405,6 +457,86 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
         self.sim.clock.game_ms += (hours * 3_600_000.0) as u64;
         self.sim.state.hours = self.sim.clock.total_hours();
     }
+    fn set_alignment_target(&mut self, e: EntityId, target: EntityId) {
+        if let Some(s) = self.script_mut(e) {
+            s.alignment_target = target;
+        }
+    }
+    fn set_movement_constraints(&mut self, e: EntityId, degrees: f32) {
+        if let Some(s) = self.script_mut(e) {
+            s.movement_constraint = degrees;
+        }
+    }
+    fn action_queue_head(&self) -> Option<(u32, EntityId)> {
+        self.sim.script.player.queue.front().copied()
+    }
+    fn action_queue_push(&mut self, id: u32, entity: EntityId) {
+        self.sim.script.player.queue.push_back((id, entity));
+    }
+    fn action_queue_pop(&mut self) {
+        self.sim.script.player.queue.pop_front();
+    }
+    fn action_queue_clear(&mut self) {
+        self.sim.script.player.queue.clear();
+    }
+    fn melee_focus(&self) -> EntityId {
+        self.sim.script.player.melee_focus
+    }
+    fn current_focus(&self) -> EntityId {
+        self.sim.script.player.focus
+    }
+    fn set_focus_entity(&mut self, e: EntityId) {
+        self.sim.script.player.focus = e;
+    }
+    fn set_focus_current_mode(&mut self, mode: u32) {
+        self.sim.script.player.focus_modes.0 = mode;
+    }
+    fn set_focus_look_at_mode(&mut self, mode: u32) {
+        self.sim.script.player.focus_modes.1 = mode;
+    }
+    fn set_focus_range_rating(&mut self, on: bool) {
+        self.sim.script.player.focus_modes.2 = on;
+    }
+    fn camera_in_first_person(&self) -> bool {
+        self.sim.script.player.first_person
+    }
+    fn set_camera_mode(&mut self, mode: u32) {
+        self.sim.script.player.camera_mode = mode;
+    }
+    fn movement_key_down(&self) -> bool {
+        self.sim.script.player.movement_key
+    }
+    fn last_weapon_config(&self) -> u32 {
+        self.sim.script.player.weapon_config
+    }
+    fn set_last_weapon_config(&mut self, v: u32) {
+        self.sim.script.player.weapon_config = v;
+    }
+    fn azimuth_elevation(&self, from: EntityId, to: EntityId) -> (f32, f32) {
+        let (Some(a), Some(b)) = (actor_of(from), actor_of(to)) else {
+            return (0.0, 0.0);
+        };
+        let (pa, pb) = (self.sim.pos(a), self.sim.pos(b));
+        let heading = self.sim.world.facing(a);
+        let mut azi = pa.yaw_to(pb) - heading;
+        while azi > std::f32::consts::PI {
+            azi -= std::f32::consts::TAU;
+        }
+        while azi < -std::f32::consts::PI {
+            azi += std::f32::consts::TAU;
+        }
+        let flat = ((pb.x - pa.x).powi(2) + (pb.z - pa.z).powi(2)).sqrt();
+        let elev = (pb.y - pa.y).atan2(flat.max(1e-3));
+        (azi.to_degrees(), elev.to_degrees())
+    }
+    fn hit_direction(&self, e: EntityId) -> u32 {
+        self.script(e).hit_direction
+    }
+    fn set_hit_direction(&mut self, e: EntityId, dir: u32) {
+        if let Some(s) = self.script_mut(e) {
+            s.hit_direction = dir;
+        }
+    }
     fn emit(&mut self, event: PlayerEvent) {
         // A window the script opens holds the world (`gui_page_open`) until the host closes it.
         match &event {
@@ -487,15 +619,143 @@ impl<W: WorldQuery> Sim<W> {
             .unwrap_or(false)
     }
 
-    /// Start a melee move against an actor.
-    pub fn player_melee(&mut self, action: se::Action, target: ActorId) -> bool {
-        self.with_hero(|h, p| commands::melee_move(h, p, action, entity_of(target)))
+    /// The facts the key handlers read before they queue an attack (`CanDo`, the weapon classes).
+    pub fn player_control_facts(&mut self) -> gothic_script::player::melee::ControlFacts {
+        self.with_hero(|h, p| gothic_script::player::melee::control_facts(h, p))
+            .unwrap_or_default()
+    }
+
+    /// The hero's script state names for the key router: task, state, seconds in the state.
+    pub fn hero_script_state(&self) -> (Option<State>, Option<State>, f32) {
+        let Some(h) = self.hero else {
+            return (None, None, 0.0);
+        };
+        let s = self.script.npc(h);
+        (s.task, s.state, s.state_time)
+    }
+
+    /// A key action of the hero (`OnPlayerGameKeyPressed` queues a `gEAction` id with the focus
+    /// entity); the loop state of the current task reads it (`PS_Melee_Loop`).
+    pub fn player_push_action(&mut self, id: u32, focus: Option<ActorId>) {
+        let focus = focus.map_or(EntityId::NONE, entity_of);
+        self.with_hero(|h, _| commands::push_action(h, id, focus));
+    }
+
+    /// `FullStop` + `SetState` of the hero: the riposte out of the guard and the chains of
+    /// `OnPlayerAction` switch states directly.
+    pub fn player_enter_state(&mut self, state: State) {
+        self.with_hero(|h, p| commands::enter_state(h, p, state));
+    }
+
+    /// The weapon key in `PS_Normal_Loop` (`OnPlayerSelectWeapon`).
+    pub fn player_select_weapon(&mut self) -> bool {
+        self.with_hero(|h, p| commands::select_weapon(h, p))
             .unwrap_or(false)
     }
 
-    /// Raise the guard against an actor (`PS_Melee_Parade`).
-    pub fn player_parade(&mut self, target: ActorId) {
-        self.with_hero(|h, p| commands::parade(h, p, entity_of(target)));
+    /// The host's per-frame view of the hero's control layer: the melee-mode focus search
+    /// (`PSFocus::GetFocusEntity(melee)`), the plain focus, the camera and the movement key
+    /// latch.
+    pub fn set_hero_control(
+        &mut self,
+        melee_focus: Option<ActorId>,
+        focus: Option<ActorId>,
+        first_person: bool,
+        movement_key: bool,
+    ) {
+        let t = &mut self.script.player;
+        t.melee_focus = melee_focus.map_or(EntityId::NONE, entity_of);
+        t.focus = focus.map_or(EntityId::NONE, entity_of);
+        t.first_person = first_person;
+        t.movement_key = movement_key;
+    }
+
+    /// What the hero's script wants the body to do: the alignment target and the movement
+    /// constraint (`SetAlignmentTarget`, `SetMovementConstraints`).
+    pub fn hero_alignment(&self) -> (Option<ActorId>, f32) {
+        let Some(h) = self.hero else {
+            return (None, 0.0);
+        };
+        let s = self.script.npc(h);
+        (actor_of(s.alignment_target), s.movement_constraint)
+    }
+
+    /// The hero's current target (`PSNpc::GetCurrentTarget`) as `PS_Melee_Loop` wrote it.
+    pub fn hero_current_target(&self) -> Option<ActorId> {
+        let h = self.hero?;
+        self.actors[h.0 as usize].target
+    }
+
+    /// The camera mode the hero's script asked for (`PSCamera::SetMode`) and the focus modes.
+    pub fn hero_script_modes(&self) -> (u32, (u32, u32, bool)) {
+        let t = &self.script.player;
+        (t.camera_mode, t.focus_modes)
+    }
+
+    /// The `OnHit` moment of a `Hit` clip (60 % of its length, `sAICombatMoveItlLoop`): the
+    /// blow lands on the move's target if `seq` is the instruction in flight.
+    pub fn hero_move_hit(&mut self, seq: u32) {
+        let HeroExec::Move {
+            seq: s,
+            hit_phase: true,
+            target: Some(target),
+            ..
+        } = self.script.player.exec.clone()
+        else {
+            return;
+        };
+        if s != seq {
+            return;
+        }
+        self.hero_strike(target);
+    }
+
+    /// The host finished the instruction `seq` (its clips ended, or none was found).
+    pub fn hero_exec_done(&mut self, seq: u32) {
+        let done = match &self.script.player.exec {
+            HeroExec::Move { seq: s, .. } | HeroExec::Hold { seq: s, .. } => *s == seq,
+            _ => false,
+        };
+        if done {
+            self.script.player.exec = HeroExec::Idle;
+        }
+    }
+
+    /// The `Begin` clip of a hold ended: the item moves between the back slot and the hand
+    /// (`PSInventory::HoldStacks`).
+    pub fn hero_hold_swap(&mut self, seq: u32) {
+        let HeroExec::Hold {
+            seq: s,
+            right,
+            left,
+            swapped: false,
+            ..
+        } = self.script.player.exec.clone()
+        else {
+            return;
+        };
+        if s != seq {
+            return;
+        }
+        self.with_hero(|h, p| gothic_script::host::InventoryApi::hold_stacks(h, p, right, left));
+        if let HeroExec::Hold { swapped, .. } = &mut self.script.player.exec {
+            *swapped = true;
+        }
+    }
+
+    /// The blow of the hero's current move: the reach test and the damage of
+    /// `Sim::resolve_strike` against the move's target.
+    fn hero_strike(&mut self, target: ActorId) {
+        let Some(h) = self.hero else { return };
+        let action = self.actors[h.0 as usize].action;
+        self.resolve_strike(
+            h.0 as usize,
+            crate::brain::Strike {
+                at_ms: 0,
+                action,
+                target,
+            },
+        );
     }
 
     /// Take everything from a body.
@@ -504,8 +764,11 @@ impl<W: WorldQuery> Sim<W> {
             .unwrap_or(0)
     }
 
-    /// Step the hero's current state and execute what it queued. Called once per tick; an
-    /// animation (an `Action`, a wait) keeps the hero busy for its length.
+    /// Step the hero: the instructions the hero's states queued run one after the other (the
+    /// engine's AI instruction queue); when none is left the current state runs again and
+    /// queues the next ones. A combat move or a hold waits for the host's animation
+    /// ([`Sim::hero_move_hit`], [`Sim::hero_exec_done`], [`Sim::hero_hold_swap`]); a wait and the
+    /// placeholder animations of the other commands keep the hero busy for their length.
     pub fn drive_player(&mut self) {
         let now = self.now_ms();
         let Some(hero) = self.hero else { return };
@@ -516,13 +779,43 @@ impl<W: WorldQuery> Sim<W> {
             s.state_time += dt;
             s.task_time += dt;
         }
-        if now < self.script.player.busy_until_ms {
+        let ent = entity_of(hero);
+        // 1. The instruction in flight, then the queued ones.
+        for _ in 0..16 {
+            match self.script.player.exec.clone() {
+                HeroExec::Idle => {}
+                HeroExec::Wait { until_ms } => {
+                    if now < until_ms {
+                        return;
+                    }
+                    self.script.player.exec = HeroExec::Idle;
+                }
+                HeroExec::Move { deadline_ms, .. } | HeroExec::Hold { deadline_ms, .. } => {
+                    if now < deadline_ms {
+                        return;
+                    }
+                    self.script.player.exec = HeroExec::Idle;
+                }
+            }
+            match self.script.player.pending.pop_front() {
+                Some(cmd) => self.start_hero_instruction(hero, cmd, now),
+                None => break,
+            }
+            if self.script.player.exec != HeroExec::Idle {
+                return;
+            }
+        }
+        if !self.script.player.pending.is_empty() {
             return;
         }
-        let ent = entity_of(hero);
+        // 2. Nothing left to run: the state decides what comes next.
         let cmds = {
             let mut host = SimHost::new(self);
             host.self_entity = ent;
+            if host.current_task(ent).is_none() {
+                // A new game starts in `PS_Normal`.
+                host.set_task(ent, State::PsNormal);
+            }
             if !host.current_state(ent).is_some_and(|s| {
                 let n = s.name();
                 n.starts_with("PS_") || n.starts_with("BS_") || n.starts_with("ZS_Evade")
@@ -532,32 +825,97 @@ impl<W: WorldQuery> Sim<W> {
             commands::run(&mut host, ent);
             host.sim.script.take_commands_for(hero)
         };
-        let mut busy = 0u64;
-        for cmd in cmds {
-            busy += match cmd {
-                AiCommand::Action { secs, .. } | AiCommand::Wait { secs } => {
-                    secs.max(0) as u64 * 1000
-                }
-                AiCommand::WaitMs { ms } => u64::from(ms),
-                AiCommand::ChangeAction
-                | AiCommand::StandUp
-                | AiCommand::HoldInventoryStacks { .. } => 400,
-                AiCommand::AniStateAction(_) => 500,
-                AiCommand::TakeItem { .. } => 800,
-                AiCommand::SayLine { key } => {
-                    self.speak(hero, key.to_string());
-                    0
-                }
-                AiCommand::Attack { target, .. } => {
-                    if let Some(t) = actor_of(target) {
-                        self.melee_hit(hero, t);
+        self.script.player.pending.extend(cmds);
+    }
+
+    /// Start one queued instruction of the hero.
+    fn start_hero_instruction(&mut self, hero: ActorId, cmd: AiCommand, now: u64) {
+        let ent = entity_of(hero);
+        let crossbow = self
+            .actor(hero)
+            .equipment
+            .left
+            .as_ref()
+            .is_some_and(|i| i.use_kind() == crate::item::Use::CrossBow);
+        let wait = |ms: u64| HeroExec::Wait { until_ms: now + ms };
+        let drives = self.script.player.host_drives;
+        let exec = match cmd {
+            AiCommand::AddStamina(delta) => {
+                let mut host = SimHost::new(self);
+                host.self_entity = ent;
+                gothic_script::stats::add_stamina_points(&mut host, ent, delta);
+                HeroExec::Idle
+            }
+            AiCommand::CombatMove {
+                action,
+                phase,
+                speed,
+                pose,
+                target,
+            } => {
+                let target = actor_of(target);
+                let hit_phase = phase == gothic_script::host::MovePhase::Hit;
+                if drives {
+                    self.script.player.seq += 1;
+                    let seq = self.script.player.seq;
+                    self.push(EventKind::HeroMove {
+                        seq,
+                        action,
+                        phase,
+                        speed,
+                        pose,
+                        target,
+                    });
+                    HeroExec::Move {
+                        seq,
+                        action,
+                        hit_phase,
+                        target,
+                        deadline_ms: now + EXEC_TIMEOUT_MS,
                     }
-                    600
+                } else {
+                    // Headless: no clip, so the blow lands at once and the move ends.
+                    if hit_phase && let Some(t) = target {
+                        self.hero_strike(t);
+                    }
+                    HeroExec::Idle
                 }
-                _ => 200,
-            };
-        }
-        self.script.player.busy_until_ms = now + busy;
+            }
+            AiCommand::HoldInventoryStacks { right, left } => {
+                if drives {
+                    self.script.player.seq += 1;
+                    let seq = self.script.player.seq;
+                    self.push(EventKind::HeroHold {
+                        seq,
+                        draw: right >= 0 || left >= 0,
+                    });
+                    HeroExec::Hold {
+                        seq,
+                        right,
+                        left,
+                        swapped: false,
+                        deadline_ms: now + EXEC_TIMEOUT_MS,
+                    }
+                } else {
+                    let mut host = SimHost::new(self);
+                    host.self_entity = ent;
+                    gothic_script::host::InventoryApi::hold_stacks(&mut host, ent, right, left);
+                    HeroExec::Idle
+                }
+            }
+            AiCommand::Action { action, secs } => wait(hero_action_ms(action, crossbow, secs)),
+            AiCommand::Wait { secs } => wait(secs.max(0) as u64 * 1000),
+            AiCommand::WaitMs { ms } => wait(u64::from(ms)),
+            AiCommand::ChangeAction | AiCommand::StandUp => wait(400),
+            AiCommand::AniStateAction(_) => wait(500),
+            AiCommand::TakeItem { .. } => wait(800),
+            AiCommand::SayLine { key } => {
+                self.speak(hero, key.to_string());
+                HeroExec::Idle
+            }
+            _ => wait(200),
+        };
+        self.script.player.exec = exec;
     }
 
     /// Has the hero returned to the idle `PS_Normal_Loop` (or no state)?
@@ -643,4 +1001,30 @@ mod tests {
                 .any(|e| matches!(&e.kind, EventKind::Player(PlayerEvent::Window(_))))
         );
     }
+}
+
+/// Milliseconds an animation action keeps the hero busy: the length of the clip that plays
+/// (`gothic_projectile::aim::clips`, measured from `_compiledAnimation.pak`). The ported script
+/// passes a placeholder of one second; the draw of a bow and the cast would otherwise lag a full
+/// second behind the key.
+fn hero_action_ms(action: gothic_script::enums::Action, crossbow: bool, secs: i32) -> u64 {
+    use gothic_projectile::aim::clips;
+    use gothic_script::enums::Action;
+    let s = match action {
+        Action::Aim if crossbow => clips::crossbow::RAISE,
+        Action::Aim => clips::bow::RAISE,
+        // The arrow leaves at once (the bow has no `Hit` clip); the recovery follows the shot.
+        Action::Shoot => 0.0,
+        Action::Reload if crossbow => clips::crossbow::RELOAD_BEGIN + clips::crossbow::RELOAD_END,
+        Action::Reload => {
+            clips::bow::RELOAD_BEGIN + clips::bow::RELOAD_RAISE + clips::bow::RELOAD_END
+        }
+        Action::Cock => clips::crossbow::COCK,
+        // The missile leaves when the raise clip ends.
+        Action::Cast => clips::cast::CAST.0,
+        Action::QuickCast => clips::cast::QUICK.0,
+        Action::PowerCast => clips::cast::POWER.0,
+        _ => return secs.max(0) as u64 * 1000,
+    };
+    (s * 1000.0) as u64
 }

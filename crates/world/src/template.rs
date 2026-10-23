@@ -88,6 +88,7 @@ impl std::error::Error for SpawnError {}
 /// Port of `gCDatabase::SplitTemplatePath` (Game:0x1018e1d0): `Layer:Name`, slashes trimmed.
 /// The layer is `None` when the path names only the template.
 pub fn split_template_path(path: &str) -> (Option<String>, String) {
+    gothic_portcov::hit!("split_template_path");
     let p = path.trim_matches('/');
     match p.rsplit_once(':') {
         Some((layer, name)) => (
@@ -139,6 +140,7 @@ impl TemplateLibrary {
 
     /// Port of `eCTemplateEntity::GetRefTemplate` (Engine:0x1022c7a0).
     pub fn ref_template(&self, name: &str) -> Option<&EntityTemplate> {
+        gothic_portcov::hit!("ref_template");
         self.get(name)
             .and_then(|t| t.ref_template.as_deref())
             .and_then(|r| self.get(r))
@@ -183,6 +185,7 @@ impl TemplateLibrary {
         entity: EntityId,
         replace_all: bool,
     ) -> PatchResult {
+        gothic_portcov::hit!("patch_entity");
         if tree.get(entity).is_none_or(|e| e.is_killed()) {
             return PatchResult::Skipped;
         }
@@ -232,6 +235,7 @@ impl TemplateLibrary {
         instance_name: &str,
         position: Vec3,
     ) -> Result<EntityId, SpawnError> {
+        gothic_portcov::hit!("spawn");
         let (_, name) = split_template_path(path);
         if name.is_empty() {
             return Err(SpawnError::EmptyName);
@@ -261,6 +265,7 @@ impl TemplateLibrary {
     /// Port of `eCTemplateEntity::PatchInstances` (Engine:0x1022c620): re-patch every live
     /// instance after the template changed. Returns how many were patched.
     pub fn patch_instances(&mut self, tree: &EntityTree, template: &str) -> usize {
+        gothic_portcov::hit!("patch_instances");
         let ids: Vec<EntityId> = self.instances(template).to_vec();
         ids.into_iter()
             .filter(|id| self.patch_entity(tree, template, *id, false) == PatchResult::Patched)
@@ -278,6 +283,7 @@ impl TemplateLibrary {
     /// Port of `eCTemplateEntity::DeleteInstances` (Engine:0x1022bea0): kill all instances of
     /// the template, newest first, and drop the template. Returns the killed entities.
     pub fn delete_template(&mut self, scene: &mut Scene, template: &str) -> Vec<EntityId> {
+        gothic_portcov::hit!("delete_template");
         let mut killed = Vec::new();
         for id in self
             .instances

@@ -89,6 +89,7 @@ impl SectorAdmin {
     /// Port of `gCSector::EnableSectorActivation` (Game:0x10192ca0): with the switch off,
     /// `OnEnable` only stores the flag and leaves the layers alone.
     pub fn enable_layer_activation(&mut self, on: bool) {
+        gothic_portcov::hit!("enable_layer_activation");
         self.layer_activation = on;
     }
 
@@ -115,6 +116,7 @@ impl SectorAdmin {
         kind: LayerKind,
         root: Option<EntityId>,
     ) -> bool {
+        gothic_portcov::hit!("add_layer");
         let Some(s) = self.sectors.get_mut(&key(sector)) else {
             return false;
         };
@@ -143,6 +145,7 @@ impl SectorAdmin {
     /// Port of `gCSector::IsEnabled` (Game:0x10192cc0). Unknown sectors count as enabled: the
     /// world simply has no switch for them.
     pub fn is_enabled(&self, name: &str) -> bool {
+        gothic_portcov::hit!("is_enabled");
         self.sector(name).is_none_or(|s| s.enabled)
     }
 
@@ -179,6 +182,7 @@ impl SectorAdmin {
     /// falls back to `OnEnable` itself; both end in [`Self::on_enable`]. `None` for an unknown
     /// sector.
     pub fn enable(&mut self, tree: &mut EntityTree, name: &str, on: bool) -> Option<SectorSwitch> {
+        gothic_portcov::hit!("enable");
         self.on_enable(tree, name, on)
     }
 
@@ -191,6 +195,7 @@ impl SectorAdmin {
         name: &str,
         on: bool,
     ) -> Option<SectorSwitch> {
+        gothic_portcov::hit!("on_enable");
         let layer_activation = self.layer_activation;
         let s = self.sectors.get_mut(&key(name))?;
         let changed = s.enabled != on;
@@ -216,6 +221,7 @@ impl SectorAdmin {
     /// Port of `gCSector::ContainsEntity` (Game:0x10192b60): is `entity` below a layer root of
     /// the sector?
     pub fn contains_entity(&self, tree: &EntityTree, sector: &str, entity: EntityId) -> bool {
+        gothic_portcov::hit!("contains_entity");
         let Some(s) = self.sector(sector) else {
             return false;
         };
@@ -250,6 +256,7 @@ impl SectorAdmin {
 
     /// Port of `gCSectorPersistence_PS::CollectSectors` (Game:0x101a18f0): the save image.
     pub fn collect(&self) -> Vec<SectorSave> {
+        gothic_portcov::hit!("collect");
         self.sectors
             .values()
             .map(|s| SectorSave {
@@ -262,6 +269,7 @@ impl SectorAdmin {
     /// Port of `gCSectorPersistence_PS::UpdateSectors` (Game:0x101a1800): re-apply a save
     /// image. Returns the names that are not part of the world (the original logs a warning).
     pub fn update_all(&mut self, tree: &mut EntityTree, saved: &[SectorSave]) -> Vec<String> {
+        gothic_portcov::hit!("update_all");
         let mut unknown = Vec::new();
         for s in saved {
             if self.on_enable(tree, &s.name, s.enabled).is_none() {
@@ -283,6 +291,7 @@ pub struct SectorSave {
 /// switched off is cached out first (stale), then the root and its subtree are enabled or
 /// disabled.
 pub fn enable_context(tree: &mut EntityTree, root: EntityId, on: bool) {
+    gothic_portcov::hit!("enable_context");
     if !on {
         tree.cache_out(root, true, false);
     }

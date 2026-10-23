@@ -7,6 +7,7 @@ license.workspace = true
 
 [features]
 default = []
+port-coverage = ["gothic-portcov/enabled"]
 trace = ["viewer", "bevy/trace", "bevy/debug"]
 ui-demo = ["viewer", "dep:gothic-ui"]
 viewer = ["dep:gothic-animation", "dep:gothic-ui", "dep:gothic-audio", "dep:gothic-runtime", "dep:gothic-nav", "dep:gothic-sim", "dep:gothic-gameplay", "dep:gothic-cook", "dep:gothic-fx", "dep:gothic-combat-souls", "dep:gothic-mods", "dep:gothic-modtool", "dep:gothic-mods-script", "dep:gothic-video", "dep:gothic-static-render", "bevy/3d_bevy_render", "bevy/bevy_winit", "bevy/multi_threaded", "bevy/bevy_log", "bevy/bevy_gizmos", "bevy/default_font"]
@@ -20,6 +21,8 @@ gothic-formats = { path = "../../crates/formats" }
 gothic-importer = { path = "../../crates/importer" }
 gothic-physics = { path = "../../crates/physics" }
 gothic-camera = { path = "../../crates/camera" }
+gothic-input = { path = "../../crates/input" }
+gothic-projectile = { path = "../../crates/projectile" }
 gothic-animation = { path = "../../crates/animation", optional = true }
 gothic-ui = { path = "../../crates/ui", optional = true }
 gothic-audio = { path = "../../crates/audio", optional = true }
@@ -37,6 +40,7 @@ gothic-mods-script = { path = "../../crates/mods-script", features = ["runtime"]
 # ffmpeg runs as a subprocess at runtime: nothing is linked, so no separate cargo feature.
 gothic-video = { path = "../../crates/video", features = ["bevy"], optional = true }
 gothic-static-render = { path = "../../crates/static-render", optional = true }
+gothic-portcov = { path = "../../crates/portcov" }
 anyhow.workspace = true
 serde_json.workspace = true
 

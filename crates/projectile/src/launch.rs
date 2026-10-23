@@ -38,6 +38,7 @@ pub fn hero_arrow(
     pick_point: Vec3,
     draw: f32,
 ) -> Launch {
+    gothic_portcov::hit!("hero_arrow");
     let mut params = template.clone();
     params.touch = TouchBehavior::MaterialDependent;
     params.path = PathStyle::Physics;
@@ -57,6 +58,7 @@ pub fn npc_arrow(
     forward: Vec3,
     target: Option<u64>,
 ) -> Launch {
+    gothic_portcov::hit!("npc_arrow");
     let mut params = template.clone();
     params.touch = TouchBehavior::MaterialDependent;
     params.path = PathStyle::Line;
@@ -76,6 +78,7 @@ pub fn spell_missile(
     target: Option<u64>,
     power: bool,
 ) -> Launch {
+    gothic_portcov::hit!("spell_missile");
     let mut params = template.clone();
     params.path = if target.is_some() && power {
         PathStyle::Missile

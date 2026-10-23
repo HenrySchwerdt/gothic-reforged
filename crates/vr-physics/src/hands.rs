@@ -5,17 +5,36 @@
 //!   stops at walls while the tracked (ghost) hand goes on.
 //! * Closing the grip picks the best grip point ([`crate::grab::choose_grab`]) and locks the
 //!   object to the hand with a [`FixedJoint`]; the joint's frame on the object is the grip
-//!   frame, so the weapon snaps into the hand. A second hand on the same object adds a second
-//!   joint (two-handed grip). Opening the grip removes the joint; the object keeps its
-//!   velocity (throwing).
-//! * The PD sees the hand plus its share of the held mass, so heavy weapons lag and sag.
+//!   frame, so the weapon snaps into the hand. Opening the grip removes the joint; the object
+//!   keeps its velocity (throwing).
+//! * Two hands: the first hand keeps the fixed joint and leads (position and roll); the second
+//!   hangs on a ball joint and only aims the object, by turning the leading hand's target so the
+//!   grip line points at the second hand (the scheme of Godot XR Tools' grab driver and of
+//!   most VR melee games; reimplemented). Two fixed joints would fight each other and make the
+//!   weapon jitter or spin. Letting go of the leading hand hands the lead to the other one.
+//! * The PD sees the hand plus its share of the held mass, so heavy weapons lag and sag. It
+//!   chases the controller's angular velocity as well as its pose, so fast wrist turns do not
+//!   lag behind and the blade does not wobble around the target.
+//! * The hand body carries an artificial wrist inertia ([`HAND_INERTIA`]): a bare 4.5 cm sphere
+//!   is hundreds of times lighter in rotation than a sword, which leaves the grip joint to be
+//!   solved between wildly different bodies (VRExpansion and others give the hand a virtual
+//!   inertia for the same reason).
+//! * Props collide with bodies: a blade stops at a body instead of passing through it (the
+//!   melee layer only turns a qualifying stab into a joint and lets that blade through, see
+//!   [`prop_layers`]). Weapons get low friction and a little restitution so blade on blade
+//!   slides and rings off instead of sticking.
+//! * [`PhysicsHand::stagger`] weakens the arm for a moment (a blocked or parried swing): the
+//!   force and torque limits drop to [`STAGGER_STRENGTH`] and ramp back, so the deflection the
+//!   contact gave the weapon is not cancelled by the drive in the next step.
 //! * A hand that is stuck far from its target (behind geometry) or got teleported snaps back.
 use crate::grab::{Candidate, GripPoint, choose_grab, object_pose_for_hand};
 use crate::pd::{PdGains, angular_torque, arm_limits, inertia_about, linear_force};
 use crate::props::{PartShape, PropKind, PropSpec};
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use gothic_vr::{Hand, Pose, VrButton, VrInputRes, XrHand, transform_to_pose};
+use gothic_vr::{
+    Hand, HapticMessage, HapticPulse, Pose, VrButton, VrInputRes, XrHand, transform_to_pose,
+};
 
 /// Player strength (Gothic `STR`), the input of the arm force limits.
 #[derive(Resource, Debug, Clone, Copy)]
@@ -47,6 +66,8 @@ pub struct PhysicsHand {
     pub held: Option<HeldBy>,
     /// Seconds the hand has been far from its target.
     pub stuck_for: f32,
+    /// Seconds of weakened arm left (see [`PhysicsHand::stagger`]).
+    pub staggered: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,6 +76,10 @@ pub struct HeldBy {
     pub joint: Entity,
     /// Object-frame anchor of this hand.
     pub anchor: Vec3,
+    /// Object-frame rotation of the grip.
+    pub rotation: Quat,
+    /// Second hand of a two-handed grip: ball joint, aims instead of leading.
+    pub secondary: bool,
 }
 
 impl PhysicsHand {
@@ -65,9 +90,33 @@ impl PhysicsHand {
             angular: PdGains::HAND_ANGULAR,
             held: None,
             stuck_for: 0.0,
+            staggered: 0.0,
+        }
+    }
+
+    /// Weaken this arm for `seconds` (the last [`STAGGER_RAMP`] of them ramping back).
+    pub fn stagger(&mut self, seconds: f32) {
+        if seconds.is_finite() {
+            self.staggered = self.staggered.max(seconds.min(2.0));
+        }
+    }
+
+    /// Current fraction of the arm limits (1 when not staggered).
+    pub fn strength_scale(&self) -> f32 {
+        if self.staggered <= 0.0 {
+            1.0
+        } else if self.staggered >= STAGGER_RAMP {
+            STAGGER_STRENGTH
+        } else {
+            STAGGER_STRENGTH + (1.0 - STAGGER_STRENGTH) * (1.0 - self.staggered / STAGGER_RAMP)
         }
     }
 }
+
+/// Arm limits while staggered, as a fraction.
+pub const STAGGER_STRENGTH: f32 = 0.3;
+/// Seconds over which a stagger ramps back to full strength.
+pub const STAGGER_RAMP: f32 = 0.2;
 
 /// Something hands can pick up.
 #[derive(Component, Debug, Clone)]
@@ -111,8 +160,9 @@ pub enum GrabMessage {
 pub const HAND_RADIUS: f32 = 0.045;
 /// Hand body mass, kg (the arm's own effective mass at the hand).
 pub const HAND_MASS: f32 = 0.5;
-/// Angular inertia of the solid hand sphere, kg*m^2.
-const HAND_INERTIA: f32 = 0.4 * HAND_MASS * HAND_RADIUS * HAND_RADIUS;
+/// Angular inertia of the hand body, kg*m^2: hand and wrist, not the bare collision sphere
+/// (which would be about 0.0004).
+pub const HAND_INERTIA: f32 = 0.01;
 /// Beyond this distance from the target a hand counts as stuck.
 const STUCK_DISTANCE: f32 = 0.45;
 /// Stuck this long (s) -> snap.
@@ -145,12 +195,13 @@ impl Plugin for VrPhysicsPlugin {
         }
         app.init_resource::<VrStrength>()
             .add_message::<GrabMessage>()
+            .add_message::<HapticMessage>()
             .configure_sets(FixedUpdate, (HandSet::Grab, HandSet::Drive).chain())
             .add_systems(Startup, spawn_hands)
             .add_systems(FixedUpdate, grab_release.in_set(HandSet::Grab))
             .add_systems(
                 FixedUpdate,
-                (snap_stuck_hands, drive_hands)
+                (tick_stagger, snap_stuck_hands, drive_hands)
                     .chain()
                     .in_set(HandSet::Drive),
             );
@@ -169,8 +220,9 @@ pub fn hand_bundle(hand: Hand, at: Vec3) -> impl Bundle {
         PhysicsHand::new(hand),
         RigidBody::Dynamic,
         Collider::sphere(HAND_RADIUS),
-        // Density (not just `Mass`) so the angular inertia matches the mass as well.
         ColliderDensity(HAND_MASS / (4.0 / 3.0 * std::f32::consts::PI * HAND_RADIUS.powi(3))),
+        AngularInertia::new(Vec3::splat(HAND_INERTIA)),
+        NoAutoAngularInertia,
         GravityScale(0.0),
         SweptCcd::default(),
         CollisionLayers::new(
@@ -180,6 +232,22 @@ pub fn hand_bundle(hand: Hand, at: Vec3) -> impl Bundle {
         Transform::from_translation(at),
         Name::new(format!("PhysicsHand{hand:?}")),
     )
+}
+
+/// Collision layers of a prop. `through_bodies` lets it pass bodies (a blade stuck in a wound,
+/// for a moment after it came out).
+pub fn prop_layers(through_bodies: bool) -> CollisionLayers {
+    if through_bodies {
+        CollisionLayers::new(
+            VrLayer::Prop,
+            [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
+        )
+    } else {
+        CollisionLayers::new(
+            VrLayer::Prop,
+            [VrLayer::World, VrLayer::Hand, VrLayer::Prop, VrLayer::Body],
+        )
+    }
 }
 
 /// Spawn a prop as a dynamic rigid body with a compound collider.
@@ -208,12 +276,7 @@ pub fn spawn_prop(commands: &mut Commands, spec: &PropSpec, pose: Pose) -> Entit
         RigidBody::Dynamic,
         Collider::compound(shapes),
         ColliderDensity(spec.density()),
-        // Props pass through bodies: weapon-vs-body contacts are resolved by the melee
-        // contact model (damage, bite, stab joints), not by rigid collision.
-        CollisionLayers::new(
-            VrLayer::Prop,
-            [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
-        ),
+        prop_layers(false),
         Transform::from_translation(pose.position).with_rotation(pose.rotation),
         Name::new(format!("{:?}", spec.kind)),
     ));
@@ -222,6 +285,13 @@ pub fn spawn_prop(commands: &mut Commands, spec: &PropSpec, pose: Pose) -> Entit
         PropKind::Arrow | PropKind::Sword | PropKind::TwoHandedSword
     ) {
         e.insert(SweptCcd::default());
+    }
+    if matches!(
+        spec.kind,
+        PropKind::Sword | PropKind::TwoHandedSword | PropKind::Axe | PropKind::Mace
+    ) {
+        // Steel on steel: slides and rings off a little.
+        e.insert((Friction::new(0.3), Restitution::new(0.15)));
     }
     e.id()
 }
@@ -265,7 +335,10 @@ fn grab_release(
         Without<PhysicsHand>,
     >,
     mut out: MessageWriter<GrabMessage>,
+    mut haptics: MessageWriter<HapticMessage>,
 ) {
+    // Objects whose leading hand let go while another hand still holds them.
+    let mut lead_lost = Vec::new();
     for (hand_e, mut hand, ht, _) in &mut hands {
         let pressed = input.0.held(hand.hand, VrButton::Grip);
         match (&hand.held, pressed) {
@@ -276,6 +349,9 @@ fn grab_release(
                 if let Ok((_, _, _, mut held, v)) = objects.get_mut(h.object) {
                     held.hands[hand.hand.index()] = None;
                     velocity = v.map_or(Vec3::ZERO, |v| v.0);
+                    if !h.secondary && held.count() > 0 {
+                        lead_lost.push(h.object);
+                    }
                 }
                 hand.held = None;
                 out.write(GrabMessage::Released {
@@ -305,9 +381,12 @@ fn grab_release(
                     continue;
                 };
                 // Only the first hand pulls the object into place; a second hand attaches where
-                // the object already is.
-                if let Ok((_, t, _, held, _)) = objects.get(choice.key)
-                    && held.count() == 0
+                // the object already is, on a ball joint.
+                let secondary = objects
+                    .get(choice.key)
+                    .is_ok_and(|(_, _, _, held, _)| held.count() > 0);
+                if let Ok((_, t, _, _, _)) = objects.get(choice.key)
+                    && !secondary
                 {
                     let want = object_pose_for_hand(&hand_pose, choice.anchor, choice.rotation);
                     let snap = transform_to_pose(t).position.distance(want.position) < 0.25;
@@ -317,14 +396,14 @@ fn grab_release(
                             .insert((Position(want.position), Rotation(want.rotation)));
                     }
                 }
-                let joint = commands
-                    .spawn((
-                        FixedJoint::new(hand_e, choice.key)
-                            .with_local_frame2(Isometry3d::new(choice.anchor, choice.rotation)),
-                        JointCollisionDisabled,
-                        Name::new(format!("Grip{:?}", hand.hand)),
-                    ))
-                    .id();
+                let joint = grip_joint(
+                    &mut commands,
+                    hand.hand,
+                    hand_e,
+                    choice.key,
+                    Isometry3d::new(choice.anchor, choice.rotation),
+                    secondary,
+                );
                 if let Ok((_, _, _, mut held, _)) = objects.get_mut(choice.key) {
                     held.hands[hand.hand.index()] = Some(choice.anchor);
                 }
@@ -332,23 +411,107 @@ fn grab_release(
                     object: choice.key,
                     joint,
                     anchor: choice.anchor,
+                    rotation: choice.rotation,
+                    secondary,
                 });
                 out.write(GrabMessage::Grabbed {
                     hand: hand.hand,
                     object: choice.key,
                     grip: choice.grip,
                 });
+                haptics.write(HapticMessage(HapticPulse::grab(hand.hand)));
             }
             _ => {}
         }
     }
+    // The remaining hand takes the lead: its ball joint becomes a fixed one, keeping the grip
+    // the hand has now.
+    for object in lead_lost {
+        let Ok((_, ot, _, _, _)) = objects.get(object) else {
+            continue;
+        };
+        let object_pose = transform_to_pose(ot);
+        for (hand_e, mut hand, ht, _) in &mut hands {
+            let Some(h) = hand.held.filter(|h| h.object == object && h.secondary) else {
+                continue;
+            };
+            commands.entity(h.joint).despawn();
+            let rotation = object_pose.rotation.inverse() * transform_to_pose(ht).rotation;
+            let joint = grip_joint(
+                &mut commands,
+                hand.hand,
+                hand_e,
+                object,
+                Isometry3d::new(h.anchor, rotation),
+                false,
+            );
+            hand.held = Some(HeldBy {
+                joint,
+                rotation,
+                secondary: false,
+                ..h
+            });
+        }
+    }
 }
 
-fn target_of(targets: &Query<(&Transform, &XrHand)>, hand: Hand) -> Option<(Pose, Vec3)> {
+/// The joint between a hand and what it holds: fixed for the leading hand, a ball joint for the
+/// second hand of a two-handed grip.
+fn grip_joint(
+    commands: &mut Commands,
+    hand: Hand,
+    hand_e: Entity,
+    object: Entity,
+    frame: Isometry3d,
+    secondary: bool,
+) -> Entity {
+    let name = Name::new(format!("Grip{hand:?}"));
+    if secondary {
+        commands
+            .spawn((
+                SphericalJoint::new(hand_e, object).with_local_frame2(frame),
+                JointCollisionDisabled,
+                name,
+            ))
+            .id()
+    } else {
+        commands
+            .spawn((
+                FixedJoint::new(hand_e, object).with_local_frame2(frame),
+                JointCollisionDisabled,
+                name,
+            ))
+            .id()
+    }
+}
+
+/// Tracked pose, velocity and angular velocity of a hand.
+fn target_of(targets: &Query<(&Transform, &XrHand)>, hand: Hand) -> Option<(Pose, Vec3, Vec3)> {
     targets
         .iter()
         .find(|(_, h)| h.hand == hand && h.tracked)
-        .map(|(t, h)| (transform_to_pose(t), h.velocity))
+        .map(|(t, h)| (transform_to_pose(t), h.velocity, h.angular_velocity))
+}
+
+/// Target rotation of the leading hand of a two-handed grip: its own tracked rotation, swung so
+/// the object's line from the leading grip to the second grip points at the second hand's
+/// tracked position. Roll about that line stays the leading hand's.
+pub fn two_hand_aim(
+    lead: &Pose,
+    grip_rotation: Quat,
+    lead_anchor: Vec3,
+    other_anchor: Vec3,
+    other_target: Vec3,
+) -> Quat {
+    let along = other_anchor - lead_anchor;
+    let want = other_target - lead.position;
+    if along.length_squared() < 1e-6 || want.length_squared() < 1e-6 {
+        return lead.rotation;
+    }
+    // Object rotation implied by the leading hand alone, and the grip line under it.
+    let object = lead.rotation * grip_rotation.inverse();
+    let now = (object * along).normalize();
+    Quat::from_rotation_arc(now, want.normalize()) * lead.rotation
 }
 
 #[allow(clippy::type_complexity)]
@@ -378,7 +541,7 @@ fn snap_stuck_hands(
 ) {
     let dt = time.delta_secs();
     for (mut hand, mut pos, mut rot, mut lv, mut av) in &mut hands {
-        let Some((target, _)) = target_of(&targets, hand.hand) else {
+        let Some((target, _, _)) = target_of(&targets, hand.hand) else {
             continue;
         };
         let d = pos.0.distance(target.position);
@@ -410,6 +573,15 @@ fn snap_stuck_hands(
     }
 }
 
+fn tick_stagger(time: Res<Time>, mut hands: Query<&mut PhysicsHand>) {
+    let dt = time.delta_secs();
+    for mut h in &mut hands {
+        if h.staggered > 0.0 {
+            h.staggered = (h.staggered - dt).max(0.0);
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn drive_hands(
     time: Res<Time>,
@@ -430,11 +602,33 @@ fn drive_hands(
     >,
 ) {
     let dt = time.delta_secs();
-    let limits = arm_limits(strength.0);
+    let full = arm_limits(strength.0);
     for (hand_e, hand) in &hands {
-        let Some((target, target_vel)) = target_of(&targets, hand.hand) else {
+        let k = hand.strength_scale();
+        let limits = crate::pd::ArmLimits {
+            max_force: full.max_force * k,
+            max_torque: full.max_torque * k,
+        };
+        let Some((mut target, target_vel, target_ang)) = target_of(&targets, hand.hand) else {
             continue;
         };
+        // Leading hand of a two-handed grip: aim at the other hand.
+        if let Some(h) = hand.held.filter(|h| !h.secondary)
+            && let Some((other, other_h)) = hands.iter().find_map(|(_, o)| {
+                o.held
+                    .filter(|oh| oh.object == h.object && oh.secondary)
+                    .map(|oh| (o.hand, oh))
+            })
+            && let Some((other_target, _, _)) = target_of(&targets, other)
+        {
+            target.rotation = two_hand_aim(
+                &target,
+                h.rotation,
+                h.anchor,
+                other_h.anchor,
+                other_target.position,
+            );
+        }
         let Ok(f) = bodies.get_mut(hand_e) else {
             continue;
         };
@@ -453,13 +647,16 @@ fn drive_hands(
         {
             let share = 1.0 / by.count().max(1) as f32;
             let m = m.value() * share;
-            let local = Mat3::from(i.tensor()) * share;
+            // Only the leading hand turns the object; the second hand's ball joint passes no
+            // torque.
+            let turn = if h.secondary { 0.0 } else { 1.0 };
+            let local = Mat3::from(i.tensor()) * turn;
             let com_world = t.transform_point(com.0);
             let i_about_hand = inertia_about(local, t.rotation, m, com_world, pos);
             mass += m;
             held_weight = m;
             // Hold the object's weight moment up as well.
-            gravity_torque = -(com_world - pos).cross(gravity.0 * m);
+            gravity_torque = -(com_world - pos).cross(gravity.0 * m) * turn;
             held = Some((h.object, m, i_about_hand));
         }
         let gravity_ff = gravity.0 * (held_weight / mass);
@@ -478,7 +675,7 @@ fn drive_hands(
             rot,
             ang,
             target.rotation,
-            Vec3::ZERO,
+            target_ang,
             Mat3::IDENTITY,
             hand.angular,
             f32::INFINITY,
