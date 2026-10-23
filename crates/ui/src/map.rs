@@ -25,6 +25,7 @@ impl MapSheet {
     /// Port of gCMap_PS::CalcUV (Game:0x101a42e0): normalised picture coordinates of a world
     /// position, `None` for a degenerate sheet.
     pub fn calc_uv(&self, x: f32, z: f32) -> Option<Vec2> {
+        gothic_portcov::hit!("calc_uv");
         let dz = self.top_left.y - self.bottom_right.y;
         let dx = self.bottom_right.x - self.top_left.x;
         if dz == 0.0 || dx == 0.0 {
@@ -37,6 +38,7 @@ impl MapSheet {
 
     /// Port of gCMap_PS::Contains (Game:0x101a4240).
     pub fn contains(&self, x: f32, z: f32) -> bool {
+        gothic_portcov::hit!("contains");
         self.top_left.x <= x
             && x <= self.bottom_right.x
             && z <= self.top_left.y
@@ -48,6 +50,7 @@ impl MapSheet {
     /// the box. `scale` is the `gSMapGenerate` scale; the engine's additive margin constant is not
     /// readable from the decompiled code, so it is a parameter [I].
     pub fn around(points: &[Vec2], scale: f32, margin: f32) -> Option<(Vec2, Vec2)> {
+        gothic_portcov::hit!("around");
         let first = points.first()?;
         let (mut lo, mut hi) = (*first, *first);
         for p in points {
@@ -109,6 +112,7 @@ pub const ZOOM_STEP: f32 = 0.5;
 /// control. The window is centred on `center` and slides back inside the picture at its edges.
 /// Port of the window computation of gCHUDStaticMap's paint (Game:0x100a87d0).
 pub fn view_window(center: Vec2, view_px: Vec2, tex_px: Vec2, zoom: f32) -> Rect {
+    gothic_portcov::hit!("view_window");
     let span = (view_px / tex_px / zoom.max(0.01)).min(Vec2::ONE);
     let lo = (center - span * 0.5).clamp(Vec2::ZERO, Vec2::ONE - span);
     Rect::from_corners(lo, lo + span)

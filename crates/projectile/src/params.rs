@@ -338,6 +338,7 @@ impl ProjectileParams {
 
 /// Port of the scale in `gCProjectile_PS::GetDirection`: `ShootVelocity` (km/h) to cm/s.
 pub fn speed_cm_s(shoot_velocity_kmh: f32) -> f32 {
+    gothic_portcov::hit!("speed_cm_s");
     shoot_velocity_kmh * VELOCITY_UNIT_CM_S
 }
 

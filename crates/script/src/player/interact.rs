@@ -36,6 +36,7 @@ const RISKY_PICK_LIMIT: i32 = 70;
 /// lockpick (`It_Key_Lockpick`) must be in the inventory (the message differs with or without
 /// a key template on the lock) and the perk of the difficulty (`Perk_LockPick_1..3`) is needed.
 pub fn can_open(host: &dyn ScriptHost, player: EntityId, object: EntityId) -> Result<(), Refusal> {
+    gothic_portcov::hit!("can_open");
     let Some(lock) = host.lock(object) else {
         return Ok(());
     };
@@ -82,6 +83,7 @@ pub fn can_open(host: &dyn ScriptHost, player: EntityId, object: EntityId) -> Re
 /// `Perk_LockPick_2` or difficulty 2 without `Perk_LockPick_3` fail when `Random(100) > 70`.
 /// Returns whether the lock is open afterwards.
 pub fn unlock(host: &mut dyn ScriptHost, player: EntityId, object: EntityId) -> bool {
+    gothic_portcov::hit!("unlock");
     let Some(lock) = host.lock(object) else {
         return true;
     };
@@ -432,6 +434,7 @@ pub fn check(host: &dyn ScriptHost, p: EntityId, object: EntityId) -> Result<(),
 /// target) and switch into its state. A refusal reports it and returns to `PS_Normal`; a use type
 /// without a player state resumes the routine silently.
 pub fn ps_interact(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact");
     let object = host.current_target(p);
     if object.is_none() {
         back_to_normal(host, p);
@@ -537,6 +540,7 @@ fn station_state(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Interact_Loop` (S:6fde0): wait while the window is open (or the pose is held),
 /// then end.
 fn ps_interact_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_loop");
     let object = host.current_target(p);
     let pose_held = matches!(
         station_for_use(host.point_use_type(object)).map(|s| s.mode),
@@ -558,6 +562,7 @@ fn ps_interact_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `IsBasket` (S:782e0): the hero just opened a chest (action `OpenChest`) and the object
 /// is one of the harvestable "ChestPod" baskets, not a real chest.
 pub fn is_basket(host: &dyn ScriptHost, player: EntityId, object: EntityId) -> bool {
+    gothic_portcov::hit!("is_basket");
     host.exists(object)
         && host.current_action(player) == Action::OpenChest
         && host.name(object).contains("ChestPod")
@@ -565,6 +570,7 @@ pub fn is_basket(host: &dyn ScriptHost, player: EntityId, object: EntityId) -> b
 
 /// Port of `PS_Interact_WaitForExit`: wait for the exit key, then stop and leave the interaction.
 fn ps_interact_wait_for_exit(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_wait_for_exit");
     if host.task_position(p) == EXIT_REQUESTED {
         host.full_stop(p);
         host.set_task(p, State::PsInteractEnd);
@@ -577,6 +583,7 @@ fn ps_interact_wait_for_exit(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Interact_End` (S:6f880): put the tools away, stand up, tell the game layer and
 /// return to `PS_Normal`.
 fn ps_interact_end(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_end");
     let object = host.current_target(p);
     match step(host, p) {
         0 => {
@@ -609,6 +616,7 @@ fn ps_interact_end(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// sets, record the use event and open the loot window. The count of generated stacks is kept
 /// in the task position so the loop can tell what was taken.
 fn ps_interact_chest(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_chest");
     let object = host.current_target(p);
     loop {
         match step(host, p) {
@@ -645,6 +653,7 @@ fn ps_interact_chest(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Interact_Chest_Loop` (S:70830): once the loot window is closed, every stack the
 /// hero took counts as a theft for the enclave that owns the zone (`AddEnclaveTheftCount`).
 fn ps_interact_chest_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_chest_loop");
     if host.gui_page_open() {
         host.queue_ai(p, AiCommand::WaitMs { ms: 200 });
         return Flow::Yield;
@@ -663,6 +672,7 @@ fn ps_interact_chest_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Interact_Door` (S:70970): a locked door is unlocked first; then the door swings
 /// open or shut, the witnesses are told, the use event is raised and the interaction ends.
 fn ps_interact_door(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_door");
     let object = host.current_target(p);
     loop {
         match step(host, p) {
@@ -701,6 +711,7 @@ pub const WAKE_HOUR: f32 = 9.0;
 /// Port of `PlayerSleep` (S:76440): advance the world by `hours` (playing time follows) and
 /// refresh hit points, stamina and mana to their maximum.
 pub fn player_sleep(host: &mut dyn ScriptHost, hours: f32) {
+    gothic_portcov::hit!("player_sleep");
     use crate::host::Pool;
     host.advance_hours(hours);
     for pool in [Pool::Hit, Pool::Stamina, Pool::Mana] {
@@ -722,6 +733,7 @@ pub fn hours_until_wake(hour: f32) -> f32 {
 /// Port of `PS_Interact_SleepBed` (S:75d40): a torch in hand is put away, the hero lies down and
 /// the night starts (`PS_DuskToDawn`).
 fn ps_interact_sleep_bed(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_sleep_bed");
     loop {
         match step(host, p) {
             0 => {
@@ -751,6 +763,7 @@ fn ps_interact_sleep_bed(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_DuskToDawn` + `PS_DuskToDawn_Loop` (S:66fc0, S:671d0): remember the hour, let the
 /// clock run until it is morning, then restore the hero (`PlayerSleep`) and get up.
 fn ps_dusk_to_dawn(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_dusk_to_dawn");
     match step(host, p) {
         0 => {
             host.emit(PlayerEvent::TimeScale(0.3));
@@ -776,6 +789,7 @@ fn ps_dusk_to_dawn(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Interact_Shrine` (S:72600) and `PS_Interact_Talk` (S:78210): kneel (shrine) and
 /// start the conversation with the object. When nobody answers the interaction ends.
 fn ps_interact_talk(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_interact_talk");
     let object = host.current_target(p);
     let shrine = host.current_state(p) == Some(State::PsInteractShrine);
     loop {

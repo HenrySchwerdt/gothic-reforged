@@ -390,6 +390,7 @@ impl EntityTree {
     /// world * local, the world node box follows, the moved centre is reported and the change
     /// recurses into the children.
     fn update_child_dependencies(&mut self, id: EntityId) {
+        gothic_portcov::hit!("update_child_dependencies");
         let Some(e) = self.entities.get(&id) else {
             return;
         };
@@ -435,6 +436,7 @@ impl EntityTree {
     /// Port of `eCEntity::UpdateParentDependencies` (Engine:0x10227860): the tree box of an
     /// entity is its node box merged with the tree boxes of its children; the change bubbles up.
     fn update_parent_dependencies(&mut self, id: EntityId) {
+        gothic_portcov::hit!("update_parent_dependencies");
         let mut cur = Some(id);
         while let Some(c) = cur {
             self.recompute_tree_box(c);
@@ -515,6 +517,7 @@ impl EntityTree {
     /// Port of `eCEntity::CacheInInternal` (Engine:0x10224030): make resident and queue for the
     /// processing-range test.
     pub fn cache_in(&mut self, id: EntityId) {
+        gothic_portcov::hit!("cache_in");
         let Some(e) = self.entities.get_mut(&id) else {
             return;
         };
@@ -533,6 +536,7 @@ impl EntityTree {
     /// then drop residency. `mark_stale` sets the update-pending bit. `recursive` also caches out
     /// the children.
     pub fn cache_out(&mut self, id: EntityId, mark_stale: bool, recursive: bool) {
+        gothic_portcov::hit!("cache_out");
         let ids = if recursive {
             self.subtree(id)
         } else {
@@ -595,6 +599,7 @@ impl EntityTree {
     /// Port of `eCNode::ContainsParent` (Engine:0x1020da60): is `ancestor` on the parent chain
     /// of `id`?
     pub fn contains_parent(&self, id: EntityId, ancestor: EntityId) -> bool {
+        gothic_portcov::hit!("contains_parent");
         let mut cur = self.entities.get(&id).and_then(Entity::parent);
         while let Some(p) = cur {
             if p == ancestor {
@@ -613,6 +618,7 @@ impl EntityTree {
         id: EntityId,
         parent: Option<EntityId>,
     ) -> Result<(), EntityError> {
+        gothic_portcov::hit!("move_to_node");
         match parent {
             Some(_) => self.link(id, parent),
             None => Ok(()),
@@ -623,6 +629,7 @@ impl EntityTree {
     /// boxes, template) without children, attached next to the original. Residency bits are not
     /// copied: the clone is neither cached in, in range nor killed.
     pub fn clone_entity(&mut self, id: EntityId) -> Result<EntityId, EntityError> {
+        gothic_portcov::hit!("clone_entity");
         let src = self
             .entities
             .get(&id)
@@ -645,6 +652,7 @@ impl EntityTree {
     /// Port of `eCNode::CloneSubgraph` (Engine:0x1020d9c0): clone an entity and, recursively,
     /// its descendants; the descendants hang under the clones. Returns the clone of `id`.
     pub fn clone_subgraph(&mut self, id: EntityId) -> Result<EntityId, EntityError> {
+        gothic_portcov::hit!("clone_subgraph");
         let root = self.clone_entity(id)?;
         let kids: Vec<EntityId> = self
             .entities
@@ -660,6 +668,7 @@ impl EntityTree {
 
     /// Port of `eCEntity::SetTemporary`: the entity is not saved with the world.
     pub fn set_temporary(&mut self, id: EntityId) {
+        gothic_portcov::hit!("set_temporary");
         self.set_flags(id, flags::TEMPORARY, true);
     }
 

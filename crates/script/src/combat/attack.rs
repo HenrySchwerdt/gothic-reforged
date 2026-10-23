@@ -50,6 +50,7 @@ fn leave(host: &mut dyn ScriptHost, npc: EntityId, state: State) -> Out {
 /// target eats it, and a swimming target is waited out on the shore. Otherwise a more pressing
 /// opponent can take over (`AssessTarget` with reason ReactToDamage/Enemy/Prey).
 pub fn on_attack(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_attack");
     let target = host.current_target(npc);
     let tmode = if target.is_some() {
         host.ai_mode(target)
@@ -134,6 +135,7 @@ pub fn on_attack(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 
 /// Port of S:1880: how many NPCs (not the player) are engaged in combat against `target`.
 pub fn fighters_on(host: &dyn ScriptHost, target: EntityId) -> usize {
+    gothic_portcov::hit!("fighters_on");
     let player = host.player();
     host.all_npcs()
         .into_iter()
@@ -150,6 +152,7 @@ pub fn fighters_on(host: &dyn ScriptHost, target: EntityId) -> usize {
 /// target stays engaged; otherwise it joins while fewer than the allowed number of NPCs fight
 /// the same target (1; 2 or 3 against the player on normal/hard difficulty).
 pub fn update_combat_state(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("update_combat_state");
     let target = host.current_target(npc);
     if host.combat_state(npc) == 1 && target.is_some() {
         return true;
@@ -175,6 +178,7 @@ pub fn update_combat_state(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `CancelAttack` (S:1a4d0): give the fight up. A fight against the player is recorded
 /// as cancelled; the NPC returns to its routine.
 pub fn cancel_attack(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("cancel_attack");
     let target = host.current_target(npc);
     if target == host.player() && !host.is_transformed(npc) {
         host.set_last_fight_vs_player(npc, LastFight::Cancel);
@@ -522,6 +526,7 @@ fn movement_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// chase that outlasts `GetFollowTime`, and switches to the swing the selected move calls for
 /// (`Fwd`, `Back`, `Left` and `Right` keep the movement running).
 pub fn on_attack_goto(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_attack_goto");
     if host.state_position(npc) == 0 {
         host.set_state_position(npc, 1);
         if on_attack(host, npc) {
@@ -574,6 +579,7 @@ pub fn on_attack_goto(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `OnAttack_Positioning` (S:16190): walk in until the distance drops under 5 m (or a
 /// second passes); closer than that, circle toward the free side first.
 pub fn on_attack_positioning(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_attack_positioning");
     if on_attack(host, npc) {
         return true;
     }
@@ -611,6 +617,7 @@ pub fn on_attack_positioning(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `OnAttack_GoBack` (S:165b0): keep backing off while the selection still says
 /// `Back`, re-evaluated every 0.4 s.
 pub fn on_attack_go_back(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_attack_go_back");
     if on_attack(host, npc) {
         return true;
     }
@@ -629,6 +636,7 @@ pub fn on_attack_go_back(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 
 /// Port of `OnAttack_Strafe` (S:16a10): strafe for 0.6 s.
 pub fn on_attack_strafe(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_attack_strafe");
     if host.state_time(npc) > 0.6 {
         host.stop_ai_goto(npc);
         host.set_state(npc, State::AttackLoop);
@@ -639,6 +647,7 @@ pub fn on_attack_strafe(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 
 /// Port of `OnAttack_Turn` (S:16e50): turn for 0.6 s.
 pub fn on_attack_turn(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_attack_turn");
     if host.state_time(npc) > 0.6 {
         host.stop_ai_goto(npc);
         host.set_on_destination(npc, false);
@@ -667,6 +676,7 @@ fn wait_for_flee_enter(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `ZS_Attack_WaitForFlee_Loop` (S:1a380): after half a second look again: beyond 20 m
 /// the attack is cancelled, a target that came closer is fought again, otherwise wait on.
 fn wait_for_flee_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("wait_for_flee_loop");
     if host.state_time(npc) > 0.5 {
         let target = host.current_target(npc);
         let d = host.distance(npc, target);

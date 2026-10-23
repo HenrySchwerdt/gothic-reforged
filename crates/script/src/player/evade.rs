@@ -93,6 +93,7 @@ fn opponent(host: &dyn ScriptHost, e: EntityId) -> EntityId {
 /// `ZS_EvadeBackward` (S:40d10): pay the stamina, play the dodge and hand over to
 /// `ZS_EvadeLoop`. A dodge into a wall or without stamina falls back to the loop at once.
 fn evade_entry(host: &mut dyn ScriptHost, e: EntityId) -> Flow {
+    gothic_portcov::hit!("evade_entry");
     let Some(direction) = host.current_state(e).and_then(Direction::of_state) else {
         return Flow::Done;
     };
@@ -126,6 +127,7 @@ fn evade_entry(host: &mut dyn ScriptHost, e: EntityId) -> Flow {
 /// Port of `ZS_EvadeLoop` (S:3fb00): the motion runs; once it is over the character walks again
 /// and returns to `PS_Melee_Loop` (the hero) or to its previous task (everybody else).
 fn evade_loop(host: &mut dyn ScriptHost, e: EntityId) -> Flow {
+    gothic_portcov::hit!("evade_loop");
     match step(host, e) {
         0 => {
             host.queue_ai(

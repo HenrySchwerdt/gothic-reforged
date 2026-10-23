@@ -46,6 +46,7 @@ pub struct ProcessPlan {
 /// driven for a stopped ragdoll, or for an enabled ragdoll whose controller is missing or
 /// not simulating.
 pub fn process_plan(s: &ProcessState) -> ProcessPlan {
+    gothic_portcov::hit!("process_plan");
     let advance = s.seen_this_frame
         || (s.ragdoll_enabled && !s.ragdoll_stopped)
         || s.has_once_attachments
@@ -114,6 +115,7 @@ impl IdleChain {
     /// Port of the chain step in eCVisualAnimation_PS::OnProcess. `remaining` is the time
     /// left of slot 0's motion (length minus position), 0 when nothing plays.
     pub fn step(&mut self, remaining: f32) -> IdleAction {
+        gothic_portcov::hit!("step");
         if self.fade < 0.0 {
             return IdleAction::Nothing;
         }

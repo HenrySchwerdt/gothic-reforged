@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use gothic_sim::types::ActorId;
 use std::sync::Arc;
 
-type Goal = Arc<dyn Fn(&mut Cx) -> Option<Vec3> + Send + Sync>;
+pub(super) type Goal = Arc<dyn Fn(&mut Cx) -> Option<Vec3> + Send + Sync>;
 type Pred = Arc<dyn Fn(&mut Cx) -> bool + Send + Sync>;
 
 const DIGITS: [KeyCode; 9] = [
@@ -109,7 +109,7 @@ pub fn approach(sc: &mut Sc, label: &str, goal: Goal, stop: f32, aim_pitch: f32,
 
 /// The talk key (Enter) on the focused NPC, then the dialog opens.
 pub fn start_dialog(sc: &mut Sc) {
-    sc.act("press Enter (confirm)", |cx| cx.tap(KeyCode::Enter));
+    sc.act("use key (left click)", |cx| cx.use_key());
     sc.until("dialog mode", 6.0, |cx| cx.play().mode == Mode::Dialog);
 }
 
@@ -417,7 +417,7 @@ pub fn loot_chest() -> Sc {
             .map(|s| s.amount.max(0) as u32)
             .sum();
         cx.st.n.insert("items0".into(), f64::from(n));
-        cx.tap(KeyCode::Enter);
+        cx.use_key();
     });
     sc.until("loot page", 10.0, |cx| {
         cx.ui().screen == gothic_ui::Screen::Loot
@@ -557,7 +557,7 @@ pub fn craft_anvil() -> Sc {
         -0.3,
         Arc::new(|cx| matches!(cx.play().target, Some(Target::Object(_)))),
     );
-    sc.act("Enter", |cx| cx.tap(KeyCode::Enter));
+    sc.act("use key", |cx| cx.use_key());
     sc.until("recipe page", 10.0, |cx| {
         cx.ui().screen == gothic_ui::Screen::Recipe
     });

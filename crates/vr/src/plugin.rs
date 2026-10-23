@@ -159,11 +159,25 @@ pub struct XrHand {
     pub tracked: bool,
     /// World-space velocity, m/s.
     pub velocity: Vec3,
+    /// World-space angular velocity (scaled axis), rad/s.
+    pub angular_velocity: Vec3,
 }
 
 /// An eye camera of the rig.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct XrEyeCamera(pub Eye);
+
+/// Ask for a controller vibration (see [`crate::haptics`]).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct HapticMessage(pub crate::haptics::HapticPulse);
+
+/// Merged haptics: the mixer and, for tests and the desktop fallback, the pulses played.
+#[derive(Resource, Default)]
+pub struct HapticOut {
+    pub mixer: crate::haptics::HapticMixer,
+    /// Every pulse started so far (kept short: the last 64).
+    pub played: Vec<crate::haptics::HapticPulse>,
+}
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VrSet {
@@ -197,6 +211,9 @@ impl Plugin for VrPlugin {
             .init_resource::<VrCommands>()
             .init_resource::<VrDisplay>()
             .add_message::<CoreCommand>()
+            .add_message::<HapticMessage>()
+            .init_resource::<HapticOut>()
+            .add_systems(Last, play_haptics)
             .configure_sets(
                 Update,
                 (
@@ -287,6 +304,35 @@ fn openxr_frame(
     }
 }
 
+/// Merge the frame's haptic requests and hand them to the backend.
+fn play_haptics(
+    time: Res<Time<Real>>,
+    mut reader: MessageReader<HapticMessage>,
+    mut out: ResMut<HapticOut>,
+    #[cfg(feature = "openxr")] mut xr: Option<NonSendMut<crate::openxr::OpenXrInput>>,
+) {
+    let now = time.elapsed_secs();
+    let out = &mut *out;
+    for HapticMessage(p) in reader.read() {
+        out.mixer.push(*p, now);
+    }
+    let started = out.mixer.take(now);
+    if started.is_empty() {
+        return;
+    }
+    #[cfg(feature = "openxr")]
+    if let Some(xr) = xr.as_mut() {
+        for p in &started {
+            if let Err(e) = xr.vibrate(p) {
+                warn!("OpenXR haptics: {e}");
+            }
+        }
+    }
+    out.played.extend(started);
+    let excess = out.played.len().saturating_sub(64);
+    out.played.drain(..excess);
+}
+
 fn spawn_tracked_entities(mut commands: Commands) {
     commands.spawn((
         XrHead,
@@ -299,6 +345,7 @@ fn spawn_tracked_entities(mut commands: Commands) {
                 hand,
                 tracked: false,
                 velocity: Vec3::ZERO,
+                angular_velocity: Vec3::ZERO,
             },
             Transform::default(),
             Name::new(format!("XrHand{hand:?}")),
@@ -454,14 +501,24 @@ fn sync_tracked(
         *t = pose_to_transform(&head);
     }
     let dt = time.delta_secs();
+    // Runtime velocities are in tracking space; the play space only turns them.
+    let space = to_world(&Pose::IDENTITY).rotation;
     for (mut t, mut h) in &mut hands {
         match input.0.hand_pose(h.hand) {
             Some(p) => {
                 let w = to_world(&p);
-                h.velocity = if h.tracked && dt > 0.0 {
-                    (w.position - t.translation) / dt
-                } else {
-                    Vec3::ZERO
+                let c = input.0.current.hand(h.hand);
+                h.velocity = match c.linear_velocity {
+                    Some(v) => space * v,
+                    None if h.tracked && dt > 0.0 => (w.position - t.translation) / dt,
+                    None => Vec3::ZERO,
+                };
+                h.angular_velocity = match c.angular_velocity {
+                    Some(v) => space * v,
+                    None if h.tracked && dt > 0.0 => {
+                        crate::input::rotation_between(t.rotation, w.rotation) / dt
+                    }
+                    None => Vec3::ZERO,
                 };
                 h.tracked = true;
                 *t = pose_to_transform(&w);
@@ -469,6 +526,7 @@ fn sync_tracked(
             None => {
                 h.tracked = false;
                 h.velocity = Vec3::ZERO;
+                h.angular_velocity = Vec3::ZERO;
             }
         }
     }

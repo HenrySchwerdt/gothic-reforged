@@ -13,7 +13,10 @@ use crate::bow::{
 };
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use gothic_vr::{Hand, Pose, VrButton, VrInputRes, VrPlayer, transform_to_pose};
+use gothic_vr::haptics::DrawTicker;
+use gothic_vr::{
+    Hand, HapticMessage, HapticPulse, Pose, VrButton, VrInputRes, VrPlayer, transform_to_pose,
+};
 use gothic_vr_melee::{Bone, DamageType, HitMessage, HitzoneSet, PlayerAvatar};
 use gothic_vr_physics::props::{PropKind, arrow};
 use gothic_vr_physics::{HandSet, Held, PhysicsHand, Prop, VrLayer, spawn_prop};
@@ -27,6 +30,8 @@ pub struct Archery {
     pub aim_assist: Option<(f32, f32)>,
     /// Stuck arrows kept before the oldest are removed.
     pub max_stuck: usize,
+    /// String creaks while drawing (one per hand).
+    pub ticks: [DrawTicker; 2],
 }
 
 impl Default for Archery {
@@ -36,6 +41,7 @@ impl Default for Archery {
             damage: Box::new(LinearDamage),
             aim_assist: None,
             max_stuck: 64,
+            ticks: [DrawTicker::default(); 2],
         }
     }
 }
@@ -81,6 +87,7 @@ impl Plugin for VrArcheryPlugin {
             .add_message::<ArrowHitMessage>()
             .add_message::<ArrowFiredMessage>()
             .add_message::<HitMessage>()
+            .add_message::<HapticMessage>()
             .add_systems(
                 FixedUpdate,
                 // After the hands moved (melee contacts run first in the step, before the
@@ -117,6 +124,7 @@ fn archer(
         (With<HeldArrow>, Without<PhysicsHand>, Without<Prop>),
     >,
     mut fired: MessageWriter<ArrowFiredMessage>,
+    mut haptics: MessageWriter<HapticMessage>,
 ) {
     let head = player
         .as_ref()
@@ -144,18 +152,55 @@ fn archer(
         bow,
         busy,
     };
+    let string_hand = match archery.archer.state {
+        ArcherState::Holding(h) | ArcherState::Nocked { hand: h, .. } => Some(h),
+        ArcherState::Idle => None,
+    };
+    let bow_hand = bow.map(|(_, h)| h);
     let events = archery.archer.update(&ai);
+    // Haptics (Valve's Longbow / ArrowHand): a click on nocking, creaks while drawing on both
+    // hands (lighter on the bow), a kick on release.
+    if let ArcherState::Nocked { hand, draw } = archery.archer.state {
+        let k = archery.archer.bow.draw_factor(draw);
+        let pulses = [
+            archery.ticks[0].update(hand, k),
+            bow_hand.and_then(|b| {
+                archery.ticks[1].update(b, k).map(|mut p| {
+                    p.amplitude *= 0.6;
+                    p
+                })
+            }),
+        ];
+        for p in pulses.into_iter().flatten() {
+            haptics.write(HapticMessage(p));
+        }
+    } else {
+        for t in &mut archery.ticks {
+            t.update(Hand::Left, 0.0);
+        }
+    }
     for ev in events {
         match ev {
-            ArcherEvent::TookArrow(_) => {
+            ArcherEvent::TookArrow(h) => {
+                haptics.write(HapticMessage(HapticPulse::grab(h)));
                 commands.spawn((HeldArrow, Transform::default(), Name::new("HeldArrow")));
             }
-            ArcherEvent::Nocked => {}
+            ArcherEvent::Nocked => {
+                for h in [string_hand, bow_hand].into_iter().flatten() {
+                    haptics.write(HapticMessage(HapticPulse::nock(h)));
+                }
+            }
             ArcherEvent::Fired {
                 origin,
                 velocity,
                 draw_factor,
             } => {
+                if let Some(h) = string_hand {
+                    haptics.write(HapticMessage(HapticPulse::release(h, draw_factor, true)));
+                }
+                if let Some(h) = bow_hand {
+                    haptics.write(HapticMessage(HapticPulse::release(h, draw_factor, false)));
+                }
                 for (e, _) in &held_arrow {
                     commands.entity(e).despawn();
                 }

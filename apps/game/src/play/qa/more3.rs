@@ -73,7 +73,7 @@ pub fn lockpick() -> Sc {
         let n = cx.count_item("It_Key_Lockpick");
         cx.st.n.insert("picks0".into(), f64::from(n));
         cx.note(format!("lockpicks before: {n}"));
-        cx.tap(KeyCode::Enter);
+        cx.use_key();
     });
     sc.wait(3.0);
     sc.shot("lockpick");
@@ -121,7 +121,7 @@ pub fn lockpick() -> Sc {
         }
         if cx.t > 1.5 { Poll::Done } else { Poll::Wait }
     });
-    sc.act("Enter", |cx| cx.tap(KeyCode::Enter));
+    sc.act("use key", |cx| cx.use_key());
     sc.wait(6.0);
     sc.shot("lockpick_perk");
     sc.check(
@@ -189,7 +189,7 @@ pub fn sit_pose() -> Sc {
         -0.3,
         Arc::new(|cx| matches!(cx.play().target, Some(Target::Object(_)))),
     );
-    sc.act("Enter (sit down)", |cx| cx.tap(KeyCode::Enter));
+    sc.act("use key (sit down)", |cx| cx.use_key());
     sc.wait(3.0);
     sc.shot("sitting");
     sc.check("the hero holds a seat pose", |cx| {

@@ -22,6 +22,7 @@ pub const BARRIER_TOUCH_EFFECT: &str = "eff_touch_magic_barriere";
 /// `current` is the pose before; a death keeps the lying family of a knocked-down character
 /// (sitting and lying become the straight dead pose). Unknown actions keep the pose.
 pub fn ani_state_by_action(action: Action, current: AniState) -> AniState {
+    gothic_portcov::hit!("ani_state_by_action");
     use AniState as P;
     match action {
         Action::Parade => P::Parade,
@@ -54,6 +55,7 @@ pub fn ani_state_by_action(action: Action, current: AniState) -> AniState {
 /// Port of `GetDCCRadius` (S:aa3a0): the radius of the character-controller capsule in cm:
 /// trolls 120, ambient creatures 20, everybody else 60.
 pub fn dcc_radius(host: &dyn ScriptHost, e: EntityId) -> f32 {
+    gothic_portcov::hit!("dcc_radius");
     if host.species(e) == Species::Troll {
         120.0
     } else if is_ambient_creature(host, e) {
@@ -66,6 +68,7 @@ pub fn dcc_radius(host: &dyn ScriptHost, e: EntityId) -> f32 {
 /// Port of `IsFirstPersonCameraAllowed` (S:aaef0): not while down or dead, and not in the
 /// knock-down tasks.
 pub fn first_person_camera_allowed(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("first_person_camera_allowed");
     if matches!(host.ai_mode(e), AiMode::Down | AiMode::Dead) {
         return false;
     }
@@ -78,6 +81,7 @@ pub fn first_person_camera_allowed(host: &dyn ScriptHost, e: EntityId) -> bool {
 /// Port of `RefreshHitPoints` (S:ab840): stamina and hit points back to their maxima (the
 /// maxima themselves are re-clamped by the setters).
 pub fn refresh_hit_points(host: &mut dyn ScriptHost, e: EntityId) {
+    gothic_portcov::hit!("refresh_hit_points");
     let sta = stats::pool_max(host, e, Pool::Stamina);
     stats::set_pool_max(host, e, Pool::Stamina, sta);
     stats::set_pool(host, e, Pool::Stamina, sta);
@@ -89,6 +93,7 @@ pub fn refresh_hit_points(host: &mut dyn ScriptHost, e: EntityId) {
 /// Port of `OnEnterMagicBarrier` (S:5ebb0): a living character that enters the barrier gets its
 /// effect.
 pub fn on_enter_magic_barrier(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("on_enter_magic_barrier");
     if host.exists(who) && host.ai_mode(who) != AiMode::Dead {
         host.emit_magic(MagicEvent::Effect {
             name: BARRIER_EFFECT.into(),
@@ -100,6 +105,7 @@ pub fn on_enter_magic_barrier(host: &mut dyn ScriptHost, who: EntityId) {
 /// Port of `OnLeaveMagicBarrier` (S:5ec90): the barrier effect ends (reported as the effect
 /// name with a leading minus).
 pub fn on_leave_magic_barrier(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("on_leave_magic_barrier");
     if host.exists(who) {
         host.emit_magic(MagicEvent::Effect {
             name: format!("-{BARRIER_EFFECT}"),
@@ -111,6 +117,7 @@ pub fn on_leave_magic_barrier(host: &mut dyn ScriptHost, who: EntityId) {
 /// Port of `OnToucheBarrier` (S:5ed60): a living character that runs into the barrier stops,
 /// forgets who is hitting it (the current attacker becomes the last one) and stumbles back.
 pub fn on_touch_barrier(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("on_touch_barrier");
     if !host.exists(who) || host.ai_mode(who) == AiMode::Dead {
         return;
     }

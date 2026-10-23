@@ -24,6 +24,7 @@ pub enum ListMode {
 /// the basket total (Game:0x100a1dc0): remaining = amount minus the mark, basket = the mark;
 /// a negative mark or one above the amount counts as the whole stack.
 pub fn list_count(stack: &Stack, mode: ListMode) -> i32 {
+    gothic_portcov::hit!("list_count");
     let mark = if (0..=stack.amount).contains(&stack.transaction) {
         stack.transaction
     } else {
@@ -46,6 +47,7 @@ pub fn fallback_price(stack: &Stack) -> i32 {
 /// property set; a stack without resolved data is priced by the closure here.) `price` is the
 /// script's `OnPlayerGetGoldCost` for the list's transaction type.
 pub fn basket_total(inv: &Inventory, mode: ListMode, price: &dyn Fn(&Stack) -> i32) -> i64 {
+    gothic_portcov::hit!("basket_total");
     inv.stacks()
         .iter()
         .map(|s| i64::from(price(s)) * i64::from(list_count(s, mode)))
@@ -56,6 +58,7 @@ pub fn basket_total(inv: &Inventory, mode: ListMode, price: &dyn Fn(&Stack) -> i
 /// moved into the basket? Something has to be left to move; the hero's own list refuses
 /// mission items, the trader's list only offers merchandise; equipped / in-use stacks stay.
 pub fn can_move(stack: &Stack, mode: ListMode, owner_is_player: bool) -> bool {
+    gothic_portcov::hit!("can_move");
     if list_count(stack, mode) < 1 {
         return false;
     }
@@ -92,6 +95,7 @@ pub fn step_basket(
     step: i32,
     wants_to_sell: &dyn Fn(&Stack) -> bool,
 ) -> Step {
+    gothic_portcov::hit!("step_basket");
     let Some(s) = inv.stack(idx) else {
         return Step::Refused;
     };
@@ -159,6 +163,7 @@ impl Repeater {
 
 /// Port of FUN_100a1f20 (Game:0x100a1f20): clear every mark of an inventory.
 pub fn clear_baskets(inv: &mut Inventory) {
+    gothic_portcov::hit!("clear_baskets");
     for i in 0..inv.len() {
         inv.set_transaction_amount(i, 0);
     }
@@ -193,6 +198,7 @@ impl Totals {
     /// Port of the enable rule of FUN_100813d0 (Game:0x100813d0): the deal needs both baskets
     /// filled and the hero's at least as valuable as the trader's.
     pub fn deal_enabled(&self) -> bool {
+        gothic_portcov::hit!("deal_enabled");
         self.offer >= self.ask && self.offer > 0 && self.ask > 0
     }
 
@@ -224,6 +230,7 @@ pub fn balance_gold(
     price_player: &dyn Fn(&Stack) -> i32,
     price_trader: &dyn Fn(&Stack) -> i32,
 ) -> bool {
+    gothic_portcov::hit!("balance_gold");
     let t = totals(player, trader, price_player, price_trader);
     let diff = t.ask - t.offer;
     let (side, need) = match diff {
@@ -257,6 +264,7 @@ pub fn commit(
     ctx_trader: &TransferContext,
     ctx_player: &TransferContext,
 ) -> (Vec<Transfer>, Vec<Transfer>) {
+    gothic_portcov::hit!("commit");
     let sold = player.transfer_transaction_items_to(trader, StackType::Merchandise, ctx_trader);
     let bought = trader.transfer_transaction_items_to(player, StackType::Normal, ctx_player);
     (sold, bought)
@@ -264,6 +272,7 @@ pub fn commit(
 
 /// Port of the close handler of the page (FUN_100a1f20 on both lists): abandon the deal.
 pub fn cancel(player: &mut Inventory, trader: &mut Inventory) {
+    gothic_portcov::hit!("cancel");
     clear_baskets(player);
     clear_baskets(trader);
 }
@@ -271,6 +280,7 @@ pub fn cancel(player: &mut Inventory, trader: &mut Inventory) {
 /// Port of gCHUDListCtrlInvLootStacks key handler (Game:0x100a1790): digit keys jump to the
 /// n-th stack; `0` is the tenth. Backspace (code 8) selects none.
 pub fn loot_key_index(key: char, count: usize) -> Option<usize> {
+    gothic_portcov::hit!("loot_key_index");
     let n = key.to_digit(10)? as usize;
     let i = if n == 0 { 9 } else { n - 1 };
     (i < count).then_some(i)

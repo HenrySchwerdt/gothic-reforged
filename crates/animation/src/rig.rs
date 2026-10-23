@@ -41,12 +41,13 @@ pub struct Rig {
     pub family: String,
 }
 
+/// Nodes that are not part of the animated skeleton: the `_ROOT` / `_END` markers of the bone
+/// chains, `Player` and the `!` helpers. The `Slot_*` nodes are *not* helpers: the clips carry
+/// tracks for them (a strike turns the weapon in the hand), and
+/// `eCVisualAnimation_PS::eCActorAttachment::Process` (Engine:0x1002a5b0) places an item at
+/// `actor x node matrix` of the animated node.
 pub fn is_helper(name: &str) -> bool {
-    name.ends_with("_ROOT")
-        || name.ends_with("_END")
-        || name.starts_with("Slot_")
-        || name == "Player"
-        || name.starts_with('!')
+    name.ends_with("_ROOT") || name.ends_with("_END") || name == "Player" || name.starts_with('!')
 }
 
 impl Rig {
@@ -295,7 +296,8 @@ pub(crate) mod tests {
     use super::*;
     use bevy::math::{Quat, Vec3A};
 
-    /// Synthetic rig: Test_ROOT(helper) -> Hip_1 -> Hip_END(helper) -> Arm_1 -> Slot_Hand.
+    /// Synthetic rig: Test_ROOT(helper) -> Hip_1 -> Hip_END(helper) -> Arm_1 -> Slot_Hand (the
+    /// slot nodes are animated: the clips carry tracks for them).
     pub fn synthetic() -> Rig {
         let names = [
             "Test_ROOT",
@@ -341,7 +343,7 @@ pub(crate) mod tests {
         }
         // Arm_1 hangs off Hip_1 through the helper Hip_END.
         assert_eq!(rig.eff_parent[3], 1);
-        assert_eq!(rig.slot_of.iter().filter(|&&s| s != NONE).count(), 2);
+        assert_eq!(rig.slot_of.iter().filter(|&&s| s != NONE).count(), 3);
     }
 
     #[test]
@@ -368,5 +370,33 @@ pub(crate) mod tests {
             (arm - Vec3A::new(0.0, 110.0, 0.0)).length() < 1e-3,
             "{arm:?}"
         );
+    }
+
+    /// A helper (slot) under an animated bone keeps its bind-local transform relative to its
+    /// real parent, so it follows the parent's animated rotation and the whole chain.
+    #[test]
+    fn helper_follows_real_parent_when_animated() {
+        let rig = synthetic();
+        let all: Vec<u16> = (0..rig.names.len() as u16).collect();
+        let plan = rig.plan(&all);
+        let mut pose = rig.rest.clone();
+        pose[0].r = Quat::from_rotation_z(0.7);
+        pose[1].r = Quat::from_rotation_x(-1.1);
+        pose[1].t += Vec3::new(3.0, -2.0, 1.0);
+        let mut model = vec![Affine3A::IDENTITY; rig.names.len()];
+        evaluate(&plan, &pose, &mut model);
+        for n in 0..rig.names.len() {
+            let p = rig.parent[n];
+            if rig.slot_of[n] != NONE || p == NONE {
+                continue;
+            }
+            let want = model[p as usize] * rig.bind_local[n].affine();
+            assert!(
+                want.abs_diff_eq(model[n], 1e-4),
+                "{}: {want:?} vs {:?}",
+                rig.names[n],
+                model[n]
+            );
+        }
     }
 }

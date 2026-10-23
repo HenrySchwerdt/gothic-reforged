@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 
 [lints]
 workspace = true

@@ -72,6 +72,7 @@ impl BodyPartSet {
         lod1: Option<&str>,
         lod_scale: f32,
     ) -> PartChange {
+        gothic_portcov::hit!("add");
         self.remove(name);
         if lod0.is_empty() {
             return PartChange::None;
@@ -89,6 +90,7 @@ impl BodyPartSet {
     /// Port of eCVisualAnimationFactory::RemoveBodyPart (Engine:0x1003a3b0): drop the part
     /// and let the caller strip bones no remaining mesh uses.
     pub fn remove(&mut self, name: &str) -> PartChange {
+        gothic_portcov::hit!("remove");
         match self.position(name) {
             Some(i) => {
                 self.parts.remove(i);
@@ -100,6 +102,7 @@ impl BodyPartSet {
 
     /// Port of eCVisualAnimationFactory::SetBodyPartVisible (Engine:0x1003a430).
     pub fn set_visible(&mut self, name: &str, visible: bool) -> PartChange {
+        gothic_portcov::hit!("set_visible");
         match self.position(name) {
             Some(i) => {
                 let changed = self.parts[i].visible != visible;
@@ -117,6 +120,7 @@ impl BodyPartSet {
     /// Port of eCVisualAnimationFactory::IsBodyPartVisible (Engine:0x1003a480): false for
     /// unknown parts.
     pub fn is_visible(&self, name: &str) -> bool {
+        gothic_portcov::hit!("is_visible");
         self.get(name).is_some_and(|p| p.visible)
     }
 

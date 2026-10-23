@@ -95,6 +95,9 @@ pub struct MagicTables {
     hit_mult: BTreeMap<u32, f32>,
     /// The hero's arrow origin and aim point (set by the camera each frame).
     pub hero_aim: Option<crate::shots::HeroAim>,
+    /// World position of the hero's casting hand (`Slot_RightHand_Weapon`, where the rune is
+    /// held), set by the host every frame; spell missiles of the hero start there.
+    pub hero_hand: Option<glam::Vec3>,
     /// Decoded projectile templates by name; unlisted ones use the built-in arrow, bolt and
     /// missile values.
     pub projectile_params: BTreeMap<String, gothic_projectile::ProjectileParams>,

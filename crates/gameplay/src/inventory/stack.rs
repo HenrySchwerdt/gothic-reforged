@@ -82,6 +82,7 @@ impl Stack {
     /// Port of gCInventoryStack::ApplyDefaults (Game:0x100c0330): amount 1, quality 0, no
     /// quick slot, nothing learned or activated, empty transaction.
     pub fn new(template: &str, info: Option<Arc<ItemInfo>>) -> Self {
+        gothic_portcov::hit!("new");
         Self {
             template: template.to_string(),
             info,
@@ -108,28 +109,33 @@ impl Stack {
 
     /// Port of gCInventorySlot::GetCategory.
     pub fn category(&self) -> Category {
+        gothic_portcov::hit!("category");
         self.item().category
     }
 
     /// Port of gCInventorySlot::GetUseType.
     pub fn use_type(&self) -> u32 {
+        gothic_portcov::hit!("use_type");
         self.item().use_type
     }
 
     /// Port of gCInventorySlot::GetEquipSlots (member form): primary and alternative slot.
     pub fn equip_slots(&self) -> (Slot, Slot) {
+        gothic_portcov::hit!("equip_slots");
         equip_slots(self.use_type())
     }
 
     /// Port of gCInventorySlot::IsPermanent (Game:0x100bcfd0): spells and skills, or items
     /// flagged `Permanent`.
     pub fn is_permanent(&self) -> bool {
+        gothic_portcov::hit!("is_permanent");
         matches!(self.category(), Category::Spellbook | Category::Skill) || self.item().permanent
     }
 
     /// Port of gCInventorySlot::IsEquipment (Game:0x100bd040): weapons, armor and artefacts
     /// except letters.
     pub fn is_equipment(&self) -> bool {
+        gothic_portcov::hit!("is_equipment");
         match self.category() {
             Category::Weapon | Category::Armor => true,
             Category::Artefact => self.use_type() != use_type::LETTER,
@@ -139,21 +145,25 @@ impl Stack {
 
     /// Port of gCInventorySlot::IsConsumable (Game:0x100bd0b0): the alchemy category.
     pub fn is_consumable(&self) -> bool {
+        gothic_portcov::hit!("is_consumable");
         self.category() == Category::Alchemy
     }
 
     /// Port of gCInventorySlot::IsLinked.
     pub fn is_linked(&self) -> bool {
+        gothic_portcov::hit!("is_linked");
         self.slot != Slot::None
     }
 
     /// Port of gCInventoryStack::IsEquippedInPrimary (Game:0x100c0440).
     pub fn is_equipped_in_primary(&self) -> bool {
+        gothic_portcov::hit!("is_equipped_in_primary");
         self.is_linked() && self.equip_slots().0 == self.slot
     }
 
     /// Port of gCInventoryStack::IsEquippedInAlternative (Game:0x100c0490).
     pub fn is_equipped_in_alternative(&self) -> bool {
+        gothic_portcov::hit!("is_equipped_in_alternative");
         self.is_linked() && self.equip_slots().1 == self.slot
     }
 
@@ -161,6 +171,7 @@ impl Stack {
     /// alternative carry slot. A weapon that is currently drawn sits in a hand slot and is
     /// not "equipped" by this test; see [`Stack::is_in_use`].
     pub fn is_equipped(&self) -> bool {
+        gothic_portcov::hit!("is_equipped");
         self.is_equipped_in_primary() || self.is_equipped_in_alternative()
     }
 
@@ -171,12 +182,14 @@ impl Stack {
 
     /// Port of gCInventoryStack::IsEquippedToSlot (Game:0x100c03c0).
     pub fn is_equipped_to_slot(&self, slot: Slot) -> bool {
+        gothic_portcov::hit!("is_equipped_to_slot");
         self.slot != Slot::None && slot == self.slot
     }
 
     /// Port of gCInventoryStack::IsDisposable (Game:0x100c04e0): a stack may only disappear
     /// when it is not linked.
     pub fn is_disposable(&self) -> bool {
+        gothic_portcov::hit!("is_disposable");
         !self.is_linked()
     }
 
@@ -184,6 +197,7 @@ impl Stack {
     /// equippable item has to be split before one piece is linked; ammunition only when the
     /// target is the right hand.
     pub fn must_split_before_linking(&self, slot: Slot) -> bool {
+        gothic_portcov::hit!("must_split_before_linking");
         let primary = self.equip_slots().0;
         if primary == Slot::Ammo {
             slot == Slot::RightHand
@@ -195,12 +209,14 @@ impl Stack {
     /// Port of gCInventoryStack::IsMergable (Game:0x100c0530): unassigned quick slot
     /// and not linked.
     pub fn is_mergeable(&self) -> bool {
+        gothic_portcov::hit!("is_mergeable");
         self.quick_slot < 0 && !self.is_linked()
     }
 
     /// Port of gCInventoryStack::CanMerge (Game:0x100c0590): same template, quality and
     /// stack type, both without quick slot and both unlinked.
     pub fn can_merge(&self, other: &Stack) -> bool {
+        gothic_portcov::hit!("can_merge");
         self.quick_slot < 0
             && !self.is_linked()
             && other.quick_slot < 0
@@ -212,6 +228,7 @@ impl Stack {
 
     /// Port of gCInventoryStack::Merge (Game:0x100c0950): move all of `other` into `self`.
     pub fn merge(&mut self, other: &mut Stack) -> bool {
+        gothic_portcov::hit!("merge");
         if !self.can_merge(other) {
             return false;
         }
@@ -223,6 +240,7 @@ impl Stack {
     /// Port of gCInventoryStack::Split (Game:0x100c09b0): cut `n` items off into a new
     /// unlinked stack. `None` unless `0 < n < amount`.
     pub fn split(&mut self, n: i32) -> Option<Stack> {
+        gothic_portcov::hit!("split");
         if n < 1 || self.amount <= n {
             return None;
         }
@@ -235,32 +253,38 @@ impl Stack {
 
     /// Port of gCInventoryStack::GetCombinedQuality (Game:0x100c0600): stack bits or the template bits.
     pub fn combined_quality(&self) -> u32 {
+        gothic_portcov::hit!("combined_quality");
         self.quality | self.item().quality
     }
 
     /// Port of gCInventoryStack::GetItemGoldValue (Game:0x100c0630).
     pub fn item_gold_value(&self) -> i32 {
+        gothic_portcov::hit!("item_gold_value");
         self.item().gold_value
     }
 
     /// Port of gCInventoryStack::GetStackGoldValue (Game:0x100c0660).
     pub fn stack_gold_value(&self) -> i32 {
+        gothic_portcov::hit!("stack_gold_value");
         self.amount.saturating_mul(self.item().gold_value)
     }
 
     /// Port of gCInventoryStack::IsEmpty (Game:0x100c03b0).
     pub fn is_empty(&self) -> bool {
+        gothic_portcov::hit!("is_empty");
         self.amount < 1
     }
 
     /// Port of gCInventoryStack::SetTransactionAmount (Game:0x100c0d30): clamp to the amount.
     pub fn set_transaction_amount(&mut self, n: i32) {
+        gothic_portcov::hit!("set_transaction_amount");
         self.transaction = n.min(self.amount);
     }
 
     /// Port of gCInventoryStack::GetTransferAmount (Game:0x100c0ce0): the marked amount, everything when the
     /// mark is negative, never more than the stack holds.
     pub fn transfer_amount(&self) -> i32 {
+        gothic_portcov::hit!("transfer_amount");
         if self.transaction < 0 {
             self.amount
         } else {
@@ -270,6 +294,7 @@ impl Stack {
 
     /// Port of gCInventoryStack::GetTransferRemainder (Game:0x100c0d00): what stays behind after the transfer.
     pub fn transfer_remainder(&self) -> i32 {
+        gothic_portcov::hit!("transfer_remainder");
         let t = if (0..=self.amount).contains(&self.transaction) {
             self.transaction
         } else {
@@ -281,6 +306,7 @@ impl Stack {
     /// Port of gCInventoryStack::GetIcon (Game:0x100c0a40, selection rule): the normal icon once the stack
     /// is learned or activated, the grey one before.
     pub fn shows_normal_icon(&self) -> bool {
+        gothic_portcov::hit!("shows_normal_icon");
         self.learned || self.activation_count > 0
     }
 
@@ -292,6 +318,7 @@ impl Stack {
         &self,
         category_default: impl Fn(Category) -> String,
     ) -> (String, String) {
+        gothic_portcov::hit!("icon_file_names");
         let it = self.item();
         if self.info.is_none() {
             let d = category_default(Category::None);

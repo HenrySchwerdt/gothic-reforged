@@ -198,6 +198,7 @@ impl NavOffset {
     /// Port of `gCNavigationMap::DetectFinalTargetAsOffset`: among the poses that lie inside
     /// the zone the character is in, take the one nearest to the character.
     pub fn choose(&self, graph: &NavGraph, zone: AreaId, from: Vec3) -> Option<OffsetChoice> {
+        gothic_portcov::hit!("choose");
         let mut best: Option<(f32, usize)> = None;
         for (i, (p, _)) in self.poses.iter().enumerate() {
             let inside = match zone {

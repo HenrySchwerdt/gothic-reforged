@@ -24,6 +24,7 @@ impl CircleShape {
     /// Port of `gCCollisionCircle_PSObj::IntersectsPoint` (Game:0x1013b190): is the point
     /// inside the volume? `inclusive` includes the border (`bCInfCylinder::Cull`'s flag).
     pub fn contains(&self, p: Vec2, inclusive: bool) -> bool {
+        gothic_portcov::hit!("contains");
         let (d2, r) = match *self {
             Self::Single { centre, radius } => (p.distance_squared(centre), radius),
             Self::Double { a, b, ra, rb } => {
@@ -37,6 +38,7 @@ impl CircleShape {
     /// Port of `gCCollisionCircle_PSObj::IntersectsStretch` (Game:0x1013ad30): does the segment
     /// `from -> to` touch the volume? Returns the entry parameter (0..1) of the first touch.
     pub fn first_hit(&self, from: Vec2, to: Vec2) -> Option<f32> {
+        gothic_portcov::hit!("first_hit");
         if self.contains(from, true) {
             return Some(0.0);
         }
@@ -118,6 +120,7 @@ impl NegZone {
     /// under which the stakes' edges are seen from the point; a full turn means inside. A point
     /// on a stake or on an edge is undecidable and gets `on_border`.
     pub fn contains(&self, p: Vec2, on_border: bool) -> bool {
+        gothic_portcov::hit!("contains@2");
         let mut sum = 0.0_f32;
         let n = self.stakes.len();
         for i in 0..n {
@@ -138,12 +141,14 @@ impl NegZone {
     /// Port of `gCNegZone_PSObj::IntersectsPoint` (Game:0x1013c780): the bounding circle culls
     /// first, then the polygon decides.
     pub fn intersects_point(&self, p: Vec2, on_border: bool) -> bool {
+        gothic_portcov::hit!("intersects_point");
         p.distance(self.centre) <= self.radius && self.contains(p, on_border)
     }
 
     /// Port of `gCNegZone_PSObj::IntersectsStretch`: does the segment enter the zone (an end
     /// inside, or a crossing of an edge)?
     pub fn intersects_stretch(&self, from: Vec2, to: Vec2) -> bool {
+        gothic_portcov::hit!("intersects_stretch");
         if self.intersects_point(from, true) || self.intersects_point(to, true) {
             return true;
         }
@@ -154,6 +159,7 @@ impl NegZone {
     /// Port of `gCNegZone_PS::IsZoneIllegal` (Game:0x10119470): an authored polygon whose
     /// non-adjacent edges cross cannot be walked around.
     pub fn is_illegal(&self) -> bool {
+        gothic_portcov::hit!("is_illegal");
         let n = self.stakes.len();
         for i in 0..n {
             for j in i + 2..n {
@@ -204,6 +210,7 @@ impl AvoidanceSet {
     /// (Game:0x10106a30): a circle exists while its radius is positive. Returns whether one was
     /// created.
     pub fn add_circle(&mut self, owner: EntityId, centre: Vec2, radius: f32) -> bool {
+        gothic_portcov::hit!("add_circle");
         if radius <= 0.0 {
             return false;
         }
@@ -219,12 +226,14 @@ impl AvoidanceSet {
 
     /// Port of `DestroyCollisionCirclePSObject` (Game:0x10106c90).
     pub fn remove_circle(&mut self, owner: EntityId) -> bool {
+        gothic_portcov::hit!("remove_circle");
         self.circles.remove(&owner).is_some()
     }
 
     /// Port of `gDynamicCollisionCircle_PS::OnEnterProcessingRange` (Game:0x10108c20): the
     /// circle follows its entity; it is recreated at the entity's new place.
     pub fn follow(&mut self, owner: EntityId, centre: Vec2) {
+        gothic_portcov::hit!("follow");
         if let Some(c) = self.circles.get_mut(&owner)
             && let CircleShape::Single { centre: ce, .. } = &mut c.shape
         {

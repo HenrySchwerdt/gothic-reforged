@@ -92,6 +92,7 @@ pub fn lipsync_source_name(actor: &str) -> String {
 /// Port of eCWrapper_emfx2Motion::CreateLipSyncMotion (Engine:0x10052cb0). Returns `None` when
 /// there are no entries or the source has no viseme track.
 pub fn build_lipsync_clip(name: &str, source: &Clip, frames: &[(f32, u32)]) -> Option<Clip> {
+    gothic_portcov::hit!("build_lipsync_clip");
     let mut timeline: Vec<(f32, u32)> = frames.to_vec();
     let end = timeline.last()?.0;
     timeline.push((end + CLOSE_SECS, REST_VISEME));
@@ -201,6 +202,7 @@ impl FaceRig {
     /// overrides the face bones it animates, everything else rests. Returns the model-space
     /// matrix (with the facing fix) of every compact joint of the head part.
     fn evaluate(&mut self, body_pose: &[Trs]) -> Vec<Affine3A> {
+        gothic_portcov::hit!("evaluate");
         let t = self.time.min(self.clip.duration);
         for (slot, p) in self.pose.iter_mut().enumerate() {
             let b = self.body_slot[slot];

@@ -89,6 +89,7 @@ impl HudFlags {
 /// Flags for the open page (`None` = no page), before the two hide toggles.
 /// Port of gCHUDPageMain2::OnPageChanged (Game:0x10088a30) table at 0x102d31b4.
 pub fn page_flags(page: Option<PageId>) -> HudFlags {
+    gothic_portcov::hit!("page_flags");
     use PageId::*;
     match page {
         None | Some(Bless | Poison | Sharpen | Fry | Tutorial) => HudFlags::DEFAULT,
@@ -198,6 +199,7 @@ impl GuiManager {
     /// Port of gCHUDDialogMain2::SetPage (Game:0x1008b340): no-op changes are ignored; the
     /// tutorial opens over the current page and remembers it. Returns whether anything changed.
     pub fn set_page(&mut self, page: Option<PageId>) -> bool {
+        gothic_portcov::hit!("set_page");
         if self.page == page {
             return false;
         }
@@ -219,11 +221,13 @@ impl GuiManager {
 
     /// Port of gCGUIManager::OpenMenu (Game:0x1007c2e0): the menu opens on its main page.
     pub fn open_menu(&mut self) {
+        gothic_portcov::hit!("open_menu");
         self.menu = Some(MenuPage::Main);
     }
 
     /// Port of gCGUIManager::CloseMenu (Game:0x1007c380).
     pub fn close_menu(&mut self) {
+        gothic_portcov::hit!("close_menu");
         self.menu = None;
     }
 
@@ -243,6 +247,7 @@ impl GuiManager {
     /// consumes the key first; `host_owns` is true while the host handles Esc itself (an
     /// interaction window of the world).
     pub fn escape(&mut self, modal: bool, host_owns: bool) -> EscOutcome {
+        gothic_portcov::hit!("escape");
         if modal {
             return EscOutcome::Modal;
         }

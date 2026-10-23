@@ -182,6 +182,7 @@ impl EntityAdmin {
 
     /// Port of `eCEntityAdmin::CullProcessingRangeRegion` (Engine:0x102317d0) for one box.
     pub fn cull(&self, b: &Aabb) -> Cull {
+        gothic_portcov::hit!("cull");
         let Some(r) = self.dynamic else {
             return Cull::Outside;
         };
@@ -248,6 +249,7 @@ impl EntityAdmin {
     /// Port of `eCEntityAdmin::OnEntityProcessingChanged` (Engine:0x10231620): an entity in range
     /// joins or leaves the processing list when its enabled / disabled state changed.
     pub fn on_entity_processing_changed(&mut self, tree: &EntityTree, id: EntityId) {
+        gothic_portcov::hit!("on_entity_processing_changed");
         let Some(e) = tree.get(id) else { return };
         if !e.has_entered_processing_range() {
             return;
@@ -305,6 +307,7 @@ impl EntityAdmin {
         prefetch: &mut PvsPrefetcher,
         camera: Vec3,
     ) -> ProcessingDelta {
+        gothic_portcov::hit!("process");
         self.drain_tree(tree, prefetch);
         let hyst = self.cfg.hysteresis;
         let forced = self.force_full;
@@ -452,6 +455,7 @@ impl EntityAdmin {
     /// Port of `eCEntityAdmin::KillEntities`: destroy the queued entities (newest first) and
     /// hand back every id that disappeared so registries can forget them.
     pub fn flush_kills(&mut self, tree: &mut EntityTree) -> Vec<EntityId> {
+        gothic_portcov::hit!("flush_kills");
         let mut gone = Vec::new();
         for id in std::mem::take(&mut self.killed).into_iter().rev() {
             for d in tree.destroy(id) {

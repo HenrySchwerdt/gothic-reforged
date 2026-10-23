@@ -669,7 +669,8 @@ fn surface_material(
             wind_mode as i32 as f32,
             data.wind_height,
             data.wind_height * CM * 0.03,
-            0.0,
+            // `GR_LEAF_FLUTTER=<x>` scales the leaf rocking (0 = off) for tuning on real data.
+            env_f32("GR_LEAF_FLUTTER", 1.0),
         );
     }
     let mut flags = 0;

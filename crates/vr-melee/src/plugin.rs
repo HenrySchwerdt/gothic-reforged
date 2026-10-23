@@ -6,9 +6,22 @@
 //!   dummy).
 //! * Every fixed step the weapons' motion since the last step runs through
 //!   [`MeleeWorld::step`]; results go out as [`HitMessage`], [`ClashMessage`] and
-//!   [`StabMessage`], and the physical side effects are applied: a blocked or parried weapon
-//!   gets a deflection impulse, a hit bites (the blade loses part of its speed), a stab
-//!   creates a [`PrismaticJoint`] along the wound and pulling out removes it.
+//!   [`StabMessage`], and the side effects are applied.
+//!
+//! Physics is left to the rigid bodies wherever it can do the job (the scheme of physics
+//! melee games like Blade & Sorcery and Boneworks, reimplemented from their public
+//! descriptions): blades collide with bodies and with each other, so a swing stops at the body
+//! it hits and a blade on a blade deflects by contact. The melee events add what rigid contact
+//! cannot:
+//!
+//! * a qualifying stab (point leading, along the blade within ~25 degrees, fast enough) lets
+//!   that blade through bodies ([`prop_layers`]) and creates a [`PrismaticJoint`] along the
+//!   wound, limited to the blade's penetration depth; the wound drags on the blade
+//!   ([`WOUND_DRAG`]); pulling out removes the joint, and the blade collides with bodies again
+//!   once it is clear ([`PASS_AFTER_PULL`]);
+//! * a blocked or parried swing staggers the attacker's arm for the recoil time
+//!   ([`gothic_vr_physics::PhysicsHand::stagger`]) and gets a small extra kick;
+//! * haptics on the hands holding the weapons: hit, clash, stuck, pulled out.
 use crate::contact::{
     BodyMotion, Bone, ClashKind, DamageType, Hitzone, MeleeEvent, MeleeProfile, MeleeWorld,
     WeaponMotion,
@@ -17,8 +30,8 @@ use crate::profiles::profile_for;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use gothic_vr::body::Joint;
-use gothic_vr::{Pose, VrBody, transform_to_pose};
-use gothic_vr_physics::{GrabMessage, HandSet, Prop};
+use gothic_vr::{HapticMessage, HapticPulse, Pose, VrBody, transform_to_pose};
+use gothic_vr_physics::{GrabMessage, HandSet, PhysicsHand, Prop, VrLayer, prop_layers};
 use std::collections::HashMap;
 
 /// A physics prop that deals melee damage.
@@ -28,6 +41,7 @@ pub struct MeleeWeapon {
     /// Who swings it (set while held).
     pub wielder: Option<Entity>,
     last: Option<Pose>,
+    before: Option<Pose>,
 }
 
 impl MeleeWeapon {
@@ -36,6 +50,7 @@ impl MeleeWeapon {
             profile,
             wielder: None,
             last: None,
+            before: None,
         }
     }
 }
@@ -107,12 +122,29 @@ pub enum StabMessage {
     },
 }
 
+/// A stab: the joint, the body it is anchored to and the wound axis in that body's frame.
+#[derive(Debug, Clone, Copy)]
+struct Wound {
+    joint: Entity,
+    body: Entity,
+    axis: Vec3,
+}
+
 /// Stab joints by weapon.
 #[derive(Resource, Debug, Default)]
-struct StabJoints(HashMap<Entity, Entity>);
+struct StabJoints(HashMap<Entity, Wound>);
 
-/// Fraction of the relative speed a hit takes out of the blade.
-const BITE: f32 = 0.35;
+/// A weapon that came out of a wound passes bodies for this long (s) so it does not get shoved
+/// out of the body it is still partly inside.
+pub const PASS_AFTER_PULL: f32 = 0.25;
+
+/// Drag of a wound on the blade along its axis, 1/s (fraction of the sliding velocity removed
+/// per second, scaled by the weapon's mass): pushing a blade in or pulling it out takes force.
+pub const WOUND_DRAG: f32 = 12.0;
+
+/// The weapon passes bodies until then (elapsed seconds); see [`PASS_AFTER_PULL`].
+#[derive(Component, Debug, Clone, Copy)]
+struct PassBodies(f32);
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MeleeSet;
@@ -127,10 +159,11 @@ impl Plugin for VrMeleePlugin {
             .add_message::<HitMessage>()
             .add_message::<ClashMessage>()
             .add_message::<StabMessage>()
+            .add_message::<HapticMessage>()
             .add_systems(Update, auto_weapons)
             .add_systems(
                 FixedUpdate,
-                (track_wielders, melee_step)
+                (track_wielders, melee_step, wound_drag, collide_again)
                     .chain()
                     .in_set(MeleeSet)
                     .before(HandSet::Grab),
@@ -189,25 +222,43 @@ fn melee_step(
     transforms: Query<&Transform>,
     mut bodies: Query<Forces>,
     masses: Query<&ComputedMass>,
+    mut hands: Query<&mut PhysicsHand>,
     mut hits: MessageWriter<HitMessage>,
     mut clashes: MessageWriter<ClashMessage>,
     mut stabs: MessageWriter<StabMessage>,
+    mut haptics: MessageWriter<HapticMessage>,
 ) {
     let dt = time.delta_secs();
-    let motions: Vec<(Entity, Option<Entity>, Pose, Pose, MeleeProfile)> = weapons
+    #[allow(clippy::type_complexity)]
+    let motions: Vec<(
+        Entity,
+        Option<Entity>,
+        Pose,
+        Pose,
+        MeleeProfile,
+        Option<Pose>,
+    )> = weapons
         .iter()
         .map(|(e, t, w)| {
             let cur = transform_to_pose(t);
-            (e, w.wielder, w.last.unwrap_or(cur), cur, w.profile.clone())
+            (
+                e,
+                w.wielder,
+                w.last.unwrap_or(cur),
+                cur,
+                w.profile.clone(),
+                w.before,
+            )
         })
         .collect();
     let wm: Vec<WeaponMotion> = motions
         .iter()
-        .map(|(e, wielder, prev, cur, profile)| WeaponMotion {
+        .map(|(e, wielder, prev, cur, profile, before)| WeaponMotion {
             id: e.to_bits(),
             wielder: wielder.map(Entity::to_bits),
             prev: *prev,
             cur: *cur,
+            before: *before,
             profile,
         })
         .collect();
@@ -235,6 +286,7 @@ fn melee_step(
         s.prev = s.zones.clone();
     }
     for (_, t, mut w) in &mut weapons {
+        w.before = w.last;
         w.last = Some(transform_to_pose(t));
     }
 
@@ -245,15 +297,25 @@ fn melee_step(
             f.apply_linear_impulse_at_point(dv * m, at);
         }
     };
+    // Hands holding a weapon.
+    let holders = |hands: &Query<&mut PhysicsHand>, weapon: Entity| -> Vec<gothic_vr::Hand> {
+        hands
+            .iter()
+            .filter(|h| h.held.is_some_and(|b| b.object == weapon))
+            .map(|h| h.hand)
+            .collect()
+    };
     for ev in events {
         match ev {
             MeleeEvent::Hit(h) => {
-                impulse(
-                    &mut bodies,
-                    ent(h.weapon),
-                    -h.direction * h.impact_speed * BITE,
-                    h.point,
-                );
+                // No bite impulse: the body's collider stops the blade.
+                for hand in holders(&hands, ent(h.weapon)) {
+                    haptics.write(HapticMessage(HapticPulse::hit(
+                        hand,
+                        h.impact_speed,
+                        h.quality,
+                    )));
+                }
                 hits.write(HitMessage {
                     attacker: h.attacker.map(ent),
                     weapon: ent(h.weapon),
@@ -277,6 +339,17 @@ fn melee_step(
                 recoil,
             } => {
                 impulse(&mut bodies, ent(attacker_weapon), attacker_impulse, point);
+                let closing = attacker_impulse.length();
+                for mut h in &mut hands {
+                    let Some(b) = h.held else { continue };
+                    if b.object == ent(attacker_weapon) {
+                        h.stagger(recoil.min(0.5));
+                    }
+                    if b.object == ent(attacker_weapon) || b.object == ent(defender_weapon) {
+                        let hand = h.hand;
+                        haptics.write(HapticMessage(HapticPulse::clash(hand, 2.0 + closing)));
+                    }
+                }
                 clashes.write(ClashMessage {
                     kind,
                     attacker_weapon: ent(attacker_weapon),
@@ -328,7 +401,22 @@ fn melee_step(
                     let j = commands
                         .spawn((joint, JointCollisionDisabled, Name::new("StabJoint")))
                         .id();
-                    joints.0.insert(weapon, j);
+                    joints.0.insert(
+                        weapon,
+                        Wound {
+                            joint: j,
+                            body: zone_body,
+                            axis: inv_b.rotation * axis,
+                        },
+                    );
+                    // The blade is in: let it through the body's colliders.
+                    commands
+                        .entity(weapon)
+                        .insert(prop_layers(true))
+                        .remove::<PassBodies>();
+                }
+                for hand in holders(&hands, weapon) {
+                    haptics.write(HapticMessage(HapticPulse::stuck(hand)));
                 }
                 stabs.write(StabMessage::Stuck {
                     weapon,
@@ -337,8 +425,14 @@ fn melee_step(
                 });
             }
             MeleeEvent::PulledOut { weapon, victim } => {
-                if let Some(j) = joints.0.remove(&ent(weapon)) {
-                    commands.entity(j).despawn();
+                if let Some(w) = joints.0.remove(&ent(weapon)) {
+                    commands.entity(w.joint).despawn();
+                    commands
+                        .entity(ent(weapon))
+                        .insert(PassBodies(time.elapsed_secs() + PASS_AFTER_PULL));
+                }
+                for hand in holders(&hands, ent(weapon)) {
+                    haptics.write(HapticMessage(HapticPulse::pulled_out(hand)));
                 }
                 stabs.write(StabMessage::PulledOut {
                     weapon: ent(weapon),
@@ -347,6 +441,68 @@ fn melee_step(
             }
         }
     }
+}
+
+/// A stuck blade sliding along its wound is slowed down.
+fn wound_drag(
+    joints: Res<StabJoints>,
+    transforms: Query<&Transform>,
+    masses: Query<&ComputedMass>,
+    mut bodies: Query<Forces>,
+) {
+    for (&weapon, w) in &joints.0 {
+        let Ok(t) = transforms.get(w.body) else {
+            continue;
+        };
+        let axis = (t.rotation * w.axis).normalize_or_zero();
+        let body_v = bodies
+            .get_mut(w.body)
+            .map_or(Vec3::ZERO, |f| f.linear_velocity());
+        let m = masses.get(weapon).map_or(1.0, |m| m.value());
+        if let Ok(mut f) = bodies.get_mut(weapon) {
+            let slide = (f.linear_velocity() - body_v).dot(axis);
+            f.apply_force(-axis * slide * m * WOUND_DRAG);
+        }
+    }
+}
+
+/// A pulled-out blade collides with bodies again once its grace time is over.
+fn collide_again(mut commands: Commands, time: Res<Time>, passing: Query<(Entity, &PassBodies)>) {
+    for (e, p) in &passing {
+        if time.elapsed_secs() >= p.0 {
+            commands
+                .entity(e)
+                .insert(prop_layers(false))
+                .remove::<PassBodies>();
+        }
+    }
+}
+
+/// Collider matching a set of hitzones, in the frame of `origin` (so blades stop where the
+/// hitzones are; a coarser collider would stop them before they register a hit).
+pub fn zone_collider(zones: &[Hitzone], origin: &Pose) -> Collider {
+    let inv = origin.inverse();
+    Collider::compound(
+        zones
+            .iter()
+            .map(|z| {
+                let local = inv.mul(&z.pose);
+                (
+                    local.position,
+                    local.rotation,
+                    Collider::capsule(z.radius, z.half_length * 2.0),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Collision layers of a body (collides with the world, hands and props).
+pub fn body_layers() -> CollisionLayers {
+    CollisionLayers::new(
+        VrLayer::Body,
+        [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
+    )
 }
 
 /// Keeps a [`PlayerAvatar`]'s [`HitzoneSet`] on the IK body.
@@ -403,19 +559,14 @@ fn player_hitzones(body: Res<VrBody>, mut sets: Query<&mut HitzoneSet, With<Play
 /// `feet`.
 pub fn spawn_dummy(commands: &mut Commands, feet: Vec3) -> Entity {
     let zones = dummy_zones(feet);
+    let origin = Pose::new(feet + Vec3::Y * 0.85, Quat::IDENTITY);
     commands
         .spawn((
-            HitzoneSet::new(zones),
             RigidBody::Kinematic,
-            Collider::capsule(0.2, 1.3),
-            CollisionLayers::new(
-                gothic_vr_physics::VrLayer::Body,
-                [
-                    gothic_vr_physics::VrLayer::World,
-                    gothic_vr_physics::VrLayer::Hand,
-                ],
-            ),
-            Transform::from_translation(feet + Vec3::Y * 0.85),
+            zone_collider(&zones, &origin),
+            HitzoneSet::new(zones),
+            body_layers(),
+            Transform::from_translation(origin.position),
             Name::new("Dummy"),
         ))
         .id()

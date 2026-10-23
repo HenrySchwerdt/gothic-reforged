@@ -89,6 +89,7 @@ impl Default for LogSettings {
 impl LogSettings {
     /// Port of gCGUIManager::ImportLogSettings (Game:0x1007cf10): read the `[Log]` keys.
     pub fn from_ini(get: impl Fn(&str) -> Option<String>) -> Self {
+        gothic_portcov::hit!("from_ini");
         let mut s = Self::default();
         let flag = |k: &str| get(k).map(|v| v.trim().eq_ignore_ascii_case("true"));
         let num = |k: &str| get(k).and_then(|v| v.trim().parse::<f32>().ok());

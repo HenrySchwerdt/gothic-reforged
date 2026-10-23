@@ -13,7 +13,11 @@
 //! cargo run -p gothic-vr-sandbox -- --strength 120   # player strength (Gothic STR)
 //! cargo run -p gothic-vr-sandbox -- --headless       # scripted CI duel, exits 0 on success
 //! cargo run -p gothic-vr-sandbox -- --screenshot shot.png [--screenshot-frame 240]
+//! cargo run -p gothic-vr-sandbox -- --showcase stab --screenshot stab.png   # scripted scene
 //! ```
+//!
+//! `--showcase <slash|stab|block|bow>` replaces the desktop input with a scripted scene (see
+//! `showcase.rs`); with `--screenshot` it captures the scene's key frame.
 //!
 //! Desktop controls (see `docs/vr/README.md`): WASD move, Q/E snap turn, T teleport, right
 //! mouse + move look, mouse moves the active hand (swing!), wheel = hand depth, Tab switch
@@ -42,6 +46,8 @@ use gothic_vr_physics::{
 };
 use std::time::Duration;
 
+mod showcase;
+
 /// Player start (feet), looking down -Z.
 const START: Vec3 = Vec3::new(0.0, 0.0, 4.0);
 const NPC_AT: Vec3 = Vec3::new(0.0, 0.0, 0.5);
@@ -69,6 +75,12 @@ fn main() -> AppExit {
     let args: Vec<String> = std::env::args().collect();
     let has = |f: &str| args.iter().any(|a| a == f);
     let headless = has("--headless");
+    let showcase = arg::<String>(&args, "--showcase").map(|s| {
+        showcase::Scene::parse(&s).unwrap_or_else(|| {
+            eprintln!("--showcase: one of slash, stab, block, bow");
+            std::process::exit(2)
+        })
+    });
     let mut app = App::new();
     if headless {
         app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::ZERO)))
@@ -99,7 +111,11 @@ fn main() -> AppExit {
         .insert_resource(Time::<Fixed>::from_hz(90.0))
         .add_plugins((
             VrPlugin {
-                backend: XrBackendKind::from_env(),
+                backend: if showcase.is_some() {
+                    XrBackendKind::External
+                } else {
+                    XrBackendKind::from_env()
+                },
             },
             VrRenderPlugin,
         ))
@@ -124,8 +140,13 @@ fn main() -> AppExit {
                 draw_hitzones,
             ),
         );
+        if let Some(scene) = showcase {
+            showcase::install(&mut app, scene);
+        }
         if let Some(path) = arg::<String>(&args, "--screenshot") {
-            let at = arg(&args, "--screenshot-frame").unwrap_or(240);
+            let at = arg(&args, "--screenshot-frame")
+                .or(showcase.map(showcase::Scene::capture_frame))
+                .unwrap_or(240);
             app.insert_resource(gothic_vr::render::CaptureAndExit::new(path, at));
         }
     }

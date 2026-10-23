@@ -7,7 +7,8 @@
 //! * [`locomotion`]: comfort locomotion driving `gothic_physics::CharacterController`.
 //! * [`body`]: full-body IK from head + hands on a generic humanoid skeleton.
 //! * [`greybox`]: synthetic test level (no game content).
-//! * [`openxr`]: OpenXR tracking / controller input (cargo feature `openxr`).
+//! * [`haptics`]: controller vibration (pulses from gameplay, merged per hand).
+//! * [`openxr`]: OpenXR tracking / controller input and haptics (cargo feature `openxr`).
 //! * [`plugin`] / [`render`]: Bevy systems, resources and the debug presentation.
 //!
 //! The backend seam is [`plugin::PendingXrFrame`]: anything that writes an [`input::XrFrame`]
@@ -17,6 +18,7 @@ pub mod bindings;
 pub mod body;
 pub mod desktop;
 pub mod greybox;
+pub mod haptics;
 pub mod input;
 pub mod locomotion;
 pub mod openxr;
@@ -25,10 +27,11 @@ pub mod render;
 pub mod rig;
 
 pub use gothic_physics;
+pub use haptics::HapticPulse;
 pub use input::{ControllerState, Hand, Pose, VrButton, VrInput, XrFrame};
 pub use plugin::{
-    DesktopXr, PendingXrFrame, VrBody, VrCommands, VrDisplay, VrInputRes, VrPlayer, VrPlugin,
-    VrSet, VrWorld, XrBackend, XrBackendKind, XrEyeCamera, XrHand, XrHead,
+    DesktopXr, HapticMessage, HapticOut, PendingXrFrame, VrBody, VrCommands, VrDisplay, VrInputRes,
+    VrPlayer, VrPlugin, VrSet, VrWorld, XrBackend, XrBackendKind, XrEyeCamera, XrHand, XrHead,
 };
 pub use render::VrRenderPlugin;
 

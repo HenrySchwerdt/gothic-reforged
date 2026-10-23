@@ -69,6 +69,7 @@ pub fn status_line(kind: &LogKind) -> Option<&'static str> {
 /// Which of the four time-of-day pictures of the quest view to show for `hour`
 /// (0 dawn, 1 day, 2 dusk, 3 night). Port of the selection in Game:0x10084690.
 pub fn time_of_day(hour: u32) -> usize {
+    gothic_portcov::hit!("time_of_day");
     match hour {
         0..=5 => 3,
         6..=7 => 0,
@@ -134,6 +135,7 @@ pub fn teach_offers(
     npc: &str,
     cost: &CostRule,
 ) -> Vec<TeachOffer> {
+    gothic_portcov::hit!("teach_offers");
     let gold = state.inventory.count(gothic_gameplay::state::GOLD_ITEM);
     let mut out = Vec::new();
     for &id in db.infos_of(npc) {

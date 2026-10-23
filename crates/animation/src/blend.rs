@@ -81,6 +81,7 @@ impl AniBlendings {
     /// two integers (intro, extro) stored as bytes. A text without the version marker yields
     /// an empty table (the engine then uses the standard fade everywhere).
     pub fn parse(text: &str) -> Self {
+        gothic_portcov::hit!("parse");
         let mut table = Self::default();
         if !text.contains("*Version 1") {
             return table;
@@ -115,6 +116,7 @@ impl AniBlendings {
     /// Port of eCAnimationAdmin::GetAniIntroBlending (Engine:0x100213a0): stored byte / 15 s,
     /// the standard fade when the key is unknown.
     pub fn intro(&self, name: &str) -> f32 {
+        gothic_portcov::hit!("intro");
         self.blends
             .get(&blending_key(name))
             .map_or(STANDARD_FADE, |&(i, _)| f32::from(i) / BLEND_TABLE_UNIT)
@@ -122,6 +124,7 @@ impl AniBlendings {
 
     /// Port of eCAnimationAdmin::GetAniExtroBlending (Engine:0x10021450).
     pub fn extro(&self, name: &str) -> f32 {
+        gothic_portcov::hit!("extro");
         self.blends
             .get(&blending_key(name))
             .map_or(STANDARD_FADE, |&(_, e)| f32::from(e) / BLEND_TABLE_UNIT)
@@ -130,6 +133,7 @@ impl AniBlendings {
     /// Port of eCAnimationAdmin::SetAniVariationMax (Engine:0x100211c0): on first sight of a
     /// clip family, word 11 of the underscore-separated file name is its variation maximum.
     pub fn register_variation(&mut self, file_name: &str) {
+        gothic_portcov::hit!("register_variation");
         let key = blending_key(file_name);
         if self.variation_max.contains_key(&key) {
             return;
@@ -150,6 +154,7 @@ impl AniBlendings {
     /// two characters before the trailing underscore of the key become a random number in
     /// `0..=max` (`rand` is the caller's random value). Keys without a maximum are unchanged.
     pub fn with_variation(&self, key: &str, rand: u32) -> String {
+        gothic_portcov::hit!("with_variation");
         let Some(max) = self.variation_max(key) else {
             return key.to_owned();
         };
@@ -268,6 +273,7 @@ impl Instance {
     /// target weight is clamped to 0..1; without a fade-in the weight is the target at once,
     /// otherwise it ramps linearly from 0 over `fade_in`.
     pub fn new(duration: f32, desc: &PlayDesc, start_time: f32) -> Self {
+        gothic_portcov::hit!("new");
         let target = desc.weight.clamp(0.0, 1.0);
         let (weight, rate, ramping) = if desc.fade_in <= 0.0 {
             (target, 0.0, false)
@@ -304,6 +310,7 @@ impl Instance {
     /// Port of eCWrapper_emfx2Actor::IsActorPlaying (Engine:0x1004a040) for an existing
     /// instance: not past its maximum loops and not paused.
     pub fn is_playing(&self) -> bool {
+        gothic_portcov::hit!("is_playing");
         !self.paused && (self.max_loops == -1 || self.loop_index < self.max_loops)
     }
 
@@ -319,6 +326,7 @@ impl Instance {
     /// Port of eCWrapper_emfx2Actor::SetTargetWeight (Engine:0x10049ca0): an instant change of
     /// current and target weight.
     pub fn set_target_weight(&mut self, weight: f32) {
+        gothic_portcov::hit!("set_target_weight");
         let w = weight.clamp(0.0, 1.0);
         self.weight = w;
         self.target_weight = w;
@@ -329,12 +337,14 @@ impl Instance {
     /// Port of eCWrapper_emfx2Actor::SetBlendMode (Engine:0x10049d10): only mode 2 sets the
     /// mix flag.
     pub fn set_blend_mode(&mut self, mode: i32) {
+        gothic_portcov::hit!("set_blend_mode");
         self.additive = mode == 2;
     }
 
     /// Port of eCWrapper_emfx2Actor::StopAtLoopEnd (Engine:0x100479c0): a running instance gets
     /// its maximum loops set to the current loop plus one.
     pub fn stop_at_loop_end(&mut self) {
+        gothic_portcov::hit!("stop_at_loop_end");
         if self.is_playing() {
             self.max_loops = self.loop_index + 1;
         }
@@ -349,6 +359,7 @@ impl Instance {
     /// clip whose remaining play time is shorter than the fade is slowed so that it ends with
     /// the fade.
     pub fn switch_fade_out(&mut self, seconds: f32) -> bool {
+        gothic_portcov::hit!("switch_fade_out");
         if !self.is_playing() {
             return false;
         }
@@ -384,6 +395,7 @@ impl Instance {
     /// before the end (just after the start for backward play) and the speed becomes 0, so the
     /// last pose is held instead of wrapping or popping.
     pub fn run_stop_prevention(&mut self, dt: f32) {
+        gothic_portcov::hit!("run_stop_prevention");
         if !self.is_playing()
             || self.speed == 0.0
             || self.max_loops == -1
@@ -627,6 +639,7 @@ pub fn idle_mixer_decision(
     duration: f32,
     items_changed: bool,
 ) -> IdleDecision {
+    gothic_portcov::hit!("idle_mixer_decision");
     match owner_value {
         2 if running => IdleDecision::Leave,
         2 | 3 | 10 | 11 => IdleDecision::TakeOver,

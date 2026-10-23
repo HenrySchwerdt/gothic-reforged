@@ -177,6 +177,7 @@ pub(crate) fn water_beds(
     mut beds: Query<(Entity, &WaterBed, Option<&mut AudioSink>, &mut Channel)>,
     mut commands: Commands,
 ) {
+    gothic_portcov::hit!("water_beds");
     let gains = if control.enabled {
         WaterBeds::at(control.ocean_distance_cm, control.river)
     } else {

@@ -138,6 +138,7 @@ impl EntityProxy {
     /// Port of `eCEntityProxy::ResolveEntity` (Engine:0x1022e470) and the cached read of
     /// `operator eCEntity*`: the cached entity while it is registered, else the id lookup.
     pub fn resolve(&mut self, scene: &SceneAdmin) -> Option<EntityId> {
+        gothic_portcov::hit!("resolve");
         if let Some(c) = self.cached.filter(|c| scene.is_registered(*c)) {
             return Some(c);
         }
@@ -188,6 +189,7 @@ impl PropertyExpr {
     /// (0x1022eb70). The expression is `address op "value"`; the address splits at its last two
     /// dots into `[entity.]set.property`.
     pub fn parse(expr: &str) -> Result<Self, ProxyError> {
+        gothic_portcov::hit!("parse");
         let (addr, rest) = match expr.find(['+', '-', '*', '/', '=']) {
             Some(i) => (expr[..i].trim(), &expr[i..]),
             None => return Err(ProxyError::Empty),
@@ -244,6 +246,7 @@ impl PropertyProxy {
         book: &mut PropertyBook,
         owner: EntityId,
     ) -> Result<(), ProxyError> {
+        gothic_portcov::hit!("execute");
         if self.expr.trim().is_empty() {
             return Ok(());
         }

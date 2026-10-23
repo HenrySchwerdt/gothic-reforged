@@ -46,6 +46,7 @@ pub enum WeaponMode {
 ///
 /// Rows follow the table in COMBAT_AI_RULES 2.12; combinations not listed are `Invalid`.
 pub fn hand_class(left: UseType, right: UseType) -> HandClass {
+    gothic_portcov::hit!("hand_class");
     use HandClass::*;
     use UseType as U;
     let tool = |u: UseType| matches!(u, U::Broom | U::Rake | U::Shovel | U::Pickaxe);
@@ -101,6 +102,7 @@ pub fn hand_class(left: UseType, right: UseType) -> HandClass {
 
 /// Port of `WeaponMode` (S:3240): map a hand class to the weapon mode.
 pub fn weapon_mode(left: UseType, right: UseType) -> WeaponMode {
+    gothic_portcov::hit!("weapon_mode");
     match hand_class(left, right) {
         HandClass::MeleeReady => WeaponMode::Melee,
         HandClass::RangedReady => WeaponMode::Ranged,
@@ -112,6 +114,7 @@ pub fn weapon_mode(left: UseType, right: UseType) -> WeaponMode {
 /// Port of the work-duration helper (S:76b0): long work animations last `(rand(3) + 2) * 60`
 /// seconds, 10 s when the debug byte is set. Used by Cook, Grind, Barbecue, Bard and others.
 pub fn long_work_secs(host: &mut dyn ScriptHost) -> i32 {
+    gothic_portcov::hit!("long_work_secs");
     if host.variants().fast_routines {
         10
     } else {
@@ -122,6 +125,7 @@ pub fn long_work_secs(host: &mut dyn ScriptHost) -> i32 {
 /// Port of the duration helper (S:76e0): ambient creatures idle `rand(11) + 10` seconds, every
 /// other NPC `rand(31) + 30`; 10 s with the debug byte. `ambient` is `IsAmbientCreature`.
 pub fn ambient_action_secs(host: &mut dyn ScriptHost, ambient: bool) -> i32 {
+    gothic_portcov::hit!("ambient_action_secs");
     if host.variants().fast_routines {
         10
     } else if ambient {
@@ -144,6 +148,7 @@ pub fn medium_work_secs(host: &mut dyn ScriptHost) -> i32 {
 /// Port of the routine-point helper (S:8600): the NPC's working, relaxing or sleeping point
 /// depending on `GetRoutineTime` (0 sleeping, 2 relaxing, otherwise working).
 pub fn routine_point(host: &dyn ScriptHost, npc: EntityId) -> EntityId {
+    gothic_portcov::hit!("routine_point");
     let time = routine_time(host.species(npc), host.world_hour());
     host.routine_point(npc, time)
 }
@@ -151,6 +156,7 @@ pub fn routine_point(host: &dyn ScriptHost, npc: EntityId) -> EntityId {
 /// Port of the use-object accessor (S:8190): the interaction object currently found for `npc`
 /// for a use type (the scanner S:7c90 fills the table), or `NONE`.
 pub fn use_object(host: &dyn ScriptHost, npc: EntityId, use_type: UseType) -> EntityId {
+    gothic_portcov::hit!("use_object");
     host.find_use_object(npc, use_type)
 }
 

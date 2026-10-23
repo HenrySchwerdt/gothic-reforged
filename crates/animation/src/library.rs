@@ -233,7 +233,7 @@ impl ActorLibrary {
                 let prefix = clip
                     .nodes
                     .iter()
-                    .filter(|n| !crate::rig::is_helper(&n.name))
+                    .filter(|n| !crate::rig::is_helper(&n.name) && !n.name.starts_with("Slot_"))
                     .find_map(|n| n.name.split('_').next().map(str::to_lowercase));
                 if let Some(prefix) = prefix
                     && prefix != family

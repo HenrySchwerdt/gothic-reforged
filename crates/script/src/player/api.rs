@@ -160,6 +160,11 @@ pub enum BoulderClass {
 /// What the game layer is told about the player's actions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
+    /// `OnPlayerUseQuickSlot` for quick slot key `n` (the script DLL's handler is not ported;
+    /// the host performs it).
+    QuickSlot(u32),
+    /// `OnPlayerPotionQuickUse` for the potion key `n` (0 health, 1 mana, 2 stamina; host).
+    PotionKey(u32),
     /// A window should open.
     Window(UiWindow),
     /// The script closed the window again.
@@ -319,4 +324,54 @@ pub trait PlayerApi {
     fn boulder_class(&self, object: EntityId) -> BoulderClass;
     /// Report something to the game layer.
     fn emit(&mut self, event: PlayerEvent);
+
+    // ---- the hero's control layer (`PSCharacterControl`, `PSFocus`, `PSCamera`, the queue) ----
+    /// `Entity::SetAlignmentTarget`: the body turns toward `target`
+    /// (`gCCharacterMovement_PS::ProcessControledRotationToTarget`, G:0x100e3fb0); `NONE` clears
+    /// it. The host's rotation reads it back.
+    fn set_alignment_target(&mut self, e: EntityId, target: EntityId);
+    /// `PSCharacterControl::SetMovementConstraints(degrees)` (G:0x100de9d0 stores it at +0x5c;
+    /// `ProcessMovements` releases the camera alignment at 360).
+    fn set_movement_constraints(&mut self, e: EntityId, degrees: f32);
+    /// The head of the player's action queue (`DAT_10118d54` / `DAT_10118d58` in the script
+    /// DLL): the `gEAction` id and the focus entity queued with it.
+    fn action_queue_head(&self) -> Option<(u32, EntityId)>;
+    /// Queue an action id with the entity the handler had in focus (`sub_7940`).
+    fn action_queue_push(&mut self, id: u32, entity: EntityId);
+    /// Remove the head (`sub_2130` after reading it).
+    fn action_queue_pop(&mut self);
+    /// Empty the queue (`sub_7a00`).
+    fn action_queue_clear(&mut self);
+    /// `PSFocus::GetFocusEntity(combat mode Melee, direction 0)`: the engine's focus search in
+    /// melee mode (`gCFocus_PS::FindFocusEntity`, ported in `gothic_gameplay::focus`), fed by the
+    /// host.
+    fn melee_focus(&self) -> EntityId;
+    /// `PSFocus::GetFocusEntity()`: the focus entity as the last search left it.
+    fn current_focus(&self) -> EntityId;
+    /// `PSFocus::SetFocusEntity`.
+    fn set_focus_entity(&mut self, e: EntityId);
+    /// `PSFocus.CurrentMode` (`gECombatMode`: 1 normal, 2 melee, 3 ranged, 4 magic).
+    fn set_focus_current_mode(&mut self, mode: u32);
+    /// `PSFocus.FocusLookAtMode` (`gEFocusLookAt`: 0 camera, 1 entity, 2 keys).
+    fn set_focus_look_at_mode(&mut self, mode: u32);
+    /// `PSFocus.EnableRangeRating`.
+    fn set_focus_range_rating(&mut self, on: bool);
+    /// `PSCamera::IsInFirstPerson`.
+    fn camera_in_first_person(&self) -> bool;
+    /// `PSCamera::SetMode(mode, true, true)` (`gECameraMode`; 2 is the melee mode).
+    fn set_camera_mode(&mut self, mode: u32);
+    /// `DAT_10118aac`: a movement key is held (set by `OnPlayerGameKeyPressed`).
+    fn movement_key_down(&self) -> bool;
+    /// `PSPlayerMemory.LastWeaponConfig` (`gEWeaponConfig`: 0 melee, 1 ranged, 2 magic).
+    fn last_weapon_config(&self) -> u32;
+    /// Write `PSPlayerMemory.LastWeaponConfig`.
+    fn set_last_weapon_config(&mut self, v: u32);
+    /// `Entity::GetAziElev(from, to)`: azimuth and elevation in degrees of `to` seen from
+    /// `from`.
+    fn azimuth_elevation(&self, from: EntityId, to: EntityId) -> (f32, f32);
+    /// `PSRoutine.HitDirection` (`gEHitDirection`: 0 left, 1 right): which hand the next
+    /// swing uses.
+    fn hit_direction(&self, e: EntityId) -> u32;
+    /// Write `PSRoutine.HitDirection`.
+    fn set_hit_direction(&mut self, e: EntityId, dir: u32);
 }
