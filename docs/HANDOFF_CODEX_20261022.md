@@ -1,5 +1,14 @@
 # Gothic Reforged — current Codex handoff
 
+## Latest APK packaging audit
+
+Read-only follow-up found the old APK script also selects the wrong workspace and
+requires a missing local env file. Sourcing the primary env would redirect root and
+outputs into primary. Exact SDK inputs remain absent. See
+`docs/research/QUEST_APK_PREREQUISITES.md` for evidence and isolated future inputs.
+No install/configuration, native rebuild, APK/signing, or device operation occurred.
+Do not repeat this audit/build while inputs remain unchanged. No own jobs pending.
+
 ## Latest reporting correction
 
 Source-only smoke log correction: `WALK TEST` now reports the actual sampled-frame
