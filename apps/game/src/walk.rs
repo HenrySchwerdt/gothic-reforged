@@ -2,10 +2,12 @@
 //!
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
+//! Opt-in extras: `--render-plus [preset|profile.json]`, `--audio-plus` (see `plus.rs`).
 mod env;
 mod gmat;
 #[path = "play/mod.rs"]
 mod play;
+mod plus;
 mod post;
 mod precip;
 mod wind_shots;
@@ -523,6 +525,7 @@ pub fn run(args: &[String]) -> Result<()> {
             selected_at_real_seconds: None,
         });
     }
+    plus::install(&mut app, args, play::requested(args))?;
     app.add_plugins(crate::perf::PerfPlugin {
         args: args.to_vec(),
     });

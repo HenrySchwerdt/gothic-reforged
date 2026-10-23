@@ -45,15 +45,25 @@ shadows, SSAO, TAA). It measures what each drop saved and restores the newest dr
 when the frame would stay under 90 % of the target with that cost added back. Changes wait
 90 frames to settle. `RenderPlusState` shows the current plan and the last change.
 
-## Integration hooks (not done in this PR)
+## In the game (`--render-plus`)
 
-* `apps/game`: a graphics option holding `RenderProfile` (serde, all fields default) that
-  adds `RenderPlusPlugin` and puts `RenderPlusCamera` on the play camera and `RenderPlusSun` on the
-  sun of the day/night cycle.
+`gothic-reforged --walk|--play --render-plus [faithful|low|medium|high|profile.json]` (or
+`GR_RENDER_PLUS=...`; no value means `medium`) adds `RenderPlusPlugin` with that profile
+(`apps/game/src/walk/plus.rs`). The player camera gets `RenderPlusCamera`, the shadowed sun
+`RenderPlusSun`; the budget runs on the real frame time. Without the flag nothing is added.
+`--features render-plus-pcss` builds PCSS for soft sun shadows.
+
+* SSR is forced off in the game: terrain, statics and water use the game's own forward
+  materials (`GothicMaterial`, `WaterMaterial`), which Bevy 0.20's SSR cannot reflect.
+* Not verified here (no game data in CI): how SSAO / TAA look with the game's materials
+  (they rely on the prepasses the custom materials produce), interplay with the original
+  bloom / HDR post (`GR_HDR`) and distance fog, and the budget on real scenes. Check with
+  `--render-plus high` against real data and adjust `budget.shed_order`.
+
+Still open:
 * With `gothic-environment` (REN-02): its distance fog stays; volumetric density can follow
   the weather (fog and rain raise `volumetric.density`).
-* Water: mark water materials with low `perceptual_roughness` so SSR picks them up; reflections
-  need deferred-compatible materials.
+* Water reflections need a deferred-capable water material.
 
 ## Demo and measured cost
 

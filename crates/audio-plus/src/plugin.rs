@@ -43,6 +43,11 @@ impl Default for EnhancedAudio {
 #[derive(Resource)]
 pub struct OcclusionProbe(pub Box<dyn Fn(Vec3, Vec3) -> bool + Send + Sync>);
 
+/// Host-computed blocking of one emitter (e.g. [`crate::probe`] against the level collision in
+/// a system of the host). Takes the place of [`OcclusionProbe`] for that emitter.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct EmitterBlocking(pub Blocking);
+
 /// Decoded mono samples of a sound plus the parameters its voice reads (one instance per
 /// playing emitter, see [`EnhancedSound::instance`]).
 #[derive(Asset, TypePath, Clone)]
@@ -204,8 +209,14 @@ pub struct EnhancedAudioPlugin;
 
 impl Plugin for EnhancedAudioPlugin {
     fn build(&self, app: &mut App) {
-        app.add_audio_source::<EnhancedSound>()
-            .init_resource::<EnhancedAudio>()
+        // Without bevy's `AudioPlugin` (headless hosts, tests) the voices are still tracked,
+        // only nothing plays them.
+        if app.is_plugin_added::<bevy::audio::AudioPlugin>() {
+            app.add_audio_source::<EnhancedSound>();
+        } else {
+            app.init_asset::<EnhancedSound>();
+        }
+        app.init_resource::<EnhancedAudio>()
             .add_systems(PostUpdate, update_voices);
     }
 }
@@ -225,22 +236,25 @@ fn update_voices(
         &GlobalTransform,
         &EnhancedEmitter,
         &AudioPlayer<EnhancedSound>,
+        Option<&EmitterBlocking>,
     )>,
 ) {
     let Some(lis) = listener.iter().next() else {
         return;
     };
     let reverb = zone_params(lis.translation().to_array(), &audio.zones, audio.outdoor);
-    for (tf, em, player) in &emitters {
+    for (tf, em, player, host) in &emitters {
         let Some(sound) = sounds.get(&player.0) else {
             continue;
         };
         let (dir, dist) = to_listener(lis, tf.translation());
         let blocking = match (
+            host,
             &probe_fn,
             audio.settings.enabled && audio.settings.occlusion,
         ) {
-            (Some(p), true) => probe(
+            (Some(h), _, true) => h.0,
+            (None, Some(p), true) => probe(
                 lis.translation().to_array(),
                 tf.translation().to_array(),
                 audio.probe_spread,
