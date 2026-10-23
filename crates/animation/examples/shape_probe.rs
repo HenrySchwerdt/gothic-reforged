@@ -22,7 +22,7 @@ use anyhow::{Context, Result, anyhow};
 use bevy::math::{Affine3A, Vec3};
 use gothic_animation::ActorLibrary;
 use gothic_animation::Stance;
-use gothic_animation::locomotion::{LocoKey, MoveDir, MoveKind};
+use gothic_animation::locomotion::{BodyPose, LocoKey, MoveDir, MoveKind};
 use gothic_animation::rig::{Rig, evaluate, is_helper};
 use gothic_formats::{PakArchive, xact::Actor};
 use std::path::{Path, PathBuf};
@@ -96,6 +96,7 @@ fn report(dir: &Path, lib: &mut ActorLibrary, body: &str, skeleton: Option<&str>
         stance: Stance::Unarmed,
         sneak: false,
         parade: false,
+        body: BodyPose::Stand,
     };
     let Some(motion) = lib.locomotion_motion(&rig.family, idle) else {
         println!("no idle motion for family {:?}", rig.family);

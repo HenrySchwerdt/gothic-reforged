@@ -361,12 +361,12 @@ fn predicate(
                 if !npc.teach_attribs.contains(&subject) {
                     return Err(Unmet::TeachNotOffered(info.teach_attrib.clone()));
                 }
-            } else if !info.teach_skill.is_empty() {
+            } else {
                 let subject = norm(&info.teach_skill);
                 if !npc.teach_skills.contains(&subject) {
                     return Err(Unmet::TeachNotOffered(info.teach_skill.clone()));
                 }
-                if st.skills.contains(&subject) {
+                if !subject.is_empty() && st.skills.contains(&subject) {
                     return Err(Unmet::SkillAlreadyLearned(info.teach_skill.clone()));
                 }
             }

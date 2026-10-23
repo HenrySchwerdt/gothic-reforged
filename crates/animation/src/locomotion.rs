@@ -213,6 +213,8 @@ impl LocoKey {
             dir: MoveDir::Fwd,
             stance,
             sneak: false,
+            parade: false,
+            body: BodyPose::Stand,
         }
     }
 }

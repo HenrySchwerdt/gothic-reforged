@@ -442,6 +442,9 @@ fn teaching_db() -> GameDatabase {
             "TeachSkill=Skill_Bow\r\n",
             &[],
         ),
+        // A blank Teach root must still satisfy the documented TeachSkills predicate;
+        // it is not a generic invitation for NPCs without a matching skill entry.
+        info("TEACH_ROOT", "TrainerA", "", "Q1", 16, 3, "", "", &[]),
         info("RUNNING_ONLY", "TrainerA", "", "Q1", 7, 7, "", "", &[]),
     ];
     GameDatabase::from_parts(
@@ -482,6 +485,17 @@ fn teach_requires_exact_teacher_subject_but_not_running_quest_status() {
     assert_eq!(
         eng.check(&st, id(&db, "TEACH_BOW"), "TrainerA"),
         Err(Unmet::TeachNotOffered("Skill_Bow".into()))
+    );
+    // GAME_RULES 1.3 says that without a TeachAttrib, TeachSkills must contain
+    // TeachSkill. An empty field therefore does not bypass teacher membership.
+    assert_eq!(
+        eng.check(&st, id(&db, "TEACH_ROOT"), "TrainerA"),
+        Err(Unmet::TeachNotOffered(String::new()))
+    );
+    st.npc_mut("TrainerC").teach_enabled = Some(true);
+    assert_eq!(
+        eng.check(&st, id(&db, "TEACH_ROOT"), "TrainerC"),
+        Err(Unmet::TeachNotOffered(String::new()))
     );
     assert_eq!(
         eng.check(&st, id(&db, "RUNNING_ONLY"), "TrainerA"),

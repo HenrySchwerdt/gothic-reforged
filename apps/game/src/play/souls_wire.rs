@@ -829,6 +829,10 @@ mod app_tests {
                 scripted_jump: None,
                 command: true,
                 face: None,
+                report: Default::default(),
+                scripted_dive: None,
+                scripted_water: None,
+                magic_body_trace: None,
             })
             .init_resource::<PlayState>()
             .init_resource::<Roster>()
