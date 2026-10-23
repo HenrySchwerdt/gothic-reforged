@@ -30,6 +30,14 @@ pub const GAMMA_SPACE: bool = true;
 /// Gothic-space start (Ardea plaza); Bevy x is mirrored.
 pub const START_GOTHIC: [f32; 2] = [92_400.0, -11_000.0];
 
+/// Start position (Gothic space): `start_x` / `start_z` knobs, default the Ardea plaza.
+pub fn start_gothic() -> [f32; 2] {
+    [
+        knob_f32("start_x", START_GOTHIC[0]),
+        knob_f32("start_z", START_GOTHIC[1]),
+    ]
+}
+
 #[derive(Component)]
 pub struct WorldRoot;
 #[derive(Component)]
@@ -48,6 +56,31 @@ pub struct Lod {
     center: Vec3,
     cull_end: f32,
     hidden: bool,
+}
+
+impl Lod {
+    /// LOD state of a streamed static (`stage` = the stage spawned with, `hidden` = spawned culled).
+    pub(crate) fn new(
+        handles: [Option<Handle<Mesh>>; 3],
+        tris: [u32; 3],
+        stage_d: [f32; 2],
+        levels: u8,
+        stage: u8,
+        center: Vec3,
+        cull_end: f32,
+        hidden: bool,
+    ) -> Self {
+        Self {
+            handles,
+            tris,
+            stage_d,
+            levels,
+            cur: stage,
+            center,
+            cull_end,
+            hidden,
+        }
+    }
 }
 
 /// Switches LOD stages and culls small objects by distance to the eyes (original thresholds).
@@ -104,21 +137,21 @@ pub fn update_lod(
 
 #[derive(Resource)]
 pub struct Ardea {
-    cache: Arc<Cache>,
+    pub(crate) cache: Arc<Cache>,
     pending: Vec<(i32, i32)>,
     materials: HashMap<u64, Handle<StandardMaterial>>,
-    qmaterials: HashMap<u64, Handle<QuestMaterial>>,
+    pub(crate) qmaterials: HashMap<u64, Handle<QuestMaterial>>,
     cheap: bool,
     white: Handle<Image>,
-    textures: HashMap<u64, Option<(Handle<Image>, Vec2)>>,
+    pub(crate) textures: HashMap<u64, Option<(Handle<Image>, Vec2)>>,
     meshes: HashMap<(u64, u32, u8), Handle<Mesh>>,
-    root: Entity,
-    focus: Vec3,
+    pub(crate) root: Entity,
+    pub(crate) focus: Vec3,
     pub cells_done: usize,
     pub spawned: usize,
     pub tris: u64,
-    lod_scale: f32,
-    cull_scale: f32,
+    pub(crate) lod_scale: f32,
+    pub(crate) cull_scale: f32,
     unlit: bool,
 }
 
@@ -126,6 +159,12 @@ pub fn data_dir() -> Option<PathBuf> {
     let mut cands: Vec<PathBuf> = Vec::new();
     if let Some(d) = gothic_xr_quest::knob("data") {
         cands.push(d.into());
+    }
+    // The whole-world pack (examples/pack_world.rs, a superset of the Ardea pack) wins when present; `world=0` forces
+    // the Ardea subset.
+    if gothic_xr_quest::knob("world").as_deref() != Some("0") {
+        cands.push("/sdcard/Android/data/dev.gothicreforged.questtest/files/world".into());
+        cands.push(".local/quest/world-pack".into());
     }
     cands.push("/sdcard/Android/data/dev.gothicreforged.questtest/files/ardea".into());
     cands.push(".local/quest/ardea-pack".into());
@@ -135,10 +174,15 @@ pub fn data_dir() -> Option<PathBuf> {
 }
 
 pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
-    let cache = Arc::new(Cache::open(dir)?);
-    let focus = Vec3::new(-START_GOTHIC[0], 0.0, START_GOTHIC[1]);
-    let r = knob_f32("radius", 25_000.0);
-    let c = START_GOTHIC;
+    let world_mode = dir.join("world.idx").is_file();
+    let cache = Arc::new(Cache::open(&dir)?);
+    let c = start_gothic();
+    let focus = Vec3::new(-c[0], 0.0, c[1]);
+    let r = if world_mode {
+        -1.0
+    } else {
+        knob_f32("radius", 25_000.0)
+    };
     let mut pending = Vec::new();
     for cx in ((c[0] - r) / 10_000.0).floor() as i32..=((c[0] + r) / 10_000.0).floor() as i32 {
         for cz in ((c[1] - r) / 10_000.0).floor() as i32..=((c[1] + r) / 10_000.0).floor() as i32 {
@@ -202,11 +246,15 @@ pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
     });
     let _ = world;
     crate::locomotion::init(app, Vec3::new(focus.x, 20_000.0, focus.z));
-    app.add_systems(Update, (stream_cells, report, update_lod));
+    if world_mode {
+        crate::world::install(app, &dir)?;
+    } else {
+        app.add_systems(Update, (stream_cells, report, update_lod));
+    }
     Ok(())
 }
 
-fn build_image(t: &TextureData) -> Option<(Image, Vec2)> {
+pub(crate) fn build_image(t: &TextureData) -> Option<(Image, Vec2)> {
     let h = t.header();
     #[cfg(not(target_os = "android"))]
     if let Some(r) = host_astc(t) {
@@ -445,7 +493,7 @@ impl Ardea {
         h
     }
 
-    fn qmaterial(
+    pub(crate) fn qmaterial(
         &mut self,
         id: u64,
         mats: &mut Assets<QuestMaterial>,
