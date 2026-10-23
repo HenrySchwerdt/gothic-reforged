@@ -71,3 +71,50 @@ frame. What it saves is CPU work per visible entity (extraction, shadow caster l
 3 cascades), and that only shows up on a real GPU, where the CPU side is the bottleneck.
 Without hysteresis, the same run showed p99 spikes of more than 600 ms. A software rasteriser (lavapipe) only shows that the bench
 runs and writes its report.
+
+## In the game (`--static-render`)
+
+Opt-in; without it the walk spawns and culls its props exactly as before. Glue:
+`apps/game/src/walk/cloud/statics.rs`, plus a one-line hook in `walk::spawn_pending` that marks
+the parts it routes.
+
+```sh
+cargo run --release -p gothic-reforged --features viewer -- --walk --static-render      # cluster + GPU culling
+cargo run --release -p gothic-reforged --features viewer -- --walk --static-render cluster
+GR_STATIC_RENDER=gpu cargo run --release -p gothic-reforged --features viewer -- --play
+```
+
+What is wired:
+
+* The world loader's static parts (`Static` and the merged small / mid / big batches; not
+  terrain, trees, ground cover or water, nor parts hidden by `GR_HIDE`) go into the crate's
+  `ClusterBvh` (64 per cluster). Each frame the clusters are tested against the player camera's
+  frustum (up to its far plane) and the caster volume of every cascade of the sun; clusters
+  outside all of them are hidden after 30 frames (shown again at once).
+* `gpu` (on by default): `NoCpuCulling` on the player camera, so Bevy's GPU preprocessing does
+  the per-instance frustum culling. This applies to everything that camera draws.
+* The props keep their `GothicMaterial`, their shared mesh / material handles (which is what
+  Bevy batches into multi-draw-indirect calls), their per-instance `VisibilityRange` (the
+  original small-object culling and LoD stages) and their shadow flags, so the culling rules
+  are unchanged: cluster culling only removes what no view or cascade can see.
+* While tiles stream in or out, the BVH is rebuilt at most every 30 frames; a prop that
+  arrived since the last rebuild stays visible until the next one.
+
+Not used: the crate's `StaticRenderPlugin` / `StaticMeshes` registry. It spawns its own
+entities with a `StandardMaterial` and one LoD table per mesh and cannot remove instances,
+whereas the walk streams tiles in and out, uses its own material and computes LoD ranges per
+placed instance. Routing the props through it would need a material-generic registry with
+per-instance ranges and removal.
+
+Not verified: the effect on real data. The issue's bench result (3.79 ms mean / 4.9 ms p99 at
+10k props on an RTX 3060 Ti) is the synthetic town, not the game. To re-measure, run the walk benchmark with and
+without the flag on the same machine and compare the JSON in `.local/bench/`:
+
+```sh
+cargo run --release -p gothic-reforged --features viewer -- --walk --bench 60 --bench-walk --bench-gpu --bench-name statics-off
+cargo run --release -p gothic-reforged --features viewer -- --walk --bench 60 --bench-walk --bench-gpu --bench-name statics-on --static-render
+GR_PROF=1 cargo run --release -p gothic-reforged --features viewer -- --walk --static-render   # + cluster stats every 10 s
+```
+
+With `GR_PROF` the log prints props, clusters, visible and shadow-only clusters, rebuilds and
+the cluster cull time per frame (`static-render: ...`).
