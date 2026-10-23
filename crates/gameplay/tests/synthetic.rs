@@ -395,3 +395,159 @@ fn friend_lines_need_fame_of_75() {
     let opt = Engine::with(&db, Assumptions::OPTIMISTIC);
     assert!(opt.check(&GameState::new(), id(&db, "F1"), "Fay").is_ok());
 }
+
+fn teaching_db() -> GameDatabase {
+    let infos = vec![
+        info(
+            "TEACH_STR",
+            "TrainerA",
+            "",
+            "Q1",
+            16,
+            3,
+            "",
+            "TeachAttrib=STR\r\nTeachAttribValue=1\r\n",
+            &[],
+        ),
+        info(
+            "TEACH_SWORD",
+            "TrainerA",
+            "",
+            "Q1",
+            16,
+            3,
+            "",
+            "TeachSkill=Skill_Sword\r\n",
+            &[],
+        ),
+        info(
+            "TEACH_DEX",
+            "TrainerB",
+            "",
+            "Q1",
+            16,
+            3,
+            "",
+            "TeachAttrib=DEX\r\nTeachAttribValue=1\r\n",
+            &[],
+        ),
+        info(
+            "TEACH_BOW",
+            "TrainerB",
+            "",
+            "Q1",
+            16,
+            3,
+            "",
+            "TeachSkill=Skill_Bow\r\n",
+            &[],
+        ),
+        info("RUNNING_ONLY", "TrainerA", "", "Q1", 7, 7, "", "", &[]),
+    ];
+    GameDatabase::from_parts(
+        vec![quest("Q1", 1, 0, "", "", "", "")],
+        infos,
+        strings(),
+        "German",
+    )
+    .unwrap()
+}
+
+#[test]
+fn teach_requires_exact_teacher_subject_but_not_running_quest_status() {
+    let db = teaching_db();
+    let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+    let mut st = GameState::new();
+    {
+        let a = st.npc_mut("TrainerA");
+        a.teach_enabled = Some(true);
+        a.teach_attribs.insert("str".into());
+        a.teach_skills.insert("skill_sword".into());
+    }
+    {
+        let b = st.npc_mut("TrainerB");
+        b.teach_enabled = Some(true);
+        b.teach_attribs.insert("dex".into());
+        b.teach_skills.insert("skill_bow".into());
+    }
+
+    // The dialog names an existing quest, but Teach itself has no status gate [GAME_RULES].
+    st.set_quest_status("Q1", QuestStatus::Open);
+    assert!(eng.check(&st, id(&db, "TEACH_STR"), "TrainerA").is_ok());
+    assert!(eng.check(&st, id(&db, "TEACH_SWORD"), "TrainerA").is_ok());
+    assert_eq!(
+        eng.check(&st, id(&db, "TEACH_STR"), "TrainerB"),
+        Err(Unmet::TeachNotOffered("STR".into()))
+    );
+    assert_eq!(
+        eng.check(&st, id(&db, "TEACH_BOW"), "TrainerA"),
+        Err(Unmet::TeachNotOffered("Skill_Bow".into()))
+    );
+    assert_eq!(
+        eng.check(&st, id(&db, "RUNNING_ONLY"), "TrainerA"),
+        Err(Unmet::QuestStatus {
+            quest: "Q1".into(),
+            have: QuestStatus::Open,
+            need: "Running",
+        })
+    );
+
+    st.set_quest_status("Q1", QuestStatus::Running);
+    st.hours = 2;
+    assert!(eng.check(&st, id(&db, "TEACH_STR"), "TrainerA").is_ok());
+    assert!(eng.check(&st, id(&db, "RUNNING_ONLY"), "TrainerA").is_ok());
+    st.skills.insert("skill_bow".into());
+    assert_eq!(
+        eng.check(&st, id(&db, "TEACH_BOW"), "TrainerB"),
+        Err(Unmet::SkillAlreadyLearned("Skill_Bow".into()))
+    );
+    st.npc_mut("TrainerA").teach_enabled = Some(false);
+    assert_eq!(
+        eng.check(&st, id(&db, "TEACH_STR"), "TrainerA"),
+        Err(Unmet::Flag("TeachEnabled"))
+    );
+}
+
+#[test]
+fn stale_teach_choice_is_refused_without_effects_and_menu_is_recomputed() {
+    let db = teaching_db();
+    let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+    let mut st = GameState::new();
+    st.npc_mut("TrainerA").teach_enabled = Some(true);
+    st.npc_mut("TrainerA").teach_attribs.insert("str".into());
+    st.npc_mut("TrainerA")
+        .teach_skills
+        .insert("skill_sword".into());
+    let (mut session, start) = eng.start(&mut st, "TrainerA");
+    assert!(start.refused.is_none());
+    let before = eng.menu(&st, &session);
+    let stale = before
+        .iter()
+        .find(|choice| choice.info == Some(id(&db, "TEACH_SWORD")))
+        .unwrap()
+        .clone();
+
+    // Another state change invalidates the displayed choice before it is submitted.
+    st.npc_mut("TrainerA").teach_skills.remove("skill_sword");
+    let after_external_change = st.clone();
+    let result = eng.choose(&mut st, &mut session, &stale);
+    assert_eq!(
+        result.refused.as_deref(),
+        Some("stale or unavailable dialog choice")
+    );
+    assert_eq!(
+        st, after_external_change,
+        "refusal must not consume or execute the info"
+    );
+    let refreshed = eng.menu(&st, &session);
+    assert!(
+        !refreshed
+            .iter()
+            .any(|choice| choice.info == Some(id(&db, "TEACH_SWORD")))
+    );
+    assert!(
+        refreshed
+            .iter()
+            .any(|choice| choice.info == Some(id(&db, "TEACH_STR")))
+    );
+}

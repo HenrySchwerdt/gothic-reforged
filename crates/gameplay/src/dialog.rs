@@ -375,6 +375,14 @@ impl<'a> Engine<'a> {
     /// Pick a menu entry.
     pub fn choose(&self, st: &mut GameState, s: &mut DialogSession, c: &Choice) -> ExecResult {
         let mut out = ExecResult::default();
+        // UI choices are snapshots. Revalidate against the current state and current level
+        // before execution: scripts or other gameplay can invalidate a displayed Teach (or
+        // any other conditional entry) while the menu is open.
+        if !self.menu(st, s).contains(c) {
+            self.refresh(st, s);
+            out.refused = Some("stale or unavailable dialog choice".into());
+            return out;
+        }
         let Some(id) = c.info else {
             s.ended = true;
             out.ended = true;

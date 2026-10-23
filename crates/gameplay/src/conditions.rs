@@ -79,6 +79,10 @@ pub enum Unmet {
     },
     NotNear(String),
     NotInParty(String),
+    /// The NPC does not offer this exact Teach subject.
+    TeachNotOffered(String),
+    /// The player already knows the skill offered by this info.
+    SkillAlreadyLearned(String),
     Overtime(String),
     TooSoon(String),
     NoChildren,
@@ -352,8 +356,19 @@ fn predicate(
         }
         Teach => {
             flag(npc.teach_enabled, assume, "TeachEnabled")?;
-            if !info.teach_skill.is_empty() && st.skills.contains(&norm(&info.teach_skill)) {
-                return Err(Unmet::Flag("skill already learned"));
+            if !info.teach_attrib.is_empty() {
+                let subject = norm(&info.teach_attrib);
+                if !npc.teach_attribs.contains(&subject) {
+                    return Err(Unmet::TeachNotOffered(info.teach_attrib.clone()));
+                }
+            } else if !info.teach_skill.is_empty() {
+                let subject = norm(&info.teach_skill);
+                if !npc.teach_skills.contains(&subject) {
+                    return Err(Unmet::TeachNotOffered(info.teach_skill.clone()));
+                }
+                if st.skills.contains(&subject) {
+                    return Err(Unmet::SkillAlreadyLearned(info.teach_skill.clone()));
+                }
             }
         }
         Trade => flag(npc.trade_enabled, assume, "TradeEnabled")?,
