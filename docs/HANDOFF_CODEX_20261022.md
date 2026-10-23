@@ -11,36 +11,38 @@ The user prioritized playability: Digit1 must draw the sword, actor gray rims,
 NPC/quest/teaching offer correctness, missing quests, and startup/input readiness.
 Do no further leaf/cosmetic work. No parity claim follows from earlier smokes.
 
-The current branch is `codex/renderer-stability`. The game source compiled for the
-candidate is commit `bc466d69b603f2d10e4cc517f0eb12a925bf780c`, pushed in draft
-integration PR77. Later commits `50eb6e3` (handoff only) and `ca1cebc` (dialog CLI
-inspection tool) do not change the game binary. The CLI changes are not linked into
-the viewer; their focused tests/build remain pending. PR77 is the existing draft;
-do not create a duplicate integration PR.
+The current branch is `codex/renderer-stability`. The latest game source compiled
+for candidate b5 is `0260a73` (`Preserve same-frame quickslot key taps`). Later
+commits `65af8f0` and `87e6dd7` document startup/save limits and update package
+instructions; they do not change the viewer source. `ca1cebc` adds a dialog CLI
+inspection command, which is not linked into the viewer and still needs its own
+focused validation. PR77 is the existing draft integration PR; do not create a
+duplicate.
 
-PR74, PR72, PR73, PR71, PR64, PR75, and PR76 are remotely merged. PR62, PR63,
-PR65, and PR66 are integrated in PR77, not yet merged into the remote continuation
-base. Local integration commits are `d4aece0`, `bd34732`, `8ba8970`, and `4731f89`,
+PR74, PR72, PR73, PR71, PR64, PR75 and PR76 are remotely merged. PR62, PR63,
+PR65 and PR66 are integrated locally in PR77 but are not yet merged remotely.
+Local integration commits are `d4aece0`, `bd34732`, `8ba8970` and `4731f89`,
 after engine continuation `2439f98` and PR75/76 base merge `c64a22e`.
 
 Validation passed:
 
 - `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-animation -p gothic-gameplay -p gothic-sim -p gothic-runtime`; log `.local/gameplay-integration/focused-tests-final.log`.
-- `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-reforged --features viewer -- --test-threads=1`; latest 54 passed on `bc466d6`, log `.local/gameplay-integration/viewer-readiness-tests-rerun.log`. Earlier 53-test log predates the startup gate.
+- `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-reforged --features viewer -- --test-threads=1`; 55 passed after the same-frame tap fix, log `.local/gameplay-integration/viewer-digit1-pulse-tests.log`. Earlier 54/53-test logs predate that fix/startup gate.
 
-One GNU release viewer build completed for `bc466d6` in 19m30s, exit 0. Command:
-`cargo +stable-x86_64-pc-windows-gnu build --release -j4 -p gothic-reforged --features viewer --locked`;
-target `D:/gr-build/integrate`, log `.local/gameplay-integration/release-viewer-build.log`.
-EXE SHA-256 is `adf926069e9db6bc86058a0abab6ef55169d0fd520908987b767717dc02f40ce`.
-The immutable local QA candidate is
-`.local/gameplay-integration/candidate-adf926069e9d/`; package runtime JSON was
-copied from the primary checkout read-only, and candidate saves are empty. Its
-`build-info.json` sees the later handoff commit `50eb6e3` and a dirty CLI-only file;
-`.local/gameplay-integration/candidate-adf926069e9d-compile-provenance.json` records
-the actual compiled game source and artifact mapping. This candidate is not a
-delivered package.
+The first GNU release build for `bc466d6` exited 0 in 19m30s; log
+`.local/gameplay-integration/release-viewer-build.log`. Its immutable private
+candidate is `.local/gameplay-integration/candidate-adf926069e9d/`, EXE SHA-256
+`adf926069e9db6bc86058a0abab6ef55169d0fd520908987b767717dc02f40ce`. The second
+incremental release build compiled `0260a73`, exited 0 in 9m56s, and is logged at
+`.local/gameplay-integration/release-viewer-digit1-pulse-build.log`. Its EXE SHA-256
+is `b5ffeb14807761cd6bb6217b4317bf7f13fb37a22496022788acf875a84deb4f`; the private
+package is `.local/gameplay-integration/candidate-b5ffeb148077/`. Runtime JSON was
+copied from the primary checkout read-only; both candidates have empty private save
+directories. The b5 compile mapping is recorded in
+`.local/gameplay-integration/candidate-b5ffeb148077-compile-provenance.json`.
+Neither candidate is a delivered package.
 
-On this candidate, root's `melee_quickslot` QA exited 0 with 6 assertions passed:
+On the first candidate, root's `melee_quickslot` QA exited 0 with 6 assertions passed:
 fresh hero HP 200, `hero_down=false`, ready state, slot 1 OrcSlayer equipped,
 Digit1 HoldRight clips, and visible right-hand mount. `melee_faithful` also exited
 0 with 15 assertions passed. These scripted scenarios do not prove native keyboard
@@ -51,11 +53,16 @@ the input-path cause is not established. The candidate must not be described as
 fixing Digit1 or ready for delivery. The close hero QA screenshots show no uniform
 gray rim on the player in those views; they do not establish the state of every actor.
 
-wind_stability is implementing a bounded input-edge fix and focused native-tap QA
-coverage in `controls.rs`/`qa/melee.rs`. Keep source frozen during the next build.
-After that patch, rerun viewer tests, build exactly one new release candidate,
-rerun both combat scenarios, and repeat native Digit1 input. Root owns game launches
-and screenshots. Do not overwrite the Desktop RenderPerf package or any saves.
+The same-frame input-edge fix unions `pressed` with `just_pressed` while enabled;
+its focused regression covers a same-frame tap, release, held key, and blocked/no
+replay. Scripted QA now emits press and release events in one frame. Candidate b5
+has not yet received a new scripted or native QA run. During the attempt to select
+its window, the user stopped Computer Use with a physical Escape key. The b5 process
+(PID 52564) may remain open; it was launched with `--play` from `C:\Windows\Temp`
+and `GR_RES=1280x720`, and received no native input. Do not control or close it.
+Therefore the input fix is not yet proven, and neither candidate is ready for
+delivery. Root owns all game launches and native input. Do not overwrite the Desktop
+RenderPerf package or any saves.
 That older package remains from `cb909ff3494e29f41533930190dd7fd9cbc46739`,
 EXE SHA-256 `8af2257ce156e49a4ac6486a5b32a6d22753830e6c71e8c2382bc5c8d14c6823`;
 it does not validate the merged source.
@@ -84,11 +91,19 @@ evidence supports changing that rule. The committed CLI `inspect` command expose
 Info owner/parent/quest/type/condition and rejection reasons without executing
 dialogue choices. Its focused tests/build remain pending.
 
-The TeachSkills empty-subject guard and regression test are included in commit
-`76fa16a`; its focused gameplay tests passed. The package README controls were
-corrected: Space/middle button draws or holsters, Alt/Numpad0 jumps, and 1–0 select
-quickslots. The earlier unconditional actor-rim fix is part of the integration;
-review it against the upcoming actor QA before describing the visual issue as fixed.
+The TeachSkills empty-subject guard and regression test are included in the
+integration; focused gameplay tests passed. Package instructions say Space/middle
+button draws or holsters, Alt/Numpad0 jumps, Shift walks, and 1–0 select quickslots.
+The actor-rim change still needs broader visual review; the first candidate’s close
+hero screenshots showed no uniform gray rim only in those views.
+
+The latest blocker is native Digit1 verification on candidate b5. Wait for root/user
+coordination before any further native control or game launch. Do not merge PR77 or
+claim Digit1 fixed until the new candidate passes the native tap check and relevant
+combat QA. Startup lifecycle gaps remain documented in
+`docs/research/STARTUP_LIFECYCLE_GAPS.md`: no-argument startup enters the active
+world, New Game is not implemented, and save-load yaw restoration is incomplete.
+There are no authorized builds or game runs pending from this checkpoint.
 
 ## Completed flutter-only probe
 
