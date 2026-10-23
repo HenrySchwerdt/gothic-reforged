@@ -46,6 +46,11 @@ These are instrumented diagnostic spans and frame timings, not shipping-performa
 are inclusive and must not be summed as disjoint costs. The trace run averages were 15.672 ms / GPU
 4.222 ms default and 6.535 ms / GPU 1.304 ms with the flag, so the large timing shift is not a valid
 release gain claim. The separate smoke-walk traveled 1642 cm versus 890 cm and is not workload parity.
+Source audit explains this limitation: smoke uses360 uncapped Update steps with each
+`time.delta_secs().min(0.1)`, but prints a literal "in6s" without accumulating stage-2
+elapsed time (`walk.rs` smoke stage2). Faster rendering can therefore integrate less
+simulated time in those360steps. Grounded360/360 is a step-count result; do not infer
+movement-speed differences from distance/6. The analytical camera benchmark avoids this driver.
 Release A/B and QA are pending on build source `cb909ff` (log
 `.local/pc-direct-render-release-build.log`): compare the same executable with
 `GR_NO_INDIRECT_DRAWING=0` reference and `=1` candidate, then inspect release images and run QA before
