@@ -1,3 +1,33 @@
+## Static dither fix delivered — 2026-10-23 00:50 UTC
+
+New package: `C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261023-DitherFix/`.
+The packaged EXE SHA-256 is `ec1fcc0688e64ddd09091702c84a6e11dafcba5d337e8f88eb627e0b52e9bf94`.
+Compiled source is `09332fc78a01005db5c2c42f6e57ee0dbae76abe` (release build
+8m13s, `.local/pc-static-dither-build-final.log`); package metadata separately
+records packaging HEAD `8023617999854f86d10b092091d8df04f09b5aa4`.
+
+At the same controlled overview pose and synthetic wind time, root inspected the
+new image and confirmed the previous white checker artifacts were gone. Package
+QA from `C:/Windows/Temp` passed melee13, magic9, bow15 (37 assertions total),
+with selected melee target active, unrelated active actors zero, and hero not down.
+Packaged walk smoke exited0 with grounded360/360. Evidence and child environment
+maps are in `.local/qa/static-dither-package/`; controlled two-shot images and
+logs are in `.local/qa/static-dither/`. Only renderer warning was the known
+nonfatal `Tonemapping::None` / `DebandDither::Enabled` notice. Package saves are
+empty; original game data and primary checkout were read-only.
+
+The first QA attempt on the unbundled immutable EXE from `C:/Windows/Temp`
+exited before gameplay because `.local/items.json` was not available in that
+working directory. This was a packaging prerequisite, not a gameplay failure.
+Packaging from the primary runtime supplied the required `.local` datasets, and
+the final packaged EXE passed all QA and smoke gates. No performance, APK, VR,
+or headset claim is made. Root independently verified the final EXE hash and
+reviewed both final packaged screenshots; delivery review is complete.
+No active own build/game/agent jobs remain. Earlier RUNNING notes are history.
+Quota was91%used at00:38UTC, reset03:15:16UTC; preserve remaining reserve and avoid
+new build/analysis cycles before reset unless user action or failure requires it.
+Heartbeat stays active for unfinished leaf fidelity/VR/performance work; stay quiet
+on unchanged state. Do not repeat this successful build/QA or claim full game parity.
 # Gothic Reforged - Codex continuation, 2026-10-22
 
 ## Active follow-up — 2026-10-23 00:35 UTC

@@ -101,3 +101,23 @@ changed for these captures. If necessary the next source probe should retain
 entity transform/part kind, geometry/resource provenance, material/layer identity
 and a0 absence reason, together with the actual depth/pipeline state.
 Current `GR_DUMP` is restricted near `(40,40)` and is not general attribution.
+
+## Resolution in the static depth-dither build — 2026-10-23
+
+The follow-up static dither fix is compiled in source `09332fc` and packaged in
+`GothicReforged-Codex-20261023-DitherFix` (EXE SHA-256
+`ec1fcc0688e64ddd09091702c84a6e11dafcba5d337e8f88eb627e0b52e9bf94`). The
+controlled overview at the same pose and synthetic wind time no longer shows
+the previously visible checker artifacts; root inspected the actual image.
+The mechanism is the missing colorless fragment stage for opaque visibility
+range dither in the depth prepass, while preserving inherited shader definitions
+and matching alpha-test behavior to F_MASK. Both changes shipped together; the
+comparison does not separately quantify each change's contribution. This is
+evidence for the fix in the checked scene, not
+a claim about every material or scene.
+
+The packaged EXE passed melee/magic/bow QA (13/9/15) and a 360/360 grounded
+walk smoke. Logs/screenshots are under `.local/qa/static-dither-package/` and
+`.local/qa/static-dither/`. An initial run of the unbundled EXE failed to find
+runtime `.local/items.json` from Temp; packaging supplied the runtime data and
+the final packaged QA then passed. No performance or VR validation was done.
