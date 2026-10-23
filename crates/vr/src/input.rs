@@ -144,6 +144,10 @@ pub struct ControllerState {
     pub pose: Option<Pose>,
     /// Linear velocity reported by the runtime (m/s, tracking space), if any.
     pub linear_velocity: Option<Vec3>,
+    /// Angular velocity reported by the runtime (rad/s as a scaled axis, tracking space), if
+    /// any.
+    #[serde(default)]
+    pub angular_velocity: Option<Vec3>,
     /// 0..1.
     pub trigger: f32,
     /// 0..1.
@@ -199,6 +203,9 @@ impl XrFrame {
             }
             if h.linear_velocity.is_some_and(|v| !v.is_finite()) {
                 h.linear_velocity = None;
+            }
+            if h.angular_velocity.is_some_and(|v| !v.is_finite()) {
+                h.angular_velocity = None;
             }
             let fin = |v: f32| if v.is_finite() { v } else { 0.0 };
             h.trigger = fin(h.trigger).clamp(0.0, 1.0);
@@ -305,6 +312,33 @@ impl VrInput {
             _ => Vec3::ZERO,
         }
     }
+
+    /// Hand angular velocity in tracking space (scaled axis, rad/s): the runtime's value, else
+    /// the rotation between the last two frames.
+    pub fn hand_angular_velocity(&self, hand: Hand, dt: f32) -> Vec3 {
+        let c = self.current.hand(hand);
+        if let Some(w) = c.angular_velocity {
+            return w;
+        }
+        match (c.pose, self.previous.hand(hand).pose) {
+            (Some(a), Some(b)) if dt > 0.0 => rotation_between(b.rotation, a.rotation) / dt,
+            _ => Vec3::ZERO,
+        }
+    }
+}
+
+/// Shortest rotation from `from` to `to` as a scaled axis (radians).
+pub fn rotation_between(from: Quat, to: Quat) -> Vec3 {
+    let mut d = to * from.inverse();
+    if d.w < 0.0 {
+        d = -d;
+    }
+    let (axis, angle) = d.normalize().to_axis_angle();
+    if angle.is_finite() && axis.is_finite() {
+        axis * angle
+    } else {
+        Vec3::ZERO
+    }
 }
 
 /// Radial deadzone with rescaling so the output still reaches 1.
@@ -388,6 +422,27 @@ mod tests {
         i.push(at(0.1));
         assert!((i.hand_velocity(Hand::Right, 0.1) - Vec3::X).length() < 1e-5);
         assert_eq!(i.hand_velocity(Hand::Left, 0.1), Vec3::ZERO);
+    }
+
+    #[test]
+    fn angular_velocity_from_runtime_or_difference() {
+        let mut i = VrInput::new();
+        let at = |a: f32| {
+            frame_with(|f| {
+                f.hand_mut(Hand::Right).pose = Some(Pose::new(Vec3::ZERO, Quat::from_rotation_y(a)))
+            })
+        };
+        i.push(at(0.0));
+        i.push(at(0.2));
+        let w = i.hand_angular_velocity(Hand::Right, 0.1);
+        assert!((w - Vec3::Y * 2.0).length() < 1e-4, "{w}");
+        let mut f = at(0.2);
+        f.hand_mut(Hand::Right).angular_velocity = Some(Vec3::X * 5.0);
+        i.push(f);
+        assert_eq!(i.hand_angular_velocity(Hand::Right, 0.1), Vec3::X * 5.0);
+        // Broken runtime values are dropped.
+        f.hand_mut(Hand::Right).angular_velocity = Some(Vec3::NAN);
+        assert_eq!(f.sanitized(&f).hand(Hand::Right).angular_velocity, None);
     }
 
     #[test]

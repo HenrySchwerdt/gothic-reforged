@@ -150,7 +150,30 @@ pub struct WeaponMotion<'a> {
     pub wielder: Option<u64>,
     pub prev: Pose,
     pub cur: Pose,
+    /// Pose one step before `prev`, if known. Weapons collide with bodies and other weapons, so
+    /// by the time a contact is seen the collider may already have braked the blade within the
+    /// step; the impact speed then comes from the faster of the two steps.
+    pub before: Option<Pose>,
     pub profile: &'a MeleeProfile,
+}
+
+impl WeaponMotion<'_> {
+    /// Velocity of the weapon-frame point `local` over the step (or the step before, if that was
+    /// faster).
+    fn point_velocity(&self, local: Vec3, dt: f32) -> Vec3 {
+        let now = (self.cur.transform_point(local) - self.prev.transform_point(local)) / dt;
+        match self.before {
+            Some(b) => {
+                let then = (self.prev.transform_point(local) - b.transform_point(local)) / dt;
+                if then.length_squared() > now.length_squared() {
+                    then
+                } else {
+                    now
+                }
+            }
+            None => now,
+        }
+    }
 }
 
 /// One body's hitzones at the start and end of the step (same order and length).
@@ -191,8 +214,8 @@ pub enum ClashKind {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MeleeEvent {
     Hit(HitEvent),
-    /// Two weapons met. `attacker_impulse` is the velocity change (m/s) to apply to the
-    /// attacking weapon at `point` to deflect it.
+    /// Two weapons met. `attacker_impulse` is an extra velocity change (m/s) for the attacking
+    /// weapon at `point`, on top of what the rigid contact between the blades already does.
     Clash {
         kind: ClashKind,
         attacker_weapon: u64,
@@ -241,6 +264,9 @@ pub struct MeleeSettings {
     pub deflect: f32,
     /// Pulled sideways further than this (m) from the wound axis, a stuck blade rips out.
     pub rip_distance: f32,
+    /// Hitzones count this much (m) thicker for detection, so a blade that the body's collider
+    /// stops right at its surface still registers.
+    pub contact_skin: f32,
 }
 
 impl Default for MeleeSettings {
@@ -248,14 +274,19 @@ impl Default for MeleeSettings {
         Self {
             edge_alignment: 0.5,
             flat_quality: 0.35,
-            stab_alignment: 0.75,
+            // About 25 degrees: a blade coming in at a slant glances off (it hits the body's
+            // collider) instead of sliding in.
+            stab_alignment: 0.9,
             rehit_cooldown: 0.25,
             clash_min_speed: 1.0,
             parry_speed: 2.0,
             block_recoil: 0.35,
             parry_recoil: 0.8,
-            deflect: 1.3,
+            // The rigid contact between the blades does the deflecting; this only adds a small
+            // kick so a block reads clearly (see `MeleeEvent::Clash`).
+            deflect: 0.3,
             rip_distance: 0.12,
+            contact_skin: 0.02,
         }
     }
 }
@@ -421,8 +452,7 @@ impl MeleeWorld {
                 }
                 let vel = |w: &WeaponMotion| {
                     let at = lerp_pose(&w.prev, &w.cur, t);
-                    let local = at.inverse().transform_point(point);
-                    (w.cur.transform_point(local) - w.prev.transform_point(local)) / dt
+                    w.point_velocity(at.inverse().transform_point(point), dt)
                 };
                 let (va, vb) = (vel(a), vel(b));
                 if va.length().max(vb.length()) < s.clash_min_speed {
@@ -537,7 +567,7 @@ impl MeleeWorld {
                                 st.radius,
                                 z0,
                                 z1,
-                                z.radius,
+                                z.radius + s.contact_skin,
                             ) {
                                 if first.is_none() {
                                     first = Some((t, point, normal));
@@ -571,7 +601,7 @@ impl MeleeWorld {
                 let st = &w.profile.strikers[si];
                 let at = lerp_pose(&w.prev, &w.cur, t);
                 let local = at.inverse().transform_point(point);
-                let v_weapon = (w.cur.transform_point(local) - w.prev.transform_point(local)) / dt;
+                let v_weapon = w.point_velocity(local, dt);
                 let zp = &body.prev[zi];
                 let zc = &body.cur[zi];
                 let v_zone = (zc.pose.position - zp.pose.position) / dt;
@@ -600,7 +630,8 @@ impl MeleeWorld {
                         let along = dir.dot(axis);
                         let tip = at.transform_point(st.b);
                         // Only the tip stabs; a point striker touched elsewhere is ignored.
-                        if along >= s.stab_alignment && tip.distance(point) <= st.radius + zc.radius
+                        if along >= s.stab_alignment
+                            && tip.distance(point) <= st.radius + zc.radius + s.contact_skin
                         {
                             (DamageType::Point, speed_q * along, true)
                         } else {
