@@ -17,6 +17,8 @@ pub struct Physics {
     pub snap_deg: f32,
     snap_armed: bool,
     pub jump_prev: bool,
+    /// Steps undone by the no-void guard (diagnostics, logged with [loco]).
+    pub void_reverts: u32,
     pub aligned_recenters: u32,
     pub worn: bool,
     pub frames: u32,
@@ -40,6 +42,7 @@ impl Physics {
             snap_deg: 30.0,
             snap_armed: true,
             jump_prev: false,
+            void_reverts: 0,
             aligned_recenters: 0,
             worn: false,
             frames: 0,
@@ -230,7 +233,7 @@ fn locomote(
 
     if phys.frames % 72 == 0 {
         info!(
-            "[loco] left_stick=({:.2},{:.2}) right_stick=({:.2},{:.2}) squeeze=({:.2},{:.2}) ready={} grounded={} pos_cm=({:.0},{:.0},{:.0})",
+            "[loco] left_stick=({:.2},{:.2}) right_stick=({:.2},{:.2}) squeeze=({:.2},{:.2}) ready={} grounded={} void_reverts={} pos_cm=({:.0},{:.0},{:.0})",
             left.x,
             left.y,
             right.x,
@@ -239,6 +242,7 @@ fn locomote(
             frame.hands[1].squeeze,
             phys.ready,
             player.ctrl.grounded,
+            phys.void_reverts,
             player.ctrl.position.x,
             player.ctrl.position.y,
             player.ctrl.position.z
@@ -256,6 +260,14 @@ fn locomote(
         } else {
             Vec3::ZERO
         };
+        // VR comfort (design decision, not an original value): the original jump (600 cm/s take-off, 981 cm/s^2
+        // scene gravity, ~1.8 m apex in ~1.2 s) reads rushed with the head riding along. `jump_time` stretches the
+        // airtime by that factor at the SAME apex height: gravity / t^2, take-off / t. Default 2 (user, 2026-10-23).
+        {
+            let t = gothic_xr_quest::knob_f32("jump_time", 2.0).clamp(1.0, 3.0);
+            player.ctrl.config.gravity = 981.0 / (t * t);
+            player.ctrl.config.jump_velocity = 600.0 / t;
+        }
         let a = frame.hands[1].primary;
         let jump = a && !phys.jump_prev;
         phys.jump_prev = a;
@@ -285,13 +297,19 @@ fn locomote(
             // Collision for that spot is not resident (edge of the streamed area, or a cell still loading): never
             // fall into the void. Undo the move like an invisible wall and keep the character standing.
             let p = ctrl.position;
+            // Never during a jump or while rising: on device this guard cut every jump short ("100x gravity") and
+            // reverted walking steps (18 cm/s at full stick) whenever the ground probe missed.
             if was_grounded
+                && !jump
+                && ctrl.vertical_speed <= 0.0
                 && !ctrl.grounded
                 && world.0.ground_below(p + Vec3::Y * 150.0, 2_500.0).is_none()
+                && world.0.ground_below(prev + Vec3::Y * 150.0, 2_500.0).is_some()
             {
                 ctrl.position = prev;
                 ctrl.vertical_speed = 0.0;
                 ctrl.grounded = true;
+                phys.void_reverts += 1;
             }
             phys.disp_a = phys.disp_b;
             phys.disp_b = player.ctrl.position;

@@ -153,6 +153,8 @@ pub struct Archer {
     pub bow: BowSpec,
     pub arrow: ArrowSpec,
     pub quiver: Quiver,
+    /// Gripping at the string with the free hand nocks an arrow without the quiver.
+    pub auto_nock: bool,
     pub state: ArcherState,
     /// Nocking distance, m.
     pub nock_radius: f32,
@@ -167,6 +169,7 @@ impl Default for Archer {
             bow: BowSpec::default(),
             arrow: ArrowSpec::default(),
             quiver: Quiver::default(),
+            auto_nock: false,
             state: ArcherState::Idle,
             nock_radius: 0.1,
             nock_lead_radius: 0.15,
@@ -271,6 +274,18 @@ impl Archer {
                     let holds_bow = input.bow.is_some_and(|(_, h)| h == hand);
                     if !pressed(i) || holds_bow || input.busy[i] {
                         continue;
+                    }
+                    // Auto-nock (opt-in): gripping at the string of the bow held in the other hand nocks an arrow
+                    // straight away, no quiver trip needed.
+                    if self.auto_nock
+                        && let (Some((bow, bow_hand)), Some(p)) = (input.bow, input.hands[i])
+                        && bow_hand != hand
+                        && p.position.distance(bow.transform_point(self.bow.string_rest)) <= self.nock_radius
+                    {
+                        self.state = ArcherState::Nocked { hand, draw: 0.0 };
+                        out.push(ArcherEvent::TookArrow(hand));
+                        out.push(ArcherEvent::Nocked);
+                        break;
                     }
                     if let Some(p) = input.hands[i]
                         && p.position.distance(self.quiver.center(&input.head, hand))

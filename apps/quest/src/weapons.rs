@@ -41,6 +41,7 @@ pub struct WeaponsPlugin;
 
 impl Plugin for WeaponsPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(Update, tick_just_drawn);
         app.add_systems(
             Update,
             (
@@ -69,6 +70,7 @@ fn tune_archery(mut commands: Commands, archery: Option<ResMut<gothic_vr_archery
         a.archer.quiver.radius = 0.26;
         a.archer.quiver.offset = Vec3::new(0.12, -0.12, 0.16);
         a.archer.nock_radius = 0.14;
+        a.archer.auto_nock = gothic_xr_quest::knob("auto_nock").as_deref() != Some("0");
     }
     let _ = &mut commands;
 }
@@ -213,7 +215,7 @@ fn holster_pin(
                     .map_or(Quat::IDENTITY, |g| g.rotation.inverse());
             lv.0 = Vec3::ZERO;
             av.0 = Vec3::ZERO;
-            commands.entity(e).remove::<Holstered>();
+            commands.entity(e).remove::<Holstered>().insert(JustDrawn(0.6));
             gothic_xr_quest::alog(&format!("draw {} with {:?}", home.slot, h.hand));
             continue;
         }
@@ -231,14 +233,16 @@ fn holster_return(
     player: Option<Res<VrPlayer>>,
     body: Option<Res<VrBody>>,
     head: Query<&Transform, (With<XrHead>, Without<HolsterHome>)>,
-    props: Query<(Entity, &HolsterHome, &Held, &Transform), Without<Holstered>>,
+    props: Query<(Entity, &HolsterHome, &Held, &Transform, Option<&JustDrawn>), Without<Holstered>>,
 ) {
     let (Some(player), Ok(head)) = (player, head.single()) else {
         return;
     };
     let frame = BodyFrame::new(head, player.ctrl.position / 100.0, body.as_deref());
-    for (e, home, held, t) in &props {
-        if held.count() > 0 {
+    for (e, home, held, t, just) in &props {
+        // Right after drawing the physics grab attaches a frame later: re-holstering in between made the bow
+        // flicker between hands and holster (device log: four draws in 250 ms).
+        if held.count() > 0 || just.is_some() {
             continue;
         }
         let (a, radius) = zone(&frame, home.slot);
@@ -864,6 +868,19 @@ fn bow_draw_pose(
             if let Ok(mut jt) = joints.get_mut(*e) {
                 *jt = t;
             }
+        }
+    }
+}
+
+/// Grace period after a holster draw (seconds left) during which the weapon is not re-holstered.
+#[derive(Component)]
+struct JustDrawn(f32);
+
+fn tick_just_drawn(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut JustDrawn)>) {
+    for (e, mut j) in &mut q {
+        j.0 -= time.delta_secs();
+        if j.0 <= 0.0 {
+            commands.entity(e).remove::<JustDrawn>();
         }
     }
 }

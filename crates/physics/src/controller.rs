@@ -1043,6 +1043,21 @@ mod tests {
     }
 
     #[test]
+    fn vr_analog_stick_per_frame_reaches_sprint() {
+        // VR feeds a slightly different analog wish every frame (stick noise) at 60-72 Hz.
+        let w = flat();
+        let mut c = controller(Vec3::ZERO);
+        run(&mut c, &w, Vec3::ZERO, 0.5);
+        let x0 = c.position.x;
+        for i in 0..90 {
+            let n = if i % 2 == 0 { 0.97 } else { 0.96 };
+            c.step(&w, Vec3::new(600.0 * n, 0.0, 6.0 * (i % 3) as f32), false, 1.0 / 60.0);
+        }
+        let travelled = c.position.x - x0;
+        assert!(travelled > 500.0, "travelled only {travelled} cm in 1.5 s");
+    }
+
+    #[test]
     fn sprint_cannot_exceed_fast_modifier() {
         let w = flat();
         let mut c = controller(Vec3::ZERO);
