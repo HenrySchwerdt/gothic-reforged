@@ -370,7 +370,6 @@ pub fn walk_to_reddock() -> Sc {
         if cx.t > 170.0 {
             cx.note("walk timed out: continuing from where the hero stands");
             cx.key_up(KeyCode::KeyW);
-            cx.key_up(KeyCode::ShiftLeft);
             return Poll::Done;
         }
         cx.walk_to(goal, 900.0, true)
@@ -500,7 +499,6 @@ pub fn world_walk() -> Sc {
             let goal = centroid(cx, &[doc]).unwrap_or(Vec3::ZERO);
             if cx.t > 25.0 {
                 cx.key_up(KeyCode::KeyW);
-                cx.key_up(KeyCode::ShiftLeft);
                 return Poll::Done;
             }
             let _ = cx.walk_to(goal, 300.0, true);

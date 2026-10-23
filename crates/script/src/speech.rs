@@ -41,6 +41,7 @@ fn pick3(host: &mut dyn ScriptHost, lines: [&'static str; 3]) -> &'static str {
 
 /// Port of `IsBig` (S:57de0): trolls, trexes and dragons.
 pub fn is_big(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_big");
     let species = host.species(e);
     species == Species::Troll || species == Species::Trex || species.raw() == 52
 }
@@ -51,6 +52,7 @@ pub fn is_big(host: &dyn ScriptHost, e: EntityId) -> bool {
 /// died get "Victory", knocked-down ones a line that depends on why the fight started; monsters
 /// get the "MonsterKilled" family.
 pub fn start_say_attack_end(host: &mut dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_attack_end");
     if !is_humanoid(host, other) {
         let key = if is_big(host, other) {
             "BigMonsterKilled"
@@ -90,6 +92,7 @@ pub fn start_say_attack_end(host: &mut dyn ScriptHost, npc: EntityId, other: Ent
 /// always says "IGetYouStill"; otherwise the line follows the attack reason, with separate
 /// choices for monsters.
 pub fn start_say_attack_reason(host: &mut dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_attack_reason");
     if is_upset(host, npc, other) {
         return say(host, npc, "IGetYouStill");
     }
@@ -140,6 +143,7 @@ pub fn start_say_attack_reason(host: &mut dyn ScriptHost, npc: EntityId, other: 
 /// Port of `StartSayDefeatComment` (S:51040): a bystander comments on a knocked-out fighter.
 /// Only fights the bystander is not part of get a remark, and then only 30% of the time.
 pub fn start_say_defeat_comment(host: &mut dyn ScriptHost, npc: EntityId, loser: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_defeat_comment");
     if host.random(10) > 7 {
         return false;
     }
@@ -168,6 +172,7 @@ pub fn start_say_defeat_comment(host: &mut dyn ScriptHost, npc: EntityId, loser:
 
 /// Port of `StartSayConfirm` (S:51680): party members have three variants, everybody else "Sure".
 pub fn start_say_confirm(host: &mut dyn ScriptHost, npc: EntityId, _other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_confirm");
     let key = if host.has_svm_sample(npc, "NPCParty") {
         pick3(host, ["Confirm_00", "Confirm_01", "Confirm_02"])
     } else {
@@ -179,6 +184,7 @@ pub fn start_say_confirm(host: &mut dyn ScriptHost, npc: EntityId, _other: Entit
 /// Port of `StartSayFollow` (S:518f0): the companion's reaction to "follow me" (only when the
 /// player gives the order).
 pub fn start_say_follow(host: &mut dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_follow");
     if host.player() != other {
         return false;
     }
@@ -193,6 +199,7 @@ pub fn start_say_holding_position(
     npc: EntityId,
     _other: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("start_say_holding_position");
     let sure = !host.has_svm_sample(npc, "NPCParty")
         || host.party_member_type(npc) == PartyMemberType::Slave;
     say(host, npc, if sure { "Sure" } else { "PartyWait" })
@@ -202,6 +209,7 @@ pub fn start_say_holding_position(
 /// says `_00`; afterwards the counter moves to 0 or 2 (or 1/2 right after the first) by a coin
 /// flip so that the same grunt rarely repeats.
 pub fn start_say_aargh(host: &mut dyn ScriptHost, npc: EntityId, _other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_aargh");
     let counter = host.voice_counter(VoiceCounter::Aargh);
     let roll = host.random(100);
     let (key, next) = match counter {
@@ -255,6 +263,7 @@ fn next_refuse(host: &mut dyn ScriptHost) -> u32 {
 /// rotates through three refusals (what they are busy with, a polite excuse, a brush-off).
 /// The second and third steps depend on whether the NPC likes the player [I].
 pub fn start_say_refuse_talk(host: &mut dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_refuse_talk");
     if host.ai_mode(npc) == AiMode::Sleep {
         return say(host, npc, "SleepRefuse");
     }
@@ -286,6 +295,7 @@ pub fn start_say_refuse_talk(host: &mut dyn ScriptHost, npc: EntityId, other: En
 /// refuses to talk; after a theft the three steps are "DontStealAnything", "TheftRefuse",
 /// "GetLost", otherwise "LeaveMeAlone", "AngryRefuse", "GetLost".
 pub fn start_say_crime_refuse(host: &mut dyn ScriptHost, npc: EntityId, _other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_crime_refuse");
     let theft = host.last_player_crime(npc) == PlayerCrime::Theft;
     let key = match (next_refuse(host), theft) {
         (0, true) => "DontStealAnything",
@@ -302,6 +312,7 @@ pub fn start_say_crime_refuse(host: &mut dyn ScriptHost, npc: EntityId, _other: 
 /// ("NoFriendOfORC", ..., "No" for none), in a plain zone it is "NoFriendOfEnclave"; then
 /// "DontDisturbMe" and "GetLost".
 pub fn start_say_zone_refuse(host: &mut dyn ScriptHost, npc: EntityId, _other: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_zone_refuse");
     use crate::enums::SecurityLevel;
     let zone = host.zone(npc);
     let strict = zone.is_some() && host.zone_security(zone) == SecurityLevel::Enclave;
@@ -327,12 +338,14 @@ pub fn start_say_zone_refuse(host: &mut dyn ScriptHost, npc: EntityId, _other: E
 
 /// Port of `StartSayDoesntWork` (S:6f660): the player's grunt when an object cannot be used.
 pub fn start_say_doesnt_work(host: &mut dyn ScriptHost, speaker: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_doesnt_work");
     let key = pick3(host, ["DoesntWork_00", "DoesntWork_01", "DoesntWork_02"]);
     say(host, speaker, key)
 }
 
 /// Port of `StartSayNothingToGet` (S:6f560): the player's comment on an emptied container.
 pub fn start_say_nothing_to_get(host: &mut dyn ScriptHost, speaker: EntityId) -> bool {
+    gothic_portcov::hit!("start_say_nothing_to_get");
     let key = pick3(
         host,
         ["NothingToGet_00", "NothingToGet_01", "NothingToGet_02"],
@@ -345,6 +358,7 @@ pub fn start_say_nothing_to_get(host: &mut dyn ScriptHost, speaker: EntityId) ->
 /// Port of `HasCrimeRefuse` (S:bd1e0): an enclave member of the personal type that knows about a
 /// crime of the player will not talk.
 pub fn has_crime_refuse(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("has_crime_refuse");
     host.enclave(npc).is_some()
         && host.npc_type(npc) == NpcType::Personal
         && host.last_player_crime(npc) != PlayerCrime::None
@@ -375,6 +389,7 @@ pub fn assess_talk(
     talker: EntityId,
     has_info: bool,
 ) -> TalkOutcome {
+    gothic_portcov::hit!("assess_talk");
     let player = host.player();
     let player_started = talker == player;
     if host.has_status(npc, crate::damage::STATUS_FROZEN) {
@@ -473,6 +488,7 @@ pub fn boss_news_level(crimes: i32) -> u8 {
 /// level 3 the boss declares revolution: the plan's last element tells the caller to set the
 /// political player-crime flag, notify the enclave (mode 1) and attack with reason Revolution.
 pub fn boss_news_plan(crimes: i32) -> (Vec<NewsLine>, bool) {
+    gothic_portcov::hit!("boss_news_plan");
     let level = boss_news_level(crimes);
     let mut lines = vec![npc_line("BadNews")];
     match level {
@@ -516,6 +532,7 @@ pub fn boss_news_finish(host: &mut dyn ScriptHost, boss: EntityId) {
 /// when the player had something to say) is "No" after the first question and "Interrupted"
 /// after the accusation [I].
 pub fn crime_investigation_plan(crime: u32, step: u32) -> Vec<NewsLine> {
+    gothic_portcov::hit!("crime_investigation_plan");
     let first = match (crime, step) {
         (1, 1) => "DoYouKnowSomething",
         (1, 2) => "BetYouAreResponsible",
@@ -540,6 +557,7 @@ pub fn crime_investigation_plan(crime: u32, step: u32) -> Vec<NewsLine> {
 /// verdict "WeObserveYou". The answer options are the dialog keys `DIA_BRIBE` (a light crime,
 /// first offence), `DIA_EXCUSE` and `DIA_PROVOKE`. Returns the lines and the option keys.
 pub fn guard_news_plan(murders: i32, thefts: i32) -> (Vec<NewsLine>, Vec<&'static str>) {
+    gothic_portcov::hit!("guard_news_plan");
     let mut lines = vec![npc_line("Halt")];
     if murders > 0 {
         lines.push(npc_line("KnownMurder"));

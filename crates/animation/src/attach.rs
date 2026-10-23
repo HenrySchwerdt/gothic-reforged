@@ -46,6 +46,7 @@ impl<E: Copy + PartialEq> AttachmentSet<E> {
     /// attachment of the same entity is removed first, then the new one is appended, so adding
     /// twice never duplicates and the last bone wins.
     pub fn add(&mut self, entity: E, bone: &str, offset: Option<Affine3A>) {
+        gothic_portcov::hit!("add");
         self.remove(entity);
         self.persistent.push(Attachment {
             entity,
@@ -61,6 +62,7 @@ impl<E: Copy + PartialEq> AttachmentSet<E> {
     ///
     /// [`add`]: AttachmentSet::add
     pub fn add_once(&mut self, entity: E, bone: &str) {
+        gothic_portcov::hit!("add_once");
         // The original only searches the persistent list here.
         self.remove(entity);
         self.once.push(Attachment {
@@ -74,6 +76,7 @@ impl<E: Copy + PartialEq> AttachmentSet<E> {
     /// Port of eCVisualAnimation_PS::RemoveAttachment (Engine:0x10030e20): removes the
     /// persistent attachment of `entity`, keeping the order of the others.
     pub fn remove(&mut self, entity: E) -> bool {
+        gothic_portcov::hit!("remove");
         match self.persistent.iter().position(|a| a.entity == entity) {
             Some(i) => {
                 self.persistent.remove(i);
@@ -85,6 +88,7 @@ impl<E: Copy + PartialEq> AttachmentSet<E> {
 
     /// Port of eCVisualAnimation_PS::RemoveOnceAttachment (Engine:0x10030fe0).
     pub fn remove_once(&mut self, entity: E) -> bool {
+        gothic_portcov::hit!("remove_once");
         match self.once.iter().position(|a| a.entity == entity) {
             Some(i) => {
                 self.once.remove(i);
@@ -96,17 +100,20 @@ impl<E: Copy + PartialEq> AttachmentSet<E> {
 
     /// Port of ClearAttachments (Engine:0x10030bc0).
     pub fn clear(&mut self) {
+        gothic_portcov::hit!("clear");
         self.persistent.clear();
     }
 
     /// Port of ClearOnceAttachments (Engine:0x10030cb0).
     pub fn clear_once(&mut self) {
+        gothic_portcov::hit!("clear_once");
         self.once.clear();
     }
 
     /// Port of RelinkAttachments (Engine:0x10031110): forgets the cached bone nodes (the
     /// skeleton changed, for instance after a head was attached).
     pub fn relink(&mut self) {
+        gothic_portcov::hit!("relink");
         for a in self.persistent.iter_mut().chain(&mut self.once) {
             a.node = None;
         }
@@ -140,6 +147,7 @@ impl<E: Copy + PartialEq> AttachmentSet<E> {
         node_world: impl Fn(u16) -> Affine3A,
         is_valid: impl Fn(E) -> bool,
     ) -> ProcessResult<E> {
+        gothic_portcov::hit!("process");
         let mut result = ProcessResult {
             placed: Vec::new(),
             missing_bone: Vec::new(),

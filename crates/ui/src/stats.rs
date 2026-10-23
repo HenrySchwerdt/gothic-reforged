@@ -110,6 +110,7 @@ pub fn item_rows(
     against: Option<&ItemInfo>,
     in_inventory: Option<u32>,
 ) -> Vec<StatRow> {
+    gothic_portcov::hit!("item_rows");
     let mut rows = Vec::new();
     if let Some((amount, ty)) = damage_of(ctx, info) {
         let mut r = StatRow::new(damage_label(ctx, &ty), amount, Tone::Normal);

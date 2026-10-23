@@ -35,6 +35,7 @@ impl ColorScale {
     /// Port of `eCColorScale::CalcValue` (Engine.dll:0x1015f2b0): linear interpolation between
     /// neighbouring keys, clamped to the first/last key outside the range; an empty scale is 1.
     pub fn at(&self, t: f32) -> [f32; 4] {
+        gothic_portcov::hit!("at");
         let Some((i, j, f)) = segment(self.keys.iter().map(|k| k.0), t) else {
             return [1.0; 4];
         };
@@ -46,6 +47,7 @@ impl ColorScale {
 impl FloatScale {
     /// Port of `eCFloatScale::CalcValue`: same interpolation as [`ColorScale::at`].
     pub fn at(&self, t: f32) -> f32 {
+        gothic_portcov::hit!("at@2");
         let Some((i, j, f)) = segment(self.keys.iter().map(|k| k.0), t) else {
             return 1.0;
         };

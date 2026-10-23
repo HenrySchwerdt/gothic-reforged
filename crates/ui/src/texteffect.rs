@@ -193,6 +193,7 @@ impl ScreenOutput {
     /// Port of gCScreenOutputCtrl::PrintScreen (Game:0x10077630): replace the text, show the
     /// window and start the timer.
     pub fn print(&mut self, text: &str, color: Color, seconds: f32) {
+        gothic_portcov::hit!("print");
         self.lines = text
             .split('\n')
             .map(|l| {
@@ -206,23 +207,27 @@ impl ScreenOutput {
 
     /// Port of gCScreenOutputCtrl::PrintScreenEnd (Game:0x10077610).
     pub fn print_end(&mut self) {
+        gothic_portcov::hit!("print_end");
         self.visible = false;
     }
 
     /// Port of gCScreenOutputCtrl::PrintScreen_Quest_Success (Game:0x10077c20): the quest
     /// title in white.
     pub fn quest_success(&mut self, title: &str, seconds: f32) {
+        gothic_portcov::hit!("quest_success");
         self.print(title, Color::WHITE, seconds);
     }
 
     /// Port of gCScreenOutputCtrl::PrintScreen_Quest_Failed (Game:0x10077cc0).
     pub fn quest_failed(&mut self, title: &str, seconds: f32) {
+        gothic_portcov::hit!("quest_failed");
         self.print(title, Color::WHITE, seconds);
     }
 
     /// Port of gCScreenOutputCtrl::PrintScreen_InfoScript_Say (Game:0x10077880): the spoken
     /// line, white for the player and yellow for everybody else.
     pub fn info_say(&mut self, speaker: &str, text: &str, by_player: bool, seconds: f32) {
+        gothic_portcov::hit!("info_say");
         let color = if by_player {
             Color::WHITE
         } else {
@@ -234,6 +239,7 @@ impl ScreenOutput {
     /// Port of gCScreenOutputCtrl::Process (Game:0x10077f40): count the timer down and hide the
     /// window when it ends.
     pub fn tick(&mut self, dt: f32) {
+        gothic_portcov::hit!("tick");
         if self.timer > 0.0 {
             self.timer -= dt;
             if self.timer <= 0.0 {

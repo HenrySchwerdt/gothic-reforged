@@ -99,3 +99,57 @@ plays a fixed script and writes `.local/souls-*.png`:
 - the lock-on strafe (actor mode shows the strafe clips);
 - a pillar between the hero and the locked foe: the camera lifts within the grace period;
 - the lock breaking after the grace period.
+
+## In the game (`--play --combat souls`, SOULS-03)
+
+The hooks above are wired into `apps/game` by `apps/game/src/play/souls_wire.rs` (logic) and
+`souls_hud.rs` (HUD); `souls.rs` only calls them. Nothing changes without `--combat souls`.
+
+| Hook | How it is wired |
+| --- | --- |
+| Tuning | `Tuning::default()` plus a JSON override file: `--souls-tuning <file>` or `GR_SOULS_TUNING=<file>`. Keys are the field names above (`roll_cost`, `lock_los_grace`, ...), `parry_window: [from, to]`, `lock_retarget_on_kill: bool`, `feedback.<parry\|block\|guard_break\|hurt_heavy\|stagger\|riposte>.hit_stop` and `.shake.<amplitude\|duration\|frequency>`; nested objects and dotted keys are equal, keys starting with `_` are comments. An unknown key or bad value rejects the whole file (logged, defaults kept). |
+| Shake scale | `--souls-shake <0..2>` / `GR_SOULS_SHAKE` / `"shake_strength"` sets `CameraShake::strength`; `0` turns the shake off (accessibility). The flag wins over the file and the variable. |
+| `Env::line_of_sight` | A ray through the physics `CollisionWorld` (both in cm; the core already lifts both points 150 cm), stopping 20 cm short of the target so the floor or a wall at its feet does not count. |
+| Lock camera occlusion | Each frame before `souls::drive`, a ray from the render camera to the locked target's chest (120 cm); the result goes to `LockCam::drive_with(.., occluded)` (lift reacts one frame late). |
+| Feedback | Hero hits (riposte / stagger) come from the core. NPC swings are resolved by the sim, so the glue turns their mirrored outcomes into the same `Event::Feedback` (parry, block, guard break when the bar empties, `HurtHeavy` for `Large` / `Knockdown`) with the same hit-stop. The plugin's `CameraShake` offset (cm) is added to the render camera in `PostUpdate`, only on frames in which `play_camera` placed it (not in fly mode / cinematics). |
+| Telegraph / commit | In the game the NPC brain owns the swing (`brain.strike`, held 650 ms by the sim's telegraph variant); a new strike aimed at the hero sends `FoeTelegraph { lead = time to the hit, track = 0.55 x lead, parryable: true }` and `FoeCommit` at 55 % of the lead. The sim keeps turning the NPC until the hit, so in the game the commit is a **timing cue only**, and `parryable` is not known from the sim (the original parry rules decide). |
+| HUD | Bottom centre: the threat line (`WIND-UP 0.4 s`, white `COMMIT - ROLL` flash, `COMMITTED`), the last impact word (`PARRY`, `BLOCK`, ...) and the lock line (`LOCK <name>`, `NO SIGHT nn%` while the line-of-sight grace runs, `CAMERA LIFT` while occluded); a `V` marker above the locked target (amber during its wind-up). Hidden whenever the flow is not driving the hero. |
+
+Example override file:
+
+```json
+{
+  "_comment": "slower stamina, longer LOS grace, softer guard-break shake",
+  "stamina_regen": 40,
+  "lock_los_grace": 1.5,
+  "parry_window": [2, 10],
+  "feedback": { "guard_break": { "shake": { "amplitude": 5 } } },
+  "shake_strength": 0.5
+}
+```
+
+**Tested** (no game data, synthetic `CollisionWorld` and core): `cargo test -p gothic-reforged
+--features viewer -- souls` runs the LOS / occlusion rays against a wall, the outcome -> feedback
+mapping and hit-stop, the shake scale (0 = no offset, fly mode untouched), the strike ->
+telegraph / commit tracker, the HUD model and lines, the JSON / flag / env loading, and the
+occlusion, telegraph, HUD and shake systems in a headless Bevy app.
+
+**Not verified in-game** (needs the installed game): that the lock breaks behind real pillars
+after the grace and the camera lift looks right, that the 20 cm end margin and the 120 cm chest
+aim suit real geometry, how the shake feels, whether the 55 % commit cue is useful against the
+real NPC swings, the HUD layout and font, and that the existing `souls_basic` / `souls_er` runs
+are unchanged. To check with real data:
+
+```sh
+cargo run --release -p gothic-reforged --features viewer -- --play --combat souls --qa souls_feedback
+cargo run --release -p gothic-reforged --features viewer -- --play --combat souls --souls-shake 0 --qa souls_feedback
+cargo run --release -p gothic-reforged --features viewer -- --play --combat souls --souls-tuning my_tuning.json
+cargo run --release -p gothic-reforged --features viewer -- --play --combat souls --qa souls_basic
+```
+
+`souls_feedback` locks onto the start raider (checks the HUD lock line), holds the guard until
+it swings and checks telegraph, commit, feedback and the camera shake (none with
+`--souls-shake 0`); it logs the occluded / shaken frame counts and writes
+`.local/qa/souls_feedback/NN_hud_{lock,telegraph,feedback}.png`. Occlusion has no scripted
+assertion yet (no known pillar spot near the start); check it by hand by locking on and walking
+behind a wall.

@@ -15,8 +15,9 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use gothic_runtime::{Command, CoreCommand, CoreEvent, CoreRes, Event};
 use gothic_sim::types::ActorId;
-use gothic_vr_melee::{Bone, HitMessage, Hitzone, HitzoneSet, MeleeSet, PlayerAvatar};
-use gothic_vr_physics::VrLayer;
+use gothic_vr_melee::{
+    Bone, HitMessage, Hitzone, HitzoneSet, MeleeSet, PlayerAvatar, body_layers, zone_collider,
+};
 use std::collections::BTreeMap;
 
 /// The core actor a proxy stands for.
@@ -108,18 +109,17 @@ fn spawn_proxies(
                 (pos_to_m(*p), sim_yaw_to_bevy(*y))
             });
         let h = settings.height;
+        let zones = standing_zones(feet, yaw, h);
+        // The collider is the hitzones themselves, so a blade stops where it registers.
+        let origin = gothic_vr::Pose::new(feet + Vec3::Y * h * 0.5, Quat::from_rotation_y(yaw));
         let e = commands
             .spawn((
                 RuntimeActor(*actor),
-                HitzoneSet::new(standing_zones(feet, yaw, h)),
                 RigidBody::Kinematic,
-                Collider::capsule(0.25, h - 0.5),
-                CollisionLayers::new(
-                    VrLayer::Body,
-                    [VrLayer::World, VrLayer::Hand, VrLayer::Prop],
-                ),
-                Transform::from_translation(feet + Vec3::Y * h * 0.5)
-                    .with_rotation(Quat::from_rotation_y(yaw)),
+                zone_collider(&zones, &origin),
+                HitzoneSet::new(zones),
+                body_layers(),
+                Transform::from_translation(origin.position).with_rotation(origin.rotation),
                 Name::new(format!("Actor {name}")),
             ))
             .id();

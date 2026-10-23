@@ -17,6 +17,7 @@ impl EffectPlayer {
     /// Port of gCEffect::Start (Game:0x1005e910): `permanent` effects (`gCEffect_PS.Static`)
     /// never finish. Time-zero commands fire on the first [`process`](Self::process) call.
     pub fn start(sequence: Arc<CommandSequence>, permanent: bool) -> Self {
+        gothic_portcov::hit!("start");
         Self {
             sequence,
             elapsed: 0.0,
@@ -32,6 +33,7 @@ impl EffectPlayer {
     /// Port of gCEffect::Process (Game:0x1005e980): advance by `dt` and return the
     /// commands that became due, in sequence order.
     pub fn process(&mut self, dt: f32) -> Vec<&EffectCommand> {
+        gothic_portcov::hit!("process");
         self.elapsed += dt;
         let mut due = Vec::new();
         while let Some(c) = self.sequence.commands.get(self.next) {
@@ -46,6 +48,7 @@ impl EffectPlayer {
 
     /// Port of gCEffect::HasFinished (Game:0x1005e870): not permanent and past the last command's start time.
     pub fn has_finished(&self) -> bool {
+        gothic_portcov::hit!("has_finished");
         !self.permanent && self.sequence.end_time() < self.elapsed
     }
 }

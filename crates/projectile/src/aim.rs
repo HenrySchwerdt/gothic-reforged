@@ -30,12 +30,14 @@ pub const SHOOT_EFFECT: &str = "eff_ani_fight_bow_shoot_01";
 
 /// Port of the rule of `OnPowerAim_Loop`: `0.2 + 0.8 * min(1, t / 1.95)` with `t` the time held.
 pub fn draw_multiplier(held_secs: f32) -> f32 {
+    gothic_portcov::hit!("draw_multiplier");
     MIN_DRAW + (1.0 - MIN_DRAW) * (held_secs / FULL_DRAW_SECS).clamp(0.0, 1.0)
 }
 
 /// Port of `GUI2::SetCrossHairSize` as `OnGetAimAngle` calls it: the crosshair shrinks from 1 at
 /// 100 cm to 0 at 4000 cm of pick distance.
 pub fn crosshair_size(pick_distance: f32) -> f32 {
+    gothic_portcov::hit!("crosshair_size");
     1.0 - pick_distance.clamp(CROSSHAIR_NEAR_CM, CROSSHAIR_FAR_CM) / CROSSHAIR_FAR_CM
 }
 
@@ -152,6 +154,7 @@ impl AimPitch {
     /// Port of the angle step of `UpdateAim` (Engine:0x10030230): a value of 1 or more keeps the
     /// last angle; otherwise `angle = asin(clamp(value, -1, 1))`.
     pub fn update(&mut self, aim_sine: f32) -> AimBlend {
+        gothic_portcov::hit!("update");
         if aim_sine < 1.0 {
             self.last_angle = aim_sine.clamp(-1.0, 1.0).asin();
         }

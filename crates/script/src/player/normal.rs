@@ -73,6 +73,7 @@ pub fn combat_task(mode: WeaponMode) -> Option<State> {
 /// `PS_Melee`, `PS_Ranged` or `PS_Magic`; otherwise the hero stands up (when kneeling or sitting)
 /// and idles in `PS_Normal_Loop` with the focus system on.
 fn ps_normal(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_normal");
     if let Some(task) = combat_task(npc_weapon_mode(host, p)) {
         host.set_task(p, task);
         return Flow::Done;
@@ -100,6 +101,7 @@ fn ps_normal(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Normal_Loop` (S:815f0): idle. The input handlers are commands; the loop only keeps
 /// the state alive (a poll command so the host does not spin).
 fn ps_normal_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_normal_loop");
     if let Some(task) = combat_task(npc_weapon_mode(host, p)) {
         host.set_task(p, task);
         return Flow::Done;
@@ -112,6 +114,7 @@ fn ps_normal_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// when it did not lie there as a dropped item (`AddEnclaveTheftCount`: only secured zones and
 /// enclaves count it), then back to the loop.
 fn ps_normal_take(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_normal_take");
     let item = host.current_target(p);
     match step(host, p) {
         0 => {
@@ -138,6 +141,7 @@ fn ps_normal_take(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 
 /// Port of `PS_GonnaLoot` (S:83120): stop and open the loot window of the focused body.
 fn ps_gonna_loot(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_gonna_loot");
     host.full_stop(p);
     host.emit(PlayerEvent::Window(UiWindow::Loot));
     host.set_state(p, State::PsNormalLoop);
@@ -147,6 +151,7 @@ fn ps_gonna_loot(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_*_Jump` (the five jump states, S:825f0 and siblings): pay the stamina, jump,
 /// return to the loop of the weapon mode.
 fn ps_jump(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_jump");
     match step(host, p) {
         0 => {
             crate::combat::commands::start_jump(host, p, false);
@@ -168,6 +173,7 @@ fn ps_jump(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 
 /// Port of `PS_*_Sneak`: switch between the sneaking and the standing pose.
 fn ps_sneak(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_sneak");
     let sneaking = host.ani_state(p) == AniState::Sneak;
     host.set_ani_state(
         p,
@@ -215,6 +221,7 @@ pub fn quick_loot(host: &mut dyn ScriptHost, p: EntityId, body: EntityId) -> usi
 /// robbed with `Perk_MasterThief` and talked to otherwise; a living one is addressed
 /// (`AssessTalk`), except fighters, who ignore the hero.
 pub fn confirm(host: &mut dyn ScriptHost, p: EntityId, focus: EntityId) -> Confirm {
+    gothic_portcov::hit!("confirm");
     match host.focus_kind(focus) {
         FocusKind::None => Confirm::Nothing,
         FocusKind::Item => {

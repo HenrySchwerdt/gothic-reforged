@@ -51,6 +51,7 @@ fn lerp_index<const N: usize>(keys: &[[f32; N]], x: f32) -> (usize, usize, f32) 
 
 /// Port of eCFloatScale::CalcValue (Engine:0x1015f750): the keyed float at `x`.
 pub fn float_scale(keys: &[[f32; 2]], x: f32) -> f32 {
+    gothic_portcov::hit!("float_scale");
     if keys.is_empty() {
         return 1.0;
     }
@@ -61,6 +62,7 @@ pub fn float_scale(keys: &[[f32; 2]], x: f32) -> f32 {
 /// Port of eCVectorScale::CalcValue (Engine:0x101600c0) incl. the linear and binary search
 /// variants (they differ only in how the segment is found).
 pub fn vector_scale(keys: &[[f32; 4]], x: f32) -> [f32; 3] {
+    gothic_portcov::hit!("vector_scale");
     match keys.len() {
         0 => [1.0; 3],
         1 => [keys[0][1], keys[0][2], keys[0][3]],
@@ -77,6 +79,7 @@ pub fn vector_scale(keys: &[[f32; 4]], x: f32) -> [f32; 3] {
 
 /// Port of eCColorScale::CalcValue (Engine:0x1015f2b0): the keyed rgba at `x`.
 pub fn color_scale(keys: &[[f32; 5]], x: f32) -> [f32; 4] {
+    gothic_portcov::hit!("color_scale");
     if keys.is_empty() {
         return [1.0; 4];
     }

@@ -29,12 +29,45 @@ rigid bodies (hands, props, weapons, NPC bone colliders) against static greybox 
   level while a weak one lets them sag and lag.
 * Measured (test `heavy_weapons_lag_strength_helps`, 1.5 Hz ±0.6 m swing): sword 7 cm lag at
   STR 10, two-handed sword unmanageable one-handed at STR 10, 7 cm at STR 150.
+* The angular drive chases the controller's angular velocity (OpenXR `xrLocateSpace`
+  velocity, else the frame-to-frame rotation) instead of zero, and the hand body carries an
+  artificial hand/wrist inertia (`HAND_INERTIA` = 0.01 kg·m² instead of the bare sphere's
+  0.0004), so the grip joint does not couple bodies ~500× apart in rotational inertia.
+  Measured (`held_sword_follows_fast_wrist_turns`, 1 Hz wrist twist): sword vs tracked hand
+  5.5° → 1.6° at 2 rad/s peak, 23° → 7° at 8 rad/s.
+* Two hands: the first hand keeps the fixed joint and leads (position, roll); the second hangs
+  on a ball joint and aims, by turning the leading hand's target so the grip line points at the
+  second hand (`hands::two_hand_aim`; the scheme of Godot XR Tools' grab driver). Two fixed
+  joints fought each other. Letting go of the leading hand hands the lead over.
+* `PhysicsHand::stagger` drops the arm limits to 30 % and ramps them back over 0.2 s; melee
+  uses it for blocked and parried swings so the drive does not undo the deflection at once.
 
 ## Collision layers
 
-`VrLayer::{World, Hand, Prop, Body}`: hands hit everything, props hit world/hands/props,
-bodies (NPC bone colliders, dummies) hit world/hands. Weapons pass through bodies on purpose:
-weapon-vs-body is resolved by the melee contact model (damage, bite impulse, stab joints).
+`VrLayer::{World, Hand, Prop, Body}`: everything collides with everything except body with
+body. Blades stop at bodies (dummy and bridge actors use colliders built from their hitzones,
+`gothic_vr_melee::zone_collider`, so a blade stops where it registers). A qualifying stab
+switches that blade to `prop_layers(true)` (passes bodies) while it is stuck and for
+`PASS_AFTER_PULL` (0.25 s) after it came out; the stab itself is a prismatic joint along the
+wound, limited to the blade's penetration, with a drag along the axis (`WOUND_DRAG`). Blade on
+blade is rigid contact (weapons: friction 0.3, restitution 0.15); the melee layer only adds a
+small kick (0.3× closing speed, was 1.3×), the attacker's arm stagger, and the events.
+
+Hit detection inflates hitzones by a 2 cm skin and takes the impact speed from the faster of
+the last two steps, since the collider may already have braked the blade within the step.
+Stabs need the point to lead within ~25° (`stab_alignment` 0.9, was 0.75 ≈ 41°); a slanted
+thrust glances off the collider.
+
+## Haptics
+
+`gothic_vr::haptics`: gameplay sends `HapticMessage(HapticPulse)`; a per-hand mixer keeps the
+strongest pulse (a weaker one is dropped while a stronger one plays, equal ones are
+rate-limited to 25 ms), and the OpenXR backend plays it (`/user/hand/*/output/haptic` in every
+interaction profile); `HapticOut::played` records the last pulses for tests and the desktop
+fallback. Sources: grab click; hit (strength and length from impact speed and quality);
+clash (sharp, 320 Hz); stab stuck (dull 80 Hz thud) and pulled out; bow nock click, string
+creak every 10 % of draw (stronger toward full draw, lighter on the bow hand), release kick
+on both hands. Amplitudes are our own starting values, to be tuned on a headset.
 
 ## Two stacks in one game (VR-09)
 

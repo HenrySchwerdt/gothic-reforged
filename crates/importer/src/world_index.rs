@@ -105,8 +105,14 @@ impl WorldIndex {
         docs.sort();
         let mut index = Self::new();
         for (path, slot) in docs {
-            match vfs.read(slot).and_then(|b| WorldDocument::parse(&b)) {
-                Ok(doc) => index.add_document(&path, &doc),
+            let parsed = vfs.read(slot).and_then(|b| {
+                let unlisted = crate::survey::is_unlisted_levelmesh(&path, &b);
+                WorldDocument::parse(&b).map(|doc| (doc, unlisted))
+            });
+            match parsed {
+                // Legacy level meshes that no sector lists are never loaded by the engine.
+                Ok((_, true)) => {}
+                Ok((doc, false)) => index.add_document(&path, &doc),
                 Err(e) => index.failed_documents.push((path, format!("{e:#}"))),
             }
         }

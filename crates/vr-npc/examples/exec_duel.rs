@@ -114,6 +114,7 @@ fn main() {
                 wielder: Some(ORC),
                 prev: orc_prev.unwrap_or(grip),
                 cur: grip,
+                before: None,
                 profile: &sword,
             },
             WeaponMotion {
@@ -121,6 +122,7 @@ fn main() {
                 wielder: Some(PLAYER),
                 prev: player_prev,
                 cur: player_pose,
+                before: None,
                 profile: &sword,
             },
         ];

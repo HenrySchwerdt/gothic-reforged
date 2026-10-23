@@ -1380,6 +1380,9 @@ impl NpcApi for TestWorld {
             n.progress = progress;
         }
     }
+    fn has_pending_ai(&self, npc: EntityId) -> bool {
+        self.npc(npc).is_some_and(|n| !n.pending.is_empty())
+    }
     fn full_stop(&mut self, npc: EntityId) {
         self.full_stops += 1;
         if let Some(n) = self.npc_mut(npc) {

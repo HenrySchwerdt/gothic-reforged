@@ -95,6 +95,7 @@ pub fn buttons(selected: Option<&SlotRow>, can_save: bool) -> Buttons {
 /// get the fixed quick-save label, region prefixes are stripped), then the game clock from the
 /// localized `HUD_File_SaveGame_Format`.
 pub fn caption(row: &SlotRow, quick_label: &str, clock_format: &str) -> (String, String) {
+    gothic_portcov::hit!("caption");
     let title = if row.kind == SlotKind::Quick {
         quick_label.to_string()
     } else if row.name.is_empty() {

@@ -50,6 +50,7 @@ fn lerp4(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
 impl EnvRecord {
     /// Port of `eCWeatherStates::SetCurrentDayTime` (0x102915c0): evaluate every scale at `t`.
     pub fn from_state(s: &WeatherState, t: f32) -> Self {
+        gothic_portcov::hit!("from_state");
         let k = &s.scales;
         Self {
             sun_diffuse: k.sun_diffuse.at(t),
@@ -173,6 +174,7 @@ pub struct ZoneOverwrites {
 impl ZoneOverwrites {
     /// Port of `eCWeatherZone_PS::DoOverwrites` (Engine.dll:0x10296ed0).
     pub fn apply(&self, r: &mut EnvRecord) {
+        gothic_portcov::hit!("apply");
         let col = |c: &mut [f32; 4], f: &Field<[f32; 3]>| {
             for (v, o) in c.iter_mut().zip(f.value) {
                 *v = f.mode.apply(*v, o);
@@ -239,6 +241,7 @@ impl Zone {
     /// Port of `eCWeatherZone_PS::GetBoxBlendFactor` (0x10296b60) and, by analogy [I], the
     /// circle / rect / sphere variants. `local` is the probe in the zone's local frame (cm).
     pub fn blend_factor(&self, local: [f32; 3]) -> f32 {
+        gothic_portcov::hit!("blend_factor");
         match self.shape {
             ZoneShape::Box3d => ramp(
                 &[local[0], local[1], local[2]],
@@ -321,6 +324,7 @@ pub const ARC_MAX_ELEVATION_DEG: f32 = 60.0;
 /// `(t - 0.25) / (0.9167 - 0.25)`, night progress over the remaining third, angle
 /// `progress * pi - pi / 2`.
 pub fn sun_state(t: f32, azimuth: f32) -> SunState {
+    gothic_portcov::hit!("sun_state");
     let t = t.rem_euclid(1.0);
     let day = t > SUNRISE && t < SUNSET;
     let progress = if day {
@@ -388,6 +392,7 @@ pub struct EnvPacket {
 /// Port of the fog clip at the end of `eCWeatherAdmin::Process`: when the fog end exceeds the far
 /// plane the start is scaled by the same ratio and the end becomes the far plane.
 pub fn clip_fog(start: f32, end: f32, far: f32) -> (f32, f32) {
+    gothic_portcov::hit!("clip_fog");
     if end <= far {
         (start, end)
     } else {
@@ -404,6 +409,7 @@ pub fn hemisphere_sh(
     back_dir: [f32; 3],
     k: f32,
 ) -> [[f32; 3]; 4] {
+    gothic_portcov::hit!("hemisphere_sh");
     let mut sh = [[0.0; 3]; 4];
     for c in 0..3 {
         sh[0][c] = (general[c] + back[c] * SH_L0) * k;

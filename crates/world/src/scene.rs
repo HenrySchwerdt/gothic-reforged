@@ -208,6 +208,7 @@ impl SceneAdmin {
         hint: TypeHint,
         index: Option<usize>,
     ) -> Option<EntityId> {
+        gothic_portcov::hit!("entity_by_part_name");
         if hint != TypeHint::Entity {
             return None;
         }
@@ -227,6 +228,7 @@ impl SceneAdmin {
 
     /// Port of `eCSceneAdmin::GetEntityCountByPartName` (Engine:0x10232f90).
     pub fn count_by_part_name(&self, tree: &EntityTree, part: &str, hint: TypeHint) -> usize {
+        gothic_portcov::hit!("count_by_part_name");
         if hint != TypeHint::Entity {
             return 0;
         }
@@ -246,6 +248,7 @@ impl SceneAdmin {
     /// Port of `eCSceneAdmin::Trigger` (Engine:0x10233ba0): the entities that receive the
     /// trigger from `source`. Delivery (the entity's trigger virtual) is the caller's job.
     pub fn trigger_targets(&self, tree: &EntityTree, cfg: &TriggerConfig) -> Vec<EntityId> {
+        gothic_portcov::hit!("trigger_targets");
         match cfg.target {
             TriggerTarget::Registered => {
                 if cfg.name.is_empty() {

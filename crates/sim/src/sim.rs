@@ -124,6 +124,27 @@ pub enum EventKind {
     Spawned {
         actor: ActorId,
     },
+    /// The hero's `sAICombatMoveInstr`: the host plays the `phase` clip of `action` at `speed`
+    /// (a `Hit` clip is followed by its `Recover` clip), calls [`Sim::hero_move_hit`] when the
+    /// `Hit` clip reaches the damage moment and [`Sim::hero_exec_done`] when the instruction
+    /// ends.
+    HeroMove {
+        seq: u32,
+        action: gothic_script::enums::Action,
+        phase: gothic_script::host::MovePhase,
+        speed: f32,
+        pose: gothic_script::enums::AniState,
+        target: Option<ActorId>,
+    },
+    /// The hero's `_AI_HoldInventoryItems`: the host plays the `Begin` clip, calls
+    /// [`Sim::hero_hold_swap`] (the item moves between back slot and hand), plays the `End`
+    /// clip and calls [`Sim::hero_exec_done`].
+    HeroHold {
+        seq: u32,
+        draw: bool,
+    },
+    /// The hero's running instruction was stopped (`FullStop`).
+    HeroStop,
     Teleported {
         actor: ActorId,
     },
@@ -391,7 +412,7 @@ impl<W: WorldQuery> Sim<W> {
         self.pos(id)
     }
 
-    fn pos(&self, id: ActorId) -> Pos {
+    pub(crate) fn pos(&self, id: ActorId) -> Pos {
         self.world.position(id).unwrap_or_default()
     }
     pub fn dist(&self, a: ActorId, b: ActorId) -> f32 {
@@ -1138,7 +1159,7 @@ impl<W: WorldQuery> Sim<W> {
         self.cfg.tick_ms as f32 / 1000.0
     }
 
-    fn resolve_strike(&mut self, i: usize, st: Strike) {
+    pub(crate) fn resolve_strike(&mut self, i: usize, st: Strike) {
         let id = self.actors[i].id;
         if matches!(self.actors[i].ai_mode, AiMode::Dead | AiMode::Down) {
             return;

@@ -7,6 +7,7 @@ license.workspace = true
 description = "Arrows, bolts and spell missiles of Gothic 3 (gCProjectile_PS): flight, hits, sticking, plus the bow aim animation coupling"
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 glam = "0.33"
 
 [dev-dependencies]

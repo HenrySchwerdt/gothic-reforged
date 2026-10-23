@@ -215,6 +215,7 @@ pub enum ScriptRun {
 /// line run only once per event; otherwise every line runs in order. (The original returns
 /// `false` in both cases and sets an "executed" flag, which the caller keeps.)
 pub fn execute_script(lines: &[ScriptLine], host: &mut dyn ItemScriptHost) -> ScriptRun {
+    gothic_portcov::hit!("execute_script");
     if host.has_event_store() {
         for l in lines {
             if l.command == "SetGameEvent" && host.game_event_set(&l.id1) {

@@ -3,7 +3,9 @@
 //! and head poses arrive in `VrInputRes`; without one it falls back to the desktop backend
 //! with the reason in `XrBackend::note`.
 use bevy::prelude::*;
-use gothic_vr::{VrInputRes, VrPlugin, XrBackend, XrBackendKind};
+use gothic_vr::{
+    Hand, HapticMessage, HapticOut, HapticPulse, VrInputRes, VrPlugin, XrBackend, XrBackendKind,
+};
 
 #[test]
 fn openxr_backend_runs_or_falls_back() {
@@ -40,4 +42,14 @@ fn openxr_backend_runs_or_falls_back() {
     // Stage space: the head is above the floor, not at the desktop default.
     let h = heads.last().unwrap();
     assert!(h.y > 1.0 && h.y < 2.2, "{h}");
+    // Haptics reach the runtime (the simulated HMD accepts them without a device).
+    let pulse = HapticPulse::clash(Hand::Right, 5.0);
+    let r = app
+        .world_mut()
+        .non_send_mut::<gothic_vr::openxr::OpenXrInput>()
+        .vibrate(&pulse);
+    assert!(r.is_ok(), "{r:?}");
+    app.world_mut().write_message(HapticMessage(pulse));
+    app.update();
+    assert!(!app.world().resource::<HapticOut>().played.is_empty());
 }

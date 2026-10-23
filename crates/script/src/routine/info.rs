@@ -27,6 +27,7 @@ fn enclave_news(host: &dyn ScriptHost, npc: EntityId, crime: PlayerCrime) -> boo
 /// Port of `HasGuardNews` (S:bcf00): a guard with the `GuardAndBoss` voice block whose enclave
 /// knows of a murder or a theft by the player has something to say.
 pub fn has_guard_news(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("has_guard_news");
     is_guard(host, npc)
         && host.has_svm_sample(npc, NEWS_SVM_BLOCK)
         && (enclave_news(host, npc, PlayerCrime::Murder)
@@ -37,6 +38,7 @@ pub fn has_guard_news(host: &dyn ScriptHost, npc: EntityId) -> bool {
 /// camp has more crimes on record than comments made, as long as the player is not already
 /// marked a criminal there.
 pub fn has_boss_news(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("has_boss_news");
     if !is_boss(host, npc) || !host.has_svm_sample(npc, NEWS_SVM_BLOCK) {
         return false;
     }
@@ -47,6 +49,7 @@ pub fn has_boss_news(host: &dyn ScriptHost, npc: EntityId) -> bool {
 /// Port of `HasHealInfo` (S:bd2c0): a humanoid member of the player's party who carries a health
 /// potion can offer to heal him.
 pub fn has_heal_info(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("has_heal_info");
     host.party_leader(npc) == host.player()
         && is_humanoid(host, npc)
         && host.has_items(npc, HEAL_POTION, 1)

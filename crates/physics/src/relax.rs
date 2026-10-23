@@ -10,6 +10,7 @@ pub const RELAX_UNIT: f32 = 0.025;
 /// Port of the boost term shared by `gCCameraAI_PS::UpdateDistance` (GameDll:0x10026860),
 /// `gCCharacterMovement_PS::PutToGround` (0x100e94f0) and `CalcAniVelocity` (0x100e1cd0).
 pub fn boost(error_sq: f32) -> f32 {
+    gothic_portcov::hit!("boost");
     let e = error_sq / 100_000.0;
     (4.0 * e + 1.0) / (e + 1.0)
 }

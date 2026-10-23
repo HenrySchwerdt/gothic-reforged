@@ -125,6 +125,7 @@ impl EmitterState {
         playing: bool,
         rng: &mut Rng,
     ) -> EmitterAction {
+        gothic_portcov::hit!("step");
         if !cfg.enabled || playing {
             return EmitterAction::None;
         }
@@ -191,6 +192,7 @@ impl EmitterState {
 /// probability `w_i / (N * max_w)`, so the remainder of the unit interval is "no sound"
 /// (`None`).
 pub fn select_sample(weights: &[f32], rng: &mut Rng) -> Option<usize> {
+    gothic_portcov::hit!("select_sample");
     let max = weights.iter().copied().fold(0.0f32, f32::max);
     if weights.is_empty() || max <= 0.0 {
         return None;
@@ -209,6 +211,7 @@ pub fn select_sample(weights: &[f32], rng: &mut Rng) -> Option<usize> {
 /// Port of gCEffectCommandPlayVoice::Execute path building (Game:0x10059030): the literal token
 /// `(voice)` is replaced by the speaker's `Voice` string and the whole path is lower-cased.
 pub fn voice_path(template: &str, voice: &str) -> String {
+    gothic_portcov::hit!("voice_path");
     template.replace("(voice)", voice).to_ascii_lowercase()
 }
 

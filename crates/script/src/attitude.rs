@@ -17,6 +17,7 @@ pub const FRIEND_FAME: i32 = 75;
 /// Port of `GetOutlawAttitude` (S:e900): an outlaw (`Out`) and a humanoid that is neither outlaw
 /// nor pirate are hostile to each other (either direction).
 pub fn outlaw_attitude(host: &dyn ScriptHost, a: EntityId, b: EntityId) -> Attitude {
+    gothic_portcov::hit!("outlaw_attitude");
     let outlaw_vs = |outlaw: EntityId, other: EntityId| {
         host.alignment(outlaw) == Alignment::Out
             && !matches!(host.alignment(other), Alignment::Out | Alignment::Pirate)
@@ -34,6 +35,7 @@ pub fn outlaw_attitude(host: &dyn ScriptHost, a: EntityId, b: EntityId) -> Attit
 /// predators and monsters (the Sabertooth named "Zuben" is neutral); each animal family has its
 /// own stance toward humanoids and prey (see COMBAT_AI_RULES 10.4).
 pub fn species_attitude(host: &dyn ScriptHost, a: EntityId, b: EntityId) -> Attitude {
+    gothic_portcov::hit!("species_attitude");
     let (obs, tgt) = (host.species(a), host.species(b));
     if obs == Species::Sabertooth && host.name(a).eq_ignore_ascii_case("Zuben") {
         return Attitude::Neutral;
@@ -113,6 +115,7 @@ pub fn species_relation(obs: Species, tgt: Species) -> Attitude {
 /// Theft Angry) and lost or cancelled fights (Angry). `None` means "no opinion, ask the
 /// political matrix".
 pub fn attitude_to_player(host: &dyn ScriptHost, npc: EntityId) -> Attitude {
+    gothic_portcov::hit!("attitude_to_player");
     let player = host.player();
     if npc == player || host.npc_type(npc) == NpcType::Friend {
         return Attitude::Friendly;
@@ -174,6 +177,7 @@ pub fn attitude_to_player(host: &dyn ScriptHost, npc: EntityId) -> Attitude {
 /// to humanoids; toward the player [`attitude_to_player`]; then the political matrix and the
 /// species relations.
 pub fn get_attitude(host: &dyn ScriptHost, a: EntityId, b: EntityId) -> Attitude {
+    gothic_portcov::hit!("get_attitude");
     let player = host.player();
     if a.is_none() || b.is_none() || a == player || !host.exists(a) || !host.exists(b) {
         return Attitude::None;
@@ -220,6 +224,7 @@ pub fn get_attitude(host: &dyn ScriptHost, a: EntityId, b: EntityId) -> Attitude
 /// Port of `GetFocusNameAttitude` (S:f340): the attitude shown on the focus name of `npc`, i.e.
 /// how the NPC regards the player [I: the argument order of the inner call is not recoverable].
 pub fn focus_name_attitude(host: &dyn ScriptHost, npc: EntityId) -> Attitude {
+    gothic_portcov::hit!("focus_name_attitude");
     get_attitude(host, npc, host.player())
 }
 

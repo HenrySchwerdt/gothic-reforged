@@ -23,6 +23,7 @@ pub const ARROW_SPEED: f32 = 200.0;
 
 /// Port of the multiplier rule of `OnPowerAim_Loop` (S:84b90): `0.2 + 0.8 * min(1, t / 1.95)`.
 pub fn draw_multiplier(held_secs: f32) -> f32 {
+    gothic_portcov::hit!("draw_multiplier");
     MIN_DRAW + (1.0 - MIN_DRAW) * (held_secs / FULL_DRAW_SECS).clamp(0.0, 1.0)
 }
 
@@ -38,6 +39,7 @@ fn crossbow(host: &dyn ScriptHost, p: EntityId) -> bool {
 /// hero uses up one piece of ammunition (NPC archers are re-supplied for free). Returns whether
 /// ammunition is left.
 pub fn shoot(host: &mut dyn ScriptHost, shooter: EntityId, target: EntityId) -> bool {
+    gothic_portcov::hit!("shoot");
     let stack = host.find_stack_index(shooter, Slot::RightHand);
     if stack < 0 {
         return false;
@@ -91,6 +93,7 @@ fn aim_target(host: &dyn ScriptHost, p: EntityId) -> EntityId {
 /// ranged, otherwise `PS_Normal`) the hero readies it: combat mode, hands filled, and the hit
 /// multiplier of a crossbow at 1, of a bow at the undrawn 0.2.
 fn ps_ranged(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Ranged {
         host.set_task(p, State::PsNormal);
         return Flow::Done;
@@ -116,6 +119,7 @@ fn ps_ranged(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Ranged_Walk` / `PS_Ranged_Walk_Loop` (S:84080): move about with the weapon ready;
 /// the loop waits for the aim key and ends the mode when the weapon is put away.
 fn ps_ranged_walk(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_walk");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Ranged {
         host.set_task(p, State::PsNormal);
         return Flow::Done;
@@ -127,6 +131,7 @@ fn ps_ranged_walk(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Ranged_Aim` (S:844a0): take aim (action `Aim`, standing); a crossbow waits in
 /// `PS_Ranged_Aim_Loop`, a bow starts drawing in `PS_Ranged_PowerAim`.
 fn ps_ranged_aim(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_aim");
     match step(host, p) {
         0 => {
             host.set_current_action(p, Action::Aim);
@@ -155,6 +160,7 @@ fn ps_ranged_aim(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 
 /// Port of `PS_Ranged_Aim_Loop` (S:84d60): hold the aim and wait for shoot or reload.
 fn ps_ranged_aim_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_aim_loop");
     if crate::combat::select::npc_weapon_mode(host, p) != WeaponMode::Ranged {
         host.set_task(p, State::PsNormal);
         return Flow::Done;
@@ -166,6 +172,7 @@ fn ps_ranged_aim_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Ranged_PowerAim` (S:84830) with its loop callback `OnPowerAim_Loop` (S:84b90): the
 /// bow is drawn; every tick the hit multiplier follows the time held.
 fn ps_ranged_power_aim(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_power_aim");
     let held = host.state_time(p);
     host.set_hit_multiplier(p, draw_multiplier(held));
     host.queue_ai(p, AiCommand::WaitMs { ms: 50 });
@@ -175,6 +182,7 @@ fn ps_ranged_power_aim(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// Port of `PS_Ranged_Shoot` (S:850e0): play the shot (`Shoot`), loose the projectile with
 /// [`shoot`], then reload: a crossbow cocks the next bolt, a bow goes back to walking.
 fn ps_ranged_shoot(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_shoot");
     match step(host, p) {
         0 => {
             host.set_current_action(p, Action::Shoot);
@@ -192,6 +200,13 @@ fn ps_ranged_shoot(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
             let target = aim_target(host, p);
             let more = shoot(host, p, target);
             host.set_current_target(p, EntityId::NONE);
+            // `Aim_Recover`: the weapon goes down after the shot before the next move.
+            host.queue_ai(
+                p,
+                AiCommand::WaitMs {
+                    ms: if crossbow(host, p) { 600 } else { 400 },
+                },
+            );
             let next = if !more {
                 State::PsRangedAimReload
             } else if crossbow(host, p) {
@@ -210,6 +225,7 @@ fn ps_ranged_shoot(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// (`Cock` overlay) or pull a fresh arrow, hold the ammunition again and aim (crossbow) or walk
 /// (bow). Without ammunition the hero just lowers the weapon.
 fn ps_ranged_reload(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_reload");
     let stack = host.find_stack_index(p, Slot::RightHand);
     if stack < 0 {
         host.set_state(p, State::PsRangedWalk);
@@ -259,6 +275,7 @@ fn ps_ranged_reload(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 
 /// Port of `PS_Ranged_CrossBowSneak_Loop` (S:86320): sneaking with a crossbow is the walk loop.
 fn ps_ranged_crossbow_sneak(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_ranged_crossbow_sneak");
     ps_ranged_walk(host, p)
 }
 

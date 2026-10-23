@@ -55,17 +55,20 @@ fn raw(s: Species) -> u32 {
 
 /// Port of `IsAnimal` (S:57bd0): the species `CanTameAnimal` and `CanTransformInto` accept.
 pub fn is_animal(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_animal");
     host.exists(e) && matches!(raw(host.species(e)), 8..=20 | 22 | 23 | 29 | 33 | 34 | 39)
 }
 
 /// Port of `IsGame` (S:57fc0): huntable animals (Boar, Bison, Rhino, Deer).
 pub fn is_game(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_game");
     matches!(raw(host.species(e)), 11 | 14 | 15 | 29)
 }
 
 /// Port of `IsLarge` (S:57ec0): the large animals (Minecrawler, Sabertooth, Shadowbeast, Bison,
 /// Rhino, Ripper, Alligator); transformations into them last half as long.
 pub fn is_large(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_large");
     matches!(raw(host.species(e)), 8 | 12..=16 | 20)
 }
 
@@ -84,6 +87,7 @@ fn player_message(host: &mut dyn ScriptHost, caster: EntityId, key: &'static str
 /// Shadowbeast, Ripper, Alligator) need Intelligence 100. The hero is told `Impossible` or
 /// `TooHard`.
 pub fn can_tame_animal(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) -> bool {
+    gothic_portcov::hit!("can_tame_animal");
     if !host.exists(target) || !is_animal(host, target) {
         player_message(host, caster, "Impossible");
         return false;
@@ -100,6 +104,7 @@ pub fn can_tame_animal(host: &mut dyn ScriptHost, caster: EntityId, target: Enti
 /// Port of `CanTransformInto` (S:5ea30): any animal but a pig; otherwise the hero is told
 /// `Impossible`.
 pub fn can_transform_into(host: &mut dyn ScriptHost, caster: EntityId, form: EntityId) -> bool {
+    gothic_portcov::hit!("can_transform_into");
     if host.exists(form) && is_animal(host, form) && host.species(form) != Species::Pig {
         return true;
     }
@@ -112,6 +117,7 @@ pub fn can_transform_into(host: &mut dyn ScriptHost, caster: EntityId, form: Ent
 /// goblins can never be controlled (`Impossible`), everything else needs Intelligence 200
 /// (`TooHard`).
 pub fn can_control(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) -> bool {
+    gothic_portcov::hit!("can_control");
     if !host.exists(target) || target == host.player() {
         return false;
     }
@@ -145,6 +151,7 @@ pub fn can_control(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId
 /// has the perk of the spell's school: `Perk_Firemage` for Innos, `Perk_Watermage` for Adanos,
 /// `Perk_Darkmage` for Beliar. 0 otherwise.
 pub fn spell_duration_bonus(host: &dyn ScriptHost, caster: EntityId, spell_name: &str) -> f32 {
+    gothic_portcov::hit!("spell_duration_bonus");
     if caster != host.player() {
         return 0.0;
     }
@@ -167,6 +174,7 @@ pub fn spell_duration_bonus(host: &dyn ScriptHost, caster: EntityId, spell_name:
 /// Port of `GetTransformDuration` (S:582a0): `max(INT - 60, 0) + 60` seconds, halved for a
 /// large form; the hero gets x1 (x2 with `Perk_Druid`, plus 0.5 with `Perk_Watermage`).
 pub fn transform_duration(host: &dyn ScriptHost, caster: EntityId, form: EntityId) -> f32 {
+    gothic_portcov::hit!("transform_duration");
     let int = stats::attribute(host, caster, crate::host::Attribute::Intelligence);
     let mut secs = (int - 60).max(0) as f32 + BASE_DURATION;
     if is_large(host, form) {
@@ -194,17 +202,20 @@ fn set_status(host: &mut dyn ScriptHost, target: EntityId, mask: u32, on: bool) 
 
 /// Port of `MagicBurn` (S:56e60): set the target on fire.
 pub fn magic_burn(host: &mut dyn ScriptHost, _caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_burn");
     set_status(host, target, STATUS_BURNING, true);
 }
 
 /// Port of `MagicFreeze` (S:56f30): freeze the target (`ZS_Freeze` handles the rest).
 pub fn magic_freeze(host: &mut dyn ScriptHost, _caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_freeze");
     set_status(host, target, STATUS_FROZEN, true);
 }
 
 /// Port of `MagicPoison` (S:57000): poison a target that `CanBePoisoned`; either way the target
 /// holds the caster responsible (`AssessTarget` with reason ReactToDamage).
 pub fn magic_poison(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_poison");
     if crate::damage::can_be_poisoned(host, target) {
         set_status(host, target, STATUS_POISONED, true);
     }
@@ -214,6 +225,7 @@ pub fn magic_poison(host: &mut dyn ScriptHost, caster: EntityId, target: EntityI
 /// Port of `MagicDisease` (S:57160): a diseasable target loses all stamina and falls ill; either
 /// way it holds the caster responsible.
 pub fn magic_disease(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_disease");
     if crate::damage::can_be_diseased(host, target) {
         stats::set_pool(host, target, Pool::Stamina, 0);
         set_status(host, target, STATUS_DISEASED, true);
@@ -223,18 +235,21 @@ pub fn magic_disease(host: &mut dyn ScriptHost, caster: EntityId, target: Entity
 
 /// Port of `MagicRefresh` (S:572d0): mana to the maximum.
 pub fn magic_refresh(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_refresh");
     let missing = stats::pool_max(host, caster, Pool::Mana) - stats::pool(host, caster, Pool::Mana);
     stats::add_mana_points(host, caster, missing);
 }
 
 /// Port of `MagicCure` (S:53870): hit points to the maximum.
 pub fn magic_cure(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_cure");
     let missing = stats::pool_max(host, caster, Pool::Hit) - stats::pool(host, caster, Pool::Hit);
     stats::add_hit_points(host, caster, missing);
 }
 
 /// Port of `MagicCurePoison` (S:53970): clear the poison.
 pub fn magic_cure_poison(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("magic_cure_poison");
     if host.has_status(who, STATUS_POISONED) {
         set_status(host, who, STATUS_POISONED, false);
     }
@@ -242,6 +257,7 @@ pub fn magic_cure_poison(host: &mut dyn ScriptHost, who: EntityId) {
 
 /// Port of `MagicCureDisease` (S:53a90): clear the disease.
 pub fn magic_cure_disease(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("magic_cure_disease");
     if host.has_status(who, STATUS_DISEASED) {
         set_status(host, who, STATUS_DISEASED, false);
     }
@@ -250,6 +266,7 @@ pub fn magic_cure_disease(host: &mut dyn ScriptHost, who: EntityId) {
 /// Port of `MagicHealOther` (S:56b20): clear poison, disease, fire and ice of the target and
 /// restore its hit points to the maximum.
 pub fn magic_heal_other(host: &mut dyn ScriptHost, target: EntityId) {
+    gothic_portcov::hit!("magic_heal_other");
     if !host.exists(target) {
         return;
     }
@@ -268,6 +285,7 @@ pub fn magic_heal_other(host: &mut dyn ScriptHost, target: EntityId) {
 /// Port of `MagicKeepStamina` (S:58b70): only the hero; the engine parks a "stamina held at
 /// maximum" flag on him (it reuses `GuardStatus` and `LastDistToGuardPoint`).
 pub fn magic_keep_stamina(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("magic_keep_stamina");
     if who == host.player() {
         let level = stats::pool_max(host, who, Pool::Stamina);
         host.set_boost(who, Boost::KeepStamina, 0.0, level);
@@ -277,6 +295,7 @@ pub fn magic_keep_stamina(host: &mut dyn ScriptHost, who: EntityId) {
 /// Port of `MagicSpeedUp` (S:58a30): only the hero; he runs fast for `(StaminaMax - 200) / 2 + 60`
 /// seconds (never less than 60).
 pub fn magic_speed_up(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("magic_speed_up");
     if who == host.player() {
         let max = stats::pool_max(host, who, Pool::Stamina);
         let secs = ((max - 200) / 2).max(0) as f32 + BASE_DURATION;
@@ -288,6 +307,7 @@ pub fn magic_speed_up(host: &mut dyn ScriptHost, who: EntityId) {
 /// dead nor down, not already stunned, not on guard duty and not in the caster's party gets the
 /// `ZS_Stunned` task. The scan ends at the first character beyond the radius.
 pub fn magic_stun(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_stun");
     for npc in host.all_npcs_by_distance(caster) {
         if npc == caster || matches!(host.ai_mode(npc), AiMode::Dead | AiMode::Down) {
             continue;
@@ -317,6 +337,7 @@ pub fn magic_stun(host: &mut dyn ScriptHost, caster: EntityId) {
 /// parameter 4, 5 or 6 picks it) remove the area-spell entities of that element within 25 m
 /// and put out the characters burning or frozen there.
 pub fn magic_dispel(host: &mut dyn ScriptHost, caster: EntityId, element: DamageType) {
+    gothic_portcov::hit!("magic_dispel");
     let centre = host.position(caster);
     host.dispel_areas(centre, DISPEL_RADIUS, element);
     for npc in host.all_npcs() {
@@ -350,6 +371,7 @@ fn make_controlled(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId
 /// Port of `MagicTameAnimal` (S:54e70): if the animal can be tamed it (and its
 /// herd) follows the hero as a controlled member of his party.
 pub fn magic_tame_animal(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_tame_animal");
     if !can_tame_animal(host, caster, target) {
         return;
     }
@@ -364,6 +386,7 @@ pub fn magic_tame_animal(host: &mut dyn ScriptHost, caster: EntityId, target: En
 
 /// Port of `MagicWordOfControl` (S:54c00): a controllable target joins the party.
 pub fn magic_word_of_control(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_word_of_control");
     if !can_control(host, caster, target) {
         return;
     }
@@ -374,6 +397,7 @@ pub fn magic_word_of_control(host: &mut dyn ScriptHost, caster: EntityId, target
 /// Port of `MagicCharm` (S:56770): a target in talk mode forgets every grudge (attitude,
 /// attack reasons, last fight, crime) and the charmer is treated as a friend; a boss resists.
 pub fn magic_charm(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_charm");
     if host.ai_mode(target) != AiMode::Talk && !is_boss(host, target) {
         host.set_attack_reason(target, AttackReason::None);
         host.set_last_player_attack_reason(target, AttackReason::None);
@@ -391,6 +415,7 @@ pub fn magic_charm(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId
 /// Port of `MagicBloodlust` (S:55cb0): a boss only turns on the caster; others who can fight
 /// attack the nearest other fighter within 10 m (reason 17 = Duel) or, with none, the caster.
 pub fn magic_bloodlust(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_bloodlust");
     if is_boss(host, target) {
         assess_target(host, target, caster, AttackReason::ReactToDamage);
         return;
@@ -418,6 +443,7 @@ pub fn magic_bloodlust(host: &mut dyn ScriptHost, caster: EntityId, target: Enti
 /// Port of `MagicFear` (S:55eb0 / S:322f0): a target that can fight (not a boss, not the gate
 /// guard) is told by fight sound, stops and flees from the caster.
 pub fn magic_fear(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_fear");
     if is_boss(host, target) || is_gate_guard(host, target) {
         assess_target(host, target, caster, AttackReason::ReactToDamage);
         return;
@@ -429,6 +455,7 @@ pub fn magic_fear(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId)
 
 /// Port of `MagicSleep` (S:54670): a target that is not a boss falls under `ZS_MagicSleep`.
 pub fn magic_sleep(host: &mut dyn ScriptHost, _caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_sleep");
     if !is_boss(host, target) {
         host.full_stop(target);
         host.set_task(target, State::MagicSleep);
@@ -439,6 +466,7 @@ pub fn magic_sleep(host: &mut dyn ScriptHost, _caster: EntityId, target: EntityI
 /// (routine, reaction, flee, arena...), not the caster, not in his party and not a boss falls under
 /// `ZS_MagicHypnosis`.
 pub fn magic_hypnosis(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_hypnosis");
     let caster_leader = host.party_leader(caster);
     for npc in host.all_npcs_by_distance(caster) {
         if npc == caster {
@@ -478,6 +506,7 @@ pub fn magic_hypnosis(host: &mut dyn ScriptHost, caster: EntityId) {
 /// otherwise one. Each is a wild animal within 250 m that can reach the caster, can attack and is
 /// not already hunting for him; it is sent after the target with reason 16 (player command).
 pub fn magic_call_animals(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_call_animals");
     let int = stats::attribute(host, caster, crate::host::Attribute::Intelligence);
     let wanted = if int > 300 {
         3
@@ -515,6 +544,7 @@ pub fn summon_party_monster(
     caster: EntityId,
     template: &str,
 ) -> EntityId {
+    gothic_portcov::hit!("summon_party_monster");
     let npc = host.spawn_npc(template, caster);
     if npc.is_none() {
         return npc;
@@ -539,21 +569,25 @@ pub fn summon_party_monster(
 
 /// Port of `MagicSummonDemon` (S:554e0).
 pub fn magic_summon_demon(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_demon");
     summon_party_monster(host, caster, "Demon");
 }
 
 /// Port of `MagicSummonSkeleton` (S:555d0): a sword skeleton.
 pub fn magic_summon_skeleton(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_skeleton");
     summon_party_monster(host, caster, "Skeleton_Sword");
 }
 
 /// Port of `MagicSummonGolem` (S:556c0).
 pub fn magic_summon_golem(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_golem");
     summon_party_monster(host, caster, "Golem");
 }
 
 /// Port of `MagicSummonGoblin` (S:557b0).
 pub fn magic_summon_goblin(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_goblin");
     summon_party_monster(host, caster, "Goblin");
 }
 
@@ -571,6 +605,7 @@ const fn army_size(int: i32, small: u32, mid: u32, big: u32) -> u32 {
 /// Port of `MagicSummonArmyOfDarkness` (S:558a0): skeletons and as many zombie slaves, three each below
 /// Intelligence 250, four from 250 and five from 300.
 pub fn magic_summon_army_of_darkness(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_army_of_darkness");
     let int = stats::attribute(host, caster, crate::host::Attribute::Intelligence);
     let n = army_size(int, 3, 4, 5);
     for _ in 0..n {
@@ -584,6 +619,7 @@ pub fn magic_summon_army_of_darkness(host: &mut dyn ScriptHost, caster: EntityId
 /// Port of `MagicSummonArmyOfCuteness` (S:56950): rabbits, six below Intelligence 250, seven from 250 and
 /// eight from 300.
 pub fn magic_summon_army_of_cuteness(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_army_of_cuteness");
     let int = stats::attribute(host, caster, crate::host::Attribute::Intelligence);
     for _ in 0..army_size(int, 6, 7, 8) {
         summon_party_monster(host, caster, "Rabbit");
@@ -594,6 +630,7 @@ pub fn magic_summon_army_of_cuteness(host: &mut dyn ScriptHost, caster: EntityId
 /// the hero's version is a `Shadowbeast` when the spell has none. Characters other than the
 /// hero keep what the template says.
 pub fn magic_summon_monster(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_monster");
     let spell = host.spell(&host.cast_spell(caster));
     let template = spell
         .map(|s| s.spawn)
@@ -604,6 +641,7 @@ pub fn magic_summon_monster(host: &mut dyn ScriptHost, caster: EntityId) {
 
 /// Port of `MagicSummonCompanion` (S:55b90): the creature named by the spell's `Spawn`.
 pub fn magic_summon_companion(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_summon_companion");
     let spell = host.spell(&host.cast_spell(caster));
     if let Some(s) = spell.filter(|s| !s.spawn.is_empty()) {
         summon_party_monster(host, caster, &s.spawn);
@@ -616,6 +654,7 @@ pub fn magic_summon_companion(host: &mut dyn ScriptHost, caster: EntityId) {
 /// along, controlled members are released to their routines, every misted character is freed,
 /// and he is moved to the waypoint named by the spell without its `Spl_` prefix.
 pub fn magic_teleport(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_teleport");
     let spell = host.cast_spell(caster);
     let destination = spell.strip_prefix("Spl_").unwrap_or(&spell).to_string();
     let right = host.find_stack_index(caster, Slot::RightHand);
@@ -649,6 +688,7 @@ pub fn magic_teleport(host: &mut dyn ScriptHost, caster: EntityId) {
 /// old body as its current or alternative target now has the new one (the DLL also moves the
 /// alignment target, the look-at of the engine, which the host does with `set_look_at`).
 pub fn send_perception_transform(host: &mut dyn ScriptHost, old: EntityId, new: EntityId) {
+    gothic_portcov::hit!("send_perception_transform");
     for npc in host.all_npcs() {
         if !crate::perception::can_receive_perception_from(host, npc, old, false) {
             continue;
@@ -666,6 +706,7 @@ pub fn send_perception_transform(host: &mut dyn ScriptHost, old: EntityId, new: 
 /// (a druid stone or a potion) for [`transform_duration`] seconds; the hands are emptied
 /// (the stone itself stays in the right hand when it is an artefact).
 pub fn magic_transform(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_transform");
     if caster != host.player() {
         return;
     }
@@ -693,6 +734,7 @@ pub fn magic_transform(host: &mut dyn ScriptHost, caster: EntityId) {
 /// `CanTransformInto` is turned into the spell's animal for the transform duration; the caster
 /// puts his hands down and goes back to standing.
 pub fn magic_animal_form(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_animal_form");
     if caster == host.player() && target.is_none() {
         return;
     }
@@ -721,6 +763,7 @@ pub fn magic_animal_form(host: &mut dyn ScriptHost, caster: EntityId, target: En
 /// Port of `TransformBack` (S:58610): the transformation ends — the hero (or the animal-formed
 /// character) takes his own shape back at the animal's place, the alien body is removed.
 pub fn transform_back(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("transform_back");
     let form = host.transform_form(who);
     if form.is_some() {
         send_perception_transform(host, form, who);
@@ -740,6 +783,7 @@ pub fn transform_back(host: &mut dyn ScriptHost, who: EntityId) {
 /// opens ordinary locks), or when its difficulty is below 5 and the caster... [I]: a lock of
 /// difficulty 1-4 opens, a keyed lock of difficulty 5 or more refuses (`Impossible`).
 pub fn magic_open_locks(host: &mut dyn ScriptHost, caster: EntityId, object: EntityId) {
+    gothic_portcov::hit!("magic_open_locks");
     match host.lock_difficulty(object) {
         Some(d) if d < 5 => {
             host.unlock_object(object);
@@ -753,6 +797,7 @@ pub fn magic_open_locks(host: &mut dyn ScriptHost, caster: EntityId, object: Ent
 /// Port of `MagicSoulTravel` (S:56440): the hero leaves his body: a ghost copy takes his place
 /// (status 0x80), he becomes the ghost (status 0x200 marks the real body).
 pub fn magic_soul_travel(host: &mut dyn ScriptHost, caster: EntityId) {
+    gothic_portcov::hit!("magic_soul_travel");
     if caster != host.player() {
         return;
     }
@@ -767,6 +812,7 @@ pub fn magic_soul_travel(host: &mut dyn ScriptHost, caster: EntityId) {
 
 /// Port of `ReturnToBody` (S:58470): the soul returns, the ghost marks are cleared.
 pub fn return_to_body(host: &mut dyn ScriptHost, who: EntityId) {
+    gothic_portcov::hit!("return_to_body");
     host.set_status_bits(who, STATUS_OUT_OF_BODY, false);
     host.set_status_bits(who, STATUS_GHOST, false);
     host.emit_magic(MagicEvent::Status {
@@ -780,12 +826,15 @@ pub fn return_to_body(host: &mut dyn ScriptHost, who: EntityId) {
 /// Port of `MagicTelekinesis` (S:56170): toggles the focused mover (levers) or lifts the
 /// focused loose item toward the caster; the host moves it.
 pub fn magic_telekinesis(host: &mut dyn ScriptHost, caster: EntityId, target: EntityId) {
+    gothic_portcov::hit!("magic_telekinesis");
     host.telekinesis(caster, target);
 }
 
 /// Port of `MagicTimeBubble` (S:566b0): the spell's `Smn_Timebubble` entity does the work; the
 /// function itself only exists to be called.
-pub fn magic_time_bubble(_host: &mut dyn ScriptHost, _caster: EntityId) {}
+pub fn magic_time_bubble(_host: &mut dyn ScriptHost, _caster: EntityId) {
+    gothic_portcov::hit!("magic_time_bubble");
+}
 
 /// Run a spell function by the name a spell template stores in `FuncOnCast`/`FuncOnTargetHit`.
 /// Returns false when the name is not a function of the script library.
