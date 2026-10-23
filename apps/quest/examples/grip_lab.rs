@@ -139,6 +139,10 @@ fn main() {
         }
     }
     let hp = rh.position;
+    // GRIPLAB_CLOSE=1: close-ups of the fist only, cameras placed in the grip frame (OpenXR: -Z thumb end of the
+    // fist, +Z little-finger end, -Y along the fingers, +-X palm normal) so every weapon gets the same anatomy views.
+    let close = std::env::var("GRIPLAB_CLOSE").is_ok_and(|v| v == "1");
+    let g = |v: Vec3| rh.rotation * v;
     // Views around the right hand: (name, camera offset from the hand, look-at offset).
     let views: [(&str, Vec3, Vec3); 4] = [
         ("palm side (from the body)", Vec3::new(-0.5, 0.1, -0.5), Vec3::ZERO),
@@ -150,6 +154,13 @@ fn main() {
             Vec3::new(0.0, 0.3, 0.25),
         ),
     ];
+    let close_views: [(&str, Vec3, Vec3); 4] = [
+        ("close +X", g(Vec3::new(0.2, 0.0, 0.0)), Vec3::ZERO),
+        ("close -X", g(Vec3::new(-0.2, 0.0, 0.0)), Vec3::ZERO),
+        ("close thumb end (-Z)", g(Vec3::new(0.05, 0.05, -0.2)), Vec3::ZERO),
+        ("close finger side (-Y)", g(Vec3::new(0.05, -0.2, 0.02)), Vec3::ZERO),
+    ];
+    let views = if close { close_views } else { views };
     for mesh in WEAPONS.iter().filter(|m| m.contains(filter.as_str())) {
         let curl_pair = gothic_quest::grip::curl(mesh);
         let curl = [[1.0, 1.0], curl_pair];
@@ -213,6 +224,39 @@ fn main() {
             for _ in 0..8 {
                 app.update();
             }
+            if i == 0 {
+                // Grip metrics (right hand): handle line = grip position along grip -Z.
+                let names = ["Hand_Hand_1", "Hand_Finger2_1", "Hand_Finger5_1", "Hand_Finger3_1", "Hand_Finger3_3", "Hand_Finger1_3"];
+                let mut w = std::collections::HashMap::new();
+                for n in names {
+                    let full = hero.by_name.keys().find(|k| k.contains("Right") && k.ends_with(n)).cloned();
+                    if let Some(full) = full {
+                        let e = hero.joints[hero.by_name[&full]];
+                        if let Some(gt) = app.world().get::<GlobalTransform>(e) {
+                            w.insert(n, gt.translation());
+                        }
+                    }
+                }
+                let hdir = rh.rotation * Vec3::NEG_Z;
+                let dist = |p: Vec3| { let d = p - rh.position; (d - hdir * d.dot(hdir)).length() * 100.0 };
+                if let (Some(&wr), Some(&i1), Some(&l1), Some(&m1), Some(&m3)) = (w.get("Hand_Hand_1"), w.get("Hand_Finger2_1"), w.get("Hand_Finger5_1"), w.get("Hand_Finger3_1"), w.get("Hand_Finger3_3")) {
+                    let kn = (i1 - l1).normalize();
+                    println!("[metrics {mesh}] knuckle-line vs handle angle {:.1} deg | handle-to-line dist (cm): wrist {:.1}, middle knuckle {:.1}, middle tip-joint {:.1}, thumb tip {:.1}", kn.angle_between(hdir).to_degrees(), dist(wr), dist(m1), dist(m3), w.get("Hand_Finger1_3").map_or(-1.0, |&p| dist(p)));
+                    let c = (i1 + l1) * 0.5; let along = (c - rh.position).dot(hdir) * 100.0;
+                    println!("[metrics {mesh}] knuckle centre along handle from grip point: {along:.1} cm");
+                    let f = (m1 - wr).normalize();
+                    let palm = { let c = m3 - m1; (c - f * c.dot(f)).normalize() };
+                    let near = rh.position + hdir * (c - rh.position).dot(hdir);
+                    let d = near - c;
+                    println!("[metrics {mesh}] handle relative to knuckle centre: along fingers {:.1} cm, toward palm side {:.1} cm, sideways {:.1} cm", d.dot(f) * 100.0, d.dot(palm) * 100.0, d.dot(f.cross(palm)) * 100.0);
+                    let jw = |suffix: &str| hero.by_name.keys().find(|k| k.contains("Right") && k.ends_with(suffix)).and_then(|k| app.world().get::<GlobalTransform>(hero.joints[hero.by_name[k]])).map(|g| g.translation());
+                    if let (Some(t2), Some(t3), Some(i2)) = (jw("Hand_Finger1_2"), jw("Hand_Finger1_3"), jw("Hand_Finger2_2")) {
+                        let tip = t3 + (t3 - t2);
+                        println!("[thumb] tip-to-index2 {:.1} cm, tip-to-handle-axis {:.1} cm", (tip - i2).length() * 100.0, dist(tip));
+                    }
+                    if std::env::var("GRIPLAB_METRICS_ONLY").is_ok() { std::process::exit(0); }
+                }
+            }
             let path = parts.join(format!("{stem}_{i}.png"));
             app.world_mut()
                 .spawn(Screenshot::image(handle.clone()))
@@ -228,7 +272,7 @@ fn main() {
             .map(|(p, n)| format!("(r'{}', '{}')", p.display(), n))
             .collect::<Vec<_>>()
             .join(",");
-        let sheet = out.join(format!("{stem}.png"));
+        let sheet = out.join(if close { format!("{stem}_close.png") } else { format!("{stem}.png") });
         let script = format!(
             "from PIL import Image, ImageDraw\n\
              v=[{list}]\n\
@@ -316,8 +360,8 @@ fn build_scene(
             .and_then(|md| gothic_quest::grip::frame_for(mesh, &md))
             .map(|g| {
                 println!(
-                    "{mesh}: blade {:?} edge {:?} centre {:?} guard {:.1} pommel {:.1} tip {:.1}",
-                    g.blade, g.edge, g.center, g.guard, g.pommel, g.tip
+                    "{mesh}: blade {:?} handle_axis {:?} handle-vs-blade {:.1} deg edge {:?} edge.blade {:.3} centre {:?} guard {:.1} pommel {:.1} tip {:.1}",
+                    g.blade, g.handle_axis, g.handle_axis.angle_between(g.blade).to_degrees(), g.edge, g.edge.dot(g.blade), g.center, g.guard, g.pommel, g.tip
                 );
                 g.visual(0.01)
             })

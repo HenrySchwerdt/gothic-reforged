@@ -50,6 +50,8 @@ pub struct Retarget {
     /// Thumb opposition: (axis in the bone's rest frame, max angle) applied on top of the flexion, about the palm
     /// normal, so the thumb sweeps across the palm instead of curling in the plane of the fingers.
     thumb_opp: Vec<Option<(Vec3, f32)>>,
+    /// Thumb joints: local rotation of the closed grip (solved so the tip wraps over the index finger).
+    thumb_pose: Vec<Option<Quat>>,
 }
 
 /// Sign of the thumb opposition rotation about the palm normal (+1/-1, picked from the grip render).
@@ -128,6 +130,7 @@ impl Retarget {
             ankle_bind_cm: 0.0,
             fingers: vec![],
             thumb_opp: vec![],
+            thumb_pose: vec![],
         }
     }
 
@@ -290,7 +293,9 @@ impl Retarget {
             if let (Some(w), Some(m), Some(t), Some(p), Some(&hi)) = (
                 pos(&hand),
                 pos(&format!("{prefix}_{side}_Hand_Finger3_2")),
-                pos(&format!("{prefix}_{side}_Hand_Finger1_1")),
+                // Fist tube = knuckle line (index base -> little finger base). The thumb base sits far down towards the
+                // wrist, so using it tilted the tube ~45 deg across the back of the hand (grip lab close-ups).
+                pos(&format!("{prefix}_{side}_Hand_Finger2_1")),
                 pos(&format!("{prefix}_{side}_Hand_Finger5_1")),
                 rig.by_name.get(&hand),
             ) {
@@ -385,6 +390,7 @@ impl Retarget {
         }
         let head_node = rig.by_name.get(&format!("{prefix}_Head_Head_1")).copied();
         let mut palm_local = [None; 2];
+        let mut thumb_pose: Vec<Option<Quat>> = vec![None; n];
         for (k, side) in ["Left", "Right"].into_iter().enumerate() {
             let hand = format!("{prefix}_{side}_Hand_Hand_1");
             let roots: Vec<Vec3> = (2..=5)
@@ -394,7 +400,66 @@ impl Retarget {
                 (pos(&hand), rig.by_name.get(&hand), roots.is_empty())
             {
                 let kc = roots.iter().copied().sum::<Vec3>() / roots.len() as f32;
-                palm_local[k] = Some(rest_rot[hi].inverse() * ((kc - w) * 0.55));
+                // Grip centre = the axis the closed fist wraps around: curl the middle finger by the full flexion
+                // (70/80 deg about the knuckle axis, as `apply` does) and take the centre of the circle through its
+                // three joints, shifted from the middle knuckle to the knuckle centroid. The old 55 % point on the
+                // wrist->knuckle bone line sat 3.3 cm behind the knuckles and on the back side of the bone line, so
+                // the fingers closed around air (grip lab metrics).
+                let fist = (|| {
+                    let al = hand_local[k]?;
+                    let t_model = rest_rot[hi] * al.col(1);
+                    let axis = if k == 0 { -t_model } else { t_model };
+                    let m1 = pos(&format!("{prefix}_{side}_Hand_Finger3_1"))?;
+                    let m2 = pos(&format!("{prefix}_{side}_Hand_Finger3_2"))?;
+                    let m3 = pos(&format!("{prefix}_{side}_Hand_Finger3_3"))?;
+                    let q1 = Quat::from_axis_angle(axis, 70f32.to_radians());
+                    let q2 = q1 * Quat::from_axis_angle(axis, 80f32.to_radians());
+                    let p2 = m1 + q1 * (m2 - m1);
+                    let p3 = p2 + q2 * (m3 - m2);
+                    let c = circle_centre(m1, p2, p3)?;
+                    Some(kc + (c - m1))
+                })();
+                let grip_c = fist.unwrap_or(w + (kc - w) * 0.55);
+                palm_local[k] = Some(rest_rot[hi].inverse() * (grip_c - w));
+                // Thumb: solve (CCD, two joints) the closed-fist rotations that put the thumb tip on the outside of
+                // the curled index finger's middle joint, just off the handle, so the thumb wraps over the fingers.
+                // `apply` blends identity -> this pose with the grip value.
+                let solved = (|| {
+                    let al = hand_local[k]?;
+                    let t_model = rest_rot[hi] * al.col(1);
+                    let axis = if k == 0 { -t_model } else { t_model };
+                    let jn = |f: u32, j: u32| format!("{prefix}_{side}_Hand_Finger{f}_{j}");
+                    let (i1, i2) = (pos(&jn(2, 1))?, pos(&jn(2, 2))?);
+                    let ci2 = i1 + Quat::from_axis_angle(axis, 70f32.to_radians()) * (i2 - i1);
+                    let hdir = t_model.normalize();
+                    let radial = {
+                        let d = ci2 - grip_c;
+                        (d - hdir * d.dot(hdir)).normalize_or_zero()
+                    };
+                    let target = ci2 + radial * 1.2;
+                    let (n1, n2) = (*rig.by_name.get(&jn(1, 1))?, *rig.by_name.get(&jn(1, 2))?);
+                    let (j1, j2, j3) = (pos(&jn(1, 1))?, pos(&jn(1, 2))?, pos(&jn(1, 3))?);
+                    let tip0 = j3 + (j3 - j2);
+                    let (mut r1, mut r2) = (Quat::IDENTITY, Quat::IDENTITY);
+                    let tip_of = |r1: Quat, r2: Quat| {
+                        let p2 = j1 + r1 * (j2 - j1);
+                        (p2, p2 + r1 * r2 * (tip0 - j2))
+                    };
+                    for _ in 0..40 {
+                        let (p2, tip) = tip_of(r1, r2);
+                        let arc2 = Quat::from_rotation_arc((tip - p2).normalize(), (target - p2).normalize());
+                        r2 = (r1.inverse() * arc2 * r1 * r2).normalize();
+                        let (_, tip) = tip_of(r1, r2);
+                        r1 = (Quat::from_rotation_arc((tip - j1).normalize(), (target - j1).normalize()) * r1)
+                            .normalize();
+                    }
+                    let d1 = rest_rot[n1].inverse() * r1 * rest_rot[n1];
+                    let d2 = rest_rot[n2].inverse() * r2 * rest_rot[n2];
+                    Some([(n1, d1), (n2, d2)])
+                })();
+                for (ni, d) in solved.into_iter().flatten() {
+                    thumb_pose[ni] = Some(d);
+                }
             }
         }
         let foot_nodes: Vec<usize> = ["Left", "Right"]
@@ -427,6 +492,7 @@ impl Retarget {
             ankle_bind_cm,
             fingers,
             thumb_opp,
+            thumb_pose,
         }
     }
 
@@ -561,10 +627,16 @@ impl Retarget {
                             _ => curl[*hand][0],
                         };
                         let cc = c.clamp(0.0, 1.0);
-                        if let Some(Some((oaxis, omax))) = self.thumb_opp.get(i) {
-                            local *= Quat::from_axis_angle(*oaxis, omax * cc);
+                        if let Some(Some(q)) = self.thumb_pose.get(i) {
+                            local *= Quat::IDENTITY.slerp(*q, (curl[*hand][0]).clamp(0.0, 1.0));
+                        } else if *kind == 0 && self.thumb_pose.iter().any(Option::is_some) {
+                            // Thumb tip joint: follows the solved base joints.
+                        } else {
+                            if let Some(Some((oaxis, omax))) = self.thumb_opp.get(i) {
+                                local *= Quat::from_axis_angle(*oaxis, omax * cc);
+                            }
+                            local *= Quat::from_axis_angle(*axis, max * cc);
                         }
-                        local *= Quat::from_axis_angle(*axis, max * cc);
                     }
                     rw[i] = parent_rw * local;
                     if let Ok(mut t) = q.get_mut(rig.joints[i]) {
@@ -593,4 +665,15 @@ impl Retarget {
             root.translation = root_t;
         }
     }
+}
+
+/// Centre of the circle through three points (None when they are collinear).
+fn circle_centre(a: Vec3, b: Vec3, c: Vec3) -> Option<Vec3> {
+    let (ab, ac) = (b - a, c - a);
+    let n = ab.cross(ac);
+    let d = 2.0 * n.length_squared();
+    if d < 1e-6 {
+        return None;
+    }
+    Some(a + (n.cross(ab) * ac.length_squared() + ac.cross(n) * ab.length_squared()) / d)
 }
