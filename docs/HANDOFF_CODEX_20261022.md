@@ -1,4 +1,17 @@
-## Active release A/B preparation — 2026-10-23 03:43 UTC
+## Active release validation — 2026-10-23 03:51 UTC
+
+Rootbuild27838definitiveexit0,8m17s. Compiledcb909ff3494e29f41533930190dd7fd9cbc46739,
+newimmutable release8af2257ce156e49a4ac6486a5b32a6d22753830e6c71e8c2382bc5c8d14c6823,
+`.local/no-indirect-release/artifacts/` + OWNcopiedruntime +runtime-root.txt.
+NormaldefaultWindowsNoIndirect controlledsmokePASS: grounded360/360,windtime/pose
+records exact; rootviewedoverview+close noobviousgeom/shadowloss/checkers.
+DesktopDitherFix remains unchanged; newrelease NOTpackaged yet.
+wind_clock sole runner NOW authorized default13/9/15QA; onlyifallPASS then4run
+sameEXE -CompareIndirectDrawing Camera30warmup20sample0/1. No extra build/tests.
+Evidence `.local/no-indirect-release/qa-smoke`, plannedqa-combat/bench. Rootreview
+QA+bench beforepackaging. Oldtrace figures below remain diagnostic, notreleasegain.
+
+## Completed trace / release preparation — 2026-10-23 03:43 UTC
 
 Tracebuild39345exit0/9m12s, source558b9de1a4bc039b6e02987dc3943c8639db2b89,
 immutable75c76b2301e9442dce27fd6b50dbf572bf44f906b896464ef60ebe96720a570f.
