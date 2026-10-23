@@ -45,15 +45,51 @@ fn log_since(cx: &Cx, from: usize) -> Vec<(String, f32)> {
     cx.world.resource::<HeroMover>().log[from.min(log_len(cx))..].to_vec()
 }
 
+/// Send a press and release before the next input update, matching a platform tap that happened
+/// entirely between two Bevy frames. `gather_input` must preserve its `just_pressed` edge.
+fn same_frame_key_tap(cx: &mut Cx, key: KeyCode) {
+    let window = {
+        let mut windows = cx
+            .world
+            .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>();
+        windows.iter(cx.world).next()
+    };
+    let Some(window) = window else { return };
+    for state in [
+        bevy::input::ButtonState::Pressed,
+        bevy::input::ButtonState::Released,
+    ] {
+        cx.world
+            .write_message(bevy::input::keyboard::KeyboardInput {
+                key_code: key,
+                logical_key: bevy::input::keyboard::Key::Unidentified(
+                    bevy::input::keyboard::NativeKey::Unidentified,
+                ),
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+    }
+}
+
 fn stamina(cx: &Cx) -> i32 {
     cx.core().0.sim.actor(cx.core().0.hero).stamina
 }
 
 fn draw_sword(sc: &mut Sc, key: KeyCode, label: &'static str) {
+    draw_sword_with_tap(sc, key, label, false);
+}
+
+fn draw_sword_with_tap(sc: &mut Sc, key: KeyCode, label: &'static str, same_frame: bool) {
     sc.act(label, move |cx| {
         let n = log_len(cx);
         cx.st.n.insert("mark".into(), n as f64);
-        cx.tap(key);
+        if same_frame {
+            same_frame_key_tap(cx, key);
+        } else {
+            cx.tap(key);
+        }
     });
     sc.wait(0.25);
     sc.until(
@@ -246,10 +282,11 @@ pub fn melee_quickslot() -> Sc {
         },
     );
     sc.shot("before_digit1");
-    draw_sword(
+    draw_sword_with_tap(
         &mut sc,
         KeyCode::Digit1,
         "Digit1: draw the sword from quick slot 1",
+        true,
     );
     sc
 }

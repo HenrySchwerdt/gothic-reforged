@@ -266,13 +266,8 @@ fn gather_input(
         f.script_left_until = None;
     }
 
-    let mut raw = RawInput::default();
+    let mut raw = keyboard_input(&keyboard, !f.blocked);
     if !f.blocked {
-        for k in keyboard.get_pressed() {
-            if let Some(code) = dik::from_key_code_name(&format!("{k:?}")) {
-                raw.keys[code as usize] = true;
-            }
-        }
         if mouse_live {
             raw.buttons[0] = buttons.pressed(MouseButton::Left);
             raw.buttons[1] = buttons.pressed(MouseButton::Right);
@@ -329,4 +324,79 @@ fn gather_input(
     f.first_person = f.pressed_edge(SessionKey::FirstPerson);
     f.reset_camera = f.pressed_edge(SessionKey::ResetCamera);
     f.update_walk();
+}
+
+/// Convert Bevy's keyboard snapshot to the session-key state for this frame. `just_pressed`
+/// preserves a press and release that both arrived between updates; unioning it with `pressed`
+/// reports that tap for one frame, after which the mapper observes the release normally.
+fn keyboard_input(keyboard: &ButtonInput<KeyCode>, enabled: bool) -> RawInput {
+    let mut raw = RawInput::default();
+    if enabled {
+        for k in keyboard.get_pressed().chain(keyboard.get_just_pressed()) {
+            if let Some(code) = dik::from_key_code_name(&format!("{k:?}")) {
+                raw.set_key(code, true);
+            }
+        }
+    }
+    raw
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quick1(mapper: &mut ActionMapper, raw: &RawInput, at: u64) -> Option<GameKeyMessage> {
+        mapper
+            .process(raw, at)
+            .into_iter()
+            .find(|message| message.key == SessionKey::Quick1)
+    }
+
+    #[test]
+    fn keyboard_tap_between_updates_is_delivered_once_and_startup_block_does_not_replay() {
+        let mut keyboard = ButtonInput::<KeyCode>::default();
+        let mut mapper = ActionMapper::standard();
+
+        // Model two platform events consumed in one Bevy update: the final held state is up,
+        // while ButtonInput retains the press edge until clear().
+        keyboard.press(KeyCode::Digit1);
+        keyboard.release(KeyCode::Digit1);
+        assert!(!keyboard.pressed(KeyCode::Digit1));
+        assert!(keyboard.just_pressed(KeyCode::Digit1));
+        let pulse = keyboard_input(&keyboard, true);
+        let down = quick1(&mut mapper, &pulse, 10).expect("same-frame Digit1 tap");
+        assert!(down.is_press_edge());
+
+        keyboard.clear();
+        let up = quick1(&mut mapper, &keyboard_input(&keyboard, true), 20)
+            .expect("pulse releases on the following update");
+        assert!(up.is_release_edge());
+        assert!(quick1(&mut mapper, &keyboard_input(&keyboard, true), 30).is_none());
+
+        // Ordinary held keys still produce one press edge, held state, then a release edge.
+        let mut held = ButtonInput::<KeyCode>::default();
+        let mut held_mapper = ActionMapper::standard();
+        held.press(KeyCode::Digit1);
+        assert!(quick1(&mut held_mapper, &keyboard_input(&held, true), 40)
+            .expect("held press")
+            .is_press_edge());
+        held.clear();
+        let repeat = quick1(&mut held_mapper, &keyboard_input(&held, true), 50)
+            .expect("held state");
+        assert!(repeat.is_pressed());
+        assert!(!repeat.is_press_edge());
+        held.release(KeyCode::Digit1);
+        assert!(quick1(&mut held_mapper, &keyboard_input(&held, true), 60)
+            .expect("held release")
+            .is_release_edge());
+
+        // A pulse observed while startup blocks hardware is discarded, not replayed on ready.
+        let mut blocked = ButtonInput::<KeyCode>::default();
+        let mut blocked_mapper = ActionMapper::standard();
+        blocked.press(KeyCode::Digit1);
+        blocked.release(KeyCode::Digit1);
+        assert!(quick1(&mut blocked_mapper, &keyboard_input(&blocked, false), 70).is_none());
+        blocked.clear();
+        assert!(quick1(&mut blocked_mapper, &keyboard_input(&blocked, true), 80).is_none());
+    }
 }
