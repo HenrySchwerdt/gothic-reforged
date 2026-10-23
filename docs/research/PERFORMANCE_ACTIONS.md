@@ -1,6 +1,6 @@
 # Performance follow-up candidates
 
-Read-only review against `docs/research/PERFORMANCE.md` and the manager-provided current PC
+Historical read-only review against `docs/research/PERFORMANCE.md` and the then-current PC
 baseline: `--play`, 1280x720, average 12.905 ms, GPU 3.442 ms, 12,765 entities / 1,554 visible.
 The referenced JSON (`.local/bench/codex-baseline-1792648427.json`) was not present in this
 worktree, so this note uses those supplied summary values. They do not isolate any candidate
@@ -25,8 +25,8 @@ environment recorded only `GR_RES=1280x720`, with no aim-pick or raycast compari
 enabled. GPU timing is whole-frame aggregate, not per-pass attribution.
 
 The earlier retained trace below remains a historical lead only. The corrected-source indirect-
-drawing trace is now complete; its paired measurements and pending release validation are recorded
-in the next section. Instrumented timings are for CPU-span attribution, not shipping performance.
+drawing trace and release validation are complete; see the next section. Instrumented timings are
+for CPU-span attribution, not shipping performance.
 
 ## Fresh fixed-camera indirect-drawing trace (2026-10-23)
 
@@ -51,28 +51,34 @@ Source audit explains this limitation: smoke uses360 uncapped Update steps with 
 elapsed time (`walk.rs` smoke stage2). Faster rendering can therefore integrate less
 simulated time in those360steps. Grounded360/360 is a step-count result; do not infer
 movement-speed differences from distance/6. The analytical camera benchmark avoids this driver.
-Release A/B and QA are pending on build source `cb909ff` (log
-`.local/pc-direct-render-release-build.log`): compare the same executable with
-`GR_NO_INDIRECT_DRAWING=0` reference and `=1` candidate, then inspect release images and run QA before
-packaging. The harness switch is `scripts/bench-renderer.ps1 -CompareIndirectDrawing` (commit
-`8677336`); no release package is validated yet.
+Release A/B and QA are complete on build source `cb909ff3494e29f41533930190dd7fd9cbc46739`
+(log `.local/pc-direct-render-release-build.log`), packaged from clean HEAD
+`3716a5552c80928bd89ef633d8ff9809f9b71804`. On one EXE hash
+`8af2257ce156e49a4ac6486a5b32a6d22753830e6c71e8c2382bc5c8d14c6823`, the release A/B/A/B
+camera test (1280x720, 30 s warmup, 20 s per run, two runs per variant) measured median run
+average 10.0434 ms / p95 10.7174 ms / GPU 2.9299 ms for `GR_NO_INDIRECT_DRAWING=0`, versus
+5.4898 / 5.9794 / 1.1016 ms for `=1` (-45.34% average in this fixed scene). Both variants had
+12,752 entities and 1,541–1,546 visible meshes at route boundaries, with about 35 μm anchor
+variation. This is not a generalized FPS, movement, hardware or VR claim; only two samples per
+variant were collected. Package QA passed melee13, magic9 and bow15 assertions; fixed smoke passed
+360/360 grounded frames, and root approved the final images. Evidence is in
+`.local/no-indirect-release/bench/summary.json`, `qa-package/` and `qa-package-smoke/`.
+The harness switch is `scripts/bench-renderer.ps1 -CompareIndirectDrawing` (commit `8677336`).
+Windows defaults to the candidate path; other platforms’ defaults are unchanged.
 
-## 1. Shadow pass mesh-bin work
+## 1. Historical shadow-pass mesh-bin lead
 
-`PERFORMANCE.md` already has direct trace evidence from an earlier run: shadow bin instance-buffer
-writes and preprocess bind-group preparation dominated render-thread time, with thousands of
-per-frame writes/bind groups across cascades. The current baseline remains CPU/render-thread heavy
-relative to the reported GPU time, so this is still the strongest measured lead. The old
-merge-per-tile experiment reduced entity count but ran about 4 ms slower because larger meshes
-lost useful culling; do not repeat that strategy.
+`PERFORMANCE.md` has trace evidence from an earlier run: shadow bin instance-buffer writes and
+preprocess bind-group preparation dominated render-thread time. The fresh indirect-drawing trace
+shows the default shadow-bin span at 3.259 ms/frame, but it is absent from the candidate top 40;
+that does not establish zero candidate cost. The validated release A/B improved this fixed scene,
+but it does not isolate shadow work from other preprocessing. The old merge-per-tile experiment
+reduced entity count but ran about 4 ms slower because larger meshes lost useful culling; do not
+repeat that strategy.
 
-Candidate to investigate: instance repeated identical mesh/material pairs in small spatial clusters,
-preserving per-cluster bounds, culling and the current shadow settings. First confirm the current
-release trace still attributes time to `write_binned_instance_buffers<Shadow>` and
-`prepare_preprocess_bind_groups`; count shadow bins and buffer writes. Compare interleaved baseline
-and prototype runs with compiler load gone, same scene/camera/cascades/resolution, using avg/p95
-frame time and render-thread spans. Also verify the cluster bounds retain the same visible and
-shadowed geometry. No merge prototype is proposed without that culling check.
+Do not start a merge prototype from this historical lead alone. If a future trace on the validated
+release identifies material residual shadow work, measure it at the same camera/cascades and verify
+that any experiment retains visible and shadowed geometry before timing claims.
 
 ## 2. Moving-player grass-focus material fan-out
 
@@ -111,18 +117,15 @@ indicates they are material to the steady-state baseline.
 
 The committed analytical camera workload was used to compare the shared-focus buffer against the old per-material focus path. Immutable artifacts and provenance are in `D:/gr-wt/codex-renderer/.local/artifacts/gothic-reforged-camera-{oldfocus,focus}.exe`; source snapshots/manifests and the reverse-patch proof are summarized in `docs/HANDOFF_CODEX_20261022.md`. The 1280x720 A/B/A/B run used 30s settled-world warmup, 20s per sample, two repetitions, output `.local/bench-grass-focus-camera/summary.json`. Per pair, average/p95/GPU ms old→shared: 11.6661/12.8463/3.3069→11.2035/12.2293/3.2022, then 11.7172/12.9147/3.3681→11.2142/12.2673/3.1892. Run medians changed −4.13% average (11.6917→11.2088ms), p95 12.8805→12.2483ms, GPU average 3.3375→3.1957ms. The route followed the same 10s-period, 2m-radius loop; 21 expected/actual samples per run stayed within 3.85µm position residual and zero quaternion-component residual. Entity count matched at 12,752; start visible meshes differed by at most five (0.32%), final counts by two or fewer. `observer_cm` returns `Player.fly_pos` in fly mode, which `grass_focus` consumes, so this route does exercise the moving 2cm-gated grass-focus updates. It bypasses hero/controller physics and hides the hero; it is not whole-game movement parity. Two repetitions give only a small descriptive estimate, not high-confidence causal proof. The earlier generic walking comparison’s 3.69% average reduction is not causal evidence: its route endpoints and visible-mesh counts differed materially.
 
-### Historical trace procedure
+### Completed diagnostic trace procedure
 
-Once the wind probe source is frozen, combine it and trace support into one optimized build rather than linking a trace-only binary and then rebuilding. The existing app feature is `trace = ["viewer", "bevy/trace", "bevy/debug"]`; `--trace` is installed before the Bevy app, and the benchmark resets span counters when measurement begins. Bevy 0.20 function systems emit INFO `system` spans with a `name` field, which the app table keys as `system:<name>`; check for the wind-probe/system spans in the output rather than assuming they are present. Use the reviewed GNU environment and target:
-
-```sh
-source /c/Users/PowerTower/dev/gothic-reforged/.local/env.sh
-cd /d/gr-wt/codex-renderer
-export CARGO_TARGET_DIR=D:/gr-build/integrate RUST_MIN_STACK=67108864
-cargo +stable-x86_64-pc-windows-gnu build --release -j4 -p gothic-reforged --features viewer,trace --locked
-```
-
-Run that frozen artifact from the existing Wind runtime at 1280x720 with the wind-probe option chosen by its owner plus `--play --bench 20 --bench-warmup 30 --bench-camera --bench-gpu --bench-name windprobe-trace --trace`; keep unrelated `GR_*` flags unset. The bench JSON is written under runtime `.local/bench/` and, with trace enabled, contains `top_spans_per_frame` entries (`span`, `ms_per_frame`, `calls_per_frame`, `max_ms`); a companion `.local/bench/trace-<unix>.txt` contains the top spans and a systems-only section. These spans are inclusive and summed across threads, so nested totals must not be added as if they were disjoint frame costs. The trace/debug build is diagnostic only; its timings are not a release-performance result. Rebuild without `trace` for final performance comparison.
+The `viewer,trace` diagnostic build and fixed-camera pair described above are complete. Bevy INFO
+system spans were captured with `--trace`; span counters reset at measurement start and are reported
+as `top_spans_per_frame` in the bench JSON. The chosen source/runtime and exact evidence paths are
+recorded above. These spans are inclusive and summed across threads, so do not add parent and child
+times as if they were disjoint. The diagnostic build timings are not release timings; the same-EXE
+release comparison and package QA are now recorded above. Do not repeat the trace or release runs
+on unchanged code.
 ## Ranged aim picking
 
 The retained camera-only probe (`.local/profile-wind-probe/trace-1792684619.txt`) measured
