@@ -232,6 +232,7 @@ impl BuildSource for SyntheticSource {
                 let (_, aabb) = self.mesh(seed_of(name), n);
                 CpuPart {
                     name: name.clone(),
+                    rig: rig.clone(),
                     joints: (0..n as u16).collect(),
                     joint_rig_nodes: (0..n as u16).collect(),
                     inverse_bindposes: inverse_bindposes.clone(),
@@ -276,10 +277,12 @@ impl BuildSource for SyntheticSource {
             joint_nodes,
             facing_fix: Quat::IDENTITY,
             joint_by_name,
+            slot_mounts: HashMap::new(),
             parts,
             attachments,
             motion: None,
             locomotion: false,
+            idle: Vec::new(),
         })
     }
 }

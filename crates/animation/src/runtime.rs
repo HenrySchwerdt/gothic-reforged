@@ -12,8 +12,7 @@ use crate::{
     animator::{Animator, Overlay},
     library::{ActorLibrary, AssetStores, Composition},
     locomotion::{
-        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveDir, MoveKind, RIGHT,
-        Stance,
+        FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveKind, RIGHT, Stance,
     },
 };
 use anyhow::{Result, anyhow};
@@ -221,13 +220,7 @@ impl ActorSpawner<'_, '_> {
         );
         let mut locomotion = Locomotion::default();
         locomotion.key.stance = spec.stance;
-        let idle_key = LocoKey {
-            kind: MoveKind::Idle,
-            dir: MoveDir::Fwd,
-            stance: spec.stance,
-            sneak: false,
-            parade: false,
-        };
+        let idle_key = LocoKey::idle(spec.stance);
         if let Some(name) = &spec.motion {
             let motion = library.motion(&rig, name)?;
             animator.play(motion, 0.0, 1.0, spec.start_time);

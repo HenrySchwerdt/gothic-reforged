@@ -34,6 +34,9 @@ let root = streamer.request(&mut commands, BuildRequest::new(["Hero_Body", "Hero
   components of `ActorSpawner::spawn`: `Animator`, `CharacterComposition`, joints,
   `PartMeshes`, skinned meshes, attachments and weapon mounts. Systems that query those need
   no change. Despawning the root before then cancels the spawn.
+* `request_on(commands, entity, request, position, stance)` does the same for an existing root
+  (it keeps its own components); it is also how a failed look is re-requested.
+  `BuildRequest::start_time` sets the playback offset and is not part of the look.
 * Looks are cached by `BuildRequest::key()` (parts plus attachments). Equal requests share one
   build and one set of assets. Textures are deduplicated by name across looks.
 * `StreamConfig { workers (default: cores - 1, max 4), frame_budget (1.5 ms), max_per_frame (8) }`.
@@ -51,20 +54,68 @@ Result<ActorBundle>`. It runs on worker threads and must not touch the ECS. An `
 holds only CPU data: `Mesh`, `Image` and `StandardMaterial` values, the rig, the joint tables
 and the evaluation plan.
 
-## Integration hooks (not done in this PR)
+## Real source: `LibrarySource` (`gothic_animation::library_source`)
 
-* **Real source:** split `ActorLibrary` into a CPU stage that returns an `ActorBundle`
-  (reading `.xact` / `._xmac`, building meshes and the plan, decoding textures) and the
-  existing `Assets` stage. `ActorLibrary` today interleaves file reads with `Assets::add`;
-  the CPU part moves into a `BuildSource` that owns a `Vfs` handle, and `commit_assets`
-  replaces the `Assets` part. `stream_synthetic::SyntheticSource` shows the shape.
-* **Callers:** NPC spawning in `apps/game` (`play/**`, sectors, template spawning) calls
-  `streamer.request` instead of `ActorSpawner::spawn`, with the camera as `StreamFocus`.
-  Code that needs the character immediately (the hero at load, cutscenes) keeps using
-  `spawn_blocking`.
-* **GPU upload:** the commit only moves buffers into `Assets`; the render world uploads them
-  in the next extract. If uploads of many large textures show up as spikes, bound them with
-  Bevy's `RenderAssetBytesPerFrame`.
+`ActorLibrary`'s loading is split into a CPU stage and an `Assets` stage. The CPU stage
+(`build_part`, `skeleton`, `build_static`, `decode_texture`, `cpu_material`) reads and parses
+`.xact` / `.xcmsh` / `.xshmat` / `.ximg`, applies the left-handed fix (x mirrored, winding
+reversed by the reflection), builds the compact joint tables, inverse bind poses, the plan,
+the facing fix and the materials. The blocking `part` / `composition` / `static_mesh_variant`
+now call that stage and only add the result to `Assets` (with the same caches as before), so
+the blocking path's behaviour is unchanged. `ActorLibrary::build_bundle(&BuildRequest)` runs
+the same stage for a whole character and returns an `ActorBundle`.
+
+`LibrarySource` implements `BuildSource` with a pool of `ActorLibrary` instances (archive
+reads seek a file cursor, so every concurrent build needs its own handles). A library is
+opened lazily on a worker when every pooled one is busy, so at most one per worker exists.
+`LibrarySource::open(data_dir)` opens the four archives like `ActorLibrary::open`;
+`LibrarySource::new(|| ...)` takes any opener (for example one that also loads a clip pack).
+
+`BuildRequest::from_spec(&NpcSpec)` gives the request for what `ActorSpawner::spawn(spec)`
+spawns: parts, weapons (drawn slot plus holster slot), slot attachments as `mesh@M<switch>`,
+the scripted motion and `start_time` (not part of the look key). Weapon offsets other than
+identity are refused (no caller uses them).
+
+What a committed character shares with the blocking spawn: the skeleton, joint order,
+part joint tables, inverse bind poses, mesh buffers, material parameters, textures,
+`slot_mounts`, attachment joints and offsets, the weapon mount joints, and the starting
+motion. For locomotion characters the bundle carries the idle of every stance
+(`ActorBundle::idle`), and the commit plays the idle of the requested stance with
+`Locomotion::playing` set, exactly as `ActorSpawner::spawn` does. Differences that remain:
+
+* Assets are shared per look (one copy of a part's meshes per look that uses it) instead of
+  per part; textures are still shared by name. More looks with the same body therefore cost
+  more mesh memory than the blocking path.
+* `Composition::key` is the request key (`Hero_Body+Hero_Head`), not the resolved archive
+  paths.
+* Clips registered on the game's `ActorLibrary` resource at run time (the `--combat souls`
+  clip pack) are not in the source's libraries. Only an explicit `motion` naming such a clip
+  would differ; the idle and facing come from the stock catalog in both paths.
+* A broken idle clip for one stance is logged and skipped instead of failing the spawn.
+
+## Game wiring (`apps/game/src/play/npc_stream.rs`), opt-in
+
+`--stream-actors` (or `GR_STREAM_ACTORS=1`) with `--play` installs an `ActorStreamer` over
+`LibrarySource::open(<data dir>)`, the `ActorStreamPlugin` and tags the walk camera as
+`StreamFocus`. Without the flag nothing is installed and NPCs spawn exactly as before.
+
+* `npcs::spawn_npcs` keeps choosing, placing and budgeting the queued characters. With the
+  flag it calls `streamer.request` instead of `ActorSpawner::spawn`; the candidate's `visual`
+  is the placeholder root.
+* When the root is committed, `npcs::bind_spawned` (the code that used to follow the blocking
+  spawn) adds the presentation components, puts the candidate in `live` and spawns or binds the
+  core actor. Until then the character counts as pending (`pending_in_ring`, `Roster::total`),
+  so loading screens and QA readiness checks wait for it.
+* A look that fails with weapons is requested again without them on the same root
+  (`ActorStreamer::request_on`), like the blocking retry; a failing bare look marks the
+  candidate failed and removes the placeholder.
+* The hero (and everything else using `ActorSpawner`) still spawns blocking.
+* After each burst the log prints `play: actor stream idle: ...` with the build and commit
+  times from `StreamStats`.
+
+**GPU upload:** the commit only moves buffers into `Assets`; the render world uploads them in
+the next extract. If uploads of many large textures show up as spikes, bound them with Bevy's
+`RenderAssetBytesPerFrame`.
 
 ## Benchmark
 
@@ -88,7 +139,34 @@ single commits that took that long. They appear at random spawns, which points t
 container being preempted by the parallel builds rather than to the commit itself; this
 still needs measuring on an idle desktop.
 
+### Real NPC population (not measured yet)
+
+Everything above uses synthetic characters. The comparison with the real Ardea population needs
+the installed game and has not been run. On the machine with the installation:
+
+```text
+cargo run --release -p gothic-reforged --features viewer -- --play --data-dir "D:\SteamLibrary\steamapps\common\Gothic 3\Data" --bench 60 --bench-warmup 0 --bench-walk --bench-name npcs-blocking
+cargo run --release -p gothic-reforged --features viewer -- --play --data-dir "D:\SteamLibrary\steamapps\common\Gothic 3\Data" --bench 60 --bench-warmup 0 --bench-walk --bench-name npcs-stream --stream-actors
+```
+
+`--bench-warmup 0` keeps the initial spawn burst in the numbers. Compare `p99_ms`, `max_ms`
+and the frames over 16 ms in `.local/bench/npcs-*.json`, and note the `play: actor stream
+idle:` log lines of the streamed run. Also check by eye that streamed NPCs look and animate
+like blocking ones (textures, weapons in hand or holster, hair and beards).
+
 ## Tests
+
+`cargo test -p gothic-animation --test library_source` (synthetic `.xact` / `.ximg` written
+into temporary G3V0 archives, no game data):
+- the bundle equals the blocking composition: skeleton, joint tables, plan length,
+  `slot_mounts`, inverse bind poses, bounds, mesh buffers, materials and texture bytes, and
+  the mirrored vertex positions;
+- a streamed character has the same composition, parts, joints and mesh buffers as one from
+  `ActorSpawner::spawn`, with locomotion in the requested stance;
+- unknown actors, missing weapon meshes and unopenable archives fail the build with the
+  blocking path's errors, and the streamer drops those requests;
+- pooled libraries are reused; `BuildRequest::from_spec` encodes weapons, switches and the
+  start time.
 
 `cargo test -p gothic-animation --test stream`:
 - everything requested is spawned, and each look is built once;
