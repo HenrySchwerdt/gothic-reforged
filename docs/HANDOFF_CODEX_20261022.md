@@ -11,33 +11,65 @@ The user prioritized playability: Digit1 must draw the sword, actor gray rims,
 NPC/quest/teaching offer correctness, missing quests, and startup/input readiness.
 Do no further leaf/cosmetic work. No parity claim follows from earlier smokes.
 
-Current local source is branch `codex/renderer-stability`, commit
-`76fa16a2f3bbd6607b52c7fd8504db3af0ea7f55`; checkout was clean after commit.
+Current game source is branch `codex/renderer-stability`, commit
+`bc466d69b603f2d10e4cc517f0eb12a925bf780c`, pushed to origin. The only pending
+source edit is the frozen CLI inspection command in `apps/dialog-cli/src/main.rs`;
+it is not linked into the viewer, and CLI validation is pending.
 The five remote merges already performed by root are PR74, PR72, PR73, PR71, and
 PR64 (their merged commit IDs are recorded in the archived handoff). PR62, PR63,
 PR65, and PR66 have since been integrated locally as commits `d4aece0`, `bd34732`,
 `8ba8970`, and `4731f89`, after merging `origin/dev/engine-continuation` as
-`2439f98`. Those four integrations are not yet pushed or merged remotely.
+`2439f98`. Those four integrations are pushed in draft integration PR77:
+https://github.com/HenrySchwerdt/gothic-reforged/pull/77 . They are not yet merged
+into the remote continuation base. PR75 and PR76 were also merged remotely and
+incorporated locally by `c64a22e`. Do not create a duplicate integration PR.
 
-Validation on this exact local source passed:
+Validation passed:
 
 - `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-animation -p gothic-gameplay -p gothic-sim -p gothic-runtime`; log `.local/gameplay-integration/focused-tests-final.log`.
-- `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-reforged --features viewer -- --test-threads=1`; 53 passed, log `.local/gameplay-integration/viewer-tests-rerun.log`.
+- `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-reforged --features viewer -- --test-threads=1`; latest 54 passed on `bc466d6`, log `.local/gameplay-integration/viewer-readiness-tests-rerun.log`. Earlier 53-test log predates the startup gate.
 
-The merged source has not yet been release-built or run in game. The previously
+One release viewer build on `bc466d6` is RUNNING, owned by `/root/water_renderer`,
+unified exec session `49313`, target `D:/gr-build/integrate`, log
+`.local/gameplay-integration/release-viewer-build.log` (Tee may buffer until exit).
+Dependencies compiled and app codegen/link began; no final exit or artifact hash
+is established yet. Poll that same session; never start a duplicate build.
+The merged source has not yet been run in game. The previously
 delivered Desktop RenderPerf package remains from commit `cb909ff3494e29f41533930190dd7fd9cbc46739`,
 EXE SHA-256 `8af2257ce156e49a4ac6486a5b32a6d22753830e6c71e8c2382bc5c8d14c6823`;
 it does not validate these merges.
 
-Next, wait for root to confirm shared compiler load is clear, then perform one
-private GNU release viewer build and preserve its log/hash. Do not kill or overlap
-foreign cargo/rustc jobs. After the build, run focused default-combat Digit1 QA and
-review actor gray rims. Do not claim an unassisted startup pass from QA that heals
-the hero or suppresses unrelated NPCs: the input-readiness gate at initial load is
-still unverified and early Digit1 may be dropped. Assert the hero remains standing
-and the UI/input state is ready as well as checking the weapon draw. Preserve
-failed artifacts and do not change saves, delivered packages, primary worktrees, or
-the original installation. No leaf, VR, or broad render work is in scope.
+Next, confirm the existing build's actual exit, log and EXE hash. Prepare a new
+private candidate with `scripts/package-pc.ps1`; root owns sequential runtime QA
+and native input/image review. Do not overwrite delivered packages or saves.
+The new `melee_quickslot` scenario uses Digit1 without healing, selecting a target
+or disabling NPC AI before drawing. It checks live hero, ready script, closed UI,
+draw clips, and visible right-hand mount. Run it and `melee_faithful`, then inspect
+the actual screenshots. Root prepared the Computer Use skill for a native key check;
+no native game input has been issued yet. No playability claim follows from tests.
+
+The new play-only startup gate (`40ef5ff`, API fixes `bc466d6`) keeps streaming,
+placement, simulation and animation running while blocking hardware gameplay keys.
+It waits for initial collision, hero placement/model and PS_Normal_Loop, then waits
+for held keys to be released. It latches once; ordinary streaming does not reblock
+play. The notice owns its own UI node, preserving shared quest notifications.
+Only typed `StartupFailed` loader initialization errors are globally fatal; tile
+errors remain log-only. Initial missing ground/model and downed hero show explicit
+failure messages. Runtime behavior remains unverified. This is not the full original
+game menu, introduction or story-loading implementation.
+
+Foreign builds must not be killed or altered. One own `-j4` build uses the isolated
+target above. No benchmark/performance measurement under compiler load. Functional
+QA may follow the own build, recording any foreign load without timing claims.
+
+Canonical dialog audit evidence is ignored under
+`.local/gameplay-integration/dialog-audit/audit.md`. Gorn/Hamlar show Back-only
+training categories; this is not yet a proven quest-condition mismatch. Existing
+Parent availability counts Back children. A bounded original Game.dll function
+analysis timed out during import at 330 seconds, target closed; no new native
+evidence supports changing that rule. The pending CLI `inspect` command exposes
+Info owner/parent/quest/type/condition and rejection reasons without executing
+dialogue choices. Its tests/build and canonical checks await the compiler release.
 
 The TeachSkills empty-subject guard and regression test are included in commit
 `76fa16a`; its focused gameplay tests passed. The package README controls were
