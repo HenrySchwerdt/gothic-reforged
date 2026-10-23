@@ -132,6 +132,12 @@ pub struct NpcScript {
     pub last_dist: Option<f32>,
     /// Current target when it is not an actor (interact object, loose item).
     pub obj_target: EntityId,
+    /// `PSRoutine.HitDirection` (0 left, 1 right): the hand of the next swing.
+    pub hit_direction: u32,
+    /// `Entity::SetAlignmentTarget`: the body turns to this entity (the host's rotation reads it).
+    pub alignment_target: EntityId,
+    /// `PSCharacterControl::SetMovementConstraints` (degrees; 0 after the property default).
+    pub movement_constraint: f32,
 }
 
 impl Default for NpcScript {
@@ -163,7 +169,7 @@ impl Default for NpcScript {
             extra_action: se::Action::None,
             extra_pose: None,
             status: 0,
-            primary_pose: 0,
+            primary_pose: 1,
             routine: String::new(),
             alt_target: EntityId::NONE,
             state_position: 0,
@@ -174,6 +180,9 @@ impl Default for NpcScript {
             last_attacker: EntityId::NONE,
             last_dist: None,
             obj_target: EntityId::NONE,
+            hit_direction: 0,
+            alignment_target: EntityId::NONE,
+            movement_constraint: 0.0,
         }
     }
 }
@@ -508,13 +517,13 @@ impl<'a, W: WorldQuery> SimHost<'a, W> {
         actor_of(e).and_then(|a| self.sim.actors.get_mut(a.0 as usize))
     }
 
-    fn script(&self, e: EntityId) -> NpcScript {
+    pub(crate) fn script(&self, e: EntityId) -> NpcScript {
         actor_of(e)
             .map(|a| self.sim.script.npc(a))
             .unwrap_or_default()
     }
 
-    fn script_mut(&mut self, e: EntityId) -> Option<&mut NpcScript> {
+    pub(crate) fn script_mut(&mut self, e: EntityId) -> Option<&mut NpcScript> {
         actor_of(e).map(|a| self.sim.script.npc_mut(a))
     }
 
@@ -1215,9 +1224,22 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
             s.progress = progress;
         }
     }
+    fn has_pending_ai(&self, npc: EntityId) -> bool {
+        actor_of(npc).is_some_and(|a| self.sim.script.commands.iter().any(|(who, _)| *who == a))
+    }
     fn full_stop(&mut self, npc: EntityId) {
         if let Some(a) = actor_of(npc) {
             self.sim.script.commands.retain(|(who, _)| *who != a);
+            if self.sim.hero == Some(a) {
+                // `PSRoutine::FullStop` aborts the hero's instruction queue (`AIStopCombatMove`).
+                let t = &mut self.sim.script.player;
+                let running = t.exec != crate::script_player::HeroExec::Idle;
+                t.pending.clear();
+                t.exec = crate::script_player::HeroExec::Idle;
+                if running {
+                    self.sim.push(crate::sim::EventKind::HeroStop);
+                }
+            }
             let now = self.sim.now_ms();
             let actor = &mut self.sim.actors[a.0 as usize];
             actor.brain.goto = None;
@@ -1447,7 +1469,13 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
             }
         }
     }
-    fn hold_stacks(&mut self, _e: EntityId, _right: i32, _left: i32) {}
+    fn hold_stacks(&mut self, e: EntityId, right: i32, left: i32) {
+        // `PSInventory::HoldStacks`: the held stacks move from the back slots into the hands; no
+        // stack held means everything hangs on the back again.
+        if let Some(a) = self.actor_mut(e) {
+            a.drawn = right >= 0 || left >= 0;
+        }
+    }
     fn drop_slot(&mut self, e: EntityId, slot: se::Slot) {
         if let Some(a) = actor_of(e) {
             self.sim.script.dropped.push((a, slot));
@@ -1476,8 +1504,15 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
         self.equipped(e, slot)
             .map_or(se::UseType::None, |i| s_use_kind(i.use_kind()))
     }
-    fn stack_use_type(&self, _e: EntityId, _stack: i32) -> se::UseType {
-        se::UseType::None
+    fn stack_use_type(&self, e: EntityId, stack: i32) -> se::UseType {
+        // A stack index is the slot it is equipped in plus one (`find_stack_index`).
+        let slot = match stack - 1 {
+            s if s == se::Slot::RightHand as i32 => se::Slot::RightHand,
+            s if s == se::Slot::LeftHand as i32 => se::Slot::LeftHand,
+            _ => return se::UseType::None,
+        };
+        self.equipped(e, slot)
+            .map_or(se::UseType::None, |i| s_use_kind(i.use_kind()))
     }
     fn is_skill_active(&self, e: EntityId, perk: &str) -> bool {
         self.actor(e).is_some_and(|a| a.has_perk(perk))

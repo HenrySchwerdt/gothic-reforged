@@ -34,6 +34,7 @@ impl Default for MotionSlots {
 impl MotionSlots {
     /// Port of eCVisualAnimation_PS::SetMotion (Engine:0x1002bee0).
     pub fn set_motion(&mut self, slot: u8, name: &str) {
+        gothic_portcov::hit!("set_motion");
         if let Some(s) = self.slots.get_mut(slot as usize) {
             s.name = name.to_owned();
         }
@@ -45,11 +46,13 @@ impl MotionSlots {
 
     /// Port of eCVisualAnimation_PS::HasMotion: a motion was set for the slot.
     pub fn has_motion(&self, slot: u8) -> bool {
+        gothic_portcov::hit!("has_motion");
         !self.name(slot).is_empty()
     }
 
     /// Port of eCVisualAnimation_PS::GetMotionOwner (Engine:0x1002bfc0).
     pub fn owner(&self, slot: u8) -> u8 {
+        gothic_portcov::hit!("owner");
         self.slots
             .get(slot as usize)
             .map_or(owner::FREE, |s| s.owner)
@@ -57,6 +60,7 @@ impl MotionSlots {
 
     /// Port of eCVisualAnimation_PS::SetMotionOwner (Engine:0x1002bfa0).
     pub fn set_owner(&mut self, slot: u8, value: u8) {
+        gothic_portcov::hit!("set_owner");
         if let Some(s) = self.slots.get_mut(slot as usize) {
             s.owner = value;
         }
@@ -70,6 +74,7 @@ impl MotionSlots {
 
     /// Port of GameReset (Engine:0x1002b700) for the descriptors: names cleared, owners free.
     pub fn reset(&mut self) {
+        gothic_portcov::hit!("reset");
         *self = Self::default();
     }
 }
@@ -78,6 +83,7 @@ impl MotionSlots {
 /// `eCWrapper_emfx2Actor::Process`: animation time is the application's scaled frame time
 /// times the entity's local scale.
 pub fn animation_delta(frame_time: f32, local_time_scale: f32) -> f32 {
+    gothic_portcov::hit!("animation_delta");
     frame_time * local_time_scale
 }
 
@@ -104,6 +110,7 @@ pub enum AimTilt {
 /// +-pi/2) gives `f = |pitch| / (pi/2)`; the centre pose gets `1 - f` and the tilt pose full
 /// weight once `f > 0`. [I] for the exact weights.
 pub fn aim_pose(pitch: f32) -> AimPose {
+    gothic_portcov::hit!("aim_pose");
     let half_pi = std::f32::consts::FRAC_PI_2;
     let p = pitch.clamp(-half_pi, half_pi);
     let f = p.abs() / half_pi;
@@ -149,6 +156,7 @@ pub enum PhysicsLod {
 /// Port of the distance test of ProcessPhysicsLOD. The decompiled band expression is garbled,
 /// so the linear ramp over the last 250 units before the limit is [I].
 pub fn physics_lod(distance: f32) -> PhysicsLod {
+    gothic_portcov::hit!("physics_lod");
     if distance > PHYSICS_DISTANCE {
         PhysicsLod::Off
     } else if distance < PHYSICS_DISTANCE - PHYSICS_BAND {

@@ -81,6 +81,7 @@ pub fn can_handle(
     class: BoulderClass,
     stage: Stage,
 ) -> bool {
+    gothic_portcov::hit!("can_handle");
     let (hold, lift) = strength_needed(class);
     let needed = match stage {
         Stage::Tilt => 0,
@@ -110,6 +111,7 @@ fn stage_of(state: Option<State>) -> Stage {
 /// `PS_Interact_LiftOrcBoulder` (S:77210): hands empty (tilting), the strength check of the
 /// stage (failure: back to `PS_Normal`), then the pose of the stage until the next key.
 fn ps_boulder(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_boulder");
     let object = host.current_target(p);
     let stage = stage_of(host.current_state(p));
     match step(host, p) {
@@ -144,6 +146,7 @@ fn ps_boulder(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// S:76950 and siblings): hold the pose; the use key asks for the next stage, the exit key ends
 /// the interaction. A lift pays the first-time Strength bonus.
 fn ps_boulder_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_boulder_loop");
     let object = host.current_target(p);
     let stage = stage_of(host.current_state(p));
     if stage == Stage::Lift && !host.used_by_player(object) {
@@ -176,6 +179,7 @@ fn ps_boulder_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 /// (movement mode 3); `PS_Interact_CarryStone_Loop` waits for the exit key and
 /// `PS_Interact_CarryStone_End` puts it down.
 fn ps_carry_stone(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
+    gothic_portcov::hit!("ps_carry_stone");
     match step(host, p) {
         0 => {
             host.queue_ai(

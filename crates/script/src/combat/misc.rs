@@ -27,6 +27,7 @@ fn go(host: &mut dyn ScriptHost, npc: EntityId, state: State) -> Out {
 /// Port of `ZS_Arena` (S:119a0), first half: the fighter walks to its arena start point in AI
 /// mode Arena.
 fn arena_enter(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("arena_enter");
     host.set_ai_mode(npc, AiMode::Arena);
     let dest = host.destination_point(npc);
     queue(host, npc, AiCommand::GotoExt { target: dest })
@@ -53,6 +54,7 @@ fn arena_start(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnArena` (S:11e60): once the player stands in the arena zone the fighter attacks
 /// him with reason Arena.
 pub fn on_arena(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_arena");
     let player = host.player();
     let dest = host.destination_point(npc);
     let arena_zone = host.zone(dest);
@@ -67,6 +69,7 @@ pub fn on_arena(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
 /// fighter says "YouLeftTheArena", the player gets the warning message and the NPC leaves via
 /// `ZS_Attack_Arena_End`.
 fn arena_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("arena_loop");
     let arena = host.arena_of(npc);
     if arena.is_some() && !host.arena_running(arena) {
         host.queue_ai(
@@ -123,6 +126,7 @@ fn wait_free_enter(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `ZS_WaitForFreeDestination_Loop` (S:42db0): every second look whether the player has
 /// moved more than 1.5 m away from the destination point; then the routine continues.
 fn wait_free_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("wait_free_loop");
     if host.state_time(npc) > 1.0 {
         host.set_state_time(npc, 0.0);
         let dest = host.destination_point(npc);
@@ -164,6 +168,7 @@ fn revolution_loop_start(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `OnRevolutionAttack` (S:61090): the first enemy that shows up is attacked with
 /// reason Revolution.
 pub fn on_revolution_attack(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_revolution_attack");
     let other = crate::combat::select::find_other_target(host, npc);
     if other.is_some() {
         assess_target(host, npc, other, AttackReason::Revolution);
@@ -179,6 +184,7 @@ fn revolution_loop(_host: &mut dyn ScriptHost, _npc: EntityId) -> Out {
 /// Port of `ZS_RevolutionSuccess` (S:611e0): the winners put everything away, face the player
 /// and applaud.
 fn success_enter(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("success_enter");
     host.set_ai_mode(npc, AiMode::Reaction);
     crate::down::reset_all(host, npc);
     let player = host.player();
@@ -251,6 +257,7 @@ pub fn end_goto(
     status: GotoStatus,
     blocker: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("end_goto");
     match status {
         GotoStatus::Arrived => host.set_can_be_pushed(npc, false),
         GotoStatus::Blocked => {
@@ -273,6 +280,7 @@ pub fn end_goto(
 /// master is not the player any more and that stands on its destination becomes a plain
 /// creature again (`PartyMemberType` cleared). Returns whether it did.
 pub fn handle_controlled_return_home(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("handle_controlled_return_home");
     if host.party_member_type(npc) != crate::enums::PartyMemberType::Controlled {
         return false;
     }
@@ -285,6 +293,7 @@ pub fn handle_controlled_return_home(host: &mut dyn ScriptHost, npc: EntityId) -
 
 /// Port of `OnWaitForPlayer` (S:86d50): a plain perception poll.
 pub fn on_wait_for_player(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("on_wait_for_player");
     assess_active_perception(host, npc)
 }
 

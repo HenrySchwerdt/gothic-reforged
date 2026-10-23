@@ -44,6 +44,7 @@ impl OptionList {
     /// (The original's variant that prefers an "end" row is not applied: the row kinds it
     /// tests are not known to be the same as our `Choice` kinds.)
     pub fn reset(&mut self, len: usize) {
+        gothic_portcov::hit!("reset");
         self.len = len;
         self.selected = 0;
         self.top = 0;
@@ -102,6 +103,7 @@ pub fn approx_text_width(text: &str, px: f32) -> f32 {
 /// Port of gCHUDStaticTalk layout (`FUN_1009eed0`): measure the text as a single line, keep
 /// it centred when it fits, otherwise left aligned.
 pub fn subtitle_align(text_width: f32, region_width: f32) -> SubtitleAlign {
+    gothic_portcov::hit!("subtitle_align");
     if text_width <= region_width {
         SubtitleAlign::Center
     } else {
@@ -131,6 +133,7 @@ impl Subtitle {
     /// Port of gCGUIManager::StartSay (Game:0x1007c500): shown only when the subtitle option
     /// is on or `force` is set. Returns whether the line was taken.
     pub fn start(&mut self, text: &str, subtitles_on: bool, force: bool, measure: f32) -> bool {
+        gothic_portcov::hit!("start");
         if !(subtitles_on || force) || text.is_empty() {
             return false;
         }
@@ -143,6 +146,7 @@ impl Subtitle {
 
     /// Port of gCGUIManager::StopSay (Game:0x1007c520): fade out.
     pub fn stop(&mut self) {
+        gothic_portcov::hit!("stop");
         self.on = false;
     }
 
@@ -204,6 +208,7 @@ impl GameMessages {
 
     /// Port of gCGUIManager::PrintGameMessage (Game:0x1007c5c0).
     pub fn print(&mut self, text: impl Into<String>, kind: MessageKind) {
+        gothic_portcov::hit!("print");
         if self.hide_gui {
             return;
         }

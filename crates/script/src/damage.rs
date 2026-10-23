@@ -128,6 +128,7 @@ pub enum Weakness {
 /// against Golem. A victim without an NPC property set or a hit without a damage type is
 /// immune.
 pub fn weakness(host: &dyn ScriptHost, victim: EntityId, ev: &HitEvent) -> Weakness {
+    gothic_portcov::hit!("weakness");
     use DamageType as D;
     use Species as S;
     if !host.exists(victim) || ev.damage_type == D::None {
@@ -166,6 +167,7 @@ pub fn weakness(host: &dyn ScriptHost, victim: EntityId, ev: &HitEvent) -> Weakn
 /// With `ExtendedContent` (shipped) the chest armor's `PROT_<TYPE>` modifier adds 20 percent
 /// (light armor, robe) or 5 percent (heavy armor, non-robe), uncapped.
 pub fn armor_protection(host: &dyn ScriptHost, victim: EntityId, ty: DamageType) -> i32 {
+    gothic_portcov::hit!("armor_protection");
     let prot = match ty {
         DamageType::Blade => Protection::Blades,
         DamageType::Missile => Protection::Missile,
@@ -198,6 +200,7 @@ pub fn armor_protection(host: &dyn ScriptHost, victim: EntityId, ty: DamageType)
 
 /// Port of `M(action)` (S:2b3a0): how much a move contributes to the hit strength class.
 fn move_strength(host: &dyn ScriptHost, attacker: EntityId, act: Action) -> i32 {
+    gothic_portcov::hit!("move_strength");
     match act {
         Action::Attack => 2,
         Action::PowerAttack | Action::SprintAttack => {
@@ -222,6 +225,7 @@ fn move_strength(host: &dyn ScriptHost, attacker: EntityId, act: Action) -> i32 
 /// Port of `R(entity)` (S:2afc0): power rank 0..=3. The player's comes from the equipped weapon
 /// perks, an NPC's from its level (>= 45: 3, >= 30: 2, >= 15: 1).
 pub fn power_rank(host: &dyn ScriptHost, e: EntityId) -> i32 {
+    gothic_portcov::hit!("power_rank");
     if e == host.player() && !host.is_transformed(e) {
         let left = host.slot_use_type(e, Slot::LeftHand);
         let right = host.slot_use_type(e, Slot::RightHand);
@@ -256,6 +260,7 @@ pub fn power_rank(host: &dyn ScriptHost, e: EntityId) -> i32 {
 /// Port of `D(victim)` (S:2b470): defence value: 2 while getting up with a parade, otherwise the
 /// power rank plus one for a shield (NPCs always, the player only with `Perk_Shield_2`).
 fn defence_value(host: &dyn ScriptHost, victim: EntityId) -> i32 {
+    gothic_portcov::hit!("defence_value");
     if host.current_action(victim) == Action::GetUpParade {
         return 2;
     }
@@ -284,6 +289,7 @@ pub fn hit_strength(host: &dyn ScriptHost, ev: &HitEvent, attacker_action: Actio
 /// Port of the weapon-quality bonus (S:6af10): a damaged weapon (0x100) loses half the base, each
 /// of the bonus flags 0x20, 0x40, 0x80 adds 10.
 pub fn quality_bonus(quality: u32, base: i32) -> i32 {
+    gothic_portcov::hit!("quality_bonus");
     let mut b = 0;
     if quality & 0x100 != 0 {
         b -= base / 2;
@@ -306,6 +312,7 @@ pub fn skill_bonus(
     ev: &HitEvent,
     base: i32,
 ) -> i32 {
+    gothic_portcov::hit!("skill_bonus");
     if attacker != host.player() {
         return 0;
     }
@@ -368,6 +375,7 @@ fn dual_wield(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `CanBeKilled` (S:2da00): essential NPCs cannot be killed [I].
 pub fn can_be_killed(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("can_be_killed");
     !host.is_immortal(npc)
 }
 
@@ -380,6 +388,7 @@ pub fn can_be_killed(host: &dyn ScriptHost, npc: EntityId) -> bool {
 /// side is hostile (the victim sees the attacker as Hostile/Panic, the attacker the victim as
 /// Hostile). Otherwise the victim is only knocked out.
 pub fn is_deadly_damage(host: &dyn ScriptHost, ev: &HitEvent, attacker_action: Action) -> bool {
+    gothic_portcov::hit!("is_deadly_damage");
     let victim = ev.victim;
     if !can_be_killed(host, victim) {
         return false;
@@ -405,6 +414,7 @@ pub fn is_deadly_damage(host: &dyn ScriptHost, ev: &HitEvent, attacker_action: A
 /// Port of `CanBurn` (S:2d530): fire damage ignites unless the victim is a Golem, Demon, Troll,
 /// FireGolem, IceGolem or Dragon or (the player) has `Perk_ResistHeat`.
 pub fn can_burn(host: &dyn ScriptHost, victim: EntityId) -> bool {
+    gothic_portcov::hit!("can_burn");
     !matches!(
         host.species(victim),
         Species::Golem
@@ -418,6 +428,7 @@ pub fn can_burn(host: &dyn ScriptHost, victim: EntityId) -> bool {
 
 /// Port of `CanFreeze` (S:2d7b0): same exclusions as [`can_burn`] with `Perk_ResistCold`.
 pub fn can_freeze(host: &dyn ScriptHost, victim: EntityId) -> bool {
+    gothic_portcov::hit!("can_freeze");
     !matches!(
         host.species(victim),
         Species::Golem
@@ -431,11 +442,13 @@ pub fn can_freeze(host: &dyn ScriptHost, victim: EntityId) -> bool {
 
 /// Port of `CanBePoisoned` (S:2d9b0 family): not for evil victims or with `Perk_ImmuneToPoison`.
 pub fn can_be_poisoned(host: &dyn ScriptHost, victim: EntityId) -> bool {
+    gothic_portcov::hit!("can_be_poisoned");
     !is_evil(host, victim) && !host.is_skill_active(victim, "Perk_ImmuneToPoison")
 }
 
 /// Port of `CanBeDiseased`: not with `Perk_ImmuneToDisease`.
 pub fn can_be_diseased(host: &dyn ScriptHost, victim: EntityId) -> bool {
+    gothic_portcov::hit!("can_be_diseased");
     !host.is_skill_active(victim, "Perk_ImmuneToDisease")
 }
 
@@ -577,6 +590,7 @@ fn apply_move(host: &dyn ScriptHost, ev: &HitEvent, dmg: i32, act: Action) -> i3
 /// moves (Pierce, Hack, and with `AIMode` also Power) can only be parried with sword and shield
 /// in hand.
 pub fn can_parade_move_of(host: &dyn ScriptHost, victim: EntityId, attacker: EntityId) -> bool {
+    gothic_portcov::hit!("can_parade_move_of");
     let attacker_fist = is_in_fist_mode(host, attacker);
     let victim_fist = is_in_fist_mode(host, victim);
     if attacker_fist {
@@ -598,6 +612,7 @@ pub fn can_parade_move_of(host: &dyn ScriptHost, victim: EntityId, attacker: Ent
 /// Sword and shield need primary pose 2, other fighting pairs pose 1 or 2, everything else pose
 /// 1 [U: the hand pairs of the second and third table rows are assumed, see PORT_NOTES].
 pub fn is_in_parade_pose(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_in_parade_pose");
     let left = host.slot_use_type(e, Slot::LeftHand);
     let right = host.slot_use_type(e, Slot::RightHand);
     let pose = host.primary_pose(e);
@@ -615,6 +630,7 @@ pub fn is_in_parade_pose(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `IsInParadeMode` (S:d870): in the `Parade` pose and [`is_in_parade_pose`].
 pub fn is_in_parade_mode(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_in_parade_mode");
     host.ani_state(e) == AniState::Parade && is_in_parade_pose(host, e)
 }
 
@@ -624,6 +640,7 @@ pub fn is_in_parade_mode(host: &dyn ScriptHost, e: EntityId) -> bool {
 /// the attacker not in a Pierce/Whirl/Finishing/Sprint move, and the attacker in the victim's
 /// field of view.
 pub fn can_parade(host: &dyn ScriptHost, victim: EntityId, attacker: EntityId) -> bool {
+    gothic_portcov::hit!("can_parade");
     if !can_parade_move_of(host, victim, attacker) || !is_in_parade_mode(host, victim) {
         return false;
     }
@@ -647,6 +664,7 @@ pub fn can_parade(host: &dyn ScriptHost, victim: EntityId, attacker: EntityId) -
 /// Port of `HasStaffMagicParade` (S:dc20): a staff in the right hand and (the player) the
 /// `Perk_StaffMagic` skill or (an NPC) the Mage class.
 pub fn has_staff_magic_parade(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("has_staff_magic_parade");
     if host.slot_use_type(e, Slot::RightHand) != UseType::Staff {
         return false;
     }
@@ -659,6 +677,7 @@ pub fn has_staff_magic_parade(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `CanParadeMagic` (S:dd70): staff magic parry, parade mode, attacker in view.
 pub fn can_parade_magic(host: &dyn ScriptHost, victim: EntityId, attacker: EntityId) -> bool {
+    gothic_portcov::hit!("can_parade_magic");
     has_staff_magic_parade(host, victim)
         && is_in_parade_mode(host, victim)
         && host.is_in_fov(victim, attacker)
@@ -666,6 +685,7 @@ pub fn can_parade_magic(host: &dyn ScriptHost, victim: EntityId, attacker: Entit
 
 /// Port of `CanParadeMissile` (S:de80): sword and shield in hand, parade mode, attacker in view.
 pub fn can_parade_missile(host: &dyn ScriptHost, victim: EntityId, attacker: EntityId) -> bool {
+    gothic_portcov::hit!("can_parade_missile");
     host.slot_use_type(victim, Slot::LeftHand) == UseType::Shield
         && host.slot_use_type(victim, Slot::RightHand) == UseType::OneH
         && is_in_parade_mode(host, victim)
@@ -697,6 +717,7 @@ fn parry_task(action: Action) -> State {
 /// arena and hard-mode adjustments; and finally death, knock-out or stagger. The reaction state
 /// is set on the victim and the `gEAction` is returned (`Action::None` for "no reaction").
 pub fn assess_hit(host: &mut dyn ScriptHost, ev: &HitEvent) -> HitOutcome {
+    gothic_portcov::hit!("assess_hit");
     let victim = ev.victim;
     let attacker = ev.attacker;
     let player = host.player();
@@ -995,6 +1016,7 @@ fn burn_applies(host: &dyn ScriptHost, ev: &HitEvent, hp: i32, dmg: i32) -> bool
 /// Port of `PipiStumble` (S:22f70): the minimal hit reaction. A victim outside combat stops what
 /// it does and forgets its move; the effect/animation part is host work.
 pub fn pipi_stumble(host: &mut dyn ScriptHost, victim: EntityId) {
+    gothic_portcov::hit!("pipi_stumble");
     if host.ai_mode(victim) != AiMode::Combat {
         host.full_stop(victim);
         host.set_current_action(victim, Action::None);
@@ -1014,6 +1036,7 @@ pub fn do_logical_damage(
     host: &mut dyn ScriptHost,
     ev: &HitEvent,
 ) -> Option<(HitOutcome, Broadcast)> {
+    gothic_portcov::hit!("do_logical_damage");
     let victim = ev.victim;
     let attacker = ev.attacker;
     let player = host.player();
@@ -1130,6 +1153,7 @@ pub fn give_xp(
     receiver: EntityId,
     amount: i32,
 ) -> i64 {
+    gothic_portcov::hit!("give_xp");
     let player = host.player();
     if source == player {
         return 0;

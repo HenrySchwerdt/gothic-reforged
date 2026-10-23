@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
 gothic-gameplay = { path = "../gameplay" }
 gothic-sim = { path = "../sim" }

@@ -130,6 +130,33 @@ pub fn queue_stumble(queue: &mut OverlayQueue) {
     queue.0.push_back(("QuickStumble", "Hit"));
 }
 
+/// The clips of the reaction an `AssessHit` result asks for (`_AI_QuickStumble`, `_AI_Stumble`,
+/// `_AI_PierceStumble`, `_AI_ParadeStumble`, `_AI_HeavyParadeStumble`: the `gEAction` of the
+/// result is the motion's action; the sided ones exist as `...L` / `...R`). The first clip the
+/// character's set has plays; `None` for results that have no stumble (knock-downs and deaths
+/// play the lying clips).
+pub fn queue_hit_reaction(
+    queue: &mut OverlayQueue,
+    result: gothic_sim::combat::HitResult,
+    from_left: bool,
+) {
+    use gothic_sim::combat::HitResult as R;
+    let (a, b): (&'static str, &'static str) = match result {
+        R::QuickStumble => ("QuickStumble", "QuickStumble"),
+        R::Stumble => ("StumbleL", "StumbleR"),
+        R::PierceStumble => ("PierceStumble", "PierceStumble"),
+        R::ParadeStumble | R::QuickParadeStumble | R::MagicParade => {
+            ("ParadeStumbleL", "ParadeStumbleR")
+        }
+        R::HeavyParadeStumble => ("HeavyParadeStumble", "ParadeStumbleL"),
+        _ => return,
+    };
+    let (first, second) = if from_left { (a, b) } else { (b, a) };
+    queue.0.clear();
+    queue.0.push_back((first, "Hit"));
+    queue.0.push_back((second, "Hit"));
+}
+
 /// Base-layer death / knock-out motion; returns whether one was found.
 pub fn play_fall(lib: &mut ActorLibrary, animator: &mut Animator, stance: Stance) -> bool {
     let family = animator.rig.family.clone();

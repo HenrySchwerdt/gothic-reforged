@@ -48,6 +48,7 @@ fn frac(x: f32) -> f32 {
 /// fractional part of `direction * rate * time` (wrapping keeps float precision over long
 /// sessions), added to the authored `ScrollOffset`.
 pub fn scroller(offset: [f32; 2], direction: [f32; 2], rate: f32, time: f32) -> [f32; 2] {
+    gothic_portcov::hit!("scroller");
     [
         offset[0] + frac(direction[0] * rate * time),
         offset[1] + frac(direction[1] * rate * time),

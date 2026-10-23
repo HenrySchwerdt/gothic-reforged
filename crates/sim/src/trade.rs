@@ -47,6 +47,7 @@ impl<W: WorldQuery> Sim<W> {
     /// `stack` on the trader's list (`PlayerBuys`) or the hero's list (`PlayerSells`). Gold
     /// is worth one gold; unknown templates fall back to their template value.
     pub fn trade_unit_price(&self, ctx: PriceCtx, stack: &Stack, player_side: bool) -> i32 {
+        gothic_portcov::hit!("trade_unit_price");
         if stack.template.eq_ignore_ascii_case(GOLD_TEMPLATE) {
             return 1;
         }
@@ -76,6 +77,7 @@ impl<W: WorldQuery> Sim<W> {
     /// Port of the page opening (`BeginTrade`): stock the trader once from its trade sets and
     /// top the refresh sets up (Game:0x100b7340 / 0x100b7400). All marks start empty.
     pub fn trade_open(&mut self, npc: ActorId, book: &TreasureBook, dice: &mut dyn Dice) {
+        gothic_portcov::hit!("trade_open");
         let inv = &mut self.actors[npc.0 as usize].inventory;
         treasure::generate_trade_inventory(inv, book, dice);
         treasure::refresh_trade_inventory(inv, book, dice);

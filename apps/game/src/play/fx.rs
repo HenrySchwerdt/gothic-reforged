@@ -5,7 +5,7 @@
 //! `..._projectile_01` effect to its target and ends in `..._impact_01`; effects the script starts
 //! itself (`MagicEvent::Effect`) play on the named character. Arrows stay a thin shaft that flies
 //! in the time the simulation computed (`ScriptTables::magic.flights`).
-use super::{HeroActor, NpcActor, Roster, sim_to_bevy_yaw};
+use super::{HeroActor, NpcActor, Roster};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use gothic_audio::PlaySfx;
@@ -20,18 +20,6 @@ use std::collections::HashMap;
 const CM: f32 = 0.01;
 /// Height of the effect anchor above a character's feet (chest/hand), metres.
 const ANCHOR_UP: f32 = 1.3;
-
-#[derive(Component)]
-pub struct Missile {
-    from: Vec3,
-    to: Vec3,
-    t0: f32,
-    dur: f32,
-    /// Spell missiles carry effects; arrows are drawn as a shaft.
-    spell: Option<String>,
-    key: u64,
-    target: Option<gothic_sim::types::ActorId>,
-}
 
 /// Counts for the smoke report.
 #[derive(Resource, Default)]
@@ -69,7 +57,10 @@ pub fn register(app: &mut App) {
             prefix: std::env::var("GR_FX_SHOTS").ok(),
             ..default()
         })
-        .add_systems(Update, (spawn_missiles, move_missiles, fx_shots).chain());
+        .add_systems(
+            Update,
+            (spawn_missiles, hand_glow_cleanup, fx_shots).chain(),
+        );
 }
 
 fn fx_shots(time: Res<Time>, log: Res<FxLog>, mut plan: ResMut<ShotPlan>, mut commands: Commands) {
@@ -120,6 +111,7 @@ fn effect_on(
     out: &mut MessageWriter<SpawnEffect>,
     roster: &Roster,
     core: &CoreRes,
+    hand: Option<Entity>,
     actor: gothic_sim::types::ActorId,
     name: String,
     permanent: bool,
@@ -127,6 +119,21 @@ fn effect_on(
     log: &mut FxLog,
 ) {
     log.effects += 1;
+    // The hero's cast effects sit at his casting hand (the effects link to the owner entity;
+    // here the owner is the rune in the right hand).
+    if actor == core.0.hero
+        && let Some(h) = hand
+    {
+        out.write(SpawnEffect {
+            name,
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            follow: Some(h),
+            permanent,
+            key,
+        });
+        return;
+    }
     if let Some(e) = roster.by_actor.get(&actor) {
         out.write(SpawnEffect {
             name,
@@ -152,10 +159,6 @@ fn effect_on(
 fn spawn_missiles(
     mut events: MessageReader<CoreEvent>,
     core: Res<CoreRes>,
-    time: Res<Time>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut sound: MessageWriter<PlaySfx>,
     mut notify: MessageWriter<Notify>,
     mut fx: MessageWriter<SpawnEffect>,
@@ -164,106 +167,46 @@ fn spawn_missiles(
     mut last: ResMut<LastCast>,
     mut held: ResMut<HeldFx>,
     roster: Res<Roster>,
+    hand: Res<super::ranged::HandAnchor>,
     _q: Query<(), (With<HeroActor>, Without<NpcActor>)>,
 ) {
     for e in events.read() {
         match &e.0 {
             Event::Projectile {
                 owner,
-                target,
                 template,
                 spell,
+                ..
             } => {
-                let Some(from) = actor_pos(&core, *owner) else {
-                    continue;
-                };
-                let yaw = core
-                    .0
-                    .sim
-                    .world
-                    .actors
-                    .get(owner)
-                    .map_or(0.0, |(_, y)| sim_to_bevy_yaw(*y));
-                let to = target
-                    .and_then(|t| actor_pos(&core, t))
-                    .unwrap_or_else(|| from + Quat::from_rotation_y(yaw) * Vec3::NEG_Z * 2500.0);
-                let now_ms = core.0.sim.now_ms();
-                // The flight the simulation just queued carries the spell and the time of arrival.
-                let flight = core
-                    .0
-                    .sim
-                    .script
-                    .magic
-                    .flights
-                    .iter()
-                    .rev()
-                    .find(|f| f.arrives_ms >= now_ms);
-                let dur = flight
-                    .map_or_else(
-                        || ((to - from).length() / 3000.0).max(0.2),
-                        |f| (f.arrives_ms - now_ms) as f32 / 1000.0,
-                    )
-                    .max(0.15);
-                let up = Vec3::Y * 130.0;
-                let a = (from + up) * CM;
-                let b = (to + up) * CM;
+                // The flight itself is drawn from the simulation's shots (`shots.rs`); here
+                // only the launch: counters, the bow's sounds and the shoot effect.
+                let from = actor_pos(&core, *owner);
                 if *spell {
                     log.missiles += 1;
-                    let name = flight
-                        .map(|f| f.spec.spell.clone())
-                        .or_else(|| last.0.get(owner).cloned())
-                        .unwrap_or_default();
                     if std::env::var_os("GR_FX_DEBUG").is_some() {
-                        eprintln!("fx: spell missile {name} template {template} dur {dur:.2}");
+                        eprintln!("fx: spell missile template {template}");
                     }
-                    let key = (log.missiles as u64) | 1 << 40;
-                    let entity = commands
-                        .spawn((
-                            Transform::from_translation(a).looking_at(b, Vec3::Y),
-                            Visibility::default(),
-                            Missile {
-                                from: a,
-                                to: b,
-                                t0: time.elapsed_secs(),
-                                dur,
-                                spell: Some(name.clone()),
-                                key,
-                                target: *target,
-                            },
-                        ))
-                        .id();
-                    fx.write(SpawnEffect {
-                        name: effect_name(&name, SpellStage::Projectile),
-                        position: Vec3::ZERO,
-                        rotation: Quat::IDENTITY,
-                        follow: Some(entity),
-                        permanent: true,
-                        key: Some(key),
-                    });
-                    log.effects += 1;
                 } else {
                     log.arrows += 1;
-                    sound.write(PlaySfx::new("sfx_ani_fight_bow_shoot_01", Some(from * CM)));
-                    let mesh = meshes.add(Cuboid::new(0.025, 0.025, 0.8));
-                    let mat = materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.55, 0.4, 0.22),
-                        unlit: true,
-                        ..default()
-                    });
-                    commands.spawn((
-                        Mesh3d(mesh),
-                        MeshMaterial3d(mat),
-                        Transform::from_translation(a).looking_at(b, Vec3::Y),
-                        Missile {
-                            from: a,
-                            to: b,
-                            t0: time.elapsed_secs(),
-                            dur,
-                            spell: None,
-                            key: 0,
-                            target: None,
-                        },
+                    sound.write(PlaySfx::new(
+                        "sfx_ani_fight_bow_shoot_01",
+                        from.map(|p| p * CM),
                     ));
+                    effect_on(
+                        &mut fx,
+                        &roster,
+                        &core,
+                        hand.0,
+                        *owner,
+                        gothic_projectile::aim::SHOOT_EFFECT.to_owned(),
+                        false,
+                        None,
+                        &mut log,
+                    );
+                    // The string-raise glow ends with the shot.
+                    stop.write(StopEffects {
+                        key: 0x3_0000_0000 | owner.0 as u64,
+                    });
                 }
             }
             // A parried blow is steel on steel: sparks at the defender (`eff_col_weaponhitsweapon`).
@@ -276,6 +219,7 @@ fn spawn_missiles(
                     &mut fx,
                     &roster,
                     &core,
+                    hand.0,
                     *victim,
                     "eff_col_weaponhitsweapon_metal_metal_01".to_owned(),
                     false,
@@ -308,6 +252,7 @@ fn spawn_missiles(
                             &mut fx,
                             &roster,
                             &core,
+                            hand.0,
                             actor,
                             effect_name(spell, s),
                             sustained,
@@ -324,6 +269,7 @@ fn spawn_missiles(
                         &mut fx,
                         &roster,
                         &core,
+                        hand.0,
                         actor_of(*on),
                         name.clone(),
                         false,
@@ -358,47 +304,18 @@ fn spawn_missiles(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn move_missiles(
-    time: Res<Time>,
+/// The glow of the spell in the hand (load / hold effects, keyed by the caster) ends when the
+/// hero no longer holds a spell: another weapon was drawn or the weapons were put away.
+fn hand_glow_cleanup(
     core: Res<CoreRes>,
-    mut commands: Commands,
-    mut fx: MessageWriter<SpawnEffect>,
+    play: Res<super::PlayState>,
+    mut held: ResMut<HeldFx>,
     mut stop: MessageWriter<StopEffects>,
-    mut log: ResMut<FxLog>,
-    mut q: Query<(Entity, &Missile, &mut Transform)>,
 ) {
-    for (e, m, mut tf) in &mut q {
-        let k = (time.elapsed_secs() - m.t0) / m.dur;
-        if k >= 1.0 {
-            if let Some(spell) = &m.spell {
-                // The missile ends: its flight effect stops, the impact and target effects play.
-                stop.write(StopEffects { key: m.key });
-                fx.write(SpawnEffect {
-                    name: effect_name(spell, SpellStage::Impact),
-                    position: m.to,
-                    rotation: Quat::IDENTITY,
-                    follow: None,
-                    permanent: false,
-                    key: None,
-                });
-                log.effects += 1;
-                if let Some(t) = m.target
-                    && let Some(p) = actor_pos(&core, t)
-                {
-                    fx.write(SpawnEffect {
-                        name: effect_name(spell, SpellStage::Target),
-                        position: p * CM + Vec3::Y * ANCHOR_UP,
-                        rotation: Quat::IDENTITY,
-                        follow: None,
-                        permanent: false,
-                        key: None,
-                    });
-                }
-            }
-            commands.entity(e).despawn();
-            continue;
-        }
-        tf.translation = m.from.lerp(m.to, k);
+    let hero = core.0.hero;
+    let magic = play.drawn
+        && core.0.sim.actor(hero).equipment.weapon_mode() == gothic_sim::item::WeaponMode::Magic;
+    if !magic && let Some(k) = held.0.remove(&hero) {
+        stop.write(StopEffects { key: k });
     }
 }

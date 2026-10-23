@@ -34,6 +34,7 @@ pub struct Pick {
 /// contact; characters on the ray are the host's business (the crosshair target of the hero's
 /// focus).
 pub fn pick_point(position: Vec3, rotation: Quat, world: &dyn CameraWorld) -> Pick {
+    gothic_portcov::hit!("pick_point");
     let dir = rotation * Vec3::NEG_Z;
     match world.ray_nearest(position, dir, PICK_RANGE) {
         Some(d) => Pick {

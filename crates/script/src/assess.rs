@@ -41,6 +41,7 @@ fn broadcast(
 /// the rest turn to the warner's target and watch it like the warner does (`ZS_ReactToWeapon`
 /// while the warner is in it, else `ZS_ObserveSuspect`). [I on the zone clause]
 pub fn assess_warn(host: &mut dyn ScriptHost, receiver: EntityId, warner: EntityId) -> bool {
+    gothic_portcov::hit!("assess_warn");
     if host.ai_mode(receiver) != AiMode::Routine || host.npc_type(receiver) == NpcType::Friend {
         return false;
     }
@@ -75,6 +76,7 @@ pub fn assess_warn(host: &mut dyn ScriptHost, receiver: EntityId, warner: Entity
 
 /// Port of `SendPerceptionWarn` (S:32bd0).
 pub fn send_perception_warn(host: &mut dyn ScriptHost, warner: EntityId) {
+    gothic_portcov::hit!("send_perception_warn");
     broadcast(host, warner, |h, n| {
         assess_warn(h, n, warner);
     });
@@ -82,6 +84,7 @@ pub fn send_perception_warn(host: &mut dyn ScriptHost, warner: EntityId) {
 
 /// Port of `AssessCmdAttack` (S:29e70): a companion attacks what the player focuses.
 pub fn assess_cmd_attack(host: &mut dyn ScriptHost, companion: EntityId) -> bool {
+    gothic_portcov::hit!("assess_cmd_attack");
     let player = host.player();
     let focus = host.focus_entity();
     if focus.is_none() || focus == player || focus == companion {
@@ -92,6 +95,7 @@ pub fn assess_cmd_attack(host: &mut dyn ScriptHost, companion: EntityId) -> bool
 
 /// Port of `SendPerceptionCmdAttack` (S:31ff0): every companion of the player hears the order.
 pub fn send_perception_cmd_attack(host: &mut dyn ScriptHost, commander: EntityId) {
+    gothic_portcov::hit!("send_perception_cmd_attack");
     let player = host.player();
     broadcast(host, commander, |h, n| {
         if h.party_leader(n) == player {
@@ -102,6 +106,7 @@ pub fn send_perception_cmd_attack(host: &mut dyn ScriptHost, commander: EntityId
 
 /// Port of `AssessCmdFollow` (S:56a80): a companion that waits stops waiting and follows again.
 pub fn assess_cmd_follow(host: &mut dyn ScriptHost, companion: EntityId) -> bool {
+    gothic_portcov::hit!("assess_cmd_follow");
     if host.party_waiting(companion) {
         host.set_party_waiting(companion, false);
         host.set_task(companion, State::FollowPlayer);
@@ -112,6 +117,7 @@ pub fn assess_cmd_follow(host: &mut dyn ScriptHost, companion: EntityId) -> bool
 
 /// Port of `SendPerceptionCmdFollow` (S:32170).
 pub fn send_perception_cmd_follow(host: &mut dyn ScriptHost, commander: EntityId) {
+    gothic_portcov::hit!("send_perception_cmd_follow");
     let player = host.player();
     broadcast(host, commander, |h, n| {
         if h.party_leader(n) == player {
@@ -169,6 +175,7 @@ pub fn assess_fight_sound(
     attacker: EntityId,
     victim: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("assess_fight_sound");
     if receiver == attacker || receiver == victim || victim.is_none() {
         return false;
     }
@@ -229,6 +236,7 @@ pub fn send_perception_fight_sound(
     attacker: EntityId,
     victim: EntityId,
 ) {
+    gothic_portcov::hit!("send_perception_fight_sound");
     broadcast(host, attacker, |h, n| {
         assess_fight_sound(h, n, attacker, victim);
     });
@@ -246,6 +254,7 @@ pub fn assess_murder(
     murderer: EntityId,
     victim: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("assess_murder");
     if witness == murderer || host.ai_mode(witness) == AiMode::Flee {
         return false;
     }
@@ -285,6 +294,7 @@ pub fn assess_murder(
 
 /// Port of `SendPerceptionMurder` (S:32720).
 pub fn send_perception_murder(host: &mut dyn ScriptHost, murderer: EntityId, victim: EntityId) {
+    gothic_portcov::hit!("send_perception_murder");
     broadcast(host, murderer, |h, n| {
         assess_murder(h, n, murderer, victim);
     });
@@ -299,6 +309,7 @@ pub fn assess_defeat(
     victor: EntityId,
     loser: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("assess_defeat");
     if witness == victor || host.ai_mode(witness) == AiMode::Flee {
         return false;
     }
@@ -316,6 +327,7 @@ pub fn assess_defeat(
 
 /// Port of `SendPerceptionDefeat` (S:32600).
 pub fn send_perception_defeat(host: &mut dyn ScriptHost, victor: EntityId, loser: EntityId) {
+    gothic_portcov::hit!("send_perception_defeat");
     broadcast(host, victor, |h, n| {
         assess_defeat(h, n, victor, loser);
     });
@@ -329,6 +341,7 @@ pub fn assess_use_interact_object(
     user: EntityId,
     object: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("assess_use_interact_object");
     if host.ai_mode(witness) == AiMode::Flee || user != host.player() {
         return false;
     }
@@ -348,6 +361,7 @@ pub fn send_perception_use_interact_object(
     user: EntityId,
     object: EntityId,
 ) {
+    gothic_portcov::hit!("send_perception_use_interact_object");
     broadcast(host, user, |h, n| {
         assess_use_interact_object(h, n, user, object);
     });
@@ -356,6 +370,7 @@ pub fn send_perception_use_interact_object(
 /// Port of `AssessPlayerEnterZone` (S:30000): the player stepped into a zone with an owner
 /// within 7 m of the witness: a calm witness goes and observes (`ZS_ObserveZonePlayer`).
 pub fn assess_player_enter_zone(host: &mut dyn ScriptHost, witness: EntityId) -> bool {
+    gothic_portcov::hit!("assess_player_enter_zone");
     let player = host.player();
     if host.ai_mode(witness) != AiMode::Routine || host.npc_type(witness) == NpcType::Friend {
         return false;
@@ -375,6 +390,7 @@ pub fn assess_player_enter_zone(host: &mut dyn ScriptHost, witness: EntityId) ->
 
 /// Port of `SendPerceptionEnterZone` (S:33170).
 pub fn send_perception_enter_zone(host: &mut dyn ScriptHost, player: EntityId) {
+    gothic_portcov::hit!("send_perception_enter_zone");
     broadcast(host, player, |h, n| {
         assess_player_enter_zone(h, n);
     });
@@ -384,6 +400,7 @@ pub fn send_perception_enter_zone(host: &mut dyn ScriptHost, player: EntityId) {
 /// public zones are observed, secured zones need the zone owner to be angry at the player and
 /// lead to `ZS_ReactToZone`. [I on the vertical-offset clause of the DLL]
 pub fn assess_player_zone(host: &mut dyn ScriptHost, witness: EntityId) -> bool {
+    gothic_portcov::hit!("assess_player_zone");
     let player = host.player();
     let zone = host.zone(player);
     if zone.is_none() || host.zone_owner(zone).is_none() {
@@ -412,6 +429,7 @@ pub fn assess_player_zone(host: &mut dyn ScriptHost, witness: EntityId) -> bool 
 /// Port of `SendPerceptionPreach` (S:32cf0): calm humanoids within 10 m of a preaching NPC stop
 /// and listen (`ZS_Listen`).
 pub fn send_perception_preach(host: &mut dyn ScriptHost, preacher: EntityId) {
+    gothic_portcov::hit!("send_perception_preach");
     broadcast(host, preacher, |h, n| {
         if h.ai_mode(n) == AiMode::Routine
             && h.distance(n, preacher) <= THEFT_RANGE
@@ -452,6 +470,7 @@ fn scan_range(host: &dyn ScriptHost, target: EntityId, attitude: Attitude) -> f3
 /// do not react. Returns true when a task was set. [I: the guard/talk/remark block at the end
 /// of the DLL function is covered by the individual `Assess*` handlers.]
 pub fn assess_active_perception(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("assess_active_perception");
     if matches!(
         host.ai_mode(npc),
         AiMode::Dead

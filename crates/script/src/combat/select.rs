@@ -29,6 +29,7 @@ pub fn npc_weapon_mode(host: &dyn ScriptHost, npc: EntityId) -> WeaponMode {
 /// Downed or dead fighters make no move; a misted one uses [`fai_misted`]; magic and ranged
 /// weapons use their handlers; melee fighters follow `CombatState` (0 passive, 1 active).
 pub fn select_combat_move(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Action {
+    gothic_portcov::hit!("select_combat_move");
     if matches!(host.ai_mode(me), AiMode::Down | AiMode::Dead) {
         return Action::None;
     }
@@ -70,6 +71,7 @@ pub const fn uses_humanoid_tactics(s: Species) -> bool {
 /// ([`choose_full`]); everything else (animals) runs [`animal_move`]. The `!AIMode` path of
 /// the unpatched game and the Gargoyle are folded into the animal behaviour [I].
 pub fn fai_active(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Action {
+    gothic_portcov::hit!("fai_active");
     let dist = host.distance(me, target);
     let species = host.species(me);
     let patched = host.setup().ai_mode && species != Species::Gargoyle;
@@ -135,6 +137,7 @@ fn animal_move(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Act
 /// are evaluated without a situation snapshot and always come back empty, so only the range
 /// rule is observable.
 pub fn fai_passive(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Action {
+    gothic_portcov::hit!("fai_passive");
     let dist = host.distance(me, target);
     let theirs = host.current_action(target);
     if super::moves::is_attack_action(theirs) {
@@ -171,6 +174,7 @@ pub fn fai_passive(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) ->
 /// Port of S:4e8d0: beyond 2 m the line of sight is checked at knee height, closer by the
 /// ordinary line.
 fn los_for_attack(host: &dyn ScriptHost, me: EntityId, target: EntityId, dist: f32) -> bool {
+    gothic_portcov::hit!("los_for_attack");
     if dist > 200.0 {
         host.has_free_los_knee(me, target)
     } else {
@@ -181,6 +185,7 @@ fn los_for_attack(host: &dyn ScriptHost, me: EntityId, target: EntityId, dist: f
 /// Port of `FAI_Ranged` (S:50370): beyond 20 m run in; without a line of sight look for a new
 /// target; then shoot.
 pub fn fai_ranged(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Action {
+    gothic_portcov::hit!("fai_ranged");
     if host.distance(me, target) > 2000.0 {
         return Action::Fwd;
     }
@@ -201,6 +206,7 @@ pub fn fai_ranged(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> 
 /// line of sight (80 percent of the time, always for Xardas), otherwise the mage looks for
 /// another target or approaches.
 pub fn fai_magic(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Action {
+    gothic_portcov::hit!("fai_magic");
     let dist = host.distance(me, target);
     let min_hit = host.setup().min_hit_duration;
     if host.spell_targets_focus(me) {
@@ -247,6 +253,7 @@ pub fn fai_magic(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> A
 /// Port of `FAI_Misted` (S:50a20): a mind-controlled NPC casts or shoots within 7 m and
 /// otherwise fights like an engaged melee fighter.
 pub fn fai_misted(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Action {
+    gothic_portcov::hit!("fai_misted");
     let dist = host.distance(me, target);
     match npc_weapon_mode(host, me) {
         WeaponMode::Magic if dist < 700.0 => return Action::Cast,
@@ -275,6 +282,7 @@ pub fn fai_misted(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> 
 /// player when the searcher is a companion) qualifies [I: the DLL walks a 2.7 KB filter chain;
 /// this keeps its structure: distance, mode, attitude, line of sight, who it fights].
 pub fn find_other_target(host: &mut dyn ScriptHost, me: EntityId) -> EntityId {
+    gothic_portcov::hit!("find_other_target");
     if host.party_waiting(me) {
         return EntityId::NONE;
     }

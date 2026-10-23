@@ -178,6 +178,7 @@ impl<W: WorldQuery> Sim<W> {
     /// Port of the save half of `gCSession` / `gCSectorPersistence_PS` / the per-character
     /// streams: capture the persistent state of the simulation.
     pub fn snapshot(&self) -> SimSnapshot {
+        gothic_portcov::hit!("snapshot");
         let player = &self.script.player;
         SimSnapshot {
             tick: self.tick,
@@ -225,6 +226,7 @@ impl<W: WorldQuery> Sim<W> {
     /// (targets, strikes, paths, queued commands) is reset; characters resume their routine
     /// or the persistent tasks (dead, unconscious, following, waiting).
     pub fn apply_snapshot(&mut self, snap: &SimSnapshot) -> RestoreReport {
+        gothic_portcov::hit!("apply_snapshot");
         let mut rep = RestoreReport::default();
         self.tick = snap.tick;
         self.rng = Rng::new(snap.rng);

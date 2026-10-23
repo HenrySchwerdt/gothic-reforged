@@ -47,6 +47,7 @@ impl Window {
 /// (Scavenger, Boar, Bison, Rhino, Pig, Cow) sleep from 23:00 to 05:00; Wolf, Sabertooth and
 /// Ripper sleep 04:00-06:00; Shadowbeast sleeps 06:00-20:00; every other species works all day.
 pub fn routine_time(species: Species, hour: f32) -> RoutineTime {
+    gothic_portcov::hit!("routine_time");
     use Species as S;
     let sleep = |w: Window| {
         if w.contains(hour) {
@@ -81,6 +82,7 @@ pub fn routine_time(species: Species, hour: f32) -> RoutineTime {
 /// Port of `GetTravellingWalkMode` (S:a9c00): `2` (fast) for Minecrawler, Scavenger, Wolf,
 /// Bison, Rhino and Snapper, `1` otherwise.
 pub fn travelling_walk_mode(species: Species) -> u32 {
+    gothic_portcov::hit!("travelling_walk_mode");
     use Species as S;
     match species {
         S::Minecrawler | S::Scavenger | S::Wolf | S::Bison | S::Rhino | S::Snapper => 2,

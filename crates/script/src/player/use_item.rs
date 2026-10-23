@@ -55,6 +55,7 @@ fn is_wearable(use_type: UseType) -> bool {
 
 /// Port of `OnPlayerUseStack` (S:69d60): use one item of the hero's inventory.
 pub fn use_stack(host: &mut dyn ScriptHost, p: EntityId, template: &str) -> UseOutcome {
+    gothic_portcov::hit!("use_stack");
     if host.item_count(p, template) == 0 {
         return UseOutcome::Ignored;
     }

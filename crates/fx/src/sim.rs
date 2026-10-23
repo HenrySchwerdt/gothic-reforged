@@ -54,6 +54,7 @@ impl Particle {
 /// Port of eCParticle_PS::CalcColorFactor (Engine:0x1014f790): the fade-in/out colour
 /// multiplier from the particle age (seconds) and life.
 pub fn color_factor(p: &EmitterParams, age: f32, life: f32) -> [f32; 4] {
+    gothic_portcov::hit!("color_factor");
     let mut fin = [1.0; 4];
     let mut fout = [1.0; 4];
     if p.fade_in && age < p.fade_in_end {
@@ -95,6 +96,7 @@ pub fn color_factor(p: &EmitterParams, age: f32, life: f32) -> [f32; 4] {
 /// Port of eCParticle_PS::CalcFrame (Engine:0x1014f4e0): the (fractional) sub-image at life
 /// fraction `t`.
 pub fn calc_frame(p: &EmitterParams, t: f32) -> f32 {
+    gothic_portcov::hit!("calc_frame");
     if p.use_subdivision_scale {
         return float_scale(&p.curves.frame, looped(t, p.subdivision_scale_repeats));
     }
@@ -165,6 +167,7 @@ impl Emitter {
     /// Port of eCParticle_PS::Reset (Engine:0x101521f0): drop the particles and start over (the emitter restarts
     /// with its warm-up when it is next processed).
     pub fn reset(&mut self) {
+        gothic_portcov::hit!("reset");
         self.particles.clear();
         self.spawn_accum = 0.0;
         self.burst_left = 0.0;
@@ -183,6 +186,7 @@ impl Emitter {
 
     /// Port of eCParticle_PS::Trigger (Engine:0x1014ef20): queue `count` extra particles.
     pub fn trigger(&mut self, count: f32) {
+        gothic_portcov::hit!("trigger");
         self.burst_left += count.max(0.0);
     }
 
@@ -198,6 +202,7 @@ impl Emitter {
     /// Port of eCParticle_PS::DoProcessV1 (Engine:0x1014fcc0): advance by `dt` seconds of frame
     /// time with the fixed-tick accumulator.
     pub fn update(&mut self, dt: f32) {
+        gothic_portcov::hit!("update");
         if !self.params.enabled || self.finished {
             return;
         }
@@ -249,6 +254,7 @@ impl Emitter {
     /// Port of eCParticle_PS::ProcessParticles (Engine:0x1014ffd0): one fixed tick. `t0..t1`
     /// is the span of the frame this tick covers (spawn times are spread over it).
     pub fn process(&mut self, dt: f32, t0: f32, t1: f32) {
+        gothic_portcov::hit!("process");
         let p = Arc::clone(&self.params);
         let mut dead = 0;
         for i in 0..self.particles.len() {
@@ -301,6 +307,7 @@ impl Emitter {
 
     /// Port of the particle part of eCParticle_PS::TickParticles (Engine:0x10155800).
     fn tick_particle(&mut self, i: usize, dt: f32) {
+        gothic_portcov::hit!("tick_particle");
         let p = Arc::clone(&self.params);
         let q = &mut self.particles[i];
         if q.dead {
@@ -371,6 +378,7 @@ impl Emitter {
     /// Port of eCParticle_PS::Spawn (Engine:0x10150530). `frac` places the spawn inside the
     /// frame so a moving emitter leaves a continuous trail.
     fn spawn(&mut self, frac: f32) {
+        gothic_portcov::hit!("spawn");
         let p = Arc::clone(&self.params);
         let life = p.lifetime.sample(&mut self.rng);
         let age = p.initial_age.sample(&mut self.rng);
@@ -480,6 +488,7 @@ impl Emitter {
 
 /// Port of eCParticle_PS::CalcColor (Engine:0x1014f5d0): the colour-scale curve.
 pub fn calc_color(p: &EmitterParams, t: f32) -> [f32; 4] {
+    gothic_portcov::hit!("calc_color");
     if p.use_color_scale {
         color_scale(&p.curves.color, looped(t, p.color_scale_repeats))
     } else {

@@ -75,6 +75,7 @@ impl CommandSequence {
     /// Port of gCEffectCommandSequence::GetEndTime (Game:0x100519f0): the largest start time (commands are
     /// sorted, so the last one).
     pub fn end_time(&self) -> f32 {
+        gothic_portcov::hit!("end_time");
         self.commands.last().map_or(0.0, |c| c.time)
     }
 }
@@ -95,6 +96,7 @@ impl EffectMap {
 
     /// Port of gCEffectMap::Lookup (Game:0x1005ef30): names are matched case-insensitively.
     pub fn lookup(&self, name: &str) -> Option<&CommandSequence> {
+        gothic_portcov::hit!("lookup");
         self.sequences.get(&name.to_ascii_lowercase())
     }
 
@@ -105,6 +107,7 @@ impl EffectMap {
     /// Port of gCEffectMap::Read (Game:0x1005f2e0): `u16 version (2)`, `u32 count`, then per effect a name and a
     /// sequence (`u16 version (1)`, `u32 count`, `count` class instances).
     pub fn parse(bytes: &[u8]) -> Result<Self> {
+        gothic_portcov::hit!("parse");
         let genome = GenomeFile::parse(bytes)?;
         let strings = Strings::new(&genome.strings);
         let mut cur = Cursor::new(genome.body);

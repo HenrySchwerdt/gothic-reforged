@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 glam = "0.33"
 gothic-physics = { path = "../physics" }
 gothic-formats = { path = "../formats" }

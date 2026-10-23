@@ -418,6 +418,7 @@ impl Actor {
     /// `Consume` 0x14ed60): apply an item modifier event to the hero. Characters that use
     /// the NPC formulas have no attribute store and ignore it.
     pub fn apply_stat(&mut self, kind: StatKind, tag: &str, op: i32, value: i32) -> bool {
+        gothic_portcov::hit!("apply_stat");
         if self.uses_npc_formulas() {
             return false;
         }

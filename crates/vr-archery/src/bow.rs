@@ -19,9 +19,14 @@ pub struct BowSpec {
     pub min_draw: f32,
     /// Arrow speed at full draw, m/s.
     pub max_speed: f32,
+    /// Arrow speed at the smallest draw that still shoots, m/s (a weak shot still flies).
+    pub min_speed: f32,
     /// The bow's own damage value (Gothic item data, supplied locally).
     pub damage: f32,
-    /// A drawing hand further than this from the arrow line loses the arrow, m.
+    /// A drawing hand further than this from the bow's shooting axis loses the arrow, m. The
+    /// arrow itself always lies on the line from the drawing hand through the arrow rest
+    /// (Valve's Longbow aims the same way), so this is only a safety net for a hand that left
+    /// the bow entirely.
     pub max_off_axis: f32,
 }
 
@@ -32,8 +37,9 @@ impl Default for BowSpec {
             max_draw: 0.6,
             min_draw: 0.08,
             max_speed: 58.0,
+            min_speed: 5.0,
             damage: 20.0,
-            max_off_axis: 0.18,
+            max_off_axis: 0.35,
         }
     }
 }
@@ -46,6 +52,12 @@ impl BowSpec {
             return 0.0;
         }
         (draw / self.max_draw).clamp(0.0, 1.0)
+    }
+
+    /// Arrow speed for a draw factor: linear from [`BowSpec::min_speed`] to
+    /// [`BowSpec::max_speed`].
+    pub fn speed(&self, draw_factor: f32) -> f32 {
+        self.min_speed + (self.max_speed - self.min_speed) * draw_factor.clamp(0.0, 1.0)
     }
 }
 
@@ -141,6 +153,8 @@ pub struct Archer {
     pub state: ArcherState,
     /// Nocking distance, m.
     pub nock_radius: f32,
+    /// From this distance on a held arrow glides toward the string (visual lead-in), m.
+    pub nock_lead_radius: f32,
     was_grip: [bool; 2],
 }
 
@@ -152,6 +166,7 @@ impl Default for Archer {
             quiver: Quiver::default(),
             state: ArcherState::Idle,
             nock_radius: 0.1,
+            nock_lead_radius: 0.15,
             was_grip: [false; 2],
         }
     }
@@ -163,31 +178,68 @@ impl Archer {
         match self.state {
             ArcherState::Idle => None,
             ArcherState::Holding(h) => input.hands[h.index()].map(|p| {
-                // Held at the nock end, pointing along the hand's forward.
-                Pose::new(
+                // Held at the nock end, pointing along the hand's forward ...
+                let held = Pose::new(
                     p.position + p.forward() * self.arrow.half_length,
                     p.rotation,
-                )
+                );
+                // ... gliding onto the string near the bow (Valve's ArrowHand lead-in).
+                match input.bow {
+                    Some((bow, bow_hand)) if bow_hand != h => {
+                        let rest = bow.transform_point(self.bow.string_rest);
+                        let d = p.position.distance(rest);
+                        let t = ((self.nock_lead_radius - d)
+                            / (self.nock_lead_radius - self.nock_radius).max(1e-3))
+                        .clamp(0.0, 1.0);
+                        if t <= 0.0 {
+                            return held;
+                        }
+                        let (_, nocked) = self.aim(&bow, rest);
+                        Pose::new(
+                            held.position.lerp(nocked.position, t),
+                            held.rotation.slerp(nocked.rotation, t),
+                        )
+                    }
+                    _ => held,
+                }
             }),
             ArcherState::Nocked { hand, .. } => {
                 let (bow, _) = input.bow?;
-                let nock = self.nock_point(&bow, input.hands[hand.index()]?.position);
-                let rest = bow.position;
-                let dir = (rest - nock).normalize_or(bow.forward());
-                Some(Pose::new(
-                    nock + dir * self.arrow.half_length,
-                    Quat::from_rotation_arc(Vec3::NEG_Z, dir),
-                ))
+                Some(self.aim(&bow, input.hands[hand.index()]?.position).1)
             }
         }
     }
 
-    /// Where the nock is: the string point pulled back to the hand along the bow's axis.
-    pub fn nock_point(&self, bow: &Pose, hand: Vec3) -> Vec3 {
+    /// Draw length and arrow pose for a drawing hand at `hand`: the arrow lies on the line from
+    /// the hand through the arrow rest, its nock at the hand (clamped to the full draw).
+    pub fn aim(&self, bow: &Pose, hand: Vec3) -> (f32, Pose) {
         let rest = bow.transform_point(self.bow.string_rest);
         let back = bow.rotation * Vec3::Z;
-        let draw = (hand - rest).dot(back).clamp(0.0, self.bow.max_draw);
-        rest + back * draw
+        let rel = hand - rest;
+        let draw = if rel.dot(back) > 0.0 {
+            rel.length().min(self.bow.max_draw)
+        } else {
+            0.0
+        };
+        let dir = if rel.length() > 1e-3 && rel.dot(back) > 0.0 {
+            -rel.normalize()
+        } else {
+            -back
+        };
+        let nock = rest - dir * draw;
+        (
+            draw,
+            Pose::new(
+                nock + dir * self.arrow.half_length,
+                Quat::from_rotation_arc(Vec3::NEG_Z, dir),
+            ),
+        )
+    }
+
+    /// Where the nock is for a drawing hand at `hand`.
+    pub fn nock_point(&self, bow: &Pose, hand: Vec3) -> Vec3 {
+        let (_, p) = self.aim(bow, hand);
+        p.position - p.forward() * self.arrow.half_length
     }
 
     /// Advance one frame.
@@ -246,16 +298,14 @@ impl Archer {
                 let rel = p.position - rest;
                 let along = rel.dot(back);
                 let off = (rel - back * along).length();
-                let draw = along.clamp(0.0, self.bow.max_draw);
-                let pose = self.arrow_pose(input);
+                let (draw, aimed) = self.aim(&bow, p.position);
+                let pose = Some(aimed);
                 if released(i) || !input.grip[i] {
                     if draw >= self.bow.min_draw {
                         let k = self.bow.draw_factor(draw);
-                        let nock = self.nock_point(&bow, p.position);
-                        let dir = (bow.position - nock).normalize_or(bow.forward());
                         out.push(ArcherEvent::Fired {
-                            origin: nock + dir * self.arrow.half_length,
-                            velocity: dir * self.bow.max_speed * k,
+                            origin: aimed.position,
+                            velocity: aimed.forward() * self.bow.speed(k),
                             draw_factor: k,
                         });
                     } else if let Some(at) = pose {

@@ -65,9 +65,11 @@ mod imp {
         THREAD.call_once(|| {
             let _ = std::thread::Builder::new()
                 .name("portcov-dump".into())
-                .spawn(|| loop {
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    dump();
+                .spawn(|| {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        dump();
+                    }
                 });
         });
     }
@@ -77,9 +79,11 @@ mod imp {
         THREAD.call_once(|| {
             let _ = std::thread::Builder::new()
                 .name("portcov-dump".into())
-                .spawn(|| loop {
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    dump();
+                .spawn(|| {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        dump();
+                    }
                 });
         });
         if let Ok(mut d) = DYN.lock() {
@@ -98,7 +102,8 @@ mod imp {
         let mut all: BTreeMap<String, u64> = BTreeMap::new();
         if let Ok(s) = SITES.lock() {
             for (k, c) in s.iter() {
-                *all.entry((*k).replace(char::from(92u8), "/")).or_insert(0) += c.load(Ordering::Relaxed);
+                *all.entry((*k).replace(char::from(92u8), "/")).or_insert(0) +=
+                    c.load(Ordering::Relaxed);
             }
         }
         if let Ok(d) = DYN.lock() {

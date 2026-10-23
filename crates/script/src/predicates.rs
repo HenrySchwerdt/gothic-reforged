@@ -20,11 +20,13 @@ use crate::host::{EntityId, ScriptHost};
 
 /// Port of `IsHumanoid` (S:10f20): the entity exists and is a Human or an Orc.
 pub fn is_humanoid(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_humanoid");
     host.exists(e) && matches!(host.species(e), Species::Human | Species::Orc)
 }
 
 /// Port of `IsUndead` (S:112f0): Skeleton or Zombie.
 pub fn is_undead(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_undead");
     species_is_undead(host.species(e))
 }
 
@@ -36,6 +38,7 @@ pub const fn species_is_undead(s: Species) -> bool {
 /// Port of `IsEvil` (S:10aa0): undead, Golem, Demon, Gargoyle, FireGolem, IceGolem or
 /// ScorpionKing.
 pub fn is_evil(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_evil");
     species_is_evil(host.species(e))
 }
 
@@ -51,6 +54,7 @@ pub const fn species_is_evil(s: Species) -> bool {
 
 /// Port of `IsAmbientCreature` (S:10140): the small harmless fauna that only wander.
 pub fn is_ambient_creature(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_ambient_creature");
     species_is_ambient(host.species(e))
 }
 
@@ -81,6 +85,7 @@ pub const fn species_is_ambient(s: Species) -> bool {
 
 /// Port of `CanSleep` (S:e060): species that use sleeping points.
 pub fn can_sleep(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("can_sleep");
     use Species as S;
     matches!(
         host.species(e),
@@ -111,6 +116,7 @@ pub fn can_sleep(host: &dyn ScriptHost, e: EntityId) -> bool {
 /// Port of `CanThreaten` (S:e180): species that can play the threaten reaction (Goblin through
 /// Bloodfly, SwampLurker, Ogre, Stalker, Dragon).
 pub fn can_threaten(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("can_threaten");
     use Species as S;
     matches!(
         host.species(e),
@@ -141,6 +147,7 @@ pub fn can_threaten(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `CanEatGround` (S:e2a0): grazing and scavenging species.
 pub fn can_eat_ground(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("can_eat_ground");
     use Species as S;
     matches!(
         host.species(e),
@@ -168,6 +175,7 @@ pub fn can_eat_ground(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `CanSwim` (S:bd420): a stub that always returns false in the shipped script.
 pub fn can_swim(_host: &dyn ScriptHost, _e: EntityId) -> bool {
+    gothic_portcov::hit!("can_swim");
     false
 }
 
@@ -176,6 +184,7 @@ pub fn can_swim(_host: &dyn ScriptHost, _e: EntityId) -> bool {
 /// Wolf: 15 while the player sprints, else 20. With `AIMode` every non-humanoid gives up after 9,
 /// humanoids (and everyone without `AIMode`) after 5.
 pub fn follow_time(host: &dyn ScriptHost, npc: EntityId) -> i32 {
+    gothic_portcov::hit!("follow_time");
     let species = host.species(npc);
     if species == Species::Wolf {
         return if host.is_sprinting(host.player()) {
@@ -193,6 +202,7 @@ pub fn follow_time(host: &dyn ScriptHost, npc: EntityId) -> i32 {
 
 /// Port of `HasAttackReasonToWatch` (S:10550): reasons 17..=18 and 20 (Duel, Arena, Kill).
 pub fn has_attack_reason_to_watch(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("has_attack_reason_to_watch");
     matches!(
         host.attack_reason(npc),
         AttackReason::Duel | AttackReason::Arena | AttackReason::Kill
@@ -206,6 +216,7 @@ pub fn has_attack_reason_to_watch(host: &dyn ScriptHost, npc: EntityId) -> bool 
 /// fame (below 75: Angry), Public is Neutral; everything else Friendly. (COMBAT_AI_RULES 10.4
 /// described this by alignment; the code is keyed by the zone's security level.)
 pub fn zone_attitude_to_player(host: &dyn ScriptHost, zone: EntityId) -> Attitude {
+    gothic_portcov::hit!("zone_attitude_to_player");
     const FRIEND_FAME: i32 = 75;
     let owner = host.zone_owner(zone);
     if owner.is_none() || !host.exists(owner) {
@@ -232,6 +243,7 @@ pub fn zone_attitude_to_player(host: &dyn ScriptHost, zone: EntityId) -> Attitud
 /// reason justifies lethal force. Enemy, Murder, Revolution and Kill always do; GateGuard and
 /// Intruder do when the target is the player and the zone does not treat the player as a friend.
 pub fn has_attack_reason_to_kill(host: &dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("has_attack_reason_to_kill");
     if host.current_target(npc) != other {
         return false;
     }
@@ -251,6 +263,7 @@ pub fn has_attack_reason_to_kill(host: &dyn ScriptHost, npc: EntityId, other: En
 /// Port of `IsDroppableWeapon` (S:10970): an item of non-zero category whose use type is a
 /// one-hander, two-hander, bow, crossbow, shield, staff, torch, halberd or axe.
 pub fn is_droppable_weapon(host: &dyn ScriptHost, e: EntityId, slot: Slot) -> bool {
+    gothic_portcov::hit!("is_droppable_weapon");
     host.slot_item_category(e, slot) != 0
         && matches!(
             host.slot_use_type(e, slot),
@@ -269,6 +282,7 @@ pub fn is_droppable_weapon(host: &dyn ScriptHost, e: EntityId, slot: Slot) -> bo
 /// Port of `IsInFistMode` (S:db00): not a Minecrawler, and the right-hand item is a fist
 /// (`Fist` or `PhysicalFist`).
 pub fn is_in_fist_mode(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_in_fist_mode");
     host.species(e) != Species::Minecrawler
         && matches!(
             host.slot_use_type(e, Slot::RightHand),
@@ -293,6 +307,7 @@ const HARMLESS_SPELLS: &[&str] = &[
 /// spell is dangerous unless it belongs to no deity or is one of [`HARMLESS_SPELLS`] [I: the
 /// DLL's flag chain was only partly readable]. Anything else is not a weapon.
 pub fn has_dangerous_weapon(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("has_dangerous_weapon");
     use crate::helpers::{WeaponMode, weapon_mode};
     let left = host.slot_use_type(e, Slot::LeftHand);
     let right = host.slot_use_type(e, Slot::RightHand);
@@ -312,12 +327,14 @@ pub fn has_dangerous_weapon(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `IsBoss` (S:10bd0): belongs to an enclave and is a political (leader) NPC.
 pub fn is_boss(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_boss");
     host.enclave(e).is_some() && host.npc_type(e) == NpcType::Political
 }
 
 /// Port of `IsGuard` (S:10ce0): an enclave-type NPC whose alignment equals the enclave's (or is
 /// Pirate).
 pub fn is_guard(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_guard");
     let enclave = host.enclave(e);
     if enclave.is_none() || host.npc_type(e) != NpcType::Enclave {
         return false;
@@ -328,12 +345,14 @@ pub fn is_guard(host: &dyn ScriptHost, e: EntityId) -> bool {
 
 /// Port of `IsGateGuard` (S:10e20): guard status other than Inactive and a guard point is set.
 pub fn is_gate_guard(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_gate_guard");
     host.guard_status(e) != GuardStatus::Inactive && host.guard_point(e).is_some()
 }
 
 /// Port of `IsSlave` (S:111a0): Slave alignment, unless the enclave has switched sides or is
 /// fleeing.
 pub fn is_slave(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_slave");
     if host.alignment(e) != Alignment::Slave {
         return false;
     }
@@ -347,6 +366,7 @@ pub fn is_slave(host: &dyn ScriptHost, e: EntityId) -> bool {
 /// Port of `SetLastFightTimestamp` (S:113d0): when `other` is the player, stamp the NPC's
 /// `LastFightTimestamp` with the current play time.
 pub fn set_last_fight_timestamp(host: &mut dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("set_last_fight_timestamp");
     if other == host.player() {
         let now = host.playing_time();
         host.set_last_fight_timestamp(npc, now);
@@ -364,6 +384,7 @@ pub const UPSET_HIGH_WINDOW: f32 = 1.2;
 /// Port of `IsTemporaryFriendlyToPlayer` (S:114c0): the last fight against the player ended
 /// `Friendly` less than [`TEMPORARY_FRIEND_WINDOW`] ago.
 pub fn is_temporary_friendly_to_player(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("is_temporary_friendly_to_player");
     host.last_fight_timestamp(npc) > 0.0
         && host.last_fight_vs_player(npc) == LastFight::Friendly
         && host.playing_time() - host.last_fight_timestamp(npc) < TEMPORARY_FRIEND_WINDOW
@@ -375,6 +396,7 @@ pub fn is_temporary_friendly_to_player(host: &dyn ScriptHost, npc: EntityId) -> 
 /// StopThief, Theft, UseInteractObject, ReactToWeapon, StopFight, ReactToDamage, GateGuard) for
 /// [`UPSET_LOW_WINDOW`].
 pub fn is_upset(host: &dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("is_upset");
     if other != host.player()
         || host.last_fight_timestamp(npc) <= 0.0
         || host.last_fight_vs_player(npc) != LastFight::Cancel
@@ -402,6 +424,7 @@ pub fn is_upset(host: &dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
 /// humanoid `other`, except when `other` is the player and the NPC is a friend-type, and never
 /// for Mage or Paladin class NPCs. Succeeding sets `Ransacked` so it happens once.
 pub fn want_to_ransack(host: &mut dyn ScriptHost, npc: EntityId, other: EntityId) -> bool {
+    gothic_portcov::hit!("want_to_ransack");
     if other.is_none() || host.ransacked(npc) {
         return false;
     }
@@ -472,6 +495,7 @@ pub fn alignment_of(host: &dyn ScriptHost, e: EntityId) -> Alignment {
 /// the Orc-side check in the DLL additionally exempts two named NPCs that the decompiler did not
 /// preserve [U]. Missing alignments give `Attitude::None`.
 pub fn political_attitude(host: &dyn ScriptHost, observer: EntityId, target: EntityId) -> Attitude {
+    gothic_portcov::hit!("political_attitude");
     let mut a = alignment_of(host, observer);
     let mut b = alignment_of(host, target);
     if a == Alignment::Pirate {

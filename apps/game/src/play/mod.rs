@@ -18,6 +18,7 @@ mod er_pack;
 mod events;
 mod fx;
 mod hero;
+mod hero_moves;
 mod hud;
 mod interact;
 mod kit;
@@ -27,13 +28,18 @@ mod npcs;
 mod objects;
 mod pose;
 mod qa;
+mod ranged;
 mod record;
 mod routines;
 mod saves;
 mod script;
+mod shots;
 mod souls;
+mod souls_hud;
+mod souls_wire;
 mod teleport;
 mod triggers;
+mod uibridge;
 mod windows;
 
 use crate::walk::{Player, Smoke};
@@ -196,8 +202,12 @@ pub struct PlayState {
     pub dialog_player_speaks: bool,
     /// The camera is first person or too close: the hero body is not drawn.
     pub hide_hero: bool,
+    /// The body is hidden but the weapons stay visible (special bow mode, first person).
+    pub keep_items: bool,
     /// The focused thing (object, item, body or character).
     pub target: Option<Target>,
+    /// `PSFocus::GetFocusEntity(melee)`: the focus search in the melee combat mode.
+    pub melee_focus: Option<ActorId>,
     /// The hero sneaks (`AniState::Sneak` of the ported state).
     pub sneaking: bool,
     /// The quick bar: template per slot 1..10.
@@ -296,6 +306,9 @@ pub const HERO_START: Vec3 = Vec3::new(92_400.0 - 87_984.94, 5_145.56, -10_197.4
 #[derive(Resource)]
 pub struct HeroKit {
     pub sword_mesh: Option<String>,
+    /// Meshes of the start bow and its arrow (shown in the left / right hand).
+    pub bow_mesh: Option<String>,
+    pub arrow_mesh: Option<String>,
     /// `PC_Hero` appearance from the NPC database.
     pub look: Option<gothic_formats::props::records::NpcLook>,
 }
@@ -386,6 +399,10 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     }
     let sword_mesh = item_mesh(&items_json, "It_1H_OrcSlayer_01")
         .filter(|m| !library.static_mesh_names(m).is_empty());
+    let bow_mesh = item_mesh(&items_json, "It_Bow_Hunting")
+        .filter(|m| !library.static_mesh_names(m).is_empty());
+    let arrow_mesh =
+        item_mesh(&items_json, "Arrow").filter(|m| !library.static_mesh_names(m).is_empty());
     let session = GameSession::new(db, state, catalog);
 
     let looks = npcs::load_looks(std::path::Path::new(".local/npcs.json"))?;
@@ -443,6 +460,8 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     app.insert_resource(objects);
     app.insert_resource(HeroKit {
         sword_mesh,
+        bow_mesh,
+        arrow_mesh,
         look: hero_look,
     })
     .insert_resource(library)
@@ -462,7 +481,11 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     .init_resource::<barks::BarkState>()
     .add_plugins((AnimationPlugin, GothicUiPlugin, audio, CorePlugin));
 
+    controls::register(app);
     hero::register(app);
+    ranged::register(app);
+    shots::register(app);
+    uibridge::register(app);
     objects::register(app);
     saves::register(app);
     interact::register(app);

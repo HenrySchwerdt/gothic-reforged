@@ -7,6 +7,7 @@ license.workspace = true
 
 [features]
 default = []
+port-coverage = ["gothic-portcov/enabled"]
 trace = ["viewer", "bevy/trace", "bevy/debug"]
 ui-demo = ["viewer", "dep:gothic-ui"]
 # Percentage-closer soft shadows for `--render-plus` (changes `DirectionalLight` everywhere).
@@ -22,6 +23,8 @@ gothic-formats = { path = "../../crates/formats" }
 gothic-importer = { path = "../../crates/importer" }
 gothic-physics = { path = "../../crates/physics" }
 gothic-camera = { path = "../../crates/camera" }
+gothic-input = { path = "../../crates/input" }
+gothic-projectile = { path = "../../crates/projectile" }
 gothic-animation = { path = "../../crates/animation", optional = true }
 gothic-ui = { path = "../../crates/ui", optional = true }
 gothic-audio = { path = "../../crates/audio", optional = true }
@@ -34,6 +37,7 @@ gothic-combat-souls = { path = "../../crates/combat-souls", features = ["plugin"
 gothic-fx = { path = "../../crates/fx", features = ["render"], optional = true }
 gothic-render-plus = { path = "../../crates/render-plus", features = ["render"], optional = true }
 gothic-audio-plus = { path = "../../crates/audio-plus", features = ["plugin"], optional = true }
+gothic-portcov = { path = "../../crates/portcov" }
 anyhow.workspace = true
 serde_json.workspace = true
 

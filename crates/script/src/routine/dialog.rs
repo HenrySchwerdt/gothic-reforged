@@ -15,6 +15,7 @@ use crate::stats::{attribute, level_max};
 /// a murderer is fought to the death (reason Revolution, 19), a thief with reason Theft, anybody
 /// else not at all.
 pub fn guard_attack_reason(crime: PlayerCrime) -> AttackReason {
+    gothic_portcov::hit!("guard_attack_reason");
     match crime {
         PlayerCrime::Murder => AttackReason::Revolution,
         PlayerCrime::Theft => AttackReason::Theft,
@@ -46,6 +47,7 @@ pub fn excuse(
     player: EntityId,
     crime: PlayerCrime,
 ) -> ExcuseOutcome {
+    gothic_portcov::hit!("excuse");
     if !host.is_skill_active(player, "Perk_Excuse") {
         host.queue_ai(
             player,
@@ -110,6 +112,7 @@ pub fn bribe(
     crime: PlayerCrime,
     accepted: bool,
 ) -> BribeOutcome {
+    gothic_portcov::hit!("bribe");
     let say = |host: &mut dyn ScriptHost, key: &'static str| {
         host.queue_ai(guard, AiCommand::SayLine { key });
     };
@@ -185,6 +188,7 @@ pub fn pick_pocket(
     victim: EntityId,
     thief: EntityId,
 ) -> PickpocketOutcome {
+    gothic_portcov::hit!("pick_pocket");
     let chance = match pickpocket_chance(host, victim, thief) {
         Ok(c) => c,
         Err(refusal) => return refusal,

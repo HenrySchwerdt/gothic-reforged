@@ -14,7 +14,7 @@
 //!
 //! The suggested bindings ([`PROFILES`]) are plain data so they are tested in every build.
 
-/// The actions the backend reads, one per `ControllerState` field.
+/// The actions the backend reads, one per `ControllerState` field, plus the vibration output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionKind {
     GripPose,
@@ -25,10 +25,12 @@ pub enum ActionKind {
     Secondary,
     StickClick,
     Menu,
+    /// Output: controller vibration (`.../output/haptic`).
+    Haptic,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 8] = [
+    pub const ALL: [ActionKind; 9] = [
         ActionKind::GripPose,
         ActionKind::Trigger,
         ActionKind::Squeeze,
@@ -37,6 +39,7 @@ impl ActionKind {
         ActionKind::Secondary,
         ActionKind::StickClick,
         ActionKind::Menu,
+        ActionKind::Haptic,
     ];
 
     /// OpenXR action name (lower case, no spaces).
@@ -50,6 +53,7 @@ impl ActionKind {
             ActionKind::Secondary => "secondary",
             ActionKind::StickClick => "stick_click",
             ActionKind::Menu => "menu",
+            ActionKind::Haptic => "haptic",
         }
     }
 }
@@ -78,6 +82,8 @@ pub const PROFILES: &[(&str, &[Binding])] = &[
             (ActionKind::StickClick, "left", "thumbstick/click"),
             (ActionKind::StickClick, "right", "thumbstick/click"),
             (ActionKind::Menu, "left", "menu/click"),
+            (ActionKind::Haptic, "left", "output/haptic"),
+            (ActionKind::Haptic, "right", "output/haptic"),
         ],
     ),
     (
@@ -98,6 +104,8 @@ pub const PROFILES: &[(&str, &[Binding])] = &[
             (ActionKind::StickClick, "left", "thumbstick/click"),
             (ActionKind::StickClick, "right", "thumbstick/click"),
             (ActionKind::Menu, "left", "system/click"),
+            (ActionKind::Haptic, "left", "output/haptic"),
+            (ActionKind::Haptic, "right", "output/haptic"),
         ],
     ),
     (
@@ -115,6 +123,8 @@ pub const PROFILES: &[(&str, &[Binding])] = &[
             (ActionKind::StickClick, "right", "trackpad/click"),
             (ActionKind::Menu, "left", "menu/click"),
             (ActionKind::Menu, "right", "menu/click"),
+            (ActionKind::Haptic, "left", "output/haptic"),
+            (ActionKind::Haptic, "right", "output/haptic"),
         ],
     ),
     (
@@ -126,13 +136,19 @@ pub const PROFILES: &[(&str, &[Binding])] = &[
             (ActionKind::Trigger, "right", "select/click"),
             (ActionKind::Menu, "left", "menu/click"),
             (ActionKind::Menu, "right", "menu/click"),
+            (ActionKind::Haptic, "left", "output/haptic"),
+            (ActionKind::Haptic, "right", "output/haptic"),
         ],
     ),
 ];
 
-/// Full binding path of a component.
+/// Full binding path of a component (`output/...` components are outputs, the rest inputs).
 pub fn binding_path(hand: &str, component: &str) -> String {
-    format!("/user/hand/{hand}/input/{component}")
+    if component.starts_with("output/") {
+        format!("/user/hand/{hand}/{component}")
+    } else {
+        format!("/user/hand/{hand}/input/{component}")
+    }
 }
 
 #[cfg(feature = "openxr")]
@@ -176,6 +192,7 @@ mod backend {
         secondary: xr::Action<bool>,
         stick_click: xr::Action<bool>,
         menu: xr::Action<bool>,
+        haptic: xr::Action<xr::Haptic>,
     }
 
     /// A running OpenXR headless session feeding [`XrFrame`]s.
@@ -286,6 +303,7 @@ mod backend {
                 secondary: action!(bool, ActionKind::Secondary),
                 stick_click: action!(bool, ActionKind::StickClick),
                 menu: action!(bool, ActionKind::Menu),
+                haptic: action!(xr::Haptic, ActionKind::Haptic),
                 set,
             };
             for (profile, bindings) in PROFILES {
@@ -306,6 +324,7 @@ mod backend {
                         ActionKind::Secondary => xr::Binding::new(&actions.secondary, p),
                         ActionKind::StickClick => xr::Binding::new(&actions.stick_click, p),
                         ActionKind::Menu => xr::Binding::new(&actions.menu, p),
+                        ActionKind::Haptic => xr::Binding::new(&actions.haptic, p),
                     });
                 }
                 // A runtime that does not know a profile rejects it; the others still apply.
@@ -456,6 +475,23 @@ mod backend {
 
         /// One frame of input: `None` until the session runs. Untracked parts keep `fallback`'s
         /// values (head) or report no pose (hands).
+        /// Play one vibration on a controller (only while the session runs).
+        pub fn vibrate(&mut self, pulse: &crate::haptics::HapticPulse) -> Result<(), String> {
+            if !self.running {
+                return Ok(());
+            }
+            let event = xr::HapticVibration::new()
+                .amplitude(pulse.amplitude)
+                .frequency(pulse.frequency)
+                .duration(xr::Duration::from_nanos(
+                    (pulse.duration as f64 * 1e9) as i64,
+                ));
+            self.actions
+                .haptic
+                .apply_feedback(&self.session, self.hands[pulse.hand.index()], &event)
+                .map_err(|e| err("xrApplyHapticFeedback", e))
+        }
+
         pub fn frame(&mut self, fallback: &XrFrame) -> Result<Option<XrFrame>, String> {
             if !self.pump_events()? || !self.running {
                 return Ok(None);
@@ -505,6 +541,16 @@ mod backend {
                                 vel.linear_velocity.z,
                             )
                         }),
+                    angular_velocity: vel
+                        .velocity_flags
+                        .contains(xr::SpaceVelocityFlags::ANGULAR_VALID)
+                        .then(|| {
+                            Vec3::new(
+                                vel.angular_velocity.x,
+                                vel.angular_velocity.y,
+                                vel.angular_velocity.z,
+                            )
+                        }),
                     trigger: f(a.trigger.state(&self.session, sub)),
                     grip: f(a.squeeze.state(&self.session, sub)),
                     thumbstick: stick,
@@ -546,8 +592,23 @@ mod tests {
         let touch = PROFILES[0].1;
         assert_eq!(
             touch.len(),
-            15,
+            17,
             "Touch binds every action (menu only on the left)"
+        );
+        // Every profile can vibrate both controllers.
+        for (profile, bindings) in PROFILES {
+            for hand in ["left", "right"] {
+                assert!(
+                    bindings
+                        .iter()
+                        .any(|(k, h, _)| *k == ActionKind::Haptic && *h == hand),
+                    "{profile} lacks haptics on {hand}"
+                );
+            }
+        }
+        assert_eq!(
+            binding_path("left", "output/haptic"),
+            "/user/hand/left/output/haptic"
         );
         let names: HashSet<_> = ActionKind::ALL.iter().map(|k| k.name()).collect();
         assert_eq!(names.len(), ActionKind::ALL.len());

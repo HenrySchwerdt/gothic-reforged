@@ -7,6 +7,7 @@ license.workspace = true
 description = "Rust port of the Gothic 3 Script_Game.dll behaviour (stat accessors, decision predicates, daily routines) over engine-interface traits. Bevy-free and deterministic."
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 
 [lints]
 workspace = true

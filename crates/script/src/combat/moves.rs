@@ -86,6 +86,7 @@ impl Situation {
 /// Port of the snapshot builder (S:6b30 with the weight of S:74e0, preceded by the reset
 /// S:7460).
 pub fn build_situation(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Situation {
+    gothic_portcov::hit!("build_situation");
     let mut c = Situation::blank();
     if me.is_none() || target.is_none() {
         return c;
@@ -128,6 +129,7 @@ pub fn build_situation(host: &mut dyn ScriptHost, me: EntityId, target: EntityId
 
 /// Port of S:19a0: more than one NPC fights `target` at the same time.
 fn crowd_on_target(host: &dyn ScriptHost, target: EntityId) -> bool {
+    gothic_portcov::hit!("crowd_on_target");
     let player = host.player();
     let count = host
         .all_npcs()
@@ -146,6 +148,7 @@ fn crowd_on_target(host: &dyn ScriptHost, target: EntityId) -> bool {
 /// five more (minimum 20) for level-1 fighters or minus 5 above level 30 and again above 70,
 /// minus 10 in the arena, minus 5 against a mage, minus 10 for a companion of the player.
 pub fn aggression_weight(host: &dyn ScriptHost, me: EntityId, c: &Situation) -> i32 {
+    gothic_portcov::hit!("aggression_weight");
     let mut w = 5;
     w += match host.difficulty() {
         Difficulty::Easy => 20,
@@ -186,6 +189,7 @@ fn species_is_foot_fighter(s: Species) -> bool {
 
 /// Port of S:1fa0: species that can sidestep.
 fn species_can_sidestep(s: Species) -> bool {
+    gothic_portcov::hit!("species_can_sidestep");
     use Species as S;
     matches!(
         s,
@@ -231,6 +235,7 @@ const fn is_swing_tool(u: UseType) -> bool {
 /// species rules (a pierce needs a one-hander in the right hand, a whirl a two-hander, a
 /// simple whirl a one-hander in each hand, ...).
 pub fn can_do(host: &dyn ScriptHost, me: EntityId, target: EntityId, mv: Action) -> bool {
+    gothic_portcov::hit!("can_do");
     if me != host.player()
         && is_attack_action(mv)
         && !host.can_hit(me, host.setup().min_hit_duration)
@@ -441,6 +446,7 @@ pub fn score_move(
     c: &mut Situation,
     mv: Action,
 ) -> i32 {
+    gothic_portcov::hit!("score_move");
     if !can_do(host, me, target, mv) {
         return 0;
     }
@@ -647,6 +653,7 @@ impl Shortlist {
     /// Port of S:6560: offer a scored move. Moves above the weight and within 35 of the best
     /// join the ordered shortlist; weaker ones wait in the secondary list.
     pub fn offer(&mut self, weight: i32, mv: Action, score: i32) {
+        gothic_portcov::hit!("offer");
         if score <= 0 {
             return;
         }
@@ -690,6 +697,7 @@ impl Shortlist {
     /// Port of S:63c0: trim to `max_keep`, with probability `W/55` mix the weak moves in at
     /// the best score, then weight the bag (best 3, middle 2, lowest 1) and pick uniformly.
     pub fn pick(mut self, host: &mut dyn ScriptHost, c: &Situation) -> Option<Action> {
+        gothic_portcov::hit!("pick");
         let use_low = host.random(55) < c.weight;
         let mut i = c.max_keep.max(0) as usize;
         // The DLL trims only the move list (the score list keeps its length), so the pairs
@@ -765,6 +773,7 @@ fn choose_from(
 /// Port of S:67c0: choose among the full candidate set; with nothing chosen and no line of
 /// sight the NPC backs off (if it can) or walks forward.
 pub fn choose_full(host: &mut dyn ScriptHost, me: EntityId, target: EntityId) -> Option<Action> {
+    gothic_portcov::hit!("choose_full");
     let (picked, c) = choose_from(host, me, target, &FULL_SET);
     if picked.is_some() {
         return picked;
@@ -802,6 +811,7 @@ pub fn choose_offensive(
     me: EntityId,
     target: EntityId,
 ) -> Option<Action> {
+    gothic_portcov::hit!("choose_offensive");
     const SET: [Action; 7] = [
         Action::PierceAttack,
         Action::PowerAttack,
@@ -820,6 +830,7 @@ pub fn choose_defensive(
     me: EntityId,
     target: EntityId,
 ) -> Option<Action> {
+    gothic_portcov::hit!("choose_defensive");
     const SET: [Action; 5] = [
         Action::Parade,
         Action::JumpBack,

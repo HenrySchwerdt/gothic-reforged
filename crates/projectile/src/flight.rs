@@ -241,6 +241,7 @@ impl Projectile {
     /// wins (towards its chest), then the stored `TargetDirection`; the unit vector is scaled by
     /// `ShootVelocity` (km/h).
     fn steer(&self, world: &dyn ProjectileWorld) -> Option<Vec3> {
+        gothic_portcov::hit!("steer");
         let dir = if let Some(t) = self.target {
             let aim = world.aim_point(t)?;
             unit_or(aim - self.position, self.direction)
@@ -256,6 +257,7 @@ impl Projectile {
     /// the projectile at `origin` and give it its launch velocity. A projectile with neither
     /// target nor direction stays where it is.
     pub fn shoot(&mut self, origin: Vec3, world: &dyn ProjectileWorld) {
+        gothic_portcov::hit!("shoot");
         if self.phase != Phase::Ready {
             return;
         }

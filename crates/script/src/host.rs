@@ -209,6 +209,27 @@ pub enum AiCommand {
         /// The opponent.
         target: EntityId,
     },
+    /// One `sAICombatMoveInstr` (Game.dll G:0x101696e0) of an `_AI_*` melee command: play the
+    /// clip of `action` in `phase` against `target` at play speed `speed`. A `Hit` clip is
+    /// followed by its `Recover` clip by the engine (`sAICombatMoveStartRecover`, G:0x1016e360);
+    /// the engine calls the script's `OnHit` when the `Hit` clip reaches 60 % of its length
+    /// (`sAICombatMoveItlLoop`, G:0x1016dd00). The instruction ends when the last clip does.
+    CombatMove {
+        /// The move (`PSRoutine.Action`).
+        action: Action,
+        /// Which clip of the move.
+        phase: MovePhase,
+        /// Play speed (`sub_42a0`).
+        speed: f32,
+        /// `PSRoutine.AniState` while the clip plays (`Stand` or `Parade`): the clip-name pose.
+        pose: AniState,
+        /// The opponent.
+        target: EntityId,
+    },
+    /// `AddStaminaPoints(delta)` between two instructions of an `_AI_*` command (the script
+    /// charges the move when it reaches that point, e.g. after the `Raise` clip of a power
+    /// attack).
+    AddStamina(i32),
     /// `_AI_Parade`: raise the guard against `target`.
     Parade {
         /// The opponent.
@@ -246,6 +267,35 @@ pub enum AiCommand {
         /// Which stumble.
         action: Action,
     },
+}
+
+/// `gEPhase` of the combat-move clips: the engine's phase-name table `g_pstrPhaseString`
+/// (Game.dll). Index 0 is `Raise` (the first instruction of `_AI_PowerAttack`, `_AI_HackAttack`,
+/// `_AI_FinishingAttack`, `_AI_PierceAttack`), 1 `Hit`, 3 `Recover` (the string compared in
+/// `gCNPC_PS::GetPrimaryPoseExt`), 4 `Begin` (`_AI_Parade`); index 2 is not used by any melee
+/// command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MovePhase {
+    /// Wind-up.
+    Raise,
+    /// The blow; the damage moment is inside it.
+    Hit,
+    /// The recovery after a blow.
+    Recover,
+    /// The first clip of a pose change (raising the guard).
+    Begin,
+}
+
+impl MovePhase {
+    /// The phase token of the motion names (`Hero_Stand_1H_1H_P0_Attack_<Phase>_N_...`).
+    pub const fn token(self) -> &'static str {
+        match self {
+            MovePhase::Raise => "Raise",
+            MovePhase::Hit => "Hit",
+            MovePhase::Recover => "Recover",
+            MovePhase::Begin => "Begin",
+        }
+    }
 }
 
 /// Kinds of movement of `sAIGotoInstr` in the combat states (the instruction's second operand).
@@ -502,6 +552,9 @@ pub trait NpcApi {
     fn set_state_progress(&mut self, npc: EntityId, progress: u32);
     /// `PSRoutine::FullStop`: abort movement and animation queues.
     fn full_stop(&mut self, npc: EntityId);
+    /// The AI instruction queue of `npc` is not empty: the engine runs the queued instructions
+    /// before it resumes any state function.
+    fn has_pending_ai(&self, npc: EntityId) -> bool;
 
     // ---- PSNavigation --------------------------------------------------------------------
     /// `PSNavigation::GetCurrentDestinationPoint`.

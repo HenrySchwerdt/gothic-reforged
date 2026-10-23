@@ -63,6 +63,7 @@ impl Transition {
     /// outgoing fragment at `pos_ms` on the stinger's own clock: 1 until `FadeOutBegin`, then
     /// linear down to 0 at `FadeOutEnd`.
     pub fn src_volume(&self, pos_ms: f64) -> f32 {
+        gothic_portcov::hit!("src_volume");
         if self.fade_out_begin_ms >= self.fade_out_end_ms {
             return 1.0;
         }
@@ -72,6 +73,7 @@ impl Transition {
     /// Port of gCMusicTransition::CalcDstVolume (Game:0x100f7cb0): 0 until `FadeInBegin`, then
     /// linear up to 1 at `FadeInEnd`.
     pub fn dst_volume(&self, pos_ms: f64) -> f32 {
+        gothic_portcov::hit!("dst_volume");
         if self.fade_in_begin_ms >= self.fade_in_end_ms {
             return 1.0;
         }

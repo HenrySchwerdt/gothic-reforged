@@ -9,7 +9,6 @@ use crate::host::{EntityId, ScriptHost};
 use crate::player::craft::{Synth, synthesize};
 use crate::player::evade::{self, Direction};
 use crate::player::interact::{EXIT_REQUESTED, unlock};
-use crate::player::melee::state_for_action;
 use crate::player::normal::{Confirm, confirm, jump_state, sneak_state};
 use crate::player::use_item::{UseOutcome, use_stack};
 use crate::routine::state::State;
@@ -20,7 +19,8 @@ pub fn run(host: &mut dyn ScriptHost, player: EntityId) -> Flow {
     let mut flow = Flow::Done;
     for _ in 0..32 {
         flow = run_state(host, player);
-        if flow == Flow::Yield {
+        if flow == Flow::Yield || host.has_pending_ai(player) {
+            // The engine runs the queued instructions before it resumes a state function.
             break;
         }
         if host.current_state(player).is_none() {
@@ -107,28 +107,23 @@ pub fn dodge(host: &mut dyn ScriptHost, player: EntityId, direction: Direction) 
     evade::start(host, player, direction)
 }
 
-/// Start a melee move (`Action` of the attack family) against `target`.
-pub fn melee_move(
-    host: &mut dyn ScriptHost,
-    player: EntityId,
-    action: crate::enums::Action,
-    target: EntityId,
-) -> bool {
-    let Some(state) = state_for_action(action) else {
-        return false;
-    };
-    if npc_weapon_mode(host, player) != WeaponMode::Melee {
-        return false;
-    }
-    host.set_current_target(player, target);
-    host.set_state(player, state);
-    true
+/// The key handlers of `OnPlayerGameKeyPressed` (`gothic_input::player::PlayerInput::route`) do
+/// not act: they put a `gEAction` id and the focus entity into the player's action queue
+/// (`sub_7940`) and the loop state of the current task (`PS_Melee_Loop`, ...) reads it.
+pub fn push_action(host: &mut dyn ScriptHost, id: u32, focus: EntityId) {
+    host.action_queue_push(id, focus);
 }
 
-/// Raise the guard.
-pub fn parade(host: &mut dyn ScriptHost, player: EntityId, target: EntityId) {
-    host.set_current_target(player, target);
-    host.set_state(player, State::PsMeleeParade);
+/// `FullStop` + `SetState(state)` (what the handlers do for the moves that bypass the queue:
+/// the riposte out of the guard, the chains of `OnPlayerAction`).
+pub fn enter_state(host: &mut dyn ScriptHost, player: EntityId, state: State) {
+    host.full_stop(player);
+    host.set_state(player, state);
+}
+
+/// The weapon key out of `PS_Normal_Loop` (`OnPlayerSelectWeapon`, S:63cc0).
+pub fn select_weapon(host: &mut dyn ScriptHost, player: EntityId) -> bool {
+    crate::player::select_weapon::select_weapon(host, player)
 }
 
 /// The use key during an orc boulder interaction: ask for the next stage (tilt, hold, lift).

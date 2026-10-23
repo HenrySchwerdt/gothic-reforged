@@ -144,6 +144,7 @@ pub fn generate_plunder(
     dice: &mut dyn Dice,
     hero: &dyn HeroSkills,
 ) -> bool {
+    gothic_portcov::hit!("generate_plunder");
     let n = set.stacks.len();
     if n == 0 {
         return false;
@@ -254,6 +255,7 @@ pub fn generate_plunder(
 /// `TradeNotRandom` copies every stack, adding the template's own quality bits. Other
 /// distributions do nothing.
 pub fn generate_trade(set: &TreasureSet, target: &mut Inventory, dice: &mut dyn Dice) -> bool {
+    gothic_portcov::hit!("generate_trade");
     match set.distribution {
         Distribution::TradeGenerate => {
             let n = set.stacks.len();
@@ -299,6 +301,7 @@ pub fn generate_trade(set: &TreasureSet, target: &mut Inventory, dice: &mut dyn 
 /// `TradeRefresh` set up again; a stack that is missing or has fallen below half of the
 /// set's amount is re-drawn (at least one item).
 pub fn refresh_trade(set: &TreasureSet, target: &mut Inventory, dice: &mut dyn Dice) -> bool {
+    gothic_portcov::hit!("refresh_trade");
     if set.distribution != Distribution::TradeRefresh {
         return true;
     }
@@ -335,6 +338,7 @@ pub fn generate_plunder_inventory(
     dice: &mut dyn Dice,
     hero: &dyn HeroSkills,
 ) -> bool {
+    gothic_portcov::hit!("generate_plunder_inventory");
     if inv.generated_plunder {
         return true;
     }
@@ -355,6 +359,7 @@ pub fn generate_trade_inventory(
     book: &TreasureBook,
     dice: &mut dyn Dice,
 ) -> bool {
+    gothic_portcov::hit!("generate_trade_inventory");
     if inv.generated_trade {
         return true;
     }
@@ -374,6 +379,7 @@ pub fn refresh_trade_inventory(
     book: &TreasureBook,
     dice: &mut dyn Dice,
 ) -> bool {
+    gothic_portcov::hit!("refresh_trade_inventory");
     let names = inv.treasure_sets.clone();
     for name in names.iter().filter(|n| !n.is_empty()) {
         if let Some(set) = book.get(name) {

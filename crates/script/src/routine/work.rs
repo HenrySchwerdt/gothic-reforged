@@ -1143,6 +1143,7 @@ pub fn run_state(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
     let Some(state) = host.current_state(npc) else {
         return Flow::Done;
     };
+    gothic_portcov::hitf!("state:{}", state.name());
     match definition(state) {
         Some(Def::Steps(steps)) => run_steps(host, npc, steps),
         Some(Def::Custom(f)) => f(host, npc),
@@ -1440,6 +1441,7 @@ fn pace_until_done(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `ZS_CarryStones` (S:8e8c0): stones are carried from a take point to a drop point; a drop-point trip
 /// holds the stone, a pick-up trip walks empty-handed. Ends with `ContinueRoutine`.
 fn carry_stones(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("carry_stones");
     if once(host, npc, 0) {
         host.queue_ai(npc, AiCommand::StandUp);
         return Flow::Yield;
@@ -1485,6 +1487,7 @@ fn carry_stones(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
 
 /// Port of `ZS_Listen_Loop` (S:97ec0): with 50 percent chance listen for a medium time; the state restarts.
 fn listen_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("listen_loop");
     if host.random(100) < 50 {
         let s = secs(host, npc, Dur::Medium);
         return queue(
@@ -1546,6 +1549,7 @@ pub const SLEEP_POLL_SECS: f32 = 60.0;
 /// Port of `ZS_Sleep_Loop` (S:9f500): poll once a minute; stay asleep while the player talks to the NPC, otherwise
 /// wake when the routine time is no longer "sleep" (saying the "Awake" voice line).
 fn sleep_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("sleep_loop");
     if host.state_time(npc) <= SLEEP_POLL_SECS {
         return Out::Abort;
     }
@@ -1570,6 +1574,7 @@ fn sleep_loop(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 
 /// Port of `ZS_Smalltalk` (S:9f6c0): the NPCs are paired through their targets; one of them leads the talk.
 fn smalltalk_dispatch(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
+    gothic_portcov::hit!("smalltalk_dispatch");
     host.set_task_callback(npc, Callback::OnWork);
     let partner = host.current_target(npc);
     if partner.is_none() {
@@ -1622,6 +1627,7 @@ fn smalltalk_partner_end(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// Port of `ZS_RunToAttackPoint` (S:9c910): draw the weapon, run to the assigned point, then mill about
 /// (`ZS_HangAround`). Without a point the NPC mills about immediately.
 fn run_to_attack_point(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("run_to_attack_point");
     let point = host.destination_point(npc);
     if once(host, npc, 0) {
         if point.is_none() {
@@ -1826,6 +1832,7 @@ fn animal_sleep_wake(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
 /// else `ZS_HangAround_DoNothing`), everything else stands around. An NPC without a destination
 /// walks to a random free Bench, SitGround, SitCampfire or Stand object.
 fn hang_around(host: &mut dyn ScriptHost, npc: EntityId) -> Flow {
+    gothic_portcov::hit!("hang_around");
     if once(host, npc, 0) {
         host.queue_ai(
             npc,

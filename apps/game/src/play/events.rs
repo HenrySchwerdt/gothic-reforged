@@ -1,5 +1,5 @@
 //! Core events -> presentation: dialog UI, voices, toasts, hit reactions, death.
-use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall, queue_stumble, queue_swing};
+use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall, queue_swing};
 use super::{HeroActor, Mode, NpcActor, PlayState, Roster};
 use crate::walk::Player;
 use bevy::prelude::*;
@@ -330,6 +330,7 @@ fn combat_events(
                 victim,
                 damage,
                 ignored,
+                result,
                 ..
             } => {
                 if ignored.is_some() {
@@ -341,11 +342,29 @@ fn combat_events(
                     log.hits_on_npcs += 1;
                     log.first_hit_at.get_or_insert(time.elapsed_secs());
                 }
-                if *damage > 0
+                if (*damage > 0 || result.is_parry())
                     && let Some(en) = entity_of(*victim)
                     && let Ok((mut q, _, _)) = anims.get_mut(en)
                 {
-                    queue_stumble(&mut q);
+                    // The reaction the hit's result asks for; the side of the stumble follows
+                    // the side the blow came from.
+                    let from_left = {
+                        let w = &core.0.sim.world.actors;
+                        match (w.get(attacker), w.get(victim)) {
+                            (Some(a), Some(v)) => {
+                                let mut azi = v.0.yaw_to(a.0) - v.1;
+                                while azi > std::f32::consts::PI {
+                                    azi -= std::f32::consts::TAU;
+                                }
+                                while azi < -std::f32::consts::PI {
+                                    azi += std::f32::consts::TAU;
+                                }
+                                azi > 0.0
+                            }
+                            _ => false,
+                        }
+                    };
+                    super::anim::queue_hit_reaction(&mut q, *result, from_left);
                 }
                 if *attacker != hero_id
                     && let Some(en) = entity_of(*attacker)

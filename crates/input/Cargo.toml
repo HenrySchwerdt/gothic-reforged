@@ -7,6 +7,7 @@ license.workspace = true
 description = "Gothic 3 input layer: session keys, action mapper, per-key state and the player key router"
 
 [dependencies]
+gothic-portcov = { path = "../portcov" }
 
 [lints]
 workspace = true

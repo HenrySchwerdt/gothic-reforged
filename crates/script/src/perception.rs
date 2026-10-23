@@ -29,6 +29,7 @@ pub const GATE_GUARD_POLL_SECS: f32 = 0.1;
 /// Port of `FUN_10008f70` (S:8f70), "can see": `observer` has `target` in its field of view and
 /// either both stand in the same outdoor zone (no line-of-sight test) or the line is free.
 pub fn can_see(host: &dyn ScriptHost, observer: EntityId, target: EntityId) -> bool {
+    gothic_portcov::hit!("can_see");
     if !host.is_in_fov(observer, target) {
         return false;
     }
@@ -42,6 +43,7 @@ pub fn can_see(host: &dyn ScriptHost, observer: EntityId, target: EntityId) -> b
 /// Port of `FUN_10009100` (S:9100), "is audible": the entity is neither sneaking (`Sneak` or
 /// `Parade` pose) nor standing still.
 pub fn is_audible(host: &dyn ScriptHost, e: EntityId) -> bool {
+    gothic_portcov::hit!("is_audible");
     !matches!(host.ani_state(e), AniState::Parade | AniState::Sneak) && !host.is_standing(e)
 }
 
@@ -57,6 +59,7 @@ pub fn can_receive_perception_from(
     sender: EntityId,
     wake_sleepers: bool,
 ) -> bool {
+    gothic_portcov::hit!("can_receive_perception_from");
     if !host.exists(receiver) || !host.exists(sender) || receiver == sender {
         return false;
     }
@@ -80,6 +83,7 @@ pub fn can_receive_perception_from(
 /// Port of `CanAttack` (S:57ce0): species that may enter combat. Ambient creatures, Deer, Pig
 /// and Cow never do (they flee instead).
 pub fn can_attack(host: &dyn ScriptHost, npc: EntityId) -> bool {
+    gothic_portcov::hit!("can_attack");
     host.exists(npc)
         && !is_ambient_creature(host, npc)
         && !matches!(
@@ -102,6 +106,7 @@ pub fn assess_target(
     target: EntityId,
     reason: AttackReason,
 ) -> bool {
+    gothic_portcov::hit!("assess_target");
     if host.ai_mode(witness) == AiMode::Dead {
         bury(host, witness);
         return false;
@@ -147,6 +152,7 @@ pub fn assess_target(
 /// that is itself in combat (but not yet part of the engaged group) joins with reason
 /// `ReactToDamage`.
 pub fn assess_attack(host: &mut dyn ScriptHost, receiver: EntityId, attacker: EntityId) -> bool {
+    gothic_portcov::hit!("assess_attack");
     if can_receive_perception_from(host, receiver, attacker, false)
         && host.combat_state(receiver) != 1
         && host.ai_mode(receiver) == AiMode::Combat
@@ -169,6 +175,7 @@ pub fn is_bothered_by_player_theft_of(
     witness: EntityId,
     item: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("is_bothered_by_player_theft_of");
     if item.is_none() || !host.exists(item) {
         return false;
     }
@@ -223,6 +230,7 @@ pub fn assess_take_item(
     taker: EntityId,
     item: EntityId,
 ) -> bool {
+    gothic_portcov::hit!("assess_take_item");
     if host.current_target(witness) == taker {
         host.full_stop(witness);
         crate::routine::select::continue_routine(host, witness);
@@ -244,6 +252,7 @@ pub fn assess_take_item(
 /// Port of `SendPerceptionTakeItem` (S:32c00 family): offer the theft to every NPC that can
 /// perceive the taker.
 pub fn send_perception_take_item(host: &mut dyn ScriptHost, taker: EntityId, item: EntityId) {
+    gothic_portcov::hit!("send_perception_take_item");
     for npc in host.all_npcs() {
         if can_receive_perception_from(host, npc, taker, false) {
             assess_take_item(host, npc, taker, item);
@@ -256,6 +265,7 @@ pub fn send_perception_take_item(host: &mut dyn ScriptHost, taker: EntityId, ite
 /// with reason `StopThief`. Does nothing when the caller's own attack reason is StopThief, Theft
 /// or UseInteractObject. Returns whether any guard answered.
 pub fn call_help(host: &mut dyn ScriptHost, caller: EntityId, culprit: EntityId) -> bool {
+    gothic_portcov::hit!("call_help");
     if matches!(
         host.attack_reason(caller),
         AttackReason::StopThief | AttackReason::Theft | AttackReason::UseInteractObject
@@ -281,6 +291,7 @@ pub fn call_help(host: &mut dyn ScriptHost, caller: EntityId, culprit: EntityId)
 /// and in sight of a witness that is not friendly, not reacting and not fighting makes it enter
 /// `ZS_ReactToSneak`.
 pub fn assess_player_sneaking(host: &mut dyn ScriptHost, witness: EntityId) -> bool {
+    gothic_portcov::hit!("assess_player_sneaking");
     let player = host.player();
     if !matches!(host.ani_state(player), AniState::Parade | AniState::Sneak) {
         return false;
@@ -308,6 +319,7 @@ pub fn assess_player_sneaking(host: &mut dyn ScriptHost, witness: EntityId) -> b
 /// within the last second. The reaction is `ZS_ReactToWeapon`, or `ZS_ObserveSuspect` for a
 /// Neutral slave-aligned witness. Drawing a weapon is never a crime.
 pub fn assess_player_weapon(host: &mut dyn ScriptHost, witness: EntityId) -> bool {
+    gothic_portcov::hit!("assess_player_weapon");
     let player = host.player();
     if !is_humanoid(host, witness) || host.npc_type(witness) == NpcType::Friend {
         return false;
@@ -347,6 +359,7 @@ pub fn assess_player_weapon(host: &mut dyn ScriptHost, witness: EntityId) -> boo
 /// view, within 10 m and within 5 m once the zone rule is applied (a sleeper in an outdoor zone
 /// ignores a player standing in another zone).
 pub fn on_sleep(host: &mut dyn ScriptHost, sleeper: EntityId) -> bool {
+    gothic_portcov::hit!("on_sleep");
     let player = host.player();
     if get_attitude(host, sleeper, player) == Attitude::Friendly
         || !host.has_free_los(sleeper, player)
@@ -374,6 +387,7 @@ pub fn on_sleep(host: &mut dyn ScriptHost, sleeper: EntityId) -> bool {
 /// within 5 m and others within 10 m. A woken animal that is not Friendly or Neutral toward the
 /// player attacks with reason `Angry`.
 pub fn on_animal_sleep(host: &mut dyn ScriptHost, animal: EntityId) -> bool {
+    gothic_portcov::hit!("on_animal_sleep");
     let player = host.player();
     let sneaking = matches!(host.ani_state(player), AniState::Parade | AniState::Sneak);
     let d = host.distance(animal, player);
@@ -402,6 +416,7 @@ pub fn on_animal_sleep(host: &mut dyn ScriptHost, animal: EntityId) -> bool {
 /// [`GATE_GUARD_POLL_SECS`] of state time, when the caller should run the active perception
 /// scan.
 pub fn on_gate_guard(host: &mut dyn ScriptHost, guard: EntityId) -> bool {
+    gothic_portcov::hit!("on_gate_guard");
     if host.state_time(guard) > GATE_GUARD_POLL_SECS {
         host.set_state_time(guard, 0.0);
         return true;

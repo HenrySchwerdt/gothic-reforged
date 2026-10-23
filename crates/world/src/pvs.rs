@@ -102,6 +102,7 @@ pub fn calculate_rect_indices(
     radius: f32,
     cell_size: u32,
 ) -> Result<CellRect, PvsError> {
+    gothic_portcov::hit!("calculate_rect_indices");
     if !(centre_x.is_finite() && centre_z.is_finite() && radius.is_finite()) || cell_size == 0 {
         return Err(PvsError::IllegalPosition);
     }
@@ -264,6 +265,7 @@ impl PvsPrefetcher {
         sphere: PvsSphere,
         special: bool,
     ) -> Result<Option<GridDelta>, PvsError> {
+        gothic_portcov::hit!("process");
         if !self.enabled {
             return Ok(None);
         }
@@ -377,6 +379,7 @@ impl PvsPrefetcher {
     /// Port of `eCPVSPrefetcher3::Recalibrate` (Engine:0x101a9470): an entity moved, so it
     /// changes cell if the new position lies in another one.
     pub fn recalibrate(&mut self, db: u8, id: EntityId, old: [f32; 3], new: [f32; 3]) {
+        gothic_portcov::hit!("recalibrate");
         let Some(d) = self.databases.get(usize::from(db)) else {
             return;
         };

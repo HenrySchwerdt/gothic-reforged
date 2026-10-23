@@ -15,6 +15,7 @@
 //! `Parade` action, and `--combat souls` also switches on the sim's NPC telegraph variant.
 use super::anim::{CombatStance, find_motion, start_overlay};
 use super::cam::PlayCam;
+use super::souls_wire::External;
 use super::{Mode, PlayState, Roster};
 use crate::walk::{Collision, Player};
 use bevy::ecs::system::SystemParam;
@@ -77,6 +78,15 @@ struct Glue {
 }
 
 pub fn register(app: &mut App) {
+    let args: Vec<String> = std::env::args().collect();
+    let (cfg, log) = super::souls_wire::load_config(
+        &args,
+        |k| std::env::var(k).ok(),
+        |p| std::fs::read_to_string(p),
+    );
+    for line in log {
+        eprintln!("play: {line}");
+    }
     // The telegraph variant of the simulation: NPC swings are held before they land.
     app.world_mut()
         .resource_mut::<CoreRes>()
@@ -90,7 +100,7 @@ pub fn register(app: &mut App) {
         .insert_resource(SoulsRes::new(SoulsWorld::new(
             Vec3::ZERO,
             100.0,
-            Tuning::default(),
+            cfg.tuning,
         )))
         .init_resource::<SoulsGate>()
         .init_resource::<Glue>()
@@ -107,7 +117,15 @@ pub fn register(app: &mut App) {
                 .after(super::hero::input)
                 .after(crate::walk::input_mode)
                 .before(crate::walk::player_motion),
+        )
+        .add_systems(
+            Update,
+            (
+                super::souls_wire::occlusion.before(drive),
+                super::souls_wire::telegraphs.after(drive),
+            ),
         );
+    super::souls_wire::register(app, &cfg);
     eprintln!("play: --combat souls (opt-in Souls-style combat flow)");
     // A locally generated clip pack (if one exists) takes over the clips and action windows.
     super::er_pack::install(app);
@@ -144,9 +162,7 @@ struct PlayEnv<'a> {
 
 impl Env for PlayEnv<'_> {
     fn line_of_sight(&self, from: Vec3, to: Vec3) -> bool {
-        let d = to - from;
-        let len = d.length();
-        len < 1.0 || self.collision.raycast(from, d / len, len - 20.0).is_none()
+        super::souls_wire::los_clear(self.collision, from, to)
     }
 
     fn move_hero(&mut self, hero: &mut Hero, motion: &Motion, _t: &Tuning) {
@@ -196,7 +212,7 @@ fn drive(
     mut gate: ResMut<SoulsGate>,
     mut glue: ResMut<Glue>,
     mut cam: ResMut<PlayCam>,
-    mut look: Look,
+    (mut look, lock_view): (Look, Res<super::souls_wire::LockView>),
     mut core_events: MessageReader<CoreEvent>,
     mut out: MessageWriter<SoulsEvent>,
     mut rig: Rig,
@@ -234,6 +250,7 @@ fn drive(
     sync_foes(&mut res, &core);
 
     // ---- events the simulation produced since the last frame -------------------------------
+    let mut outcomes = Vec::new();
     for e in core_events.read() {
         let CoreEv::Sim(EventKind::Hit {
             attacker,
@@ -257,9 +274,11 @@ fn drive(
                     f.swing_result(gothic_combat_souls::HitResult::Parried);
                 }
                 res.world.hero.apply_external_block(0.0, &tuning);
+                outcomes.push(External::Parried);
             } else {
                 let cost = (*damage as f32 * tuning.guard_stamina_ratio).max(6.0);
                 res.world.hero.apply_external_block(cost, &tuning);
+                outcomes.push(External::block_of(&res.world.hero));
             }
         } else if *damage > 0 {
             let hp = core.0.sim.actor(hero_id).hp as f32;
@@ -267,8 +286,10 @@ fn drive(
             res.world
                 .hero
                 .apply_external_damage(hp, hurt_level(*result), poise, &tuning);
+            outcomes.push(External::Hurt(hurt_level(*result)));
         }
     }
+    let feedback = super::souls_wire::external_events(&outcomes, &mut res.world.hero, &tuning);
 
     // ---- step the flow ------------------------------------------------------------------------
     let mut sink = SimSink::new(&mut core.0.sim);
@@ -284,7 +305,7 @@ fn drive(
     };
     let SoulsRes { world, accum, .. } = &mut *res;
     *accum += dt;
-    let mut events = Vec::new();
+    let mut events = feedback;
     while *accum >= gothic_combat_souls::tuning::DT {
         *accum -= gothic_combat_souls::tuning::DT;
         let inp = latch.take();
@@ -324,7 +345,14 @@ fn drive(
     }
     let hero_yaw = player.ctrl.heading;
     let SoulsRes { lock_cam, .. } = &mut *res;
-    lock_cam.drive(&mut cam.state, hero_pos, target, hero_yaw, dt);
+    lock_cam.drive_with(
+        &mut cam.state,
+        hero_pos,
+        target,
+        hero_yaw,
+        dt,
+        lock_view.occluded,
+    );
     if target.is_some() {
         look.motion.delta = Vec2::ZERO;
     }
