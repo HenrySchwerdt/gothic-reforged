@@ -12,6 +12,12 @@
 //! clear colour and distance fog, draws a sky dome and a particle-free full-screen
 //! rain/snow/sand overlay.
 //!
+//! Relation to `gothic-environment`: that crate ports the original weather rules and consumes the
+//! original `WeatherStates.g3ws` and is authoritative in the game. This crate is the data-free
+//! reference; [`g3ws::synthetic_weather_data`] turns its placeholder tables into a synthetic
+//! `WeatherData` so the game can run the authoritative pipeline without the original file
+//! (see `docs/ENVIRONMENT.md`).
+//!
 //! ```
 //! use gothic_env_synth::{Environment, WeatherKind};
 //! let mut env = Environment::default();
@@ -26,6 +32,7 @@
 pub mod curve;
 pub mod day;
 pub mod env;
+pub mod g3ws;
 #[cfg(feature = "render")]
 pub mod plugin;
 pub mod rng;
