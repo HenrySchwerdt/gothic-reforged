@@ -95,6 +95,26 @@ impl Rig {
 }
 
 impl Rig {
+    /// Give the rig a `VrPlayer` so the play space can move ([`Rig::set_origin`]).
+    pub fn enable_origin(&mut self) {
+        let head = Pose::new(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
+        self.app.insert_resource(gothic_vr::VrPlayer::new(
+            Vec3::ZERO,
+            gothic_vr::locomotion::ComfortSettings::default(),
+            &head,
+        ));
+    }
+
+    /// Move the play space (tracking origin) to `position` in the world.
+    pub fn set_origin(&mut self, position: Vec3) {
+        self.app
+            .world_mut()
+            .resource_mut::<gothic_vr::VrPlayer>()
+            .loco
+            .origin
+            .position = position;
+    }
+
     /// Spawn something now (applied immediately).
     pub fn spawn(&mut self, f: impl FnOnce(&mut Commands) -> Entity) -> Entity {
         let e = {

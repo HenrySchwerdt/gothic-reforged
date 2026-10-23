@@ -3818,6 +3818,8 @@ dependencies = [
  "gothic-vr-physics",
  "gothic-xr-quest",
  "log",
+ "serde",
+ "serde_json",
  "texture2ddecoder",
 ]
 

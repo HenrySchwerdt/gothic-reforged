@@ -249,7 +249,10 @@ fn locomote(
         let dir = t.rotation * Quat::from_rotation_y(yaw) * Vec3::new(left.x, 0.0, -left.y);
         let mag = left.length().min(1.0);
         let wish = if mag > 0.15 {
-            dir.normalize_or_zero() * mag * 600.0
+            // Full stick = 600 cm/s = ForwardSpeedMax 400 x fast modifier 1.5 of `MovementProfile::hero()` (the
+            // original sprint; `run_speed_matches_forward_speed_max` / `sprint_cannot_exceed_fast_modifier` in
+            // gothic-physics). `move_speed` (default 1) is a VR comfort/design multiplier, not an original value.
+            dir.normalize_or_zero() * mag * 600.0 * gothic_xr_quest::knob_f32("move_speed", 1.0).clamp(0.2, 2.0)
         } else {
             Vec3::ZERO
         };
@@ -261,7 +264,13 @@ fn locomote(
         // the rig position interpolates between the last two steps.
         phys.acc += dt;
         phys.since += dt;
-        let step_now = jump || phys.acc >= 1.0 / 40.0 || phys.wish_prev != wish && phys.acc > 0.0;
+        // Airborne: step every frame (a fall or jump sampled at ~27 Hz and interpolated reads choppy and, with the one-step
+        // interpolation lag, as if the ground arrives early). Design decision; the ground walk keeps the cheap 40 Hz.
+        let airborne = !player.ctrl.grounded;
+        let step_now = jump
+            || airborne && phys.acc > 0.0
+            || phys.acc >= 1.0 / 40.0
+            || phys.wish_prev != wish && phys.acc > 0.0;
         phys.wish_prev = wish;
         if step_now {
             let sdt = phys.acc;

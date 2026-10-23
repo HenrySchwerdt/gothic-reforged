@@ -480,7 +480,7 @@ fn spawn_weapons(
         .cache()
         .load_mesh(gothic_cook::AssetId::of("g3_weapon_1h_sword_orcslayer_01.xcmsh"))
         .ok()
-        .and_then(|md| crate::grip::analyse(&md))
+        .and_then(|md| crate::grip::frame_for("g3_weapon_1h_sword_orcslayer_01.xcmsh", &md))
         .map(|g| {
             info!(
                 "[weapons] sword grip: blade {:?} edge {:?} flat {:?} centre {:?} handle axis {:?} (guard {:.1}, pommel {:.1}, tip {:.1})",

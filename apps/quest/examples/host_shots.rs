@@ -130,7 +130,16 @@ fn main() {
     gothic_quest::hero::place_trunk(&mut pose3, head.position, head.rotation);
     let apply_hero = |app: &mut App, curl: [[f32; 2]; 2]| {
         let rt = hero_rt.clone();
-        let p3 = pose3.clone();
+        let mut p3 = pose3.clone();
+        // Like the game (hero.rs): the visible palm centre goes to the grip position.
+        for (k, joint, h) in [
+            (0usize, gothic_vr::body::Joint::HandL, lh),
+            (1usize, gothic_vr::body::Joint::HandR, rh),
+        ] {
+            if let Some(w) = rt.wrist_for_grip(k, h.position, h.rotation, sc_hero) {
+                p3.joints[joint.index()] = w;
+            }
+        }
         let rig_copy = ActorRig {
             root: hero.root,
             by_name: hero.by_name.clone(),
@@ -160,6 +169,7 @@ fn main() {
             .unwrap();
     };
     apply_hero(&mut app, [[0.0; 2]; 2]);
+    let _ = gothic_quest::hero::ardea_clips_path("clips_hero.grcp").and_then(|p| gothic_quest::anim::ClipSet::load(&p, &hero, "Hero"));
     // Orc pose.
     {
         let rag = ActiveRagdoll::new(&NpcAnimator::standing(
@@ -194,6 +204,19 @@ fn main() {
             bind_global: orc.bind_global.clone(),
             joints: orc.joints.clone(),
         };
+        // Like the game (orcs.rs): the original idle clip drives the whole body, `GR_CLIPS=0` turns it off.
+        let ov = gothic_quest::hero::ardea_clips_path("clips_orc.grcp")
+            .and_then(|p| gothic_quest::anim::ClipSet::load(&p, &orc, "Orc"))
+            .and_then(|set| {
+                let idle = set.find("ambient_loop")?;
+                let rot = set.sample_world(
+                    &[(idle.as_str(), 0.0, 1.0)],
+                    Quat::from_rotation_y(opose.body_yaw),
+                );
+                let weight = rot.iter().map(|r| r.is_some() as u32 as f32).collect();
+                Some(gothic_quest::anim::PoseOverride { rot, weight })
+            });
+        println!("orc clip override: {}", ov.is_some());
         app.world_mut()
             .run_system_once(
                 move |mut q: Query<&mut Transform, (Without<ShotCam>, Without<HeldSword>)>| {
@@ -206,7 +229,7 @@ fn main() {
                         1.12,
                         None,
                         [[0.0; 2], [1.0, 0.7]],
-                        None,
+                        ov.as_ref(),
                         None,
                     );
                 },
@@ -268,7 +291,7 @@ fn main() {
             })
             .unwrap();
     }
-    let shots: [(&str, Vec3, Vec3); 5] = [
+    let shots: [(&str, Vec3, Vec3); 6] = [
         (
             "host_fpv.png",
             Vec3::new(0.0, 1.7, 0.0),
@@ -288,6 +311,12 @@ fn main() {
             "host_orc.png",
             Vec3::new(-1.7, 1.2, -1.9),
             Vec3::new(0.0, 0.9, -4.0),
+        ),
+        (
+            // Over the player's shoulder: the orc (z = -4, facing +Z) must look at the player.
+            "host_orc_player.png",
+            Vec3::new(1.1, 1.8, 1.6),
+            Vec3::new(-0.2, 1.1, -2.6),
         ),
         (
             "host_fpv_grip.png",
@@ -398,7 +427,7 @@ fn build_scene(
             "g3_weapon_1h_sword_orcslayer_01.xcmsh",
         ))
         .ok()
-        .and_then(|md| gothic_quest::grip::analyse(&md))
+        .and_then(|md| gothic_quest::grip::frame_for("g3_weapon_1h_sword_orcslayer_01.xcmsh", &md))
         .map(|g| g.visual(0.01))
         .expect("sword grip");
     let (sw, _) = holster_zone(Vec3::ZERO, 1.7, 0.0, "Slot_MeleeBackRight");

@@ -68,6 +68,8 @@ pub struct PhysicsHand {
     pub stuck_for: f32,
     /// Seconds of weakened arm left (see [`PhysicsHand::stagger`]).
     pub staggered: f32,
+    /// Rig velocity already added to the hand (and what it holds).
+    pub carried: Vec3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -91,6 +93,7 @@ impl PhysicsHand {
             held: None,
             stuck_for: 0.0,
             staggered: 0.0,
+            carried: Vec3::ZERO,
         }
     }
 
@@ -201,7 +204,7 @@ impl Plugin for VrPhysicsPlugin {
             .add_systems(FixedUpdate, grab_release.in_set(HandSet::Grab))
             .add_systems(
                 FixedUpdate,
-                (tick_stagger, snap_stuck_hands, drive_hands)
+                (tick_stagger, carry_with_rig, snap_stuck_hands, drive_hands)
                     .chain()
                     .in_set(HandSet::Drive),
             );
@@ -485,12 +488,32 @@ fn grip_joint(
     }
 }
 
-/// Tracked pose, velocity and angular velocity of a hand.
-fn target_of(targets: &Query<(&Transform, &XrHand)>, hand: Hand) -> Option<(Pose, Vec3, Vec3)> {
+/// Longest extrapolation of a target past its sample (s).
+const MAX_EXTRAPOLATION: f32 = 0.05;
+/// Faster than this (m/s) is a jump of the pose, not motion.
+const MAX_EXTRAPOLATED_SPEED: f32 = 12.0;
+
+/// The tracked pose carried forward to the fixed step's own time with its velocity (the target is
+/// only refreshed once per frame, the physics steps at its own rate). The hand is thus chased
+/// where the controller (and the rig that carries it) is now, not where it was at the last
+/// frame; the velocity also feeds the PD, so a rig that jumps or rides does not drag the hand.
+fn target_at(
+    targets: &Query<(&Transform, &XrHand)>,
+    hand: Hand,
+    now: f32,
+) -> Option<(Pose, Vec3, Vec3)> {
     targets
         .iter()
         .find(|(_, h)| h.hand == hand && h.tracked)
-        .map(|(t, h)| (transform_to_pose(t), h.velocity, h.angular_velocity))
+        .map(|(t, h)| {
+            let age = (now - h.sampled_at).clamp(0.0, MAX_EXTRAPOLATION);
+            let mut pose = transform_to_pose(t);
+            // A teleport or a recenter shows up as a huge velocity: do not extrapolate that.
+            if h.velocity.length() < MAX_EXTRAPOLATED_SPEED {
+                pose.position += h.velocity * age;
+            }
+            (pose, h.velocity, h.angular_velocity)
+        })
 }
 
 /// Target rotation of the leading hand of a two-handed grip: its own tracked rotation, swung so
@@ -540,8 +563,9 @@ fn snap_stuck_hands(
     >,
 ) {
     let dt = time.delta_secs();
+    let now = time.elapsed_secs();
     for (mut hand, mut pos, mut rot, mut lv, mut av) in &mut hands {
-        let Some((target, _, _)) = target_of(&targets, hand.hand) else {
+        let Some((target, _, _)) = target_at(&targets, hand.hand, now) else {
             continue;
         };
         let d = pos.0.distance(target.position);
@@ -570,6 +594,39 @@ fn snap_stuck_hands(
         rot.0 = target.rotation;
         lv.0 = Vec3::ZERO;
         av.0 = Vec3::ZERO;
+    }
+}
+
+/// Body -> rig -> hand -> weapon: when the rig moves (jump, fall, ride) the hand and what it holds
+/// move with it, by changing their velocity by the rig's velocity change since the last step.
+/// The PD then only chases the controller's own motion, so the weapon does not lag and swing back
+/// when the body jumps (the tracker feed-forward of Battle Talent's hand chain, reimplemented).
+fn carry_with_rig(
+    targets: Query<&XrHand>,
+    mut hands: Query<&mut PhysicsHand>,
+    mut velocities: Query<&mut LinearVelocity>,
+    hand_entities: Query<Entity, With<PhysicsHand>>,
+) {
+    for e in &hand_entities {
+        let Ok(mut hand) = hands.get_mut(e) else { continue };
+        let rig = targets
+            .iter()
+            .find(|h| h.hand == hand.hand && h.tracked)
+            .map_or(Vec3::ZERO, |h| h.rig_velocity);
+        let dv = rig - hand.carried;
+        if dv == Vec3::ZERO || !dv.is_finite() {
+            continue;
+        }
+        hand.carried = rig;
+        if let Ok(mut v) = velocities.get_mut(e) {
+            v.0 += dv;
+        }
+        // A held object is carried by its leading hand only (each hand has the same rig).
+        if let Some(h) = hand.held.filter(|h| !h.secondary)
+            && let Ok(mut v) = velocities.get_mut(h.object)
+        {
+            v.0 += dv;
+        }
     }
 }
 
@@ -602,6 +659,7 @@ fn drive_hands(
     >,
 ) {
     let dt = time.delta_secs();
+    let now = time.elapsed_secs();
     let full = arm_limits(strength.0);
     for (hand_e, hand) in &hands {
         let k = hand.strength_scale();
@@ -609,7 +667,7 @@ fn drive_hands(
             max_force: full.max_force * k,
             max_torque: full.max_torque * k,
         };
-        let Some((mut target, target_vel, target_ang)) = target_of(&targets, hand.hand) else {
+        let Some((mut target, target_vel, target_ang)) = target_at(&targets, hand.hand, now) else {
             continue;
         };
         // Leading hand of a two-handed grip: aim at the other hand.
@@ -619,7 +677,7 @@ fn drive_hands(
                     .filter(|oh| oh.object == h.object && oh.secondary)
                     .map(|oh| (o.hand, oh))
             })
-            && let Some((other_target, _, _)) = target_of(&targets, other)
+            && let Some((other_target, _, _)) = target_at(&targets, other, now)
         {
             target.rotation = two_hand_aim(
                 &target,

@@ -81,12 +81,44 @@ impl ClipSet {
             fix: Quat::IDENTITY,
             n_quest: qrig.names.len(),
         };
-        // Facing of the clips' model space, measured on the family's idle clip like the desktop animator does.
+        // Facing of the clips' model space, measured on the family's idle clip. Bipeds (orcs included) use the
+        // foot -> toe direction: the generic rule of `Rig::facing_in_pose` prefers the spine-to-head lean for
+        // "creatures", and a hunched orc idle leans the wrong way (the orc then faced 180 degrees away from its
+        // heading).
         if let Some(idle) = set.find("ambient_loop") {
             let mut model = vec![Affine3A::IDENTITY; set.rig.names.len()];
             let pose = set.pose(&[(idle.as_str(), 0.0, 1.0)]);
             rig::evaluate(&set.plan, &pose, &mut model);
-            if let Some(f) = set.rig.facing_in_pose(&model) {
+            let find = |suffix: &str| {
+                set.rig
+                    .names
+                    .iter()
+                    .position(|n| n.to_lowercase().ends_with(suffix))
+            };
+            let feet = match (find("left_foot_foot_1"), find("left_foot_toe_1")) {
+                (Some(f), Some(t)) => {
+                    let d = Vec3::from(model[t].translation) - Vec3::from(model[f].translation);
+                    let h = Vec3::new(d.x, 0.0, d.z);
+                    (h.length() > 1e-3).then(|| h.normalize())
+                }
+                _ => None,
+            };
+            // Shoulders: facing = up x (right - left), the rule of the ragdoll heading (`ActiveRagdoll::pose`), so
+            // the clip pose and the ragdoll yaw cannot disagree.
+            let shoulders = match (find("right_arm_shoulder_1"), find("left_arm_shoulder_1")) {
+                (Some(r), Some(l)) => {
+                    let side = Vec3::from(model[r].translation) - Vec3::from(model[l].translation);
+                    let f = Vec3::Y.cross(side);
+                    let h = Vec3::new(f.x, 0.0, f.z);
+                    (h.length() > 1e-3).then(|| h.normalize())
+                }
+                _ => None,
+            };
+            let old = feet.or_else(|| set.rig.facing_in_pose(&model));
+            if std::env::var("GR_DEBUG_FACING").is_ok() {
+                eprintln!("[anim] {family}: feet/lean facing {old:?}, shoulder facing {shoulders:?}");
+            }
+            if let Some(f) = shoulders.or(old) {
                 set.fix = Quat::from_rotation_arc(f, Vec3::NEG_Z);
             }
         }

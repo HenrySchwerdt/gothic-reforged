@@ -47,11 +47,17 @@ pub struct Retarget {
     ankle_bind_cm: f32,
     /// Finger bones: (hand, flexion axis in the bone's own rest frame, max flexion in radians, 0 = thumb/1 = index/2 = other).
     fingers: Vec<Option<(usize, Vec3, f32, u8)>>,
+    /// Thumb opposition: (axis in the bone's rest frame, max angle) applied on top of the flexion, about the palm
+    /// normal, so the thumb sweeps across the palm instead of curling in the plane of the fingers.
+    thumb_opp: Vec<Option<(Vec3, f32)>>,
 }
+
+/// Sign of the thumb opposition rotation about the palm normal (+1/-1, picked from the grip render).
+const THUMB_OPP_SIGN: f32 = 1.0;
 
 /// Bind-pose facing of a skeleton in mirrored model space, same rule as `crates/animation` `Rig::facing_in_pose`:
 /// pelvis-side spine to head for creatures (mostly horizontal), otherwise left foot to left toe.
-fn bind_facing(rig: &ActorRig) -> Vec3 {
+pub fn bind_facing(rig: &ActorRig) -> Vec3 {
     let find = |suffix: &str| {
         rig.names
             .iter()
@@ -121,6 +127,7 @@ impl Retarget {
             foot_nodes: vec![],
             ankle_bind_cm: 0.0,
             fingers: vec![],
+            thumb_opp: vec![],
         }
     }
 
@@ -326,21 +333,41 @@ impl Retarget {
         // curls the fingers towards the palm: +T for a left hand, -T for a right hand (see `hand_anatomy`). The axis is
         // expressed in each bone's own rest frame. Max flexion per joint (degrees): fingers 70/80/50, thumb 25/30/20.
         let mut fingers: Vec<Option<(usize, Vec3, f32, u8)>> = vec![None; n];
+        let mut thumb_opp: Vec<Option<(Vec3, f32)>> = vec![None; n];
         for (k, side) in ["Left", "Right"].into_iter().enumerate() {
             let hand = format!("{prefix}_{side}_Hand_Hand_1");
             let (Some(&hi), Some(al)) = (rig.by_name.get(&hand), hand_local[k]) else {
                 continue;
             };
             let t_model = rest_rot[hi] * al.col(1);
-            let axis_model = if k == 0 { t_model } else { -t_model };
+            let axis_model = if k == 0 { -t_model } else { t_model };
+            // Palm normal N (outward, towards the side the fingers curl to), model space; opposition turns the thumb
+            // about it, towards the little-finger side (-T), so it lies across the grip.
+            // (tuning: `thumb_axis` 0 = F, 1 = T, 2 = N picks the opposition axis, `thumb_sign` its direction)
+            let ax = gothic_xr_quest::knob_f32("thumb_axis", 0.0) as usize;
+            let n_model = rest_rot[hi] * al.col(ax.min(2));
+            let sgn = gothic_xr_quest::knob_f32("thumb_sign", THUMB_OPP_SIGN);
+            let opp_model = if k == 0 { n_model } else { -n_model } * sgn;
             for fnum in 1..=5 {
                 for (j, deg) in [(1, 70.0f32), (2, 80.0), (3, 50.0)] {
                     if let Some(&fi) = rig
                         .by_name
                         .get(&format!("{prefix}_{side}_Hand_Finger{fnum}_{j}"))
                     {
+                        if fnum == 1 {
+                            // Opposition mostly at the base joint, a little at the middle one.
+                            let opp = match j {
+                                1 => gothic_xr_quest::knob_f32("thumb_a1", 60.0),
+                                2 => gothic_xr_quest::knob_f32("thumb_a2", 30.0),
+                                _ => gothic_xr_quest::knob_f32("thumb_a3", 0.0),
+                            };
+                            thumb_opp[fi] = Some((
+                                (rest_rot[fi].inverse() * opp_model).normalize(),
+                                opp.to_radians(),
+                            ));
+                        }
                         let (deg, kind) = if fnum == 1 {
-                            (deg * 0.4, 0u8)
+                            (deg * gothic_xr_quest::knob_f32("thumb_flex", 0.4), 0u8)
                         } else if fnum == 2 {
                             (deg, 1u8)
                         } else {
@@ -399,6 +426,7 @@ impl Retarget {
             foot_nodes,
             ankle_bind_cm,
             fingers,
+            thumb_opp,
         }
     }
 
@@ -532,7 +560,11 @@ impl Retarget {
                             0 => curl[*hand][0] * 0.7,
                             _ => curl[*hand][0],
                         };
-                        local *= Quat::from_axis_angle(*axis, max * c.clamp(0.0, 1.0));
+                        let cc = c.clamp(0.0, 1.0);
+                        if let Some(Some((oaxis, omax))) = self.thumb_opp.get(i) {
+                            local *= Quat::from_axis_angle(*oaxis, omax * cc);
+                        }
+                        local *= Quat::from_axis_angle(*axis, max * cc);
                     }
                     rw[i] = parent_rw * local;
                     if let Ok(mut t) = q.get_mut(rig.joints[i]) {

@@ -202,3 +202,67 @@ impl GripFrame {
         }
     }
 }
+
+/// Authored per-weapon grip data (`grips.json`, embedded). Our own values; the automatic analysis only seeds defaults.
+#[derive(serde::Deserialize, Clone, Debug, Default)]
+pub struct GripEntry {
+    /// Centre of the fist on the handle, native mesh space (cm).
+    pub center: Option<[f32; 3]>,
+    /// Blade direction, native mesh space.
+    pub blade: Option<[f32; 3]>,
+    /// Cutting-edge direction, native mesh space.
+    pub edge: Option<[f32; 3]>,
+    /// Closed-grip finger flexion.
+    pub curl: Option<GripCurl>,
+}
+
+/// Finger flexion of the closed grip (0 open .. 1 closed).
+#[derive(serde::Deserialize, Clone, Copy, Debug)]
+pub struct GripCurl {
+    /// Middle, ring, little finger (the thumb follows at 0.7).
+    pub grip: f32,
+    /// Index finger.
+    pub trigger: f32,
+}
+
+fn db() -> &'static std::collections::HashMap<String, GripEntry> {
+    static DB: std::sync::OnceLock<std::collections::HashMap<String, GripEntry>> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        let raw: std::collections::HashMap<String, serde_json::Value> =
+            serde_json::from_str(include_str!("../grips.json")).unwrap_or_default();
+        raw.into_iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .filter_map(|(k, v)| serde_json::from_value(v).ok().map(|e| (k, e)))
+            .collect()
+    })
+}
+
+/// Authored entry of a weapon mesh.
+pub fn entry(mesh: &str) -> Option<&'static GripEntry> {
+    db().get(mesh)
+}
+
+/// Closed-grip finger flexion `[grip, trigger]` of a weapon (fully closed when nothing is authored).
+pub fn curl(mesh: &str) -> [f32; 2] {
+    entry(mesh)
+        .and_then(|e| e.curl)
+        .map_or([1.0, 1.0], |c| [c.grip, c.trigger])
+}
+
+/// Grip frame of a weapon mesh: the analysis, with the authored values of `grips.json` on top.
+pub fn frame_for(mesh: &str, md: &MeshData) -> Option<GripFrame> {
+    let mut g = analyse(md)?;
+    if let Some(e) = entry(mesh) {
+        if let Some(b) = e.blade {
+            g.blade = Vec3::from(b).normalize_or_zero();
+        }
+        if let Some(d) = e.edge {
+            g.edge = Vec3::from(d).normalize_or_zero();
+        }
+        g.flat = g.blade.cross(g.edge).normalize_or_zero();
+        if let Some(c) = e.center {
+            g.center = Vec3::from(c);
+        }
+    }
+    Some(g)
+}

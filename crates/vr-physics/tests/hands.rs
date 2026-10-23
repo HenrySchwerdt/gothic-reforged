@@ -394,3 +394,58 @@ fn second_hand_aims_the_blade_without_fighting_the_first() {
         "still in the left hand"
     );
 }
+
+/// The rig (play space) jumps while the hand holds a sword still relative to the rig. Frames
+/// arrive at `render_hz` while physics runs at 90 Hz, like on the headset. Returns the worst
+/// distance between the physical hand and the controller target and the peak-to-peak
+/// oscillation of the sword about the controller-fixed pose during the jump.
+fn jump_error(render_hz: f64) -> (f32, f32) {
+    use bevy::time::TimeUpdateStrategy;
+    let (mut rig, sword) = hand_over(props::sword());
+    rig.grip(Hand::Right, true);
+    let base = Vec3::new(0.2, 1.4, -0.4);
+    rig.set_hand(Hand::Right, Pose::new(base, LYING.rotation));
+    rig.step(90);
+    rig.enable_origin();
+    let rel_pos = rig.transform(sword).translation - rig.hand_pos(Hand::Right);
+    rig.app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f64(1.0 / render_hz),
+        ));
+    let (v0, g) = (5.0_f32, 9.81_f32);
+    let air = 2.0 * v0 / g;
+    let mut worst_hand: f32 = 0.0;
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    let frames = (render_hz * (air as f64 + 0.4)) as usize;
+    for i in 0..frames {
+        let t = i as f32 / render_hz as f32 - 0.2;
+        let rise = if t > 0.0 && t < air {
+            v0 * t - 0.5 * g * t * t
+        } else {
+            0.0
+        };
+        // The controller does not move in tracking space: the whole play space jumps.
+        let target = base + Vec3::Y * rise;
+        rig.set_origin(Vec3::Y * rise);
+        rig.step(1);
+        if t > 0.0 && t < air {
+            // Against the newest frame; at 72/60 Hz the physics clock trails it by up to one
+            // step (5 m/s * 11 ms = 5 cm of the figure is that sampling offset).
+            worst_hand = worst_hand.max(rig.hand_pos(Hand::Right).distance(target));
+            let off = rig.transform(sword).translation - target - rel_pos;
+            lo = lo.min(off.y);
+            hi = hi.max(off.y);
+        }
+    }
+    (worst_hand, hi - lo)
+}
+
+#[test]
+fn jumping_rig_does_not_make_the_sword_bob() {
+    for hz in [90.0, 72.0] {
+        let (hand, bob) = jump_error(hz);
+        println!("jump at {hz} Hz frames: hand error {hand:.3} m, sword bob {bob:.3} m");
+        assert!(hand < 0.08, "{hz} Hz: hand error {hand}");
+        assert!(bob < 0.12, "{hz} Hz: sword bob {bob}");
+    }
+}

@@ -161,6 +161,13 @@ pub struct XrHand {
     pub velocity: Vec3,
     /// World-space angular velocity (scaled axis), rad/s.
     pub angular_velocity: Vec3,
+    /// Virtual time (s) at which the transform was written. The fixed step extrapolates the
+    /// target with `velocity` from here, so a target that is only refreshed once per frame
+    /// does not stutter against the 90 Hz physics.
+    pub sampled_at: f32,
+    /// World velocity of the play space (rig/body) at the sample, m/s: a jump or a ride. Physics
+    /// hands are carried with it so the follow only has to work on the controller's own motion.
+    pub rig_velocity: Vec3,
 }
 
 /// An eye camera of the rig.
@@ -346,6 +353,8 @@ fn spawn_tracked_entities(mut commands: Commands) {
                 tracked: false,
                 velocity: Vec3::ZERO,
                 angular_velocity: Vec3::ZERO,
+                sampled_at: 0.0,
+                rig_velocity: Vec3::ZERO,
             },
             Transform::default(),
             Name::new(format!("XrHand{hand:?}")),
@@ -494,6 +503,7 @@ fn sync_tracked(
     mut heads: Query<&mut Transform, (With<XrHead>, Without<XrHand>, Without<XrEyeCamera>)>,
     mut hands: Query<(&mut Transform, &mut XrHand), (Without<XrHead>, Without<XrEyeCamera>)>,
     mut eyes: Query<(&mut Transform, &XrEyeCamera), (Without<XrHead>, Without<XrHand>)>,
+    mut prev_origin: Local<Option<Vec3>>,
 ) {
     let to_world = |p: &Pose| player.as_ref().map_or(*p, |pl| pl.world(p));
     let head = to_world(&input.0.head());
@@ -502,14 +512,22 @@ fn sync_tracked(
     }
     let dt = time.delta_secs();
     // Runtime velocities are in tracking space; the play space only turns them.
-    let space = to_world(&Pose::IDENTITY).rotation;
+    let origin = to_world(&Pose::IDENTITY);
+    let space = origin.rotation;
+    // Velocity of the play space itself (a jump, a ride): the runtime's controller velocity is relative to it.
+    let rig_vel = match (*prev_origin, dt > 0.0) {
+        (Some(p), true) => ((origin.position - p) / dt).clamp_length_max(30.0),
+        _ => Vec3::ZERO,
+    };
+    *prev_origin = Some(origin.position);
+    let now = time.elapsed_secs();
     for (mut t, mut h) in &mut hands {
         match input.0.hand_pose(h.hand) {
             Some(p) => {
                 let w = to_world(&p);
                 let c = input.0.current.hand(h.hand);
                 h.velocity = match c.linear_velocity {
-                    Some(v) => space * v,
+                    Some(v) => space * v + rig_vel,
                     None if h.tracked && dt > 0.0 => (w.position - t.translation) / dt,
                     None => Vec3::ZERO,
                 };
@@ -521,6 +539,8 @@ fn sync_tracked(
                     None => Vec3::ZERO,
                 };
                 h.tracked = true;
+                h.sampled_at = now;
+                h.rig_velocity = rig_vel;
                 *t = pose_to_transform(&w);
             }
             None => {
