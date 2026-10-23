@@ -64,7 +64,7 @@ fn update(
         (),
         (
             With<HeroActor>,
-            With<gothic_animation::runtime::Animator>,
+            With<gothic_animation::Animator>,
             With<gothic_animation::runtime::CharacterComposition>,
         ),
     >,
@@ -85,7 +85,7 @@ fn update(
     }
 
     let cell = stream.settings.cell_at(player.ctrl.position);
-    let initial_cell_ready = collision.0.has_chunk(tile_chunk_id(cell));
+    let initial_cell_ready = collision.0.has_chunk(tile_chunk_id((cell.x, cell.z)));
     let visual_ready = play
         .hero_entity
         .is_some_and(|hero| hero_entities.get(hero).is_ok());
@@ -143,7 +143,7 @@ fn state_hero_down(play: &PlayState, core: &CoreRes) -> bool {
 }
 
 fn inputs_released(keyboard: &ButtonInput<KeyCode>, mouse: &ButtonInput<MouseButton>) -> bool {
-    keyboard.get_pressed().is_empty() && mouse.get_pressed().is_empty()
+    keyboard.get_pressed().next().is_none() && mouse.get_pressed().next().is_none()
 }
 
 fn advance(phase: Phase, ready: bool, released: bool) -> Phase {
