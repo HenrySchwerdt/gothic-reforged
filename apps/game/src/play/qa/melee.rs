@@ -185,12 +185,41 @@ fn draw_sword(sc: &mut Sc, key: KeyCode, label: &'static str) {
 pub fn melee_quickslot() -> Sc {
     let mut sc = Sc::new(45.0);
     grab(&mut sc);
-    pick_target(&mut sc);
-    trace(&mut sc);
     rec(&mut sc, true);
+    trace_draw_clips(&mut sc);
     sc.until("fresh hero is idle in PS_Normal_Loop", 6.0, |cx| {
         hero_state(cx).1 == Some(State::PsNormalLoop)
+            && cx
+                .world
+                .resource::<super::super::readiness::StartupReadiness>()
+                .is_playing()
     });
+    sc.check(
+        "startup gate opened on a live fresh hero before Digit1",
+        |cx| {
+            let actor = cx.core().0.sim.actor(cx.core().0.hero);
+            let interaction = cx.world.resource::<super::super::interact::Interaction>();
+            let ready = !cx
+                .world
+                .resource::<super::super::readiness::StartupReadiness>()
+                .blocks_hardware();
+            let ok = ready
+                && !cx.play().hero_down
+                && actor.hp > 0
+                && hero_state(cx).1 == Some(State::PsNormalLoop)
+                && !cx.ui().is_open()
+                && interaction.window.is_none();
+            let detail = format!(
+                "ready={ready} hp={} hero_down={} state={} ui_open={} interaction_window={}",
+                actor.hp,
+                cx.play().hero_down,
+                state_name(cx),
+                cx.ui().is_open(),
+                interaction.window.is_some()
+            );
+            expect(ok, detail.clone(), detail)
+        },
+    );
     sc.check(
         "fresh game assigns OrcSlayer to quick slot 1 and equips it",
         |cx| {
@@ -223,6 +252,51 @@ pub fn melee_quickslot() -> Sc {
         "Digit1: draw the sword from quick slot 1",
     );
     sc
+}
+
+/// Passive clip observation for the clean quick-slot test. Unlike `trace`, this does not heal the
+/// hero, choose a target, or alter any NPC AI before the real Digit1 input.
+fn trace_draw_clips(sc: &mut Sc) {
+    sc.watch(|cx| {
+        if cx.st.n.get("quickslot_end_pending").copied() == Some(1.0) {
+            let t = f64::from(cx.now);
+            let started = cx.st.n.get("quickslot_end_pending_at").copied();
+            match started {
+                None => {
+                    cx.st.n.insert("quickslot_end_pending_at".into(), t);
+                }
+                Some(t0) if t - t0 > 0.1 => {
+                    let drawn = u8::from(cx.core().0.sim.actor(cx.core().0.hero).drawn);
+                    cx.st.n.insert("drawn_at_end".into(), f64::from(drawn));
+                    cx.st.n.insert("quickslot_end_pending".into(), 0.0);
+                    cx.st.n.remove("quickslot_end_pending_at");
+                }
+                _ => {}
+            }
+        }
+        let seen = cx
+            .st
+            .n
+            .get("quickslot_draw_clip_seen")
+            .copied()
+            .unwrap_or(0.0) as usize;
+        let n = log_len(cx);
+        if n <= seen {
+            return;
+        }
+        let drawn = u8::from(cx.core().0.sim.actor(cx.core().0.hero).drawn);
+        for (clip, _) in log_since(cx, seen) {
+            if clip.contains("HoldRight_Begin") {
+                cx.st.n.insert("drawn_at_begin".into(), f64::from(drawn));
+            }
+            if clip.contains("HoldRight_End") {
+                cx.st.n.insert("quickslot_end_pending".into(), 1.0);
+            }
+        }
+        cx.st
+            .n
+            .insert("quickslot_draw_clip_seen".into(), n as f64);
+    });
 }
 
 /// Records every state change and every clip start with the scenario time.

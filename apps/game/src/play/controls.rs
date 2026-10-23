@@ -15,6 +15,7 @@
 //! (`PlayerInput::route`); `cam.rs` feeds the look counts to the camera. The few UI-level keys
 //! (window digits, Enter inside windows, F5..F10) stay on Bevy key codes.
 use super::interact::Interaction;
+use super::readiness::StartupReadiness;
 use super::{Mode, PlayState, ScriptInput};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseButton};
 use bevy::prelude::*;
@@ -95,6 +96,8 @@ pub struct InputFrame {
     walk_toggled: bool,
     /// Keys are not delivered (a page, a dialog, a window or the death screen is up).
     pub blocked: bool,
+    /// The initial play gate specifically blocks startup keyboard shortcuts in other systems.
+    pub(super) startup_loading: bool,
     /// The mouse is captured by the game.
     pub grabbed: bool,
     /// The smoke script holds the left / right mouse button until this time.
@@ -128,6 +131,7 @@ impl InputFrame {
             walk: false,
             walk_toggled: false,
             blocked: false,
+            startup_loading: false,
             grabbed: false,
             script_left_until: None,
             script_right: false,
@@ -225,6 +229,7 @@ fn gather_input(
     ui: Res<gothic_ui::UiState>,
     state: Res<PlayState>,
     inter: Res<Interaction>,
+    startup: Option<Res<StartupReadiness>>,
     mut script: ResMut<ScriptInput>,
     time: Res<Time>,
     mut f: ResMut<InputFrame>,
@@ -239,8 +244,12 @@ fn gather_input(
     // frame after the capture.
     let mouse_live = grabbed && f.grabbed;
     f.grabbed = grabbed;
-    f.blocked =
-        ui.is_open() || state.mode == Mode::Dialog || state.hero_down || inter.window.is_some();
+    f.startup_loading = startup.is_some_and(|readiness| readiness.blocks_hardware());
+    f.blocked = f.startup_loading
+        || ui.is_open()
+        || state.mode == Mode::Dialog
+        || state.hero_down
+        || inter.window.is_some();
     // The legacy smoke flag is a 0.1 s click of the left button.
     if std::mem::take(&mut script.attack) {
         f.script_left_until = Some(now + 0.1);

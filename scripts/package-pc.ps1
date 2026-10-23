@@ -100,7 +100,7 @@ $readmeLines = @(
     'unter D:\SteamLibrary\steamapps\common\Gothic 3\Data. Die Spieldateien werden direkt',
     'von dort gelesen; dieses Paket enthält keine Original-PAK-Dateien.', '',
     'Steuerung',
-    'W/A/S/D: bewegen; Maus: Blickrichtung; Shift: schneller laufen; Leertaste/mittlere Maustaste: Waffe ziehen/einstecken.',
+    'W/A/S/D: bewegen; Maus: Blickrichtung; Shift: gehen; Leertaste/mittlere Maustaste: Waffe ziehen/einstecken.',
     'Alt oder Numpad 0: springen; 1..0: Schnellslots.',
     'I: Inventar. F5: Schnellspeichern; F9: Schnellladen.',
     'F6: manuell speichern; F10: neuesten Spielstand laden. Escape: Menü/Fokus freigeben.', '',

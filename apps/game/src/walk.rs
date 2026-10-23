@@ -129,6 +129,8 @@ struct Stream {
     pending: VecDeque<Pending>,
     spawned: HashMap<TileKey, Vec<Entity>>,
     ready: bool,
+    /// A terminal tile-loader error; play startup shows it instead of leaving input gated forever.
+    load_error: Option<String>,
     loader_ms: u128,
     records: usize,
     triangles_nav: usize,
@@ -430,6 +432,7 @@ pub fn run(args: &[String]) -> Result<()> {
         pending: VecDeque::new(),
         spawned: HashMap::new(),
         ready: false,
+        load_error: None,
         loader_ms: 0,
         records: 0,
         triangles_nav: 0,
@@ -699,6 +702,12 @@ fn receive_tiles(
             }
             Response::Weather(p) => orig_env.install(*p),
             Response::Failed(e) => eprintln!("loader: {e}"),
+            Response::StartupFailed(e) => {
+                eprintln!("loader: {e}");
+                if stream.load_error.is_none() {
+                    stream.load_error = Some(e);
+                }
+            }
             Response::Vegetation(payload) => {
                 let key = payload.key;
                 veg.in_flight.remove(&key);
@@ -1552,11 +1561,13 @@ fn sky_follow(
 fn input_mode(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    startup: Option<Res<play::readiness::StartupReadiness>>,
     mut player: ResMut<Player>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     camera: Query<&Transform, With<PlayerCamera>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyF) {
+    let startup_loading = startup.is_some_and(|readiness| readiness.blocks_hardware());
+    if !startup_loading && keys.just_pressed(KeyCode::KeyF) {
         player.fly = !player.fly;
         if player.fly {
             if let Ok(t) = camera.single() {
@@ -1570,11 +1581,11 @@ fn input_mode(
             player.ctrl.grounded = false;
         }
     }
-    if keys.just_pressed(KeyCode::KeyV) {
+    if !startup_loading && keys.just_pressed(KeyCode::KeyV) {
         player.third = !player.third;
     }
     if let Ok(mut c) = cursor.single_mut() {
-        if buttons.just_pressed(MouseButton::Left) {
+        if !startup_loading && buttons.just_pressed(MouseButton::Left) {
             c.grab_mode = CursorGrabMode::Locked;
             c.visible = false;
         }
@@ -1590,12 +1601,14 @@ fn player_motion(
     mouse: Res<AccumulatedMouseMotion>,
     cursor: Query<&CursorOptions, With<PrimaryWindow>>,
     time: Res<Time>,
+    startup: Option<Res<play::readiness::StartupReadiness>>,
     stream: Res<Stream>,
     collision: Res<Collision>,
     caches: Res<Caches>,
     mut player: ResMut<Player>,
 ) {
     let dt = time.delta_secs().min(0.1);
+    let startup_loading = startup.is_some_and(|readiness| readiness.blocks_hardware());
     let trace_motion = player
         .magic_body_trace
         .as_ref()
@@ -1612,7 +1625,8 @@ fn player_motion(
         && cursor
             .single()
             .is_ok_and(|options| options.grab_mode != CursorGrabMode::None);
-    if !player.command
+    if !startup_loading
+        && !player.command
         && cursor
             .single()
             .is_ok_and(|c| c.grab_mode != CursorGrabMode::None)
@@ -1624,22 +1638,22 @@ fn player_motion(
     let forward = rot * Vec3::NEG_Z;
     let right = rot * Vec3::X;
     let mut wish = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
+    if !startup_loading && keys.pressed(KeyCode::KeyW) {
         wish += forward;
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if !startup_loading && keys.pressed(KeyCode::KeyS) {
         wish -= forward;
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if !startup_loading && keys.pressed(KeyCode::KeyD) {
         wish += right;
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if !startup_loading && keys.pressed(KeyCode::KeyA) {
         wish -= right;
     }
     if let Some(w) = player.scripted_wish {
         wish = rot * w;
     }
-    let sprint = keys.pressed(KeyCode::ShiftLeft);
+    let sprint = !startup_loading && keys.pressed(KeyCode::ShiftLeft);
     if player.fly {
         if trace_motion {
             player.record_magic_body_trace(|| {
@@ -1652,23 +1666,23 @@ fn player_motion(
         let look = Quat::from_euler(EulerRot::YXZ, player.yaw, player.pitch, 0.0);
         let mut dir = Vec3::ZERO;
         {
-            if keys.pressed(KeyCode::KeyW) {
+            if !startup_loading && keys.pressed(KeyCode::KeyW) {
                 dir += look * Vec3::NEG_Z;
             }
-            if keys.pressed(KeyCode::KeyS) {
+            if !startup_loading && keys.pressed(KeyCode::KeyS) {
                 dir -= look * Vec3::NEG_Z;
             }
-            if keys.pressed(KeyCode::KeyD) {
+            if !startup_loading && keys.pressed(KeyCode::KeyD) {
                 dir += look * Vec3::X;
             }
-            if keys.pressed(KeyCode::KeyA) {
+            if !startup_loading && keys.pressed(KeyCode::KeyA) {
                 dir -= look * Vec3::X;
             }
         }
-        if keys.pressed(KeyCode::Space) {
+        if !startup_loading && keys.pressed(KeyCode::Space) {
             dir.y += 1.0;
         }
-        if keys.pressed(KeyCode::ControlLeft) {
+        if !startup_loading && keys.pressed(KeyCode::ControlLeft) {
             dir.y -= 1.0;
         }
         let speed = if sprint { 6000.0 } else { 1500.0 };

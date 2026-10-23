@@ -219,6 +219,9 @@ pub enum Response {
     Tile(Box<TilePayload>),
     Vegetation(Box<VegPayload>),
     Texture(String, Option<Arc<TexData>>),
+    /// Loader initialization failed before it could emit `Ready`; unlike an individual tile error,
+    /// this prevents the initial world stream from becoming usable.
+    StartupFailed(String),
     Failed(String),
 }
 
@@ -296,7 +299,7 @@ pub fn spawn_loader(data_dir: std::path::PathBuf, origin: Origin) -> LoaderHandl
                     }
                 }
                 Err(e) => {
-                    let _ = resp_tx.send(Response::Failed(format!("loader start: {e:#}")));
+                    let _ = resp_tx.send(Response::StartupFailed(format!("loader start: {e:#}")));
                 }
             }
         })

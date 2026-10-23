@@ -34,6 +34,7 @@ mod objects;
 mod pose;
 mod qa;
 mod ranged;
+pub(super) mod readiness;
 mod record;
 mod routines;
 mod saves;
@@ -507,6 +508,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     .add_plugins((AnimationPlugin, GothicUiPlugin, audio, CorePlugin));
 
     controls::register(app);
+    readiness::register(app, args);
     hero::register(app);
     ranged::register(app);
     shots::register(app);

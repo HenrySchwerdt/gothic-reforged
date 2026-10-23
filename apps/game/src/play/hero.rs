@@ -301,10 +301,12 @@ pub(super) fn input(
         }
     }
     if window_open {
-        w.window_key = w
-            .window_key
-            .or_else(|| quick_slot_pressed(&keys).map(|n| n + 1));
-        w.window_enter |= just_pressed(&keys, Act::Confirm);
+        if !frame.startup_loading {
+            w.window_key = w
+                .window_key
+                .or_else(|| quick_slot_pressed(&keys).map(|n| n + 1));
+            w.window_enter |= just_pressed(&keys, Act::Confirm);
+        }
         w.window_close |= keys.just_pressed(KeyCode::Escape);
         if let Some(n) = w.window_key {
             inter.window_key = Some(n);
@@ -314,10 +316,10 @@ pub(super) fn input(
     }
 
     // ---- save / load ---------------------------------------------------------------------------
-    if just_pressed(&keys, Act::QuickSave) {
+    if !frame.startup_loading && just_pressed(&keys, Act::QuickSave) {
         commands.write(CoreCommand(Command::Save(save.0.clone())));
     }
-    if just_pressed(&keys, Act::QuickLoad) {
+    if !frame.startup_loading && just_pressed(&keys, Act::QuickLoad) {
         commands.write(CoreCommand(Command::Load(save.0.clone())));
     }
 
