@@ -4,6 +4,7 @@
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 //! Opt-in extras: `--render-plus [preset|profile.json]`, `--audio-plus` (see `plus.rs`).
 mod env;
+mod env_synth;
 mod gmat;
 #[path = "play/mod.rs"]
 mod play;
