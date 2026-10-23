@@ -4,8 +4,8 @@
 //! Weapon frame convention: the primary grip sits at the origin with the identity rotation,
 //! i.e. a weapon held there has its frame equal to the hand's grip frame. A blade points along
 //! -Z (out of the thumb side of the fist, the OpenXR grip-pose convention), the pommel along
-//! +Z; an axe or blade edge faces +Y ("up" when the hand is level); a bow's stave runs along
-//! Y and it shoots toward -Z.
+//! +Z; an axe or blade edge faces +Y ("up" when the hand is level); a bow's own frame has the stave along
+//! Y and shoots toward -Z, but its grip rotation turns that into the fist frame (stave along the fist tube).
 use crate::grab::{GripKind, GripPoint};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -227,10 +227,13 @@ pub fn bow() -> PropSpec {
                 color: WOOD,
             },
         ],
+        // The bow frame (stave Y, shoots -Z) is NOT the hand's grip frame: held, the stave runs along the fist
+        // tube (grip -Z, little finger -> thumb, upper limb up) and the shot leaves along the fingers (grip -Y).
+        // grip frame = bow frame * rotation, so rotation = Rx(+90 deg): bow Y -> grip -Z, bow -Z -> grip -Y.
         grips: vec![GripPoint {
             a: Vec3::ZERO,
             b: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
+            rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
             kind: GripKind::Primary,
             radius: 0.1,
         }],
@@ -240,7 +243,8 @@ pub fn bow() -> PropSpec {
 
 /// Where the bow string's nocking point rests (bow frame).
 pub fn bow_string_rest() -> Vec3 {
-    Vec3::new(0.0, 0.0, 0.16)
+    // Brace height of the original bow mesh (`it_weapon_ranged_bow_hunting_01`: string 27.1 cm behind the grip).
+    Vec3::new(0.0, 0.0, 0.271)
 }
 
 /// Arrow: 0.03 kg, 0.75 m, tip toward -Z, nock at +Z end.

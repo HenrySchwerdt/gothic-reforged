@@ -16,7 +16,7 @@ use gothic_vr_physics::props::{self, PropKind};
 use gothic_vr_physics::{HandSet, Held, Prop, VrLayer, spawn_prop};
 use std::collections::HashMap;
 
-use crate::actor::{PartOptions, spawn_body};
+use crate::actor::{ActorRig, PartOptions, spawn_body};
 use crate::ardea::Ardea;
 use crate::locomotion::Physics;
 use crate::qmat::QuestMaterial;
@@ -49,6 +49,7 @@ impl Plugin for WeaponsPlugin {
                 weapon_recall,
                 grab_haptics,
                 bow_haptics,
+                bow_draw_pose,
                 holster_feedback,
                 ground_follow,
                 quiver_follow,
@@ -173,6 +174,7 @@ fn holster_pin(
         &HolsterHome,
         &Held,
         Option<&Holstered>,
+        &Prop,
         &mut Position,
         &mut Rotation,
         &mut LinearVelocity,
@@ -183,7 +185,7 @@ fn holster_pin(
         return;
     };
     let frame = BodyFrame::new(head, player.ctrl.position / 100.0, body.as_deref());
-    for (e, home, held, holstered, mut pos, mut rot, mut lv, mut av) in &mut props {
+    for (e, home, held, holstered, prop, mut pos, mut rot, mut lv, mut av) in &mut props {
         if holstered.is_none() {
             continue;
         }
@@ -202,7 +204,13 @@ fn holster_pin(
         });
         if let Some((ht, h)) = draw {
             pos.0 = ht.translation;
-            rot.0 = ht.rotation;
+            // The grip frame is the hand's frame: prop frame = hand * grip.rotation^-1 (identity for blades).
+            rot.0 = ht.rotation
+                * prop
+                    .0
+                    .grips
+                    .first()
+                    .map_or(Quat::IDENTITY, |g| g.rotation.inverse());
             lv.0 = Vec3::ZERO;
             av.0 = Vec3::ZERO;
             commands.entity(e).remove::<Holstered>();
@@ -505,8 +513,9 @@ fn spawn_weapons(
     );
 
     // Bow (actor, mirrored): stave native Z -> prop Y, shoot direction -X (mirrored) -> prop -Z.
-    let bow_rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y));
-    let bow_vis = Transform::from_rotation(bow_rot).with_scale(Vec3::splat(0.01));
+    // The grip / nocking point sits at the bow's centre (native z = BOW_CENTER_Z cm, see `BowDraw`): move it to the
+    // prop origin so the prop frame (grip at the origin, string rest on +Z) matches the mesh.
+    let bow_vis = bow_visual();
     let bow = spawn_prop(
         &mut commands,
         &props::bow(),
@@ -526,7 +535,7 @@ fn spawn_weapons(
     let bowroot = commands
         .spawn((Transform::IDENTITY, Visibility::default(), ChildOf(holder)))
         .id();
-    let _ = spawn_body(
+    let bow_rig = spawn_body(
         &mut commands,
         &mut a,
         "it_weapon_ranged_bow_hunting_01.xact",
@@ -540,8 +549,11 @@ fn spawn_weapons(
         &mut images,
         &mut inv,
     );
-    // The holder carries the visual transform already; undo the actor's own root scale (the actor is spawned in
-    // centimetres, the holder scales by 0.01).
+    if let Some(rig) = bow_rig.as_ref().and_then(|r| BowDraw::new(r)) {
+        commands.entity(bow).insert(rig);
+    } else {
+        warn!("[weapons] bow actor has no Bone01/02/03/05/06 skeleton: no draw animation");
+    }
     // Quiver (visual only; the archery logic derives its position from the head).
     spawn_quiver(
         &mut commands,
@@ -737,4 +749,121 @@ pub fn spawn_quiver(
         );
     }
     root
+}
+
+/// Bow actor in prop space: stave native Z -> prop Y, shoot direction -X (mirrored) -> prop -Z, the bow's centre
+/// (`BOW_CENTER_Z`) at the prop origin so the prop frame (grip at the origin, string rest on +Z) matches the mesh.
+pub fn bow_visual() -> Transform {
+    let bow_rot = Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y));
+    Transform::from_rotation(bow_rot)
+        .with_translation(bow_rot * Vec3::new(0.0, 0.0, -BOW_CENTER_Z * 0.01))
+        .with_scale(Vec3::splat(0.01))
+}
+
+/// Native z (cm) of the bow's centre: grip, arrow rest and nocking point (the mesh is symmetric about it: limb tips at
+/// +57.4 and -82.4).
+const BOW_CENTER_Z: f32 = -12.3;
+/// Model-space (mirrored rig, cm) string points measured from the original bow mesh `it_weapon_ranged_bow_hunting_01`:
+/// the string is a thin prism from the upper limb tip over the centre (nock, skinned half to `Bone03`, half to
+/// `Bone06`) to the lower limb tip. Tips follow `Bone02` / `Bone05`.
+const BOW_UPPER_TIP: Vec3 = Vec3::new(27.1, 0.0, 55.2);
+const BOW_LOWER_TIP: Vec3 = Vec3::new(27.1, 0.0, -79.7);
+const BOW_NOCK: Vec3 = Vec3::new(27.1, 0.0, -12.2);
+
+/// Draw animation of the bow actor: the original skeleton has `Bone01` (riser) with two limb chains
+/// `Bone02 -> Bone03` (upper) and `Bone05 -> Bone06` (lower); the string has no bone of its own, its centre vertices are
+/// skinned to the chain ends `Bone03` / `Bone06`. Drawing bends the limbs (`Bone02` / `Bone05` swing about the model Y
+/// axis until the string, whose half length is constant, reaches the drawing hand) and moves the chain ends (so the
+/// string centre) to the nock.
+#[derive(Component)]
+pub struct BowDraw {
+    joints: [Entity; 4],
+    bind_local: [Transform; 4],
+    /// Model-space bind matrices of Bone01, Bone02, Bone03, Bone05, Bone06.
+    bind: [Mat4; 5],
+}
+
+impl BowDraw {
+    pub fn new(rig: &ActorRig) -> Option<Self> {
+        let id = |n: &str| rig.by_name.get(n).copied();
+        let (b1, b2, b3, b5, b6) = (
+            id("Bone01")?,
+            id("Bone02")?,
+            id("Bone03")?,
+            id("Bone05")?,
+            id("Bone06")?,
+        );
+        let ix = [b2, b3, b5, b6];
+        Some(Self {
+            joints: ix.map(|i| rig.joints[i]),
+            bind_local: ix.map(|i| rig.bind_local[i]),
+            bind: [b1, b2, b3, b5, b6].map(|i| rig.bind_global[i]),
+        })
+    }
+
+    pub fn joint_entities(&self) -> [Entity; 4] {
+        self.joints
+    }
+
+    /// Joint local transforms `[Bone02, Bone03, Bone05, Bone06]` for a string drawn `draw_cm` from the rest nock.
+    pub fn pose(&self, draw_cm: f32) -> [Transform; 4] {
+        let nock = BOW_NOCK + Vec3::X * draw_cm.max(0.0);
+        let delta = nock - BOW_NOCK;
+        let mut out = self.bind_local;
+        for (limb, tip0) in [(0usize, BOW_UPPER_TIP), (2usize, BOW_LOWER_TIP)] {
+            let (pi, ci) = (1 + limb, 2 + limb); // bind index of the limb bone and its chain end
+            let hinge = self.bind[pi].w_axis.truncate();
+            let r0 = tip0 - hinge;
+            let len = (tip0 - BOW_NOCK).length();
+            let sgn = if r0.z >= 0.0 { 1.0 } else { -1.0 };
+            let tip_at = |a: f32| {
+                let (s, c) = (sgn * a).sin_cos();
+                hinge + Vec3::new(r0.x * c + r0.z * s, r0.y, -r0.x * s + r0.z * c)
+            };
+            // String length constant: swing the limb back until the tip is `len` from the nock (or the limit).
+            let (mut lo, mut hi) = (0.0f32, 1.2f32);
+            if (nock - tip_at(0.0)).length() > len {
+                for _ in 0..24 {
+                    let mid = 0.5 * (lo + hi);
+                    if (nock - tip_at(mid)).length() > len {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+            } else {
+                hi = 0.0;
+            }
+            let a = sgn * 0.5 * (lo + hi);
+            let about = Mat4::from_translation(hinge)
+                * Mat4::from_rotation_y(a)
+                * Mat4::from_translation(-hinge);
+            let limb_global = about * self.bind[pi];
+            out[limb] = Transform::from_matrix(self.bind[0].inverse() * limb_global);
+            // Chain end: translate so the skinned string centre lands on the nock.
+            let end_global = Mat4::from_translation(delta) * self.bind[ci];
+            out[limb + 1] = Transform::from_matrix(limb_global.inverse() * end_global);
+        }
+        out
+    }
+}
+
+/// Drives the bow's limbs and string from the archer state (`ArcherState::Nocked { draw }`).
+fn bow_draw_pose(
+    archery: Option<Res<gothic_vr_archery::Archery>>,
+    bows: Query<&BowDraw>,
+    mut joints: Query<&mut Transform, Without<BowDraw>>,
+) {
+    let draw = match archery.as_deref().map(|a| a.archer.state) {
+        Some(gothic_vr_archery::bow::ArcherState::Nocked { draw, .. }) => draw,
+        _ => 0.0,
+    };
+    for b in &bows {
+        let poses = b.pose(draw * 100.0);
+        for (e, t) in b.joints.iter().zip(poses) {
+            if let Ok(mut jt) = joints.get_mut(*e) {
+                *jt = t;
+            }
+        }
+    }
 }

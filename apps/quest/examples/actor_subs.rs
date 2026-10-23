@@ -9,6 +9,14 @@ fn main() {
     let data = cache.load_actor(AssetId::of(&name)).expect("actor");
     let names = data.node_names();
     let verts = data.vertices();
+    for (i, n) in data.nodes().iter().enumerate() {
+        println!("node {i:2} {:28} parent {:3} pos {:?} rot {:?}", names[i], n.parent, n.position, n.rotation);
+    }
+    if std::env::var("VERTS").is_ok() {
+        for (k, v) in verts.iter().enumerate() {
+            println!("v {k:3} pos [{:7.1} {:7.1} {:7.1}] j {:?} w {:?}", v.pos[0], v.pos[1], v.pos[2], v.joints, v.weights);
+        }
+    }
     for (i, s) in data.submeshes().iter().enumerate() {
         let vs = &verts[s.first_vertex as usize..(s.first_vertex + s.vertex_count) as usize];
         let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
