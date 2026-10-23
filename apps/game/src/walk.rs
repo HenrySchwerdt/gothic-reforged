@@ -3,6 +3,7 @@
 //! `gothic-reforged --walk [--data-dir DIR] [--radius TILES] [--smoke] [--screenshot PREFIX]`
 //! F toggles fly/walk, V toggles first/third person, click grabs the mouse, Esc releases.
 //! Opt-in extras: `--render-plus [preset|profile.json]`, `--audio-plus` (see `plus.rs`).
+mod cloud;
 mod env;
 mod env_synth;
 mod gmat;
@@ -351,6 +352,12 @@ pub fn run(args: &[String]) -> Result<()> {
         play::install(&mut app, args)?;
     }
     plus::install(&mut app, args, play::requested(args))?;
+    cloud::install(
+        &mut app,
+        args,
+        std::path::Path::new(&data_dir),
+        play::requested(args),
+    );
     app.add_plugins(crate::perf::PerfPlugin {
         args: args.to_vec(),
     });
@@ -1097,6 +1104,9 @@ fn spawn_pending(
         let part = &front.payload.parts[front.next];
         front.next += 1;
         let entity = spawn_part(&mut commands, part, &mut gpu, double_sided);
+        if cloud::statics::routes(part.kind) && !profile_hidden(part.kind) {
+            commands.entity(entity).insert(cloud::statics::StaticProp);
+        }
         front.entities.push(entity);
         stream.parts_spawned += 1;
     }
