@@ -934,6 +934,32 @@ impl<W: WorldQuery> Sim<W> {
     }
 }
 
+/// Milliseconds an animation action keeps the hero busy: the length of the clip that plays
+/// (`gothic_projectile::aim::clips`, measured from `_compiledAnimation.pak`). The ported script
+/// passes a placeholder of one second; the draw of a bow and the cast would otherwise lag a full
+/// second behind the key.
+fn hero_action_ms(action: gothic_script::enums::Action, crossbow: bool, secs: i32) -> u64 {
+    use gothic_projectile::aim::clips;
+    use gothic_script::enums::Action;
+    let s = match action {
+        Action::Aim if crossbow => clips::crossbow::RAISE,
+        Action::Aim => clips::bow::RAISE,
+        // The arrow leaves at once (the bow has no `Hit` clip); the recovery follows the shot.
+        Action::Shoot => 0.0,
+        Action::Reload if crossbow => clips::crossbow::RELOAD_BEGIN + clips::crossbow::RELOAD_END,
+        Action::Reload => {
+            clips::bow::RELOAD_BEGIN + clips::bow::RELOAD_RAISE + clips::bow::RELOAD_END
+        }
+        Action::Cock => clips::crossbow::COCK,
+        // The missile leaves when the raise clip ends.
+        Action::Cast => clips::cast::CAST.0,
+        Action::QuickCast => clips::cast::QUICK.0,
+        Action::PowerCast => clips::cast::POWER.0,
+        _ => return secs.max(0) as u64 * 1000,
+    };
+    (s * 1000.0) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1001,30 +1027,4 @@ mod tests {
                 .any(|e| matches!(&e.kind, EventKind::Player(PlayerEvent::Window(_))))
         );
     }
-}
-
-/// Milliseconds an animation action keeps the hero busy: the length of the clip that plays
-/// (`gothic_projectile::aim::clips`, measured from `_compiledAnimation.pak`). The ported script
-/// passes a placeholder of one second; the draw of a bow and the cast would otherwise lag a full
-/// second behind the key.
-fn hero_action_ms(action: gothic_script::enums::Action, crossbow: bool, secs: i32) -> u64 {
-    use gothic_projectile::aim::clips;
-    use gothic_script::enums::Action;
-    let s = match action {
-        Action::Aim if crossbow => clips::crossbow::RAISE,
-        Action::Aim => clips::bow::RAISE,
-        // The arrow leaves at once (the bow has no `Hit` clip); the recovery follows the shot.
-        Action::Shoot => 0.0,
-        Action::Reload if crossbow => clips::crossbow::RELOAD_BEGIN + clips::crossbow::RELOAD_END,
-        Action::Reload => {
-            clips::bow::RELOAD_BEGIN + clips::bow::RELOAD_RAISE + clips::bow::RELOAD_END
-        }
-        Action::Cock => clips::crossbow::COCK,
-        // The missile leaves when the raise clip ends.
-        Action::Cast => clips::cast::CAST.0,
-        Action::QuickCast => clips::cast::QUICK.0,
-        Action::PowerCast => clips::cast::POWER.0,
-        _ => return secs.max(0) as u64 * 1000,
-    };
-    (s * 1000.0) as u64
 }

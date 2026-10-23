@@ -40,7 +40,7 @@ fn main() {
                 let n = shown.entry(p.class.clone()).or_default();
                 if *n < max {
                     *n += 1;
-                    println!("== {} in {} pos {:?}", p.class, path, &e.world_matrix[3]);
+                    println!("== {} in {} pos {:?}", p.class, path, e.world_matrix[3]);
                     for pr in &p.properties {
                         println!("   {} = {:?}", pr.name, pr.value);
                     }
