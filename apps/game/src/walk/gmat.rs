@@ -854,6 +854,7 @@ impl Material for GothicMaterial {
                 shader_defs: descriptor.vertex.shader_defs.clone(),
                 entry_point: Some("fragment".into()),
                 targets: Vec::new(),
+                ..default()
             });
         }
         Ok(())
