@@ -39,13 +39,28 @@ commands.spawn((AudioPlayer(sound), EnhancedEmitter::default(), Transform::from_
   `EnhancedSound::instance()` (the samples are shared through an `Arc`).
 * Without an `OcclusionProbe` resource nothing is occluded.
 
-### Integration hooks (not done in this PR)
+### Bridge from `gothic-audio` (`bridge::GothicAudioBridgePlugin`)
 
-* `apps/game`: an "Enhanced audio" option that inserts the plugin and sets
-  `EnhancedAudio::settings` (the struct is serde, so it can live in the settings file).
-* The game's sound emitters spawn `AudioPlayer<EnhancedSound>` instead of the faithful
-  player when the option is on; reverb zones come from level data or a hand-made table.
-* `OcclusionProbe` wraps the physics raycast against static level geometry.
+Positional channels `gothic-audio` spawns (sound effects, ambient shots and emitters: an
+`Emitter3d` plus `AudioPlayer<AudioSource>`, no `VoiceLine`) are switched to enhanced voices
+before `bevy_audio` starts them: the sound is decoded once per source and cached, each play
+gets its own `instance()`, the channel's base volume becomes the playback volume, and the
+template distances (in world units via `AudioSettings::units_per_meter`) the
+`EnhancedEmitter`. Channel budget and priorities stay with `gothic-audio`. Dialogue voices
+stay faithful. `EmitterBlocking` on an emitter carries a host-computed probe result in place
+of the `OcclusionProbe` closure (for hosts whose collision lives in a resource).
+
+### In the game (`--audio-plus`)
+
+`gothic-reforged --play --audio-plus` (or `GR_AUDIO_PLUS=1`) adds `EnhancedAudioPlugin` and
+the bridge with every feature on (`apps/game/src/walk/plus.rs`):
+* occlusion: `probe` against the world `CollisionWorld` (centimetres), every sixth frame per
+  emitter, staggered; a source mounted on a wall is not behind it (25 cm grace);
+* reverb: no zones in the level data yet, so a ray up from the listener picks the room
+  (no ceiling within 9 m: outdoor; under 4.5 m: indoor; else hall), four times a second.
+
+Not verified here (no game data in CI): how it sounds in real scenes, the occlusion probe's
+cost with many emitters, and the main-thread decode hitch on a sound's first play.
 
 ## Demo and cost
 
@@ -74,7 +89,9 @@ shelf, and the last seconds carry the cave tail.
 
 ## Tests
 
-`cargo test -p gothic-audio-plus`: ITD follows the side, head shadow is frequency dependent,
+`cargo test -p gothic-audio-plus --features plugin`: the bridge switches positional channels
+(volume and distances kept, one decode per sound, own voice parameters per play), leaves
+undecodable sounds and the disabled path faithful, and host blocking reaches the voice. ITD follows the side, head shadow is frequency dependent,
 sources behind are duller, occlusion is monotonically quieter and duller, the probe tells
 obstruction from occlusion, bigger presets ring longer, zones blend smoothly and priority
 wins, the disabled voice is exactly the equal-power pan, and long noise stays finite and
