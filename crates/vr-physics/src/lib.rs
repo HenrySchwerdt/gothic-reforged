@@ -22,5 +22,5 @@ pub mod testing;
 pub use avian3d;
 pub use hands::{
     GrabMessage, Grabbable, HandSet, Held, PhysicsHand, Prop, VrLayer, VrPhysicsPlugin, VrStrength,
-    spawn_prop, spawn_static_greybox, static_box,
+    prop_layers, spawn_prop, spawn_static_greybox, static_box,
 };

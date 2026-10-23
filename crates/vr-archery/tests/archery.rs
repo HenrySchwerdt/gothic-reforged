@@ -95,7 +95,8 @@ fn draw_length_is_power() {
         panic!("{ev:?}")
     };
     assert!((draw_factor - 0.5).abs() < 1e-3);
-    assert!((velocity.length() - a.bow.max_speed * 0.5).abs() < 0.01);
+    assert!((velocity.length() - a.bow.speed(0.5)).abs() < 0.01);
+    assert!(a.bow.speed(0.0) >= 5.0 && a.bow.speed(1.0) == a.bow.max_speed);
     assert!(velocity.normalize().z < -0.99);
 
     // Over-drawing clamps to full power.
@@ -115,14 +116,55 @@ fn tiny_draw_drops_and_off_axis_loses_the_arrow() {
         a.update(&i).as_slice(),
         [ArcherEvent::Dropped { .. }]
     ));
+    // A hand that left the bow entirely loses the arrow ...
     let (mut a, i) = drawn(0.3);
     let mut off = i;
-    let p = off.hands[1].unwrap().position + Vec3::X * 0.3;
+    let p = off.hands[1].unwrap().position + Vec3::X * 0.5;
     off.hands[1] = Some(Pose::new(p, Quat::IDENTITY));
     assert!(matches!(
         a.update(&off).as_slice(),
         [ArcherEvent::Dropped { .. }]
     ));
+    // ... a drawing hand a little to the side keeps it and aims through the arrow rest.
+    let (mut a, i) = drawn(0.3);
+    let mut side = i;
+    let p = side.hands[1].unwrap().position + Vec3::X * 0.15;
+    side.hands[1] = Some(Pose::new(p, Quat::IDENTITY));
+    assert!(a.update(&side).is_empty());
+    let (bow, _) = side.bow.unwrap();
+    let rest = bow.transform_point(a.bow.string_rest);
+    let pose = a.arrow_pose(&side).unwrap();
+    let to_rest = (rest - p).normalize();
+    assert!(
+        pose.forward().dot(to_rest) > 0.999,
+        "arrow on the hand-to-rest line"
+    );
+    assert!(pose.forward().x < -0.1, "aims away from the offset hand");
+}
+
+#[test]
+fn held_arrow_glides_onto_the_string() {
+    let mut a = Archer::default();
+    a.update(&input(quiver_spot(), false));
+    a.update(&input(quiver_spot(), true));
+    let probe = input(quiver_spot(), true);
+    let (bow, _) = probe.bow.unwrap();
+    let rest = bow.transform_point(a.bow.string_rest);
+    let back = bow.rotation * Vec3::Z;
+    // The hand holds the arrow turned sideways. Far away: the arrow sits in the hand; close
+    // in: it lines up with the bow.
+    let turned = |at: Vec3| {
+        let mut i = input(at, true);
+        i.hands[1] = Some(Pose::new(at, Quat::from_rotation_y(1.2)));
+        i
+    };
+    let far = a
+        .arrow_pose(&turned(rest + back * 0.4 + Vec3::X * 0.2))
+        .unwrap();
+    let near = a.arrow_pose(&turned(rest + back * 0.11)).unwrap();
+    let shoot = -back;
+    assert!(near.forward().dot(shoot) > far.forward().dot(shoot));
+    assert!(near.forward().dot(shoot) > 0.95);
 }
 
 #[test]

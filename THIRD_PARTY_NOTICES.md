@@ -70,6 +70,17 @@ Pulled in via Cargo, not vendored; listed here for licence tracking. Full licenc
 - `crates/formats` (dev-dependency only): `proptest` (MIT OR Apache-2.0).
 - `crates/formats/fuzz` (separate nightly workspace, not part of the default build): `libfuzzer-sys` (MIT OR Apache-2.0 OR NCSA).
 
+# VR feel references (principles only)
+
+The held-weapon, two-handed grip, bow and haptics behaviour of `crates/vr`, `crates/vr-physics`, `crates/vr-melee` and `crates/vr-archery` was designed after reading these open-source VR interaction systems (consulted 2026-10-22). No source code was copied; the Rust implementation, structure and most tuning values are our own. Values taken over as starting points are named in `docs/vr/PHYSICS.md` and the code comments.
+
+- [SteamVR Unity Plugin](https://github.com/ValveSoftware/steamvr_unity_plugin) Interaction System (BSD-3-Clause, Copyright (c) Valve Corporation): longbow nock lead-in and hand-to-rest aiming, release and string haptics sequence, velocity-driven held objects.
+- [Godot XR Tools](https://github.com/GodotVR/godot-xr-tools) (MIT, Copyright (c) 2018-2023 Bastiaan Olij and Contributors): two-handed grab driver (primary hand leads, secondary aims), rumble manager (strongest event wins).
+- [VR Expansion Plugin](https://github.com/mordentral/VRExpansionPlugin) (MIT, Copyright Joshua Statzer): virtual hand inertia and per-grip constraint settings.
+- [NewtonVR](https://github.com/TomorrowTodayLabs/NewtonVR) (MIT, Copyright (c) 2015 TomorrowTodayLabs): velocity-based physical held objects.
+
+Physics-melee behaviour (blades stop at bodies, stabs pierce along the blade, recoil weakens the arm) follows what Blade & Sorcery and Boneworks are publicly known for; nothing of those games was decompiled or used.
+
 # OpenXR backend (VR-07, optional feature)
 
 `crates/vr` with the cargo feature `openxr` (off by default) uses [`openxr`](https://github.com/Ralith/openxrs) 0.22.0 and `openxr-sys` 0.14.0 (MIT OR Apache-2.0), `libloading` (ISC) and `libc` (MIT OR Apache-2.0). The Khronos OpenXR loader (`libopenxr_loader.so.1` / `openxr_loader.dll`, Apache-2.0) and the runtime (SteamVR, Meta, Monado, ...) are **not linked or bundled**: the loader is opened at run time from the system. CI installs Ubuntu's `libopenxr-loader1` and Monado (`monado-service`, `libopenxr1-monado`, Boost Software License 1.0) only to test against a simulated headset; nothing of them is redistributed.
