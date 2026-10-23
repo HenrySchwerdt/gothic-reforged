@@ -8,7 +8,10 @@
 //!   ([`voice::EnhancedSettings`], all off = the faithful equal-power pan).
 //!
 //! The DSP is plain deterministic f32 code without allocation while processing; the `plugin`
-//! feature wraps it as a `bevy_audio` source. See `docs/AUDIO_ENHANCED.md`.
+//! feature wraps it as a `bevy_audio` source, and [`bridge`] switches `gothic-audio`'s
+//! positional channels onto it. See `docs/AUDIO_ENHANCED.md`.
+#[cfg(feature = "plugin")]
+pub mod bridge;
 pub mod dsp;
 pub mod hrtf;
 pub mod occlusion;
