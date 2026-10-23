@@ -73,8 +73,19 @@ camera route. Normal throughput is essentially unchanged; no general FPS claim.
 Root independently checked the forced raw profiles: all12,752 entities, visible
 meshes1540–1543, expected camera-only route; tiny simulation/pose variation remains.
 Child environment maps and both benchmark summaries are clean. Evidence:
-`.local/bench-camera-raycast-{forced,normal}/`. Existing Desktop builds untouched;
-separate new package and final-location validation are in progress.
+`.local/bench-camera-raycast-{forced,normal}/`.
+
+Delivered separately on the Desktop:
+`C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261023-AimPerf/GothicReforged.exe`.
+Root independently verified the hash above against the final EXE and zero files
+in the new runtime saves folder. Compiled source is recorded separately from the
+packaging/documents commit in `build-info.json`. Existing packages are preserved.
+Final EXE from `C:/Windows/Temp`: melee13/magic9/bow15, explicit PASS/exit0, correct
+child environments and melee fixture diagnostics. Smoke exit0, grounded360/360;
+actual `smoke-walk.png` and `smoke-overview.png` visually inspected by root.
+All final evidence `.local/qa/camera-raycast-package/`. Remaining small white/checker
+patches are visible in the overview; leaf motion/atlas fidelity and VR are not
+certified by this release. No APK/headset validation, no remote publication.
 
 Earlier prototype measurements below do not certify the current scoped executable.
 

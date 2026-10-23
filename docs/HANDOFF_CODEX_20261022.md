@@ -1,5 +1,45 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+## Delivered PC milestone — 2026-10-23 00:09 UTC
+
+NEW Desktop package (old packages preserved):
+C:/Users/PowerTower/Desktop/GothicReforged-Codex-20261023-AimPerf/GothicReforged.exe
+SHA256445c3773b4de48cabad3a94c07a5d17ea799a149834d2da5377605047e99b47f.
+Compiled source3e5cbdbf4e99973d85d799262c5c761a176edb1e; build8m50s, log
+`.local/pc-raycast-camera-build.log`. Build-info separates compiled vs packagingSHA.
+Root independently verified finalhash and saves empty; original/primary/Claude intact.
+
+FINAL package from C:/Windows/Temp: melee13/magic9/bow15 explicitPASS/exit0 (37).
+Melee selectedtargetAIactive, unrelatedAI0, finalheronotdown; actualincomingtargetdamage
+stillrecorded. No health/invulnerability/lifecycle or assertion weakening. Physics59,
+camera25+integration13, movementintegration14 PASS (111targetedRust tests).
+Smokeexit0 grounded360/360; rootviewed actualsmoke-walk.png +smoke-overview.png.
+Evidence `.local/qa/camera-raycast-package/` (logs, childenvmaps, summaries, PNGs).
+No compiler/game/coding jobs remain. All older RUNNING states below are history.
+
+PERF applies to this exacthash: sameEXE A/B 1280x720,30swarmup,20ssamples,2runs/variant.
+Forcedpicking avgframemedian11.3107->10.3308ms (-8.66%), pickCPU~6.70->4.00ms (~40%less).
+Normalcamera10.0506->10.0418ms (-0.087%), essentiallyunchanged; no generalFPSgainclaim.
+Cleanenv+renderer/probechecks; all12,752entities, visible1540-1543 (tinyvariation).
+Evidence `.local/bench-camera-raycast-{forced,normal}/`. Details RAYCAST_TRAVERSAL.md.
+
+SCOPE: ONLY CameraWorld opts into raycast_accelerated; ordinaryphysicsraycast/hit,
+NPCLOS/capsules retainreferencebehavior. GlobalDDAprototypewithdrawnafter2defaultmeleeFAIL
+vs1legacyPASS (downedhero); no provennumericraybug. Do not re-enable global basedonlyon
+syntheticfixtures. Need same-loaded-world realLOS comparisons AND queued/cache/answer-age
+trace (pendingcap64, optimistictrue, deferredUpdateafterfixed30Hz). QAisolationseparate.
+
+OPEN: smallwhite/checkerpatches stillvisibleoverview; actualleafjitter/fidelityunproven,
+atlasflipdiagnostic staysOFF; fixedtimewindshots and CPU/GPUclockproofs are diagnostics.
+VR fixturelayerfix/nativeAndroidlib earlier, NOnewAPK/headsetvalidation. No installs or
+remote publishing. ClaudeCloudPR71-74 reviewed; preserveallforeignwork andoldfailedlogs.
+Nextboundedwork: traceactualrenderer/LOS costs withsamequality, investigatewhitepatch
+material identity; leafSDKUV mapping unresolved; prepareVRSDK/devicepreflight viaMeta skill.
+Avoidduplicatebuilds, performance runs undercompilerload, or retranslating preservedhistory.
+Quota00:09UTC primary71%used/weekly27%, reset03:15:16UTC; keep>=5%reserve for user/failures,
+prefercheapboundedagents and avoid new broadsource/build cycles near quota exhaustion.
+Heartbeat remainsactive because largerleaf/renderer/VR work is unfinished; quietunchanged.
+
 SCOPED BUILD FINISHED: parent93562actualexit0,8m50s, compiled3e5cbdb, no compiler.
 wind_clock NOW sole runner using env-safe `.local/camera-raycast-runner.ps1`.
 Createsnew camera-raycast immutable EXE/hash, FIRSTmelee13 (+targetactive/unrelated0
