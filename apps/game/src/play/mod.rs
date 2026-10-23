@@ -373,11 +373,12 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
         "play: game database from {db_source} in {} ms",
         t_db.elapsed().as_millis()
     );
-    let db = std::sync::Arc::new(db);
     let items_json = PathBuf::from(".local/items.json");
     let items = ItemDb::load(&items_json).map_err(|e| {
         anyhow::anyhow!("item database (run `gothic-inspector item-dump` first): {e:#}")
     })?;
+    let (db, items) = super::cloud::mods::apply_opt_in(args, db, items);
+    let db = std::sync::Arc::new(db);
     let catalog = ItemCatalog::load(&items_json)?;
     let npcs = NpcFile::load(std::path::Path::new(".local/npcs.json")).map_err(|e| {
         anyhow::anyhow!("NPC database (run `gothic-inspector npc-dump` first): {e:#}")
