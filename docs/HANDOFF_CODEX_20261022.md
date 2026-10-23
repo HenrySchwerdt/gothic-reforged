@@ -1,5 +1,29 @@
 # Gothic Reforged - Codex continuation, 2026-10-22
 
+## Active follow-up — 2026-10-23 00:35 UTC
+
+Controlled GR_LODG=4 does NOT remove/move checker patches (visible2296vs2295);
+same29dump lines, grounded360/360, exactwind3600/pose. Root viewed PNG. Small-object
+fade now stronger candidate; single factor test does not rule out allLOD effects.
+
+Root found deeper pinnedBevy omission missed by earlier dither-call audit:
+prepass/mod.rs620-626 creates fragment only for targets/emulateddepth/MAY_DISCARD;
+opaque VisibilityRange sets VISIBILITY_RANGE_DITHER but not MAY_DISCARD. Custom
+prepass FS existing in material does NOT by itself ensure it runs. Material
+bindings retained via material.rs1837 customVS/FS check. Walk camera DepthPrepass.
+Thus full depth footprint with dithered color is a concrete pipeline discrepancy.
+
+Source c2984f1 supplies missing no-color fragment only prepass+range+fragmentNone;
+keeps inherited defs/normals/existing fragments. Also gates prepass alpha byF_MASK.
+Shaderchecker all11positive+negative fixturePASS; noGPUclaimyet. Initialbuild
+28721exit1missingFragmentState.constants; retainedpc-static-dither-build.log.
+09332fc adds ..default(). ONE GNU releaseviewer replacement build43197RUNNING,
+log `.local/pc-static-dither-build-final.log`; root owns definitiveexitcheck.
+wind_clock prepares `.local/static-dither-runner.ps1`, must waitrootexit0, then
+newimmutable `.local/artifacts/gothic-reforged-static-dither.exe`, first controlled
+normaloverview+close at3600/3600.016667 withGR_DUMP1+RES1280x720. Root imageapproval
+before melee13/magic9/bow15. No benchmark or package until review; Desktop unchanged.
+
 ## Latest bounded renderer diagnosis — 2026-10-23 00:28 UTC
 
 All own agents idle/completed; root checked no cargo/rustc/game processes before
