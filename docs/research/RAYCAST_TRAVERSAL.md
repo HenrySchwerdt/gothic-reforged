@@ -50,8 +50,33 @@ Current source **`3e5cbdb`** scopes the optimization to camera queries after the
 global prototype's melee failures. Physics59 + camera25 + camera integration13 +
 movement integration14 tests pass (111 total), final log
 `.local/physics-camera-raycast-scoped-tests-camera-regression.log`.
-The game build and a fresh QA-first/runtime comparison are pending. Prototype
-measurements below do not certify the current scoped executable.
+The optimized game build completed in 8m50s; immutable artifact
+`.local/artifacts/gothic-reforged-camera-raycast.exe`, SHA256
+`445c3773b4de48cabad3a94c07a5d17ea799a149834d2da5377605047e99b47f`.
+QA-first validation passes melee13/magic9/bow15 (37 checks, explicit PASS/exit0),
+with target active, unrelated actors inactive and final hero-down false. The trace
+still records incoming target damage (HP200→149→200); no invulnerability was added.
+Evidence `.local/qa/camera-raycast-combat/`.
+
+Fresh same-binary comparison for this scoped build, 1280x720, 30s warmup and 20s
+samples, two runs per variant:
+
+| Workload | Legacy median run-average | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Forced idle target picking | 11.3107 ms | 10.3308 ms | -8.66% |
+| Normal unforced camera | 10.0506 ms | 10.0418 ms | -0.087% |
+
+Forced query CPU per call: legacy6.7275/6.6663 ms, candidate4.0053/3.9923 ms
+(about40% less CPU time). Forced p95 medians12.655 versus11.052 ms; normal
+p9510.899 versus10.6356 ms. These are descriptive small-sample results for this
+camera route. Normal throughput is essentially unchanged; no general FPS claim.
+Root independently checked the forced raw profiles: all12,752 entities, visible
+meshes1540–1543, expected camera-only route; tiny simulation/pose variation remains.
+Child environment maps and both benchmark summaries are clean. Evidence:
+`.local/bench-camera-raycast-{forced,normal}/`. Existing Desktop builds untouched;
+separate new package and final-location validation are in progress.
+
+Earlier prototype measurements below do not certify the current scoped executable.
 
 Global prototype outcomes: two default melee runs failed with downed hero, while
 one startup-legacy run passed. The difference is unresolved, so global NPC LOS
