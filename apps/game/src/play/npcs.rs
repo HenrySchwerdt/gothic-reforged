@@ -396,7 +396,7 @@ pub struct NpcGear {
 /// Characters wanted right now (inside the range box of the hero, layer enabled) that are not
 /// shown yet. Readiness checks wait for these.
 pub fn pending_in_ring(roster: &Roster, _stream: &Stream) -> usize {
-    roster.queue.len()
+    roster.queue.len() + super::npc_stream::in_flight(roster)
 }
 
 /// Half extent of the box around the hero inside which characters are shown: the entity
@@ -520,6 +520,7 @@ fn scan_candidates(
             library.prefetch_parts(&spec.parts);
         }
     }
+    roster.total = roster.spawned + roster.queue.len() + super::npc_stream::in_flight(&roster);
     roster.cost.scan.add(t0.elapsed());
 }
 
@@ -534,6 +535,7 @@ fn spawn_npcs(
     mut commands: MessageWriter<CoreCommand>,
     objects: Res<WorldObjects>,
     core: Res<CoreRes>,
+    mut npc_stream: super::npc_stream::NpcStream,
 ) {
     let started = std::time::Instant::now();
     let queued = !roster.queue.is_empty();
@@ -584,7 +586,7 @@ fn spawn_npcs(
                 continue;
             }
         };
-        let idx = roster.spawned;
+        let idx = roster.spawned + super::npc_stream::in_flight(&roster);
         spec = spec.with_start_time(hash01(idx, 4) * 2.0);
         let gear = gear_of(&objects, &core, &spawner.library, &cand.record);
         for w in &gear.weapons {
@@ -600,6 +602,20 @@ fn spawn_npcs(
             rotation: Quat::from_rotation_y(yaw),
             scale: Vec3::splat(CM),
         };
+        let placement = Placement {
+            ci,
+            pos,
+            ground,
+            yaw,
+            gear,
+        };
+        if npc_stream.active() {
+            // Opt-in (`--stream-actors`): built on worker threads, bound when committed.
+            let t_request = std::time::Instant::now();
+            npc_stream.request(&mut spawner.commands, &mut roster, &spec, tf, placement);
+            roster.cost.build.add(t_request.elapsed());
+            continue;
+        }
         let t_spawn = std::time::Instant::now();
         let spawned = match spawner.spawn(&spec, tf) {
             Ok(e) => Ok(e),
@@ -622,69 +638,105 @@ fn spawn_npcs(
                 continue;
             }
         };
-        let creature = cand.look.as_ref().is_some_and(is_creature);
-        let stance = if creature {
-            Stance::Unarmed
-        } else if Species::from_name(&cand.record.species) == Species::Orc && gear.equip.is_empty()
-        {
-            Stance::TwoHand
-        } else {
-            gear.stance
-        };
-        let look = cand.look.as_ref();
-        let extra = NpcExtra {
-            voice: look.map(|l| l.voice.clone()).unwrap_or_default(),
-            work: look.and_then(|l| l.routine.working_points.first().cloned()),
-            relax: look.and_then(|l| l.routine.relaxing_points.first().cloned()),
-            sleep: look.and_then(|l| l.routine.sleeping_points.first().cloned()),
-        };
-        let record = cand.record.clone();
-        let mut ec = spawner.commands.entity(entity);
-        ec.insert((
-            extra,
-            OverlayQueue::default(),
-            CombatStance(stance),
-            NpcMotion {
-                last_cm: pos,
-                yaw,
-                ground_y: ground,
-                ground_at: Vec2::new(pos.x, pos.z),
-                velocity: Vec3::ZERO,
-                fallen: false,
-                aim: 0.0,
-            },
-        ));
         roster.cost.build.add(built);
-        roster.cands[ci].visual = Some(entity);
-        roster.live.push(ci as u32);
-        roster.spawned += 1;
-        match known {
-            Some(actor) => {
-                // The core still has this character (health, inventory, quest state): bind the
-                // new body to it instead of creating a second actor.
-                ec.insert(NpcActor(actor));
-                roster.by_actor.insert(actor, entity);
-            }
-            None => {
-                ec.insert(NpcGear {
-                    equip: gear.equip,
-                    give: gear.give,
-                });
-                roster.binds.push_back((entity, ci as u32));
-                commands.write(CoreCommand(Command::SpawnNpc {
-                    record: Box::new(record),
-                    at: Pos::new(pos.x, ground, pos.z),
-                    yaw: super::bevy_to_sim_yaw(yaw),
-                }));
-            }
-        }
+        bind_spawned(
+            &mut roster,
+            &mut spawner.commands,
+            &mut commands,
+            entity,
+            placement,
+        );
     }
-    roster.total = roster.spawned + roster.queue.len();
+    roster.total = roster.spawned + roster.queue.len() + super::npc_stream::in_flight(&roster);
     if queued {
         roster.cost.spawn.add(started.elapsed());
         let spent = started.elapsed().as_secs_f32();
         if spent > 0.003 {
             roster.spawn_not_before = now + spent * 2.0;
+        }
+    }
+}
+
+/// Where and with what a queued character is placed (kept until its body exists).
+pub(super) struct Placement {
+    /// Index into [`Roster::cands`].
+    pub ci: usize,
+    /// Centimetres, on the ground.
+    pub pos: Vec3,
+    pub ground: f32,
+    pub yaw: f32,
+    pub gear: Gear,
+}
+
+/// Presentation components and roster / core bookkeeping of a freshly spawned body.
+pub(super) fn bind_spawned(
+    roster: &mut Roster,
+    cmd: &mut Commands,
+    core_commands: &mut MessageWriter<CoreCommand>,
+    entity: Entity,
+    placement: Placement,
+) {
+    let Placement {
+        ci,
+        pos,
+        ground,
+        yaw,
+        gear,
+    } = placement;
+    let cand = &roster.cands[ci];
+    let known = cand.actor;
+    let creature = cand.look.as_ref().is_some_and(is_creature);
+    let stance = if creature {
+        Stance::Unarmed
+    } else if Species::from_name(&cand.record.species) == Species::Orc && gear.equip.is_empty() {
+        Stance::TwoHand
+    } else {
+        gear.stance
+    };
+    let look = cand.look.as_ref();
+    let extra = NpcExtra {
+        voice: look.map(|l| l.voice.clone()).unwrap_or_default(),
+        work: look.and_then(|l| l.routine.working_points.first().cloned()),
+        relax: look.and_then(|l| l.routine.relaxing_points.first().cloned()),
+        sleep: look.and_then(|l| l.routine.sleeping_points.first().cloned()),
+    };
+    let record = cand.record.clone();
+    let mut ec = cmd.entity(entity);
+    ec.insert((
+        extra,
+        OverlayQueue::default(),
+        CombatStance(stance),
+        NpcMotion {
+            last_cm: pos,
+            yaw,
+            ground_y: ground,
+            ground_at: Vec2::new(pos.x, pos.z),
+            velocity: Vec3::ZERO,
+            fallen: false,
+            aim: 0.0,
+        },
+    ));
+    roster.cands[ci].visual = Some(entity);
+    roster.live.push(ci as u32);
+    roster.spawned += 1;
+    match known {
+        Some(actor) => {
+            // The core still has this character (health, inventory, quest state): bind the
+            // new body to it instead of creating a second actor.
+            ec.insert(NpcActor(actor));
+            roster.by_actor.insert(actor, entity);
+        }
+        None => {
+            ec.insert(NpcGear {
+                equip: gear.equip,
+                give: gear.give,
+            });
+            roster.binds.push_back((entity, ci as u32));
+            core_commands.write(CoreCommand(Command::SpawnNpc {
+                record: Box::new(record),
+                at: Pos::new(pos.x, ground, pos.z),
+                yaw: super::bevy_to_sim_yaw(yaw),
+            }));
         }
     }
 }

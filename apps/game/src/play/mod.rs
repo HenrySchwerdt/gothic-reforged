@@ -28,6 +28,7 @@ mod layers;
 pub(crate) mod nav;
 mod npc_bows;
 mod npc_moves;
+mod npc_stream;
 mod npcs;
 mod objects;
 mod pose;
@@ -391,7 +392,9 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     })?;
     let mut library = ActorLibrary::open(&data_dir)
         .map_err(|e| anyhow::anyhow!("opening actor archives: {e:#}"))?;
-    library.start_prefetch();
+    if !npc_stream::enabled() {
+        library.start_prefetch();
+    }
     let audio = GothicAudioPlugin::open(&data_dir, "German")
         .map_err(|e| anyhow::anyhow!("opening audio: {e:#}"))?;
     eprintln!("play: data loaded in {} ms", started.elapsed().as_millis());
@@ -518,6 +521,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     fx::register(app);
     app.add_systems(Update, pose::pose_system.after(crate::walk::update_camera));
     npcs::register(app);
+    npc_stream::register(app, &data_dir);
     teleport::register(app);
     triggers::register(app);
     routines::register(app);
