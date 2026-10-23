@@ -333,9 +333,9 @@ fn build_scene(
         &mut commands,
         "g3_weapons_ranged_bow_arrow_01.xcmsh",
         arrow,
-        Transform::from_translation(Vec3::new(0.0, 0.0, -0.375))
+        Transform::from_translation(Vec3::new(0.0, 0.0, -0.46875))
             .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
-            .with_scale(Vec3::splat(0.0080)),
+            .with_scale(Vec3::splat(0.01)),
         &mut meshes,
         &mut qmats,
         &mut images,

@@ -676,9 +676,9 @@ fn arrow_visuals(
     let Some(a) = a.as_mut() else { return };
     for e in &arrows {
         commands.entity(e).insert(Visibility::default());
-        // Tip toward -Z (prop frame), nock +Z; mesh length ~0.94 m scaled to the 0.75 m prop arrow.
-        let s = 0.0080;
-        let vis = Transform::from_translation(Vec3::new(0.0, 0.0, -0.375))
+        // Tip toward -Z (prop frame), nock +Z; the original mesh at 1:1 (93.75 cm = the 0.9375 m prop arrow).
+        let s = 0.01;
+        let vis = Transform::from_translation(Vec3::new(0.0, 0.0, -0.46875))
             .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
             .with_scale(Vec3::splat(s));
         let ok = a.spawn_static(

@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 pub struct BowSpec {
     /// Nocking point at rest (bow frame).
     pub string_rest: Vec3,
-    /// Full draw, m.
+    /// Where the arrow lies on the riser (bow frame); a nocked arrow points from the nock to here.
+    pub arrow_rest: Vec3,
+    /// Full draw, m (further clamped so the arrow tip never ends behind the arrow rest, see `Archer::max_draw`).
     pub max_draw: f32,
     /// Below this draw a release just drops the arrow, m.
     pub min_draw: f32,
@@ -34,6 +36,7 @@ impl Default for BowSpec {
     fn default() -> Self {
         Self {
             string_rest: gothic_vr_physics::props::bow_string_rest(),
+            arrow_rest: gothic_vr_physics::props::bow_arrow_rest(),
             max_draw: 0.6,
             min_draw: 0.08,
             max_speed: 58.0,
@@ -210,23 +213,37 @@ impl Archer {
         }
     }
 
-    /// Draw length and arrow pose for a drawing hand at `hand`: the arrow lies on the line from
-    /// the hand through the arrow rest, its nock at the hand (clamped to the full draw).
+    /// Full draw actually reachable, m: the bow's `max_draw`, but the arrow tip (nock + arrow length) must stay at least
+    /// 3 cm past the arrow rest, so the arrow never slips behind the riser.
+    pub fn max_draw(&self) -> f32 {
+        let to_rest = (self.bow.arrow_rest - self.bow.string_rest).length();
+        self.bow
+            .max_draw
+            .min(2.0 * self.arrow.half_length - to_rest - 0.03)
+            .max(0.0)
+    }
+
+    /// Draw length and arrow pose for a drawing hand at `hand`: the nock sits at the hand (on the line from the string's
+    /// rest point, clamped to the full draw) and the arrow lies from the nock over the arrow rest on the riser, so its
+    /// direction (and the shot) is nock -> rest.
     pub fn aim(&self, bow: &Pose, hand: Vec3) -> (f32, Pose) {
-        let rest = bow.transform_point(self.bow.string_rest);
+        let string = bow.transform_point(self.bow.string_rest);
+        let rest = bow.transform_point(self.bow.arrow_rest);
         let back = bow.rotation * Vec3::Z;
-        let rel = hand - rest;
-        let draw = if rel.dot(back) > 0.0 {
-            rel.length().min(self.bow.max_draw)
+        let rel = hand - string;
+        let drawn = rel.dot(back) > 0.0 && rel.length() > 1e-3;
+        let draw = if drawn {
+            rel.length().min(self.max_draw())
         } else {
             0.0
         };
-        let dir = if rel.length() > 1e-3 && rel.dot(back) > 0.0 {
-            -rel.normalize()
+        let nock = if drawn {
+            string + rel.normalize() * draw
         } else {
-            -back
+            string
         };
-        let nock = rest - dir * draw;
+        let dir = (rest - nock).normalize_or_zero();
+        let dir = if dir == Vec3::ZERO { -back } else { dir };
         (
             draw,
             Pose::new(

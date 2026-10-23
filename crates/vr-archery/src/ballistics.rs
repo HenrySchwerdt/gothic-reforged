@@ -27,7 +27,7 @@ impl Default for ArrowSpec {
         Self {
             mass: 0.03,
             radius: 0.005,
-            half_length: 0.375,
+            half_length: 0.46875,
             drag: 0.5 * 1.225 * 1.6 * area / 0.03,
             damage: 10.0,
         }

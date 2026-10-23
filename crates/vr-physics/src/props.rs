@@ -241,18 +241,26 @@ pub fn bow() -> PropSpec {
     }
 }
 
+/// Where a nocked arrow lies on the riser (bow frame): on the arrow-rest side of the riser (half the riser thickness of
+/// 3 cm plus the shaft radius), just above the bow hand (the grip wrap spans +-6 cm). The arrow runs from the nock on
+/// the string to this point. For a bow held in the left hand.
+pub fn bow_arrow_rest() -> Vec3 {
+    Vec3::new(-0.02, 0.05, 0.0)
+}
+
 /// Where the bow string's nocking point rests (bow frame).
 pub fn bow_string_rest() -> Vec3 {
     // Brace height of the original bow mesh (`it_weapon_ranged_bow_hunting_01`: string 27.1 cm behind the grip).
     Vec3::new(0.0, 0.0, 0.271)
 }
 
-/// Arrow: 0.03 kg, 0.75 m, tip toward -Z, nock at +Z end.
+/// Arrow: 0.03 kg, 0.9375 m (the original arrow mesh `g3_weapons_ranged_bow_arrow_01` at 1:1, 93.75 cm), tip toward -Z,
+/// nock at +Z end.
 pub fn arrow() -> PropSpec {
     PropSpec {
         kind: PropKind::Arrow,
         mass: 0.03,
-        parts: vec![along_z(0.005, 0.37, -0.38, WOOD)],
+        parts: vec![along_z(0.005, 0.46875, -0.46875, WOOD)],
         grips: vec![GripPoint {
             a: Vec3::new(0.0, 0.0, 0.3),
             b: Vec3::new(0.0, 0.0, -0.1),
@@ -265,7 +273,7 @@ pub fn arrow() -> PropSpec {
 }
 
 /// Arrow length (m) and the distance from its centre to the nock.
-pub const ARROW_HALF_LENGTH: f32 = 0.375;
+pub const ARROW_HALF_LENGTH: f32 = 0.46875;
 
 /// Wooden crate with `half` extents, grabbable anywhere.
 pub fn crate_box(half: Vec3, mass: f32) -> PropSpec {
