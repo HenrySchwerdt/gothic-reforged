@@ -1,32 +1,49 @@
 # Gothic Reforged — current Codex handoff
 
-## USER PRIORITY CORRECTION — gameplay and PR integration
+## Active integration checkpoint — 2026-10-23
 
-On2026-10-23 the user explicitly rejected further leaf/cosmetic work and reported:
-Digit1 does not draw the sword, gray model rims, overly broad NPC/quest dialog and
-teaching offers, missing quests and original-style game startup/loading. Stop leaf
-work. Previous smoke results do not establish playability. The user expressly
-authorized merging the existing PRs; remote integration is now in scope.
+This checkpoint supersedes older status statements below. The prior complete handoff
+is preserved byte-for-byte in [`docs/research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md`](research/HANDOFF_CODEX_HISTORY_PRE_RENDERPERF.md),
+SHA-256 `e7d85d3c96a505ffb3ec0d76b08127078aa7a3a18aaa0c7249339b9be12b088f`.
+That file contains obsolete RUNNING states and proposals; use it only as history.
 
-GitHub merged: PR74=30b0cd3e59a2ef8d55c5e159e5c145033c55e27c,
-PR72=5ad6505f8d6e46f4a87bdc2239ec93e5d400e72e,
-PR73=3746f941c32a33bc9f2d559a65c24c5ac6e4f3cd,
-PR71=5110fefbbea7682cb9b5c15b570c9fea45868642,
-PR64=68e500948213ef7564d217a32c4f9cbe9bccf9bb.
-Remaining PR62/63/65/66 have conflicts; integrate deliberately while preserving
-local fixes and Claude work. These remote merges are not in the delivered EXE yet.
+The user prioritized playability: Digit1 must draw the sword, actor gray rims,
+NPC/quest/teaching offer correctness, missing quests, and startup/input readiness.
+Do no further leaf/cosmetic work. No parity claim follows from earlier smokes.
 
-Local in-progress changes: water_renderer disabled unconditional actor rim light
-in gmat.rs (source evidence original rim was permutation-gated). wind_clock owns
-six gameplay/sim/runtime files for canonical Teach subject membership, stale-choice
-revalidation, and save-load canonical-subject rehydration. Do NOT seed TeachEnabled
-from legacy npcs.json's lossy false values. wind_stability owns a new default-combat
-Digit1 QA path; existing melee QA uses Space, so the reported key was not covered.
-The default kit does assign sword to slot1; no guessed input fix has been made.
-Package README wrongly says Space jumps (actual default Space weapon, Alt jump).
-No new build/test/runtime job yet; coordinate ONE validation/build after source freeze.
-Keep root, foreign worktrees, saves and original installation intact. Heartbeat prompt
-was updated to gameplay-first; no further leaf captures/builds are authorized.
+Current local source is branch `codex/renderer-stability`, commit
+`76fa16a2f3bbd6607b52c7fd8504db3af0ea7f55`; checkout was clean after commit.
+The five remote merges already performed by root are PR74, PR72, PR73, PR71, and
+PR64 (their merged commit IDs are recorded in the archived handoff). PR62, PR63,
+PR65, and PR66 have since been integrated locally as commits `d4aece0`, `bd34732`,
+`8ba8970`, and `4731f89`, after merging `origin/dev/engine-continuation` as
+`2439f98`. Those four integrations are not yet pushed or merged remotely.
+
+Validation on this exact local source passed:
+
+- `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-animation -p gothic-gameplay -p gothic-sim -p gothic-runtime`; log `.local/gameplay-integration/focused-tests-final.log`.
+- `cargo +stable-x86_64-pc-windows-gnu test --locked -j4 -p gothic-reforged --features viewer -- --test-threads=1`; 53 passed, log `.local/gameplay-integration/viewer-tests-rerun.log`.
+
+The merged source has not yet been release-built or run in game. The previously
+delivered Desktop RenderPerf package remains from commit `cb909ff3494e29f41533930190dd7fd9cbc46739`,
+EXE SHA-256 `8af2257ce156e49a4ac6486a5b32a6d22753830e6c71e8c2382bc5c8d14c6823`;
+it does not validate these merges.
+
+Next, wait for root to confirm shared compiler load is clear, then perform one
+private GNU release viewer build and preserve its log/hash. Do not kill or overlap
+foreign cargo/rustc jobs. After the build, run focused default-combat Digit1 QA and
+review actor gray rims. Do not claim an unassisted startup pass from QA that heals
+the hero or suppresses unrelated NPCs: the input-readiness gate at initial load is
+still unverified and early Digit1 may be dropped. Assert the hero remains standing
+and the UI/input state is ready as well as checking the weapon draw. Preserve
+failed artifacts and do not change saves, delivered packages, primary worktrees, or
+the original installation. No leaf, VR, or broad render work is in scope.
+
+The TeachSkills empty-subject guard and regression test are included in commit
+`76fa16a`; its focused gameplay tests passed. The package README controls were
+corrected: Space/middle button draws or holsters, Alt/Numpad0 jumps, and 1–0 select
+quickslots. The earlier unconditional actor-rim fix is part of the integration;
+review it against the upcoming actor QA before describing the visual issue as fixed.
 
 ## Completed flutter-only probe
 
@@ -210,8 +227,9 @@ build, QA or benchmark unless code changes or a concrete failure requires it.
   packaging SDK tools remain missing. Do not repeat completed host fixes or claim headset validation.
   Review `docs/research/VR_RENDERER_AUDIT.md`, `VR_COMBAT_BNS.md`, and
   `CLOUD_PR_REVIEW_20261022.md`; consult the applicable Meta VR skill before Quest-specific work.
-- Cloud PRs 71–74 were reviewed, not merged. Preserve their branches and foreign work. Exact heads,
-  CI failures, and review limits are in `docs/research/CLOUD_PR_REVIEW_20261022.md`.
+- Cloud PRs 71, 72, 73, and 74 are remotely merged; PR64 is also remotely merged.
+  PR62/63/65/66 are integrated locally only. Preserve foreign branches and worktrees.
+  Exact heads, CI failures, and review limits are in `docs/research/CLOUD_PR_REVIEW_20261022.md`.
 - Do not claim full Gothic 3 parity, cross-platform performance, general FPS gains, or a VR result.
 
 Earlier global-DDA failures, water and renderer audits, failed QA, screenshots, retained trace
