@@ -166,6 +166,31 @@ fn main() {
         app.update();
     }
 
+    if flag("--walk-check") {
+        // Device repro: the hero controller at the Ardea start spot, full stick for 3 s at 72 Hz against the real
+        // streamed collision. Prints distance, grounded, mode and speed every 0.25 s.
+        let (sx, sz) = (92_880.0, -11_997.0);
+        teleport(&mut app, sx, sz);
+        settle(&mut app, 3_000);
+        let jt: f32 = std::env::var("JUMP_TIME").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        app.world_mut().resource_scope(|w, vw: Mut<gothic_vr::VrWorld>| {
+        let world = &vw.0;
+        let mut p = w.resource_mut::<VrPlayer>();
+        p.ctrl.config.gravity = 981.0 / (jt * jt);
+        p.ctrl.config.jump_velocity = 600.0 / jt;
+        let start = p.ctrl.position;
+        println!("[walk] start {:?} grounded {} mode {:?} gravity {}", start, p.ctrl.grounded, p.ctrl.mode, p.ctrl.config.gravity);
+        for i in 0..216 {
+            let wish = Vec3::new(0.0, 0.0, 600.0 * if i % 2 == 0 { 0.97 } else { 0.96 });
+            p.ctrl.step(world, wish, false, 1.0 / 72.0);
+            if i % 18 == 17 {
+                let d = p.ctrl.position - start;
+                println!("[walk] t={:.2}s dist_xz={:.0} cm dy={:.0} grounded={} mode={:?} vel={:.0}", (i + 1) as f32 / 72.0, Vec2::new(d.x, d.z).length(), d.y, p.ctrl.grounded, p.ctrl.mode, p.ctrl.velocity.length());
+            }
+        }
+        });
+        return;
+    }
     if !flag("--no-shots") {
         for (name, gx, gz) in TOWNS {
             if only.as_deref().is_some_and(|o| o != name) {

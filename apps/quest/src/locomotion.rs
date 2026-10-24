@@ -68,6 +68,8 @@ pub fn init(app: &mut App, start_cm: Vec3) {
         teleport: false,
         ..ComfortSettings::default()
     };
+    // This module steps the controller itself; the crate's comfort locomotion must not step/drag it again.
+    app.insert_resource(gothic_vr::ExternalLocomotion);
     app.insert_resource(VrWorld::default())
         .insert_resource(VrPlayer::new(start_cm / CM, comfort, &head))
         .insert_resource(Physics::new(start_cm));

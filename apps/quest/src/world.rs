@@ -899,11 +899,42 @@ fn stream_system(
     // 7. Release the player once the ground below exists.
     if !phys.ready && !ws.collision_cells.is_empty() {
         let p = player.ctrl.position;
-        if let Some(y) = vrworld
-            .0
-            .ground_below(Vec3::new(p.x, 50_000.0, p.z), 100_000.0)
-        {
-            player.ctrl.teleport(Vec3::new(p.x, y + 20.0, p.z));
+        // Spawn spot: the first top surface straight below can be a crate, a stall or a roof, and the capsule then
+        // starts inside geometry (device: "I spawn in a crate", never grounded, crawling). Search a spiral around the
+        // start for a spot whose capsule (feet to head) is free and stand there.
+        let r = player.ctrl.config.radius;
+        let free = |x: f32, z: f32| {
+            let y = vrworld.0.ground_below(Vec3::new(x, 50_000.0, z), 100_000.0)?;
+            let feet = Vec3::new(x, y, z);
+            let blocked = vrworld.0.capsule_blocked(
+                feet + Vec3::Y * (r + 15.0),
+                feet + Vec3::Y * (180.0 - r),
+                r + 5.0,
+            );
+            (!blocked).then_some(y)
+        };
+        let mut spot = None;
+        'search: for ring in 0..=16 {
+            let d = ring as f32 * 50.0;
+            let n = if ring == 0 { 1 } else { 8 + ring * 2 };
+            for k in 0..n {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                let (x, z) = (p.x + d * a.cos(), p.z + d * a.sin());
+                if let Some(y) = free(x, z) {
+                    spot = Some(Vec3::new(x, y, z));
+                    break 'search;
+                }
+            }
+        }
+        let spot = spot.or_else(|| {
+            vrworld
+                .0
+                .ground_below(Vec3::new(p.x, 50_000.0, p.z), 100_000.0)
+                .map(|y| Vec3::new(p.x, y, p.z))
+        });
+        if let Some(s) = spot {
+            let y = s.y;
+            player.ctrl.teleport(Vec3::new(s.x, y + 20.0, s.z));
             phys.ready = true;
             info!(
                 "[world] ground found at y={y:.0} cm after {} cells",

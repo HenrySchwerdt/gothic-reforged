@@ -6,7 +6,7 @@
 //! | prop | default | meaning |
 //! |---|---|---|
 //! | `pd_lin_hz`, `pd_lin_damp` | 12, 1.0 | hand position PD: natural frequency (Hz) and damping ratio (spring/damper feel) |
-//! | `pd_ang_hz`, `pd_ang_damp` | 10, 1.0 | hand rotation PD |
+//! | `pd_ang_hz`, `pd_ang_damp` | 25, 1.0 | hand rotation PD (25 Hz: at 10 the wrist visibly bent under sword swings although the controller did not; user, 2026-10-24) |
 //! | `strength` | 60 | arm strength (Gothic STR): force and torque caps (`arm_limits`); low = heavy/laggy hands |
 //! | `weapon_mass` | 1.0 | multiplier on every holstered weapon's mass (weight lag) |
 //! | `hit_min_speed`, `hit_full_speed` | 0 = profile | blade impact speed (m/s) below which a hit does nothing / at which it counts fully |
@@ -58,7 +58,7 @@ fn apply_tuning(
         damping_ratio: knob_f32("pd_lin_damp", 1.0),
     };
     let ang = PdGains {
-        frequency_hz: knob_f32("pd_ang_hz", 10.0),
+        frequency_hz: knob_f32("pd_ang_hz", 25.0),
         damping_ratio: knob_f32("pd_ang_damp", 1.0),
     };
     let stag_max = knob_f32("hand_stagger_max", 2.0);

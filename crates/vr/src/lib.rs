@@ -29,7 +29,7 @@ pub mod rig;
 pub use gothic_physics;
 pub use haptics::HapticPulse;
 pub use input::{ControllerState, Hand, Pose, VrButton, VrInput, XrFrame};
-pub use plugin::{
+pub use plugin::{ExternalLocomotion, 
     DesktopXr, HapticMessage, HapticOut, PendingXrFrame, VrBody, VrCommands, VrDisplay, VrInputRes,
     VrPlayer, VrPlugin, VrSet, VrWorld, XrBackend, XrBackendKind, XrEyeCamera, XrHand, XrHead,
 };

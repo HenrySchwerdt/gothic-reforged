@@ -451,18 +451,27 @@ fn runtime_commands(
     }
 }
 
+/// Present when the app moves the character controller itself (the Quest app's own stick locomotion): the comfort
+/// locomotion then neither steps the controller nor drags the capsule to the head, which otherwise fought the app
+/// every frame (device: full stick crawled at 18-65 cm/s, never grounded).
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct ExternalLocomotion;
+
 fn locomotion(
     time: Res<Time>,
     input: Res<VrInputRes>,
     world: Res<VrWorld>,
     mut player: ResMut<VrPlayer>,
     commands: Res<VrCommands>,
+    external: Option<Res<ExternalLocomotion>>,
     mut out: MessageWriter<CoreCommand>,
 ) {
     let p = &mut *player;
-    p.last = p
-        .loco
-        .update(&input.0, &mut p.ctrl, &world.0, time.delta_secs());
+    if external.is_none() {
+        p.last = p
+            .loco
+            .update(&input.0, &mut p.ctrl, &world.0, time.delta_secs());
+    }
     if commands.send_hero_transform {
         out.write(CoreCommand(hero_transform(p.ctrl.position, p.ctrl.heading)));
     }

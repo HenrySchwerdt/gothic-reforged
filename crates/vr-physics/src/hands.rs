@@ -410,6 +410,10 @@ fn grab_release(
                 if let Ok((_, _, _, mut held, _)) = objects.get_mut(choice.key) {
                     held.hands[hand.hand.index()] = Some(choice.anchor);
                 }
+                bevy::log::info!(
+                    "[grab] {:?} grabbed {:?} grip {:?} anchor {:?} secondary {}",
+                    hand.hand, choice.key, choice.grip, choice.anchor, secondary
+                );
                 hand.held = Some(HeldBy {
                     object: choice.key,
                     joint,
