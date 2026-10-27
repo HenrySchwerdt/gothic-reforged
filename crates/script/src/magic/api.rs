@@ -300,6 +300,8 @@ pub trait MagicApi {
     fn spell(&self, name: &str) -> Option<SpellInfo>;
     /// Spell of the item on a stack (`PSItem.Spell`), empty if it has none.
     fn stack_spell(&self, e: EntityId, stack: i32) -> String;
+    /// Spell of an item template (`PSItem.Spell`), empty if it has none.
+    fn item_spell(&self, template: &str) -> String;
     /// Amount of items on a stack.
     fn stack_amount(&self, e: EntityId, stack: i32) -> i32;
     /// Is the item of the stack permanent (runes), i.e. never used up?

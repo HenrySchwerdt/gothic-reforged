@@ -64,3 +64,41 @@ pub fn routine_zoo() -> Sc {
     });
     sc
 }
+
+/// `crime_theft`: the hero takes an item lying next to a character of the world data. The taking
+/// goes through `PS_Normal_Take`, which offers the theft to everybody who can perceive it
+/// (`SendPerceptionTakeItem` -> `AssessTakeItem`, S:32c00 / S:30620). Asserts the item changed
+/// hands, the ported perception ran and, when the witness found the theft bothering, that it
+/// holds the hero responsible.
+pub fn crime_theft() -> Sc {
+    use gothic_runtime::{Command, CoreCommand};
+    use gothic_sim::script::host::EntityId;
+    let mut sc = Sc::new(120.0);
+    grab(&mut sc);
+    super::npc_ai::find_and_place(&mut sc, "Hamlar", 400.0);
+    sc.act("a sword lies at the hero's feet, in Hamlar's view", |cx| {
+        let id = tgt_id(cx).unwrap();
+        let pos = cx.core().0.sim.world_pos(id);
+        let hero = cx.core().0.hero;
+        let hp = cx.core().0.sim.world_pos(hero);
+        let item = cx.core_mut().0.sim.script.add_item("It_Sword_01", hp);
+        cx.st.n.insert("item".into(), f64::from(item.0));
+        cx.st.n.insert("take0".into(), gothic_portcov::count("send_perception_take_item") as f64);
+        cx.note(format!("item {item:?} at {hp:?}, Hamlar at {pos:?}"));
+        let _ = EntityId::NONE;
+        cx.world.write_message(CoreCommand(Command::PickUp { item: item.0 }));
+    });
+    sc.wait(4.0);
+    sc.check("the sword is in the hero's inventory", |cx| {
+        let n = cx.count_item("It_Sword_01");
+        expect(n > 0, format!("{n} swords"), "the sword was not taken")
+    });
+    sc.check("the taking was offered to the witnesses (ported SendPerceptionTakeItem)", |cx| {
+        if !gothic_portcov::ENABLED {
+            return super::ok("coverage build off: not counted");
+        }
+        let n = gothic_portcov::count("send_perception_take_item") as f64;
+        expect(n > cx.st.n["take0"], format!("{n} offers"), "no witness was offered the theft")
+    });
+    sc
+}
