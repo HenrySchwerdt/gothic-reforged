@@ -670,6 +670,36 @@ pub fn hud_focus() -> Sc {
             format!("label {:?} alpha {:.2}", l.text, l.alpha()),
         )
     });
+    // gCFocus_PS::OnAction (Game:0x1006e8e0) / FindFocusEntity (Game:0x1006da20): the lock key
+    // keeps the focus while the camera looks away; a second press releases it.
+    sc.act("R: lock the focus", |cx| cx.tap(KeyCode::KeyR));
+    sc.wait(0.3);
+    sc.act("turn the camera away", |cx| cx.mouse_motion(Vec2::new(900.0, 0.0)));
+    sc.wait(0.6);
+    sc.shot("focus_locked_looking_away");
+    let locked_id = Arc::new(std::sync::Mutex::new(None));
+    let rec = locked_id.clone();
+    sc.check("the locked character stays focused with the camera turned away", move |cx| {
+        let p = cx.play();
+        *rec.lock().unwrap() = p.focus_lock;
+        let ok = p.focus_lock.is_some() && p.focus == p.focus_lock;
+        expect(
+            ok,
+            format!("lock {:?} focus {:?}", p.focus_lock, p.focus),
+            format!("lock {:?} focus {:?}", p.focus_lock, p.focus),
+        )
+    });
+    sc.act("R: unlock", |cx| cx.tap(KeyCode::KeyR));
+    sc.wait(0.4);
+    sc.check("the second press releases the lock and the focus is searched again", move |cx| {
+        let p = cx.play();
+        let was = *locked_id.lock().unwrap();
+        expect(
+            p.focus_lock.is_none() && p.focus != was,
+            format!("lock {:?} focus {:?}", p.focus_lock, p.focus),
+            format!("lock {:?} focus {:?}", p.focus_lock, p.focus),
+        )
+    });
     sc
 }
 

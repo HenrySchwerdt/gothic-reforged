@@ -713,6 +713,7 @@ fn quick_use(
 /// priorities of the hero template, `gothic_gameplay::focus`); the view direction is the camera's.
 #[allow(clippy::too_many_arguments)]
 fn focus(
+    frame: Res<InputFrame>,
     player: Res<Player>,
     core: Res<CoreRes>,
     objects: Res<WorldObjects>,
@@ -771,7 +772,8 @@ fn focus(
         let Some(p) = core.0.sim.world.actors.get(&a.id).map(|w| w.0) else {
             continue;
         };
-        if !near([p.x, p.y, p.z]) {
+        // A locked focus is kept up to `FocusLockMaxDistance`, beyond the scan range of the mode.
+        if !near([p.x, p.y, p.z]) && state.focus_lock != Some(a.id) {
             continue;
         }
         let t = if a.is_alive() {
@@ -805,17 +807,44 @@ fn focus(
         yaw: fwd.x.atan2(fwd.y),
         reach: FOCUS_REACH,
     };
-    let found = find_focus(&FocusConfig::hero(), mode, &viewer, &cands);
+    // `gCFocus_PS::OnAction` (Game:0x1006e8e0): the lock key (message 0x27) toggles `FocusLocked`.
+    // Only a character focus can be locked here; `FindFocusEntity` (Game:0x1006da20) keeps a locked
+    // entity while it lives (a character must not be dead) and lies within `FocusLockMaxDistance`,
+    // otherwise it clears the focus and the lock and searches again.
+    if frame.pressed_edge(SessionKey::Lock) && !frame.blocked {
+        state.focus_lock = match state.focus_lock {
+            Some(_) => None,
+            None => state.focus,
+        };
+    }
+    let cfg = FocusConfig::hero();
+    let locked = state.focus_lock.filter(|a| {
+        core.0.sim.world.actors.get(a).is_some_and(|w| {
+            gothic_gameplay::focus::lock_holds(
+                &cfg,
+                &viewer,
+                [w.0.x, w.0.y, w.0.z],
+                core.0.sim.actor(*a).is_alive(),
+            )
+        })
+    });
+    state.focus_lock = locked;
+    let found = match locked {
+        Some(a) => ids.iter().position(|t| *t == Target::Npc(a)),
+        None => find_focus(&cfg, mode, &viewer, &cands),
+    };
     state.target = found.map(|i| ids[i]);
     state.focus = match state.target {
         Some(Target::Npc(a)) => Some(a),
         _ => None,
     };
     // `PSFocus::GetFocusEntity(melee)` for `PS_Melee_Loop`: the same search in the melee mode.
-    state.melee_focus = find_focus(&FocusConfig::hero(), FocusMode::Melee, &viewer, &cands)
-        .and_then(|i| match ids[i] {
-            Target::Npc(a) | Target::Body(a) => Some(a),
-            _ => None,
+    state.melee_focus = locked
+        .or_else(|| {
+            find_focus(&FocusConfig::hero(), FocusMode::Melee, &viewer, &cands).and_then(|i| match ids[i] {
+                Target::Npc(a) | Target::Body(a) => Some(a),
+                _ => None,
+            })
         });
 }
 

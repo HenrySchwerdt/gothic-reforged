@@ -215,6 +215,8 @@ pub struct PlayState {
     pub target: Option<Target>,
     /// `PSFocus::GetFocusEntity(melee)`: the focus search in the melee combat mode.
     pub melee_focus: Option<ActorId>,
+    /// `gCFocus_PS::FocusLocked` (this+0x158) with the locked entity (`PSFocus` proxy this+0x130).
+    pub focus_lock: Option<ActorId>,
     /// The hero sneaks (`AniState::Sneak` of the ported state).
     pub sneaking: bool,
     /// The quick bar: template per slot 1..10.
