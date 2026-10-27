@@ -1,0 +1,13 @@
+[package]
+name = "gothic-coords"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The single Gothic 3 (left-handed, cm) to engine (right-handed, X mirrored) conversion"
+
+[dependencies]
+glam = "0.33"
+
+[lints]
+workspace = true
