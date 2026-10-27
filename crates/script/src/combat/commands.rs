@@ -192,6 +192,10 @@ pub fn start_die(host: &mut dyn ScriptHost, npc: EntityId) {
 pub fn start_stumble(host: &mut dyn ScriptHost, npc: EntityId, action: Action) {
     gothic_portcov::hit!("start_stumble");
     host.set_current_action(npc, action);
+    if matches!(action, Action::Stumble | Action::QuickStumble) {
+        // The pain grunt of `_AI_Stumble` / `_AI_QuickStumble` (S:4aaf0, S:489c0 call S:528a0).
+        crate::speech::start_say_aargh(host, npc, EntityId::NONE);
+    }
 }
 
 /// Port of `_AI_LieKnockDown` (S:467c0): the knocked-down NPC lies on the ground.

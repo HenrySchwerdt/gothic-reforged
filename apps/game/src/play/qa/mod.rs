@@ -35,6 +35,7 @@ mod moves;
 mod moves2;
 mod npc_ai;
 mod ranged;
+mod routines;
 mod scenarios;
 mod souls_wire;
 mod spells;

@@ -76,6 +76,24 @@ impl<W: WorldQuery> Sim<W> {
             return HitOutcome::ignored_hit();
         };
         let _ = captured;
+        {
+            // The reaction the script chose starts on the victim (`_AI_Stumble` family,
+            // `_AI_LieKnockDown`, `_AI_Die`).
+            use gothic_script::combat::commands as c;
+            let mut host = SimHost::new(self);
+            let v = crate::script_host::entity_of(vic);
+            match outcome.action {
+                se::Action::Stumble
+                | se::Action::QuickStumble
+                | se::Action::ParadeStumble
+                | se::Action::QuickParadeStumble
+                | se::Action::HeavyParadeStumble
+                | se::Action::PierceStumble => c::start_stumble(&mut host, v, outcome.action),
+                se::Action::LieKnockDown => c::start_lie_knock_down(&mut host, v),
+                se::Action::Die => c::start_die(&mut host, v),
+                _ => {}
+            }
+        }
         let mut out = HitOutcome::ported(result_of(outcome.action), outcome.damage);
         out.parried = out.result.is_parry();
         out.perception = Some(match broadcast {
