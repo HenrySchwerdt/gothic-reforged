@@ -164,7 +164,7 @@ impl<W: WorldQuery> Sim<W> {
 
     /// Mirror the script task into the simulation task: tasks the script ended return the actor
     /// to its routine.
-    pub(super) fn reflect_script_task(&mut self, i: usize, now: u64) {
+    pub(crate) fn reflect_script_task(&mut self, i: usize, now: u64) {
         let id = self.actors[i].id;
         let task = self.script.npc(id).task;
         match task_for(task) {
@@ -215,13 +215,13 @@ impl<W: WorldQuery> Sim<W> {
             self.actors[i].brain.busy_until_ms = now;
         }
         let dest = self.script.npc(id).dest;
-        if dest.is_none() {
+        if dest.is_none() && self.script.npc(id).task.is_none() {
             return;
         }
-        let Some(target) = SimHost::<W>::entity_position_of(&self.script, dest) else {
-            return;
-        };
         if self.script.npc(id).task.is_none() {
+            let Some(target) = SimHost::<W>::entity_position_of(&self.script, dest) else {
+                return;
+            };
             // Not at work yet: walk to the routine point; the task state starts on arrival.
             if self.pos(id).dist_xz(target) > 30.0 {
                 self.world.move_towards(id, target, WALK_SPEED * self.dt());
@@ -235,8 +235,21 @@ impl<W: WorldQuery> Sim<W> {
             };
             self.script_enter(id, task);
         }
-        // The task state drives from here: its own walks to work objects, animations, waits.
-        // Task callbacks (`OnGoto`, `OnWork`) run every tick like the combat tasks'.
+        self.script_state_drive(i, now);
+    }
+
+    /// The task state drives: its own walks to work objects, animations, waits. The state
+    /// clocks advance, task callbacks (`OnGoto`, `OnWork`, `OnSleep`, `OnFollowPlayer`, ...) run
+    /// every tick like the combat tasks'.
+    pub(super) fn script_state_drive(&mut self, i: usize, now: u64) {
+        let id = self.actors[i].id;
+        let npc = entity(id);
+        {
+            let dt = self.dt();
+            let s = self.script.npc_mut(id);
+            s.state_time += dt;
+            s.task_time += dt;
+        }
         let cb = self.script.npc(id).task_cb;
         if cb != Callback::None {
             let mut host = SimHost::new(self);
@@ -330,6 +343,17 @@ impl<W: WorldQuery> Sim<W> {
                     kind,
                     walk_mode,
                     stop: CONTACT_DISTANCE,
+                    since_ms: now,
+                });
+            }
+            AiCommand::GotoFollow { target, within } => {
+                // `_AI_GotoFollow`: walk up to the leader and stop `within` cm from it.
+                self.actors[i].brain.goto = Some(GotoState {
+                    target: Some(actor_id(target)),
+                    pos: None,
+                    kind: GotoKind::Approach,
+                    walk_mode: 2,
+                    stop: within,
                     since_ms: now,
                 });
             }
