@@ -855,7 +855,8 @@ pub fn call_spell_function(
         "MagicPoison" => magic_poison(host, caster, target),
         "MagicDisease" => magic_disease(host, caster, target),
         "MagicRefresh" => magic_refresh(host, caster),
-        "MagicCure" => magic_cure(host, caster),
+        // `MagicHeal` is the registry alias of the same function (0x10053870, `Spl_Cure`).
+        "MagicCure" | "MagicHeal" => magic_cure(host, caster),
         "MagicCurePoison" => magic_cure_poison(host, caster),
         "MagicCureDisease" => magic_cure_disease(host, caster),
         "MagicHealOther" => magic_heal_other(host, target),

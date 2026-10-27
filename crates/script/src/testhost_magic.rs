@@ -94,6 +94,9 @@ impl MagicApi for TestWorld {
         }
         self.slot_spell_name(e, Self::slot_of(stack))
     }
+    fn item_spell(&self, _template: &str) -> String {
+        String::new()
+    }
     fn stack_amount(&self, e: EntityId, stack: i32) -> i32 {
         self.mg.amounts.get(&(e, stack)).copied().unwrap_or(1)
     }
