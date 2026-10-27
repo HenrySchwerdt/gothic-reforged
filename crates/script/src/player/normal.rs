@@ -129,6 +129,8 @@ fn ps_normal_take(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
                 if stolen {
                     add_enclave_theft_count(host, p, p, 1);
                 }
+                // The people around see the taking (`SendPerceptionTakeItem`, S:32c00).
+                crate::perception::send_perception_take_item(host, p, item);
                 host.take_item(p, item);
                 host.emit(PlayerEvent::PickedUp { template, stolen });
             }

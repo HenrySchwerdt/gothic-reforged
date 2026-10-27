@@ -826,7 +826,7 @@ fn open_spot(cx: &Cx, p: Vec3, dist: f32) -> Option<Vec3> {
 /// Finds the nearest enabled character of the roster whose name contains `needle`, teleports the
 /// hero `dist` cm south of it and waits until the body exists (setup, not under test). Leaves
 /// the actor id in `st.n["tgt"]`.
-fn find_and_place(sc: &mut Sc, needle: &'static str, dist: f32) {
+pub(super) fn find_and_place(sc: &mut Sc, needle: &'static str, dist: f32) {
     sc.act(format!("find a {needle} in the roster"), move |cx| {
         let hero = cx.hero_pos();
         let r = cx.world.resource::<crate::walk::play::Roster>();
