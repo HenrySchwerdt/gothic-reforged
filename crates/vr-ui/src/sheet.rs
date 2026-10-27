@@ -112,10 +112,8 @@ pub enum SheetAct {
     Select(usize),
     /// Quest map radio: `true` shows only locations with a running quest ("Haupt").
     Radio(bool),
-    /// Wait page: change the hours by this much.
-    Step(i32),
-    /// Wait page: wait the chosen hours.
-    WaitDo,
+    /// Sleep page: sleep until this hour of the day (`PlayerSleep(hour)`).
+    SleepUntil(u32),
     /// Main menu entry.
     Menu(MenuEntry),
     /// Comfort options page: step an option.

@@ -211,18 +211,19 @@ fn sleeping_is_a_core_command_that_advances_the_clock_and_restores_the_hero() {
     let hero = c.hero;
     let max = c.sim.actor(hero).hp_max(&c.sim.cfg);
     c.sim.actors[hero.0 as usize].hp = 10;
-    let h0 = c.sim.clock.hour_of_day();
-    let ev = c.tick(0.033, &[feed::wait_command(3)]);
+    let ev = c.tick(0.033, &[feed::wait_command(12)]);
     assert!(
-        ev.iter().any(|e| matches!(e, Event::Player(gothic_sim::script::player::api::PlayerEvent::Slept { hours }) if (*hours - 3.0).abs() < 1e-3)),
+        ev.iter().any(|e| matches!(e, Event::Player(gothic_sim::script::player::api::PlayerEvent::Slept { hours }) if *hours > 0.0 && *hours <= 24.0)),
         "{ev:?}"
     );
     assert_eq!(c.sim.actor(hero).hp, max, "PlayerSleep restores the hero");
-    let h1 = c.sim.clock.hour_of_day();
-    assert!(((h1 - h0 + 24.0) % 24.0 - 3.0).abs() < 0.05, "{h0} -> {h1}");
+    assert!((c.sim.clock.hour_of_day() - 12.0).abs() < 0.05, "PlayerSleep(12) lands on 12:00: {}", c.sim.clock.hour_of_day());
     assert_eq!(c.state().hours, c.sim.clock.total_hours(), "the quest clock follows the world clock");
+    // Sleeping at 12:00 until 12 is a full day (the target is not later than now).
+    let ev = c.tick(0.033, &[feed::wait_command(12)]);
+    assert!(ev.iter().any(|e| matches!(e, Event::Player(gothic_sim::script::player::api::PlayerEvent::Slept { hours }) if (*hours - 24.0).abs() < 0.05)), "{ev:?}");
     // The bed: sleep until the wake-up hour, whatever the hour is.
-    let ev = c.tick(0.033, &[Command::Sleep { hours: None }]);
+    let ev = c.tick(0.033, &[Command::Sleep { hour: None }]);
     assert!(ev.iter().any(|e| matches!(e, Event::Player(gothic_sim::script::player::api::PlayerEvent::Slept { .. }))));
     assert!((c.sim.clock.hour_of_day() - 9.0).abs() < 0.05, "{}", c.sim.clock.hour_of_day());
 }
@@ -232,7 +233,6 @@ fn the_dialog_sleep_command_goes_through_the_same_port() {
     let (mut c, _) = core();
     let hero = c.hero;
     c.sim.actors[hero.0 as usize].hp = 5;
-    let h0 = c.sim.clock.hour_of_day();
     c.sim.apply_outputs(&[gothic_gameplay::script::Output::Effect {
         command: "Sleep".into(),
         entity1: String::new(),
@@ -241,5 +241,5 @@ fn the_dialog_sleep_command_goes_through_the_same_port() {
         arg2: String::new(),
     }]);
     assert_eq!(c.sim.actor(hero).hp, c.sim.actor(hero).hp_max(&c.sim.cfg));
-    assert!(((c.sim.clock.hour_of_day() - h0 + 24.0) % 24.0 - 6.0).abs() < 0.05);
+    assert!((c.sim.clock.hour_of_day() - 6.0).abs() < 0.05, "the dialog Sleep 6 goes to 06:00");
 }

@@ -236,19 +236,26 @@ pub fn bribe(
     crate::routine::dialog::bribe(host, guard, player, crime, accepted)
 }
 
-/// The player's sleep / wait as one entry point: `hours = None` sleeps through the night like the
-/// bed does (`PS_DuskToDawn_Loop`: until the wake-up hour), `Some(h)` advances `h` hours like the
-/// dialog `Sleep` command and `Spl_DuskToDawn`. Both end in `PlayerSleep` (S:76440): the world
-/// clock advances (NPC routines follow the clock through `GetRoutineTime`, see COMBAT_AI_RULES
-/// 11.2), hit points, stamina and mana are restored to their maximum and `PlayerEvent::Slept` is
-/// reported. The clock runs at `fTimeScale = 0.3` while it happens (`PS_DuskToDawn`), reported as
-/// `TimeScale` events around it. Returns the hours slept.
-pub fn sleep(host: &mut dyn ScriptHost, hours: Option<f32>) -> f32 {
+/// The player's sleep as one entry point (used by the bed state and `Command::Sleep`).
+///
+/// * `hour: None`: the bed / `Spl_DuskToDawn` (`PS_DuskToDawn` S:66fc0 + loop S:671d0): sleep until
+///   the wake-up hour, 09:00 (see [`crate::player::interact::WAKE_HOUR`]).
+/// * `hour: Some(h)`: `PlayerSleep(h)` (S:76440) with `h` the target hour of the day: advance to the
+///   next `h` o'clock. The bed objects' dialog infos offer exactly 8, 12, 20 and 0
+///   (`Sleep` command, ID1 = hour).
+///
+/// Both end in `PlayerSleep`'s body: the world clock advances (NPC routines follow the clock through
+/// `GetRoutineTime`, `COMBAT_AI_RULES.md` 11.2), hit points, stamina and mana are restored to
+/// their maximum and `PlayerEvent::Slept` is reported, with `TimeScale` 0.3 / 1.0 around it
+/// (`timer.fTimeScale`). Returns the hours slept.
+pub fn sleep(host: &mut dyn ScriptHost, hour: Option<u32>) -> f32 {
     use crate::player::api::PlayerEvent;
-    use crate::player::interact::{hours_until_wake, player_sleep};
-    let h = hours
-        .unwrap_or_else(|| hours_until_wake(host.world_hour()))
-        .clamp(0.0, 24.0 * 7.0);
+    use crate::player::interact::{hours_until_hour, hours_until_wake, player_sleep};
+    let now = host.world_hour();
+    let h = match hour {
+        None => hours_until_wake(now),
+        Some(t) => hours_until_hour(now, (t % 24) as f32),
+    };
     host.emit(PlayerEvent::TimeScale(0.3));
     player_sleep(host, h);
     host.emit(PlayerEvent::TimeScale(1.0));

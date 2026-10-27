@@ -58,7 +58,8 @@ pub struct Labels {
     pub you_give: String,
     pub page: String,
     pub wait: String,
-    pub hours: String,
+    pub oclock: String,
+    pub midnight: String,
     pub menu: [String; 7],
     pub options_title: String,
     pub opt_names: [String; 7],
@@ -117,8 +118,9 @@ impl Default for Labels {
             you_get: s("Du bekommst"),
             you_give: s("Du gibst"),
             page: s("Seite"),
-            wait: s("Warten"),
-            hours: s("Stunden"),
+            wait: s("Schlafen bis"),
+            oclock: s("Uhr"),
+            midnight: s("Mitternacht"),
             menu: [
                 s("Zurück zum Spiel"),
                 s("Neues Spiel"),
@@ -251,10 +253,17 @@ pub struct FilesView {
     pub rows: Vec<FileRowView>,
 }
 
-/// The wait page: how many hours at most.
+/// The sleep page: the hours of the day one can sleep until. The beds' dialog infos of the
+/// original offer 8, 12, 20 and 0 (`Sleep` command, ID1 = hour).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaitView {
-    pub max_hours: u32,
+    pub targets: Vec<u32>,
+}
+
+impl Default for WaitView {
+    fn default() -> Self {
+        Self { targets: vec![8, 12, 20, 0] }
+    }
 }
 
 /// The main menu: whether a game runs (Resume / Save are offered).
@@ -794,22 +803,20 @@ fn files(v: &FilesView, ui: &WindowUi, cx: &Ctx) -> Sheet {
     s
 }
 
-/// The wait page on the original confirm box: hours - / + and the wait button.
-fn wait(v: &WaitView, ui: &WindowUi, cx: &Ctx) -> Sheet {
+/// The sleep page on the original confirm box: one button per target hour.
+fn wait(v: &WaitView, _ui: &WindowUi, cx: &Ctx) -> Sheet {
     let l = cx.labels;
-    let hours = ui.selected.unwrap_or(1).clamp(1, v.max_hours as usize) as u32;
-    let mut s = Sheet::new(l.wait.clone(), Vec2::new(482.0, 143.0), 520.0, 1.1);
+    let mut s = Sheet::new(l.wait.clone(), Vec2::new(482.0, 143.0), 560.0, 1.1);
     s.backdrop(gothic_ui::atlas::CONFIRM, 0.0, 0.0, 482.0, 143.0);
-    heading(&mut s, &l.wait, 0.0, 14.0, 482.0);
-    let r = s.px(60.0, 56.0, 50.0, 40.0);
-    s.push(SheetItem::new(r, ItemKind::Button, "−").size(22.0).enabled(hours > 1).act(SheetAct::Step(-1)));
-    let r = s.px(130.0, 56.0, 222.0, 40.0);
-    s.push(SheetItem::new(r, ItemKind::Title, format!("{hours} {}", if hours == 1 { "Stunde" } else { l.hours.as_str() })).size(22.0));
-    let r = s.px(372.0, 56.0, 50.0, 40.0);
-    s.push(SheetItem::new(r, ItemKind::Button, "+").size(22.0).enabled(hours < v.max_hours).act(SheetAct::Step(1)));
-    let r = s.px(64.0, 100.0, 109.0, 37.0);
-    s.push(SheetItem::new(r, ItemKind::Button, &l.wait).act(SheetAct::WaitDo));
-    let r = s.px(300.0, 100.0, 109.0, 37.0);
+    heading(&mut s, &l.wait, 0.0, 12.0, 482.0);
+    let n = v.targets.len().max(1) as f32;
+    let w = (482.0 - 40.0 - 10.0 * (n - 1.0)) / n;
+    for (k, h) in v.targets.iter().enumerate() {
+        let text = if *h % 24 == 0 { l.midnight.clone() } else { format!("{} {}", h, l.oclock) };
+        let r = s.px(20.0 + (w + 10.0) * k as f32, 52.0, w, 40.0);
+        s.push(SheetItem::new(r, ItemKind::Button, text).size(19.0).act(SheetAct::SleepUntil(*h)));
+    }
+    let r = s.px(186.0, 100.0, 109.0, 37.0);
     s.push(SheetItem::new(r, ItemKind::Button, &l.close).act(SheetAct::Close));
     s
 }

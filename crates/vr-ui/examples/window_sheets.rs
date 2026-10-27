@@ -200,7 +200,7 @@ fn windows() -> Vec<(&'static str, WindowView)> {
         ("character", WindowView::Character(character)),
         ("menu", WindowView::Menu(MenuView { in_game: true })),
         ("options", WindowView::Options(VrComfortOptions::default())),
-        ("wait", WindowView::Wait(WaitView { max_hours: 12 })),
+        ("wait", WindowView::Wait(WaitView::default())),
         (
             "files",
             WindowView::Files(FilesView {

@@ -25,7 +25,8 @@ pub enum WindowAction {
     Page(PageEvent),
     /// `Command::UseItem { template }`.
     UseItem(String),
-    /// The wait page: wait this many hours (the host fades, advances the clock).
+    /// The sleep page: sleep until this hour of the day (the host fades and sends
+    /// `Command::Sleep { hour: Some(h) }`, see `feed::wait_command`).
     Wait(u32),
     /// A main-menu entry.
     Menu(crate::sheet::MenuEntry),
@@ -121,15 +122,7 @@ impl VrWindow {
                 self.ui.main_only = main;
                 None
             }
-            SheetAct::Step(d) => {
-                let max = match &self.view {
-                    WindowView::Wait(w) => w.max_hours as i32,
-                    _ => 1,
-                };
-                self.ui.selected = Some((self.ui.selected.unwrap_or(1) as i32 + d).clamp(1, max) as usize);
-                None
-            }
-            SheetAct::WaitDo => Some(WindowAction::Wait(self.ui.selected.unwrap_or(1) as u32)),
+            SheetAct::SleepUntil(h) => Some(WindowAction::Wait(h)),
             SheetAct::Menu(e) => Some(WindowAction::Menu(e)),
             SheetAct::Opt(id, d) => Some(WindowAction::Option(id, d)),
             SheetAct::File(op) => {

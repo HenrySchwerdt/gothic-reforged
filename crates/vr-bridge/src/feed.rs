@@ -545,12 +545,10 @@ pub fn locations_with_running_quest(core: &Core) -> Vec<String> {
     v
 }
 
-/// The command for the wait picker / any wait: the core's own `PlayerSleep` port advances the
-/// clock, restores the hero and reports `Slept` (no state is poked from the host).
-pub fn wait_command(hours: u32) -> Command {
-    Command::Sleep {
-        hours: Some(hours as f32),
-    }
+/// The command for the sleep picker: `PlayerSleep(hour)` of the core (the bed infos offer 8, 12, 20
+/// and 0), no state is poked from the host.
+pub fn wait_command(hour: u32) -> Command {
+    Command::Sleep { hour: Some(hour % 24) }
 }
 
 /// `WindowAction::Wait` as the command (`None` for anything else).

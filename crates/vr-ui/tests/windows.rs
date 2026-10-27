@@ -398,15 +398,11 @@ fn main_menu_lists_the_original_entries_and_wait_picker_sends_hours() {
     assert!(r.win.sheet.items.iter().all(|i| i.text != "Spiel speichern" || !i.enabled), "no save without a game");
     let k = r.find("Einstellungen");
     assert_eq!(r.press(k), [WindowAction::Menu(MenuEntry::Options)]);
-    let mut r = Rig::new(WindowView::Wait(WaitView { max_hours: 3 }));
-    let plus = r.win.sheet.items.iter().position(|i| i.text == "+").unwrap();
-    r.press(plus);
-    r.press(plus);
-    r.press(plus);
-    assert_eq!(r.win.ui.selected, Some(3), "clamped to the maximum");
-    assert!(r.win.sheet.items.iter().any(|i| i.text == "3 Stunden"));
-    let k = r.win.sheet.items.iter().position(|i| i.text == "Warten" && i.act.is_some()).unwrap();
-    assert_eq!(r.press(k), [WindowAction::Wait(3)]);
+    let mut r = Rig::new(WindowView::Wait(WaitView::default()));
+    let k = r.find("20 Uhr");
+    assert_eq!(r.press(k), [WindowAction::Wait(20)]);
+    let k = r.find("Mitternacht");
+    assert_eq!(r.press(k), [WindowAction::Wait(0)]);
 }
 
 #[test]

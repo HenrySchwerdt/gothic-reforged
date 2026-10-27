@@ -1704,10 +1704,9 @@ impl<W: WorldQuery> Sim<W> {
                 }
             }
             "sleep" => {
-                // Dialog `Sleep` (GAME_RULES 3 id 21): ID1 hours, ported as the hero's `PlayerSleep`.
-                if let Ok(h) = a1.trim().parse::<f32>()
-                    && h > 0.0
-                {
+                // Dialog `Sleep` (GAME_RULES 3 id 21): ID1 is the target hour (the bed infos offer
+                // 8, 12, 20, 0): the hero's `PlayerSleep(hour)`.
+                if let Ok(h) = a1.trim().parse::<u32>() {
                     self.player_sleep(Some(h));
                 }
             }

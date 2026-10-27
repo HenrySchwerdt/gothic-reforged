@@ -603,10 +603,10 @@ impl<W: WorldQuery> Sim<W> {
         self.with_hero(|h, p| commands::use_item(h, p, template))
     }
 
-    /// Sleep or wait (`PlayerSleep`, S:76440): `None` until the wake-up hour, `Some(h)` for `h`
-    /// hours. Advances the world clock, restores the hero and reports `PlayerEvent::Slept`.
-    pub fn player_sleep(&mut self, hours: Option<f32>) -> Option<f32> {
-        self.with_hero(|h, _| commands::sleep(h, hours))
+    /// Sleep or wait (`PlayerSleep`, S:76440): `None` until the wake-up hour (the bed), `Some(h)` until the
+    /// next `h` o'clock. Advances the world clock, restores the hero and reports `PlayerEvent::Slept`.
+    pub fn player_sleep(&mut self, hour: Option<u32>) -> Option<f32> {
+        self.with_hero(|h, _| commands::sleep(h, hour))
     }
 
     /// Toggle sneaking.
