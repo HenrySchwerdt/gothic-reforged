@@ -709,6 +709,7 @@ impl Core {
         );
         let scene = self.range.scene_mut();
         let mut changed = false;
+        let mut saved = Vec::new();
         for (name, on) in wanted {
             let known = scene.sectors.sector(&name).map(|s| s.enabled);
             if known == Some(on) {
@@ -717,14 +718,21 @@ impl Core {
             if known.is_none() {
                 scene.sectors.register(&name, on);
             }
-            scene.sectors.enable(&mut scene.tree, &name, on);
+            saved.push(gothic_world::sector::SectorSave { name, enabled: on });
+        }
+        // `gCSectorPersistence_PS::UpdateSectors`: re-apply the image of the flags.
+        let unknown = scene.sectors.update_all(&mut scene.tree, &saved);
+        for s in &saved {
+            if unknown.contains(&s.name) {
+                continue;
+            }
             let shown = scene
                 .sectors
-                .sector(&name)
-                .map_or_else(|| name.clone(), |s| s.name.clone());
+                .sector(&s.name)
+                .map_or_else(|| s.name.clone(), |x| x.name.clone());
             out.push(Event::SectorSwitched {
                 sector: shown,
-                enabled: on,
+                enabled: s.enabled,
             });
             changed = true;
         }

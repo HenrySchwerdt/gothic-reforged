@@ -713,7 +713,6 @@ fn quick_use(
 /// priorities of the hero template, `gothic_gameplay::focus`); the view direction is the camera's.
 #[allow(clippy::too_many_arguments)]
 fn focus(
-    frame: Res<InputFrame>,
     player: Res<Player>,
     core: Res<CoreRes>,
     objects: Res<WorldObjects>,
@@ -807,29 +806,7 @@ fn focus(
         reach: FOCUS_REACH,
     };
     let cfg = FocusConfig::hero();
-    let mut found = find_focus(&cfg, mode, &viewer, &cands);
-    // Lock key: pin the focused character; the lock test at the top of `FindFocusEntity`
-    // keeps it while it lives and stays within `FocusLockMaxDistance`.
-    if frame.pressed_edge(SessionKey::Lock) {
-        state.lock = match (state.lock, found.map(|i| ids[i])) {
-            (None, Some(Target::Npc(a))) => Some(a),
-            _ => None,
-        };
-    }
-    if let Some(a) = state.lock {
-        let held = ids.iter().position(|t| *t == Target::Npc(a)).filter(|&i| {
-            gothic_gameplay::focus::lock_holds(
-                &cfg,
-                &viewer,
-                cands[i].pos,
-                core.0.sim.actor(a).is_alive(),
-            )
-        });
-        match held {
-            Some(i) => found = Some(i),
-            None => state.lock = None,
-        }
-    }
+    let found = find_focus(&cfg, mode, &viewer, &cands);
     state.target = found.map(|i| ids[i]);
     state.focus = match state.target {
         Some(Target::Npc(a)) => Some(a),

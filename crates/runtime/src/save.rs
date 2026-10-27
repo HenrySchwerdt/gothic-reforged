@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 
 /// Host-map key that carries the persisted trigger state (`eCTrigger_PS` counters).
 pub const TRIGGER_KEY: &str = "world.triggers";
+/// The sector image of `gCSectorPersistence_PS::CollectSectors` in the opaque host map.
+pub const SECTOR_KEY: &str = "world.sectors";
 /// File magic.
 pub const MAGIC: &[u8; 4] = b"G3RS";
 /// Schema written by this build.
@@ -283,6 +285,10 @@ impl Core {
         // The trigger counters ride in the opaque host map: no schema change.
         let mut host = self.host.clone();
         host.remove(TRIGGER_KEY);
+        host.remove(SECTOR_KEY);
+        if let Ok(json) = serde_json::to_string(&self.range.scene().sectors.collect()) {
+            host.insert(SECTOR_KEY.to_owned(), json);
+        }
         let snap = self.triggers.snapshot(self.clock);
         if !snap.triggers.is_empty()
             && let Ok(json) = serde_json::to_string(&snap)
@@ -310,6 +316,13 @@ impl Core {
             && let Ok(snap) = serde_json::from_str(&json)
         {
             self.triggers.restore(&snap, self.clock);
+        }
+        if let Some(json) = self.host.remove(SECTOR_KEY)
+            && let Ok(saved) = serde_json::from_str::<Vec<gothic_world::sector::SectorSave>>(&json)
+        {
+            // `UpdateSectors`: the image wins over whatever the world was registered with.
+            let scene = self.range.scene_mut();
+            scene.sectors.update_all(&mut scene.tree, &saved);
         }
         self.after_restore();
         rep
