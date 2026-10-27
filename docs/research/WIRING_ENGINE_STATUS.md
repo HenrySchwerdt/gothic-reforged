@@ -18,6 +18,8 @@ world 18 / 46, animation 10 / 38, audio 20 / 6, render rules 1 / 6, fx 17 / 2.
 | world/sector | `update_all`, `collect` | `sync_sectors` loop that re-implemented `UpdateSectors`; `capture()` now writes `CollectSectors` into the save image | `sector_switch`, `menu_save_load` QA |
 | render rules | `lights::packet` (and `weight_sphere`) | `lights::select` + hand packing in `walk/env.rs` for the character light set | `startup_sanity` |
 
+| gameplay/inventory | `equip_stack`, `unequip_stack`, `hold_stacks`, `hold_stack_{right,left}_hand`, `equip_stack_to_slot`, `link_stack_to_slot`, `unlink_stack_from_slot`, `right/left_equip_slot`, `apply_stats`, `unapply_stats`, `find_stack*`, stack `is_equipped*` | none: worn items were never in the stack list | `Sim::mirror_equipment`: the stack list follows `Equipment` / the drawn flag (direction Equipment -> links, not yet derived). Apply / unapply modifier events are dropped (Equipment's sums already count them); ammunition stays a plain count (`take` only removes unlinked stacks). 56 inventory functions hit across the QA set |
+
 ## Not reachable with the current host (needs a feature first, or is covered by an inverted form)
 
 Evidence is code or document, not a guess. "Needs" names the host feature that would reach it.
@@ -44,6 +46,14 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   is for `.lip` label text, the game reads the binary `.xlip` frames.
 * `audio::sequencer::{set_accept_triggers, execute_stop}`: music trigger rows carry `DisableTriggers` (parsed, not applied)
   and a stop trigger is never raised; the original's caller of `SetAcceptTriggers` still has to be found (REA pass).
+
+## Blocked
+
+* REA pass (inventory sort citation, `SetAcceptTriggers` caller, world emitter spawner): `open_binary` on Game.dll succeeds but
+  every query (`procedure_callers`, `procedure_pseudo_code`, `search_procedures`) times out and the session is dropped;
+  there is no Game.dll snapshot under `.local/research/`. The stack-list sort in `windows.rs` is therefore **uncited**
+  (`gCInventoryStack::Compare` is ported; where the original calls it is unknown). Needs a pre-analysed snapshot of Game.dll
+  (headless Ghidra export) before this can proceed.
 
 ## Open (feature work, not dead)
 
