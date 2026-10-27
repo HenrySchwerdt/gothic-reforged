@@ -73,10 +73,25 @@ pub enum ItemKind {
     Rule,
     /// A picture of the `g3.igl` by name (map, time-of-day strip).
     Image(&'static str),
+    /// A location icon; `text` is the picture name (`g3_hud_icon_location_<name>.tga`).
+    Marker,
 }
 
 /// What pressing an item does. The window turns it into a [`crate::windows::WindowAction`]
 /// for the host or handles it itself (tabs, row selection, scrolling).
+/// Entries of the main menu (`UI_ORIGINAL.md`: Neues Spiel, Spiel laden, Spiel speichern,
+/// Einstellungen, Mitwirkende, Spiel beenden; Fortsetzen first while a game runs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuEntry {
+    Resume,
+    NewGame,
+    Load,
+    Save,
+    Options,
+    Credits,
+    Quit,
+}
+
 /// What the save / load page's buttons do with the selected slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileOp {
@@ -95,6 +110,16 @@ pub enum SheetAct {
     Tab(usize),
     /// Select list row `n` (recipes, quests).
     Select(usize),
+    /// Quest map radio: `true` shows only locations with a running quest ("Haupt").
+    Radio(bool),
+    /// Wait page: change the hours by this much.
+    Step(i32),
+    /// Wait page: wait the chosen hours.
+    WaitDo,
+    /// Main menu entry.
+    Menu(MenuEntry),
+    /// Comfort options page: step an option.
+    Opt(crate::comfort_opts::OptId, i32),
     /// Save-game page: run the selected slot's load / save / delete.
     File(FileOp),
     /// Turn to page `n` (documents).

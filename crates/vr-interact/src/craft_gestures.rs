@@ -168,6 +168,11 @@ impl Pickpocket {
         PocketStep::Reaching(((self.t / self.hold) * 100.0) as u8)
     }
 
+    /// 0..1 how close the NPC is to noticing (shown on the watch).
+    pub fn noise(&self) -> f32 {
+        (self.shake / (TOLERANCE + self.hold * 0.05)).clamp(0.0, 1.0)
+    }
+
     fn reset(&mut self) {
         self.t = 0.0;
         self.prev = None;

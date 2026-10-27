@@ -20,6 +20,7 @@
 //! All layout and selection logic is Bevy-free and tested without a window.
 pub mod backpack;
 pub mod comfort;
+pub mod comfort_opts;
 pub mod dialog;
 pub mod fade;
 pub mod handheld;
@@ -40,9 +41,10 @@ pub use hud::{DialogData, HudAction, HudData, Tracked, VrHud};
 pub use panel::Panel;
 pub use plugin::{HudActionMsg, HudDataRes, VrHudRes, VrUiPlugin, WindowActionMsg};
 pub use render::{HudFont, HudHeadingFont, VrUiRenderPlugin};
+pub use comfort_opts::{OptId, VrComfortOptions};
 pub use fade::SleepFade;
-pub use sheet::{Sheet, SheetAct};
+pub use sheet::{MenuEntry, Sheet, SheetAct};
 pub use tags::{FocusData, Floaters, Tag};
-pub use views::{CharacterView, FileRowView, FilesView, QuestEntry, QuestLogView, WindowView};
+pub use views::{MenuView, WaitView, CharacterView, FileRowView, FilesView, QuestEntry, QuestLogView, WindowView};
 pub use windows::{VrWindow, WindowAction};
 pub use wrist::Vitals;

@@ -353,6 +353,7 @@ pub fn quest_log(core: &Core) -> QuestLogView {
         quests,
         clock: format_clock(&fmt, 0, day, hour, minute),
         hour,
+        with_quest: Vec::new(),
         reputation,
     }
 }
@@ -513,4 +514,27 @@ pub fn file_command(dir: &std::path::Path, c: &gothic_ui::FileCommand, unix: u64
         }
         _ => None,
     }
+}
+
+/// Lower-case names of the locations whose quests are running, from the host's `WorldLocations`
+/// mapping (`quest name -> location`): fills `QuestLogView::with_quest`.
+pub fn locations_with_running_quest(core: &Core, location_of: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    let st = core.state();
+    let mut v: Vec<String> = st
+        .quests
+        .iter()
+        .filter(|(_, q)| q.status == Some(gothic_gameplay::model::QuestStatus::Running))
+        .filter_map(|(n, _)| location_of(n))
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Wait `hours` of world time (the host fades first: `SleepFade::start(hours)` and calls this
+/// when `tick` returns the hours). Returns the new world hour of the day.
+pub fn wait_hours(core: &mut Core, hours: u32) -> u32 {
+    core.sim.state.hours += u64::from(hours);
+    core.sim.state.hours.rem_euclid(24) as u32
 }

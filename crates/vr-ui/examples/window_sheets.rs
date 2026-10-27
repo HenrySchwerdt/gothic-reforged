@@ -160,6 +160,7 @@ fn windows() -> Vec<(&'static str, WindowView)> {
         .collect(),
         clock: "1. Tag, 12:23".into(),
         hour: 12,
+        with_quest: vec!["ardea".into(), "faring".into()],
         reputation: vec![("Ruf in Nordmar".into(), 0), ("Ruf bei den Orks".into(), 0), ("Ruf bei den Rebellen".into(), 0), ("Ruf beim Waldvolk".into(), 0), ("Ruf bei den Assassinen".into(), 0), ("Ruf bei den Nomaden".into(), 0)],
     };
     let character = CharacterView {
@@ -197,6 +198,9 @@ fn windows() -> Vec<(&'static str, WindowView)> {
         ("document", WindowView::Document(doc)),
         ("quests", WindowView::Quests(quests)),
         ("character", WindowView::Character(character)),
+        ("menu", WindowView::Menu(MenuView { in_game: true })),
+        ("options", WindowView::Options(VrComfortOptions::default())),
+        ("wait", WindowView::Wait(WaitView { max_hours: 12 })),
         (
             "files",
             WindowView::Files(FilesView {
@@ -272,6 +276,9 @@ fn drive(
             health: Some(0.7),
             head: Vec3::new(0.3, 1.7, -2.5),
         });
+        data.0.noise = Some(0.45);
+        data.0.messages.print("Spiel gespeichert", gothic_ui::MessageKind::SaveOk);
+        data.0.messages.print("Du hast den Schlüssel erhalten.", gothic_ui::MessageKind::Info);
         data.0.floaters.push("+250 EP", [0.9, 0.85, 0.4], Vec3::new(-0.3, 1.5, -1.5), 30.0);
     }
     if phase == 0 {

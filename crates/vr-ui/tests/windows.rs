@@ -6,6 +6,7 @@ use gothic_vr_ui::comfort::MIN_TARGET_DMM;
 use gothic_vr_ui::hud::{Tracked, fingertip};
 use gothic_vr_ui::views::{self, WindowUi, guess_name};
 use gothic_vr_ui::*;
+use gothic_vr_ui::sheet::MenuEntry;
 
 fn row(item: &str, count: i32, price: i32, key: usize) -> PageRow {
     PageRow {
@@ -48,6 +49,7 @@ fn quests() -> QuestLogView {
         quests: vec![q("a", 0), q("b", 0), q("c", 1), q("d", 2)],
         clock: "1. Tag, 12:23".into(),
         hour: 12,
+        with_quest: vec!["ardea".into()],
         reputation: vec![("Nordmar".into(), 12)],
     }
 }
@@ -336,4 +338,96 @@ fn focus_name_hangs_above_the_head_and_floaters_rise_and_fade() {
     assert!(fl.tags(&eye)[0].alpha < 0.5, "fades at the end");
     fl.tick(0.5);
     assert!(fl.items.is_empty());
+}
+
+#[test]
+fn quest_map_shows_location_markers_and_the_haupt_radio_filters_them() {
+    let mut r = Rig::new(WindowView::Quests(quests()));
+    let markers = |r: &Rig| r.win.sheet.items.iter().filter(|i| i.kind == sheet::ItemKind::Marker).count();
+    assert_eq!(markers(&r), gothic_ui::map::LOCATIONS.len());
+    let k = r.find("Haupt");
+    assert!(r.press(k).is_empty());
+    assert_eq!(markers(&r), 1, "only Ardea has a running quest");
+    let k = r.find("Alle");
+    r.press(k);
+    assert_eq!(markers(&r), gothic_ui::map::LOCATIONS.len());
+    let m = r.win.sheet.items.iter().find(|i| i.kind == sheet::ItemKind::Marker).unwrap();
+    assert!(m.text.starts_with("g3_hud_icon_location_") && m.rect.w > 0.0);
+}
+
+#[test]
+fn comfort_options_step_and_feed_the_hud() {
+    let mut o = VrComfortOptions::default();
+    let mut r = Rig::new(WindowView::Options(o));
+    let change = |r: &mut Rig, id: OptId, d: i32, o: &mut VrComfortOptions| {
+        let name = if d > 0 { "\u{203a}" } else { "\u{2039}" };
+        let k = r
+            .win
+            .sheet
+            .items
+            .iter()
+            .position(|i| i.text == name && i.act == Some(SheetAct::Opt(id, d)))
+            .expect("button");
+        let acts = r.press(k);
+        assert_eq!(acts, [WindowAction::Option(id, d)]);
+        o.apply(id, d);
+        r.win.set_view(WindowView::Options(*o), &cx());
+    };
+    change(&mut r, OptId::SnapDegrees, 1, &mut o);
+    assert_eq!(o.snap_degrees, 45.0);
+    change(&mut r, OptId::Height, -1, &mut o);
+    assert_eq!(o.height_cm, -5);
+    change(&mut r, OptId::Handedness, 1, &mut o);
+    assert!(!o.right_handed);
+    let mut hud = VrHud::default();
+    hud.apply_options(&o);
+    assert_eq!(hud.main_hand, Hand::Left);
+    change(&mut r, OptId::TurnMode, 1, &mut o);
+    assert!(!o.snap_turn && !o.active(OptId::SnapDegrees), "degrees only matter for snap turning");
+    assert!(r.win.sheet.items.iter().filter(|i| i.act == Some(SheetAct::Opt(OptId::SnapDegrees, 1))).all(|i| !i.enabled));
+    for _ in 0..20 {
+        o.apply(OptId::Height, 1);
+        o.apply(OptId::VignetteStrength, 1);
+    }
+    assert_eq!((o.height_cm, o.vignette_strength), (30, 1.0));
+}
+
+#[test]
+fn main_menu_lists_the_original_entries_and_wait_picker_sends_hours() {
+    let mut r = Rig::new(WindowView::Menu(MenuView { in_game: false }));
+    assert!(r.win.sheet.items.iter().all(|i| i.text != "Spiel speichern" || !i.enabled), "no save without a game");
+    let k = r.find("Einstellungen");
+    assert_eq!(r.press(k), [WindowAction::Menu(MenuEntry::Options)]);
+    let mut r = Rig::new(WindowView::Wait(WaitView { max_hours: 3 }));
+    let plus = r.win.sheet.items.iter().position(|i| i.text == "+").unwrap();
+    r.press(plus);
+    r.press(plus);
+    r.press(plus);
+    assert_eq!(r.win.ui.selected, Some(3), "clamped to the maximum");
+    assert!(r.win.sheet.items.iter().any(|i| i.text == "3 Stunden"));
+    let k = r.win.sheet.items.iter().position(|i| i.text == "Warten" && i.act.is_some()).unwrap();
+    assert_eq!(r.press(k), [WindowAction::Wait(3)]);
+}
+
+#[test]
+fn toasts_are_world_locked_and_follow_the_head_only_after_a_big_turn() {
+    let mut hud = VrHud::default();
+    let mut data = HudData::default();
+    data.messages.print("Spiel gespeichert", gothic_ui::MessageKind::SaveOk);
+    data.noise = Some(0.3);
+    let mut input = VrInput::new();
+    let mut frame = XrFrame::default();
+    input.push(frame);
+    hud.update(&input, &Tracked::from_input(&input), &data);
+    assert_eq!(hud.tags.len(), 1);
+    let p0 = hud.tags[0].pose.position;
+    assert!(p0.y < 1.7 - 0.4, "below the view");
+    frame.head = Pose::new(HEAD, Quat::from_rotation_y(0.3));
+    input.push(frame);
+    hud.update(&input, &Tracked::from_input(&input), &data);
+    assert_eq!(hud.tags[0].pose.position, p0, "a small turn leaves the toast where it hangs");
+    frame.head = Pose::new(HEAD, Quat::from_rotation_y(1.2));
+    input.push(frame);
+    hud.update(&input, &Tracked::from_input(&input), &data);
+    assert!(hud.tags[0].pose.position.distance(p0) > 1.0, "a big turn re-hangs it");
 }

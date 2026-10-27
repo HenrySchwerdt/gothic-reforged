@@ -171,7 +171,7 @@ pub fn apply_to_hud(out: &FlowOut, data: &mut HudData, npc_head: glam::Vec3, hea
         FlowOut::Say { line, secs: _ } => {
             data.speaker_head = Some(if line.player { head_of(None) } else { head_of(line.actor) });
             let measure = gothic_ui::dialogmenu::approx_text_width(&line.text, 14.0);
-            data.subtitle.start(&line.text, true, true, measure);
+            data.subtitle.start(&line.text, data.comfort.subtitles, false, measure);
         }
         FlowOut::ShowOptions(options) => {
             data.dialog = Some(DialogData {

@@ -25,6 +25,13 @@ pub enum WindowAction {
     Page(PageEvent),
     /// `Command::UseItem { template }`.
     UseItem(String),
+    /// The wait page: wait this many hours (the host fades, advances the clock).
+    Wait(u32),
+    /// A main-menu entry.
+    Menu(crate::sheet::MenuEntry),
+    /// A comfort option stepped (the host applies it with `VrComfortOptions::apply` and sets
+    /// the page's view again).
+    Option(crate::comfort_opts::OptId, i32),
     /// A save-page button on the selected slot (the host carries out the file work).
     File(gothic_ui::FileCommand),
     /// The player closed the window (the host sends `Command::GuiOpen(false)` /
@@ -110,6 +117,21 @@ impl VrWindow {
             SheetAct::Page(e) => Some(WindowAction::Page(e)),
             SheetAct::UseItem(t) => Some(WindowAction::UseItem(t)),
             SheetAct::Close => Some(WindowAction::Close),
+            SheetAct::Radio(main) => {
+                self.ui.main_only = main;
+                None
+            }
+            SheetAct::Step(d) => {
+                let max = match &self.view {
+                    WindowView::Wait(w) => w.max_hours as i32,
+                    _ => 1,
+                };
+                self.ui.selected = Some((self.ui.selected.unwrap_or(1) as i32 + d).clamp(1, max) as usize);
+                None
+            }
+            SheetAct::WaitDo => Some(WindowAction::Wait(self.ui.selected.unwrap_or(1) as u32)),
+            SheetAct::Menu(e) => Some(WindowAction::Menu(e)),
+            SheetAct::Opt(id, d) => Some(WindowAction::Option(id, d)),
             SheetAct::File(op) => {
                 let WindowView::Files(f) = &self.view else {
                     return None;

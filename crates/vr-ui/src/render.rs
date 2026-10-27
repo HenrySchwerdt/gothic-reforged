@@ -53,7 +53,7 @@ pub enum SurfaceKind {
 }
 
 impl SurfaceKind {
-    const ALL: [SurfaceKind; 14] = [
+    const ALL: [SurfaceKind; 17] = [
         SurfaceKind::Wrist,
         SurfaceKind::Dialog,
         SurfaceKind::Subtitle,
@@ -68,6 +68,9 @@ impl SurfaceKind {
         SurfaceKind::Tag(2),
         SurfaceKind::Tag(3),
         SurfaceKind::Tag(4),
+        SurfaceKind::Tag(5),
+        SurfaceKind::Tag(6),
+        SurfaceKind::Tag(7),
     ];
 }
 
@@ -252,7 +255,7 @@ fn content_key(kind: SurfaceKind, hud: &VrHud, data: &HudData) -> String {
     match kind {
         SurfaceKind::Wrist => {
             let f = data.vitals.fractions();
-            format!("{:.2}{:.2}{:.2}", f[0], f[1], f[2])
+            format!("{:.2}{:.2}{:.2}{:?}", f[0], f[1], f[2], data.noise.map(|n| (n * 50.0) as i32))
         }
         SurfaceKind::Dialog => hud.dialog.as_ref().map_or_else(String::new, |d| {
             format!("{:?}{:?}{:?}", d.options, d.rows(), d.list.selected())
@@ -354,10 +357,12 @@ fn build(
             parent
                 .spawn((frame(px), BackgroundColor(LEATHER), BorderColor::all(BRASS)))
                 .with_children(|p| {
-                    for (i, (label, color)) in [("HP", HEALTH), ("MP", MANA), ("SP", STAMINA)]
-                        .into_iter()
-                        .enumerate()
-                    {
+                    let mut rows = vec![("HP", HEALTH, f[0], format!("{:.0}", vals[0].0)), ("MP", MANA, f[1], format!("{:.0}", vals[1].0)), ("SP", STAMINA, f[2], format!("{:.0}", vals[2].0))];
+                    if let Some(n) = data.noise {
+                        // Pickpocket noise: green while quiet, red when the NPC is about to notice.
+                        rows.push(("!", Color::srgb(0.30 + 0.5 * n, 0.70 - 0.5 * n, 0.2), n.clamp(0.0, 1.0), String::new()));
+                    }
+                    for (label, color, frac, value) in rows {
                         p.spawn(Node {
                             flex_grow: 1.0,
                             align_items: AlignItems::Center,
@@ -380,7 +385,7 @@ fn build(
                             .with_children(|track| {
                                 track.spawn((
                                     Node {
-                                        width: Val::Percent(f[i] * 100.0),
+                                        width: Val::Percent(frac * 100.0),
                                         height: Val::Percent(100.0),
                                         border_radius: BorderRadius::all(Val::Px(h * 0.03)),
                                         ..default()
@@ -388,7 +393,7 @@ fn build(
                                     BackgroundColor(color),
                                 ));
                             });
-                            row.spawn(text(format!("{:.0}", vals[i].0), h * 0.15, TEXT));
+                            row.spawn(text(value, h * 0.15, TEXT));
                         });
                     }
                 });

@@ -165,6 +165,13 @@ pub fn build_sheet(
                             }
                         }
                     }
+                    ItemKind::Marker => {
+                        if let Some(p) = assets.and_then(|a| a.named_pic(&it.text))
+                            && let Some(b) = pic_node(assets, p, abs(r))
+                        {
+                            root.spawn(b);
+                        }
+                    }
                     ItemKind::Button | ItemKind::Tab => {
                         let bg = if it.selected {
                             TEAL_ON

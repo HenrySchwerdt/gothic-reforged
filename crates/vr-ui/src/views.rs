@@ -11,7 +11,8 @@
 //! [`Labels`]: the original loc-table keys where the flat UI has them, the flat UI's own
 //! fallbacks (real German, with umlauts) otherwise.
 use crate::panel::wrap;
-use crate::sheet::{FileOp, ItemKind, Rect, Sheet, SheetAct, SheetItem};
+use crate::comfort_opts::{OptId, VrComfortOptions};
+use crate::sheet::{FileOp, ItemKind, MenuEntry, Rect, Sheet, SheetAct, SheetItem};
 use crate::wrist::Vitals;
 use glam::Vec2;
 use gothic_ui::atlas as art;
@@ -56,6 +57,19 @@ pub struct Labels {
     pub you_get: String,
     pub you_give: String,
     pub page: String,
+    pub wait: String,
+    pub hours: String,
+    pub menu: [String; 7],
+    pub options_title: String,
+    pub opt_names: [String; 7],
+    pub on: String,
+    pub off: String,
+    pub snap: String,
+    pub smooth: String,
+    pub right: String,
+    pub left: String,
+    pub main_radio: String,
+    pub all_radio: String,
     pub save_game: String,
     pub load_game: String,
     pub save: String,
@@ -103,6 +117,35 @@ impl Default for Labels {
             you_get: s("Du bekommst"),
             you_give: s("Du gibst"),
             page: s("Seite"),
+            wait: s("Warten"),
+            hours: s("Stunden"),
+            menu: [
+                s("Zurück zum Spiel"),
+                s("Neues Spiel"),
+                s("Spiel laden"),
+                s("Spiel speichern"),
+                s("Einstellungen"),
+                s("Mitwirkende"),
+                s("Spiel beenden"),
+            ],
+            options_title: s("VR-Komfort"),
+            opt_names: [
+                s("Drehung"),
+                s("Drehwinkel"),
+                s("Tunnelblick"),
+                s("Stärke des Tunnelblicks"),
+                s("Körpergröße"),
+                s("Haupthand"),
+                s("Untertitel"),
+            ],
+            on: s("An"),
+            off: s("Aus"),
+            snap: s("Schrittweise"),
+            smooth: s("Gleitend"),
+            right: s("Rechts"),
+            left: s("Links"),
+            main_radio: s("Haupt"),
+            all_radio: s("Alle"),
             save_game: s("Spiel speichern"),
             load_game: s("Spiel laden"),
             save: s("Speichern"),
@@ -136,6 +179,7 @@ impl Labels {
         set(&mut l.requirements, "HUD_Recipe_Requirements");
         set(&mut l.take_all, "HUD_TakeAll");
         set(&mut l.trade, "HUD_Trade");
+        set(&mut l.save_game, "HUD_Menu_SaveGame");
         l
     }
 }
@@ -163,6 +207,8 @@ pub struct QuestLogView {
     pub clock: String,
     /// Hour of the day (picks the sky strip).
     pub hour: u32,
+    /// Lower-case names of the locations with a running quest (the "Haupt" filter).
+    pub with_quest: Vec<String>,
     /// "Ruf in Nordmar" and its value.
     pub reputation: Vec<(String, i32)>,
 }
@@ -205,8 +251,23 @@ pub struct FilesView {
     pub rows: Vec<FileRowView>,
 }
 
+/// The wait page: how many hours at most.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitView {
+    pub max_hours: u32,
+}
+
+/// The main menu: whether a game runs (Resume / Save are offered).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MenuView {
+    pub in_game: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowView {
+    Wait(WaitView),
+    Menu(MenuView),
+    Options(VrComfortOptions),
     Files(FilesView),
     Trade(TradeView),
     Loot(LootView),
@@ -226,6 +287,9 @@ impl WindowView {
             WindowView::Quests(_) => "quests",
             WindowView::Character(_) => "character",
             WindowView::Files(_) => "files",
+            WindowView::Wait(_) => "wait",
+            WindowView::Menu(_) => "menu",
+            WindowView::Options(_) => "options",
         }
     }
 }
@@ -239,6 +303,8 @@ pub struct WindowUi {
     pub scroll: Vec<usize>,
     /// Document spread.
     pub page: usize,
+    /// Quest map: only the locations with a running quest.
+    pub main_only: bool,
 }
 
 impl WindowUi {
@@ -264,6 +330,9 @@ pub fn build(view: &WindowView, ui: &WindowUi, cx: &Ctx) -> Sheet {
         WindowView::Quests(v) => quests(v, ui, cx),
         WindowView::Character(v) => character(v, ui, cx),
         WindowView::Files(v) => files(v, ui, cx),
+        WindowView::Wait(v) => wait(v, ui, cx),
+        WindowView::Menu(v) => menu(v, cx),
+        WindowView::Options(v) => options(v, cx),
     }
 }
 
@@ -531,6 +600,23 @@ fn quests(v: &QuestLogView, ui: &WindowUi, cx: &Ctx) -> Sheet {
     heading(&mut s, &l.quest_log, 0.0, 6.0, 937.0);
     let map = s.px(38.0, 46.0, 442.0, 392.0);
     s.push(SheetItem::new(map, ItemKind::Image("g3_hud_view_world_back.tga"), ""));
+    // Location icons (`g3_hud_icon_location_<name>.tga`, 18x18) at the control's offsets, and the
+    // Haupt / Alle radios.
+    for (name, x, y) in gothic_ui::map::LOCATIONS.iter() {
+        let shown = !ui.main_only || v.with_quest.iter().any(|q| q.eq_ignore_ascii_case(name));
+        if shown {
+            let r = s.px(38.0 + x, 46.0 + y, 18.0, 18.0);
+            s.push(SheetItem::new(r, ItemKind::Marker, format!("g3_hud_icon_location_{name}.tga")).value((*name).to_string()));
+        }
+    }
+    for (k, (text, main)) in [(l.main_radio.clone(), true), (l.all_radio.clone(), false)].into_iter().enumerate() {
+        let r = s.px(38.0 + 300.0, 46.0 + 314.0 + 24.0 * k as f32, 120.0, 22.0);
+        s.push(
+            SheetItem::new(r, ItemKind::Label, text)
+                .selected(ui.main_only == main)
+                .act(SheetAct::Radio(main)),
+        );
+    }
     for (t, name) in l.quest_tabs.iter().enumerate() {
         let r = s.px(503.0 + 139.0 * t as f32, 44.0, 138.0, 44.0);
         s.push(
@@ -705,5 +791,73 @@ fn files(v: &FilesView, ui: &WindowUi, cx: &Ctx) -> Sheet {
         it.region = Some(region);
         s.push(it);
     }
+    s
+}
+
+/// The wait page on the original confirm box: hours - / + and the wait button.
+fn wait(v: &WaitView, ui: &WindowUi, cx: &Ctx) -> Sheet {
+    let l = cx.labels;
+    let hours = ui.selected.unwrap_or(1).clamp(1, v.max_hours as usize) as u32;
+    let mut s = Sheet::new(l.wait.clone(), Vec2::new(482.0, 143.0), 520.0, 1.1);
+    s.backdrop(gothic_ui::atlas::CONFIRM, 0.0, 0.0, 482.0, 143.0);
+    heading(&mut s, &l.wait, 0.0, 14.0, 482.0);
+    let r = s.px(60.0, 56.0, 50.0, 40.0);
+    s.push(SheetItem::new(r, ItemKind::Button, "−").size(22.0).enabled(hours > 1).act(SheetAct::Step(-1)));
+    let r = s.px(130.0, 56.0, 222.0, 40.0);
+    s.push(SheetItem::new(r, ItemKind::Title, format!("{hours} {}", if hours == 1 { "Stunde" } else { l.hours.as_str() })).size(22.0));
+    let r = s.px(372.0, 56.0, 50.0, 40.0);
+    s.push(SheetItem::new(r, ItemKind::Button, "+").size(22.0).enabled(hours < v.max_hours).act(SheetAct::Step(1)));
+    let r = s.px(64.0, 100.0, 109.0, 37.0);
+    s.push(SheetItem::new(r, ItemKind::Button, &l.wait).act(SheetAct::WaitDo));
+    let r = s.px(300.0, 100.0, 109.0, 37.0);
+    s.push(SheetItem::new(r, ItemKind::Button, &l.close).act(SheetAct::Close));
+    s
+}
+
+/// The main menu on the original banner: 252x32 entries at x = 386.
+fn menu(v: &MenuView, cx: &Ctx) -> Sheet {
+    let l = cx.labels;
+    let mut s = Sheet::new(l.menu[1].clone(), Vec2::new(1024.0, 768.0), WINDOW_DMM, WINDOW_DISTANCE);
+    s.backdrop(gothic_ui::atlas::MENU_BG, 0.0, 0.0, 1024.0, 768.0);
+    let entries = [
+        (MenuEntry::Resume, v.in_game),
+        (MenuEntry::NewGame, true),
+        (MenuEntry::Load, true),
+        (MenuEntry::Save, v.in_game),
+        (MenuEntry::Options, true),
+        (MenuEntry::Credits, true),
+        (MenuEntry::Quit, true),
+    ];
+    let ys = [336.0, 368.0, 400.0, 432.0, 464.0, 496.0, 532.0];
+    for (k, (e, on)) in entries.into_iter().enumerate() {
+        if e == MenuEntry::Resume && !v.in_game {
+            continue;
+        }
+        let r = s.px(386.0, ys[k], 252.0, 32.0);
+        s.push(SheetItem::new(r, ItemKind::Button, &l.menu[k]).size(19.0).enabled(on).act(SheetAct::Menu(e)));
+    }
+    s
+}
+
+/// The VR comfort options page: label, `‹ value ›` per option.
+fn options(o: &VrComfortOptions, cx: &Ctx) -> Sheet {
+    let l = cx.labels;
+    let mut s = Sheet::new(l.options_title.clone(), Vec2::new(1024.0, 768.0), WINDOW_DMM, WINDOW_DISTANCE);
+    s.backdrop(gothic_ui::atlas::MENU_CUSTOM_BG, 0.0, 0.0, 1024.0, 768.0);
+    heading(&mut s, &l.options_title, 271.0, 30.0, 482.0);
+    for (k, id) in OptId::ALL.into_iter().enumerate() {
+        let y = 150.0 + 66.0 * k as f32;
+        let on = o.active(id);
+        let r = s.px(190.0, y, 380.0, 40.0);
+        s.push(SheetItem::new(r, ItemKind::Label, &l.opt_names[k]).size(19.0).enabled(on));
+        let r = s.px(590.0, y, 50.0, 40.0);
+        s.push(SheetItem::new(r, ItemKind::Button, "‹").size(22.0).enabled(on).act(SheetAct::Opt(id, -1)));
+        let r = s.px(650.0, y, 170.0, 40.0);
+        s.push(SheetItem::new(r, ItemKind::Title, o.value(id, l)).size(19.0));
+        let r = s.px(830.0, y, 50.0, 40.0);
+        s.push(SheetItem::new(r, ItemKind::Button, "›").size(22.0).enabled(on).act(SheetAct::Opt(id, 1)));
+    }
+    let r = s.px(462.0, 682.0, 100.0, 32.0);
+    s.push(SheetItem::new(r, ItemKind::Button, &l.back).act(SheetAct::Close));
     s
 }
