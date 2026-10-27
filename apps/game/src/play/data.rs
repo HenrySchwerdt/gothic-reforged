@@ -2,6 +2,10 @@
 //! treasure sets and recipes. All three files are exports of the inspector (`object-dump`,
 //! `treasure-dump`, `recipe-dump`) under the gitignored `.local/`; nothing here is invented, the
 //! values are the property streams of the original world and templates.
+use gothic_gameplay::inventory::{Inventory, ItemCatalog};
+use gothic_gameplay::treasure::{
+    Dice, Distribution, HeroSkills, TreasureBook, generate_plunder_inventory, set_from_pairs,
+};
 use gothic_sim::script::enums::UseType;
 use gothic_sim::script::player::api::{Lock, LockStatus, Recipe, SkillCategory};
 use serde_json::Value;
@@ -181,22 +185,6 @@ pub struct Treasure {
     sets: HashMap<String, TreasureSet>,
 }
 
-/// Small deterministic generator for loot rolls (seeded per object / character).
-pub struct Roll(pub u64);
-
-impl Roll {
-    pub fn next(&mut self, n: u32) -> u32 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        if n == 0 {
-            0
-        } else {
-            ((self.0 >> 11) % u64::from(n)) as u32
-        }
-    }
-}
-
 /// FNV-1a hash of a string (seeds the loot rolls).
 pub fn seed_of(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -257,32 +245,49 @@ impl Treasure {
             .collect()
     }
 
-    /// Plunder / treasure of the non-weaponry sets: `Min..=MaxTransferStacks` stacks picked at
-    /// random per set (all stacks when both are zero) [I: the roll is the port's own].
-    pub fn plunder(&self, sets: &[String], roll: &mut Roll) -> Vec<(String, u32)> {
-        let mut out: Vec<(String, u32)> = Vec::new();
-        for s in sets
-            .iter()
-            .filter_map(|n| self.get(n))
-            .filter(|s| !matches!(s.distribution.as_str(), "Weaponry" | "Trader"))
-        {
-            let mut pool = s.stacks.clone();
-            let n = if s.max_stacks <= 0 {
-                pool.len()
-            } else {
-                let span = (s.max_stacks - s.min_stacks).max(0) as u32 + 1;
-                ((s.min_stacks.max(0) as u32 + roll.next(span)) as usize).min(pool.len())
+    /// The named sets as the ported treasure book (`gCTreasureSet_PS` with its inventory);
+    /// stacks of templates the item database does not know are left out.
+    pub fn book(&self, items: &dyn ItemCatalog, sets: &[String]) -> TreasureBook {
+        let mut book = TreasureBook::default();
+        for name in sets.iter().filter(|n| !n.is_empty()) {
+            let Some(t) = self.get(name) else { continue };
+            let Some(distribution) = Distribution::from_name(&t.distribution) else {
+                continue;
             };
-            for _ in 0..n {
-                let i = roll.next(pool.len() as u32) as usize;
-                let (item, amount) = pool.remove(i);
-                match out.iter_mut().find(|(k, _)| *k == item) {
-                    Some((_, a)) => *a += amount,
-                    None => out.push((item, amount)),
-                }
-            }
+            let pairs: Vec<(String, u32)> = t
+                .stacks
+                .iter()
+                .filter(|(i, _)| items.item(i).is_some())
+                .cloned()
+                .collect();
+            book.insert(
+                name,
+                set_from_pairs(items, distribution, t.min_stacks, t.max_stacks, &pairs),
+            );
         }
-        out
+        book
+    }
+
+    /// Plunder of the named sets: `gCInventory_PS::GeneratePlunderInvFromTreasureSets` on an
+    /// inventory that has the sets (Game:0x100b71f0), the stacks it ends up with.
+    pub fn plunder(
+        &self,
+        items: &dyn ItemCatalog,
+        sets: &[String],
+        dice: &mut dyn Dice,
+        hero: &dyn HeroSkills,
+    ) -> Vec<(String, u32)> {
+        let mut book = self.book(items, sets);
+        let mut inv = Inventory::new();
+        for (i, n) in sets.iter().take(5).enumerate() {
+            inv.treasure_sets[i] = n.clone();
+        }
+        generate_plunder_inventory(&mut inv, &mut book, dice, hero);
+        inv.stacks()
+            .iter()
+            .filter(|s| s.amount > 0)
+            .map(|s| (s.template.clone(), s.amount as u32))
+            .collect()
     }
 }
 
@@ -354,33 +359,4 @@ pub fn load_item_meshes(path: &Path) -> HashMap<String, String> {
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plunder_picks_between_min_and_max_stacks() {
-        let mut t = Treasure::default();
-        t.sets.insert(
-            "ts_x".into(),
-            TreasureSet {
-                distribution: "Plunder".into(),
-                min_stacks: 2,
-                max_stacks: 3,
-                stacks: vec![
-                    ("A".into(), 1),
-                    ("B".into(), 1),
-                    ("C".into(), 1),
-                    ("D".into(), 1),
-                ],
-            },
-        );
-        for seed in 1..40u64 {
-            let got = t.plunder(&["TS_X".into()], &mut Roll(seed * 7919));
-            assert!((2..=3).contains(&got.len()), "{got:?}");
-        }
-        assert!(t.weaponry(&["TS_X".into()]).is_empty());
-    }
 }

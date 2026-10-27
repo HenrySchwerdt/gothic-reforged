@@ -23,8 +23,8 @@ mod hero_moves;
 mod hud;
 mod interact;
 mod kit;
-pub(crate) mod move_states;
 mod layers;
+pub(crate) mod move_states;
 pub(crate) mod nav;
 mod npc_bows;
 mod npc_moves;
@@ -213,6 +213,8 @@ pub struct PlayState {
     pub keep_items: bool,
     /// The focused thing (object, item, body or character).
     pub target: Option<Target>,
+    /// The locked focus (`SessionKey::Lock`): kept while `lock_holds` says so.
+    pub lock: Option<ActorId>,
     /// `PSFocus::GetFocusEntity(melee)`: the focus search in the melee combat mode.
     pub melee_focus: Option<ActorId>,
     /// The hero sneaks (`AniState::Sneak` of the ported state).

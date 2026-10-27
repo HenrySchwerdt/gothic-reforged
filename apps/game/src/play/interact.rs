@@ -8,7 +8,7 @@ use crate::walk::Player;
 use bevy::prelude::*;
 use gothic_animation::{ActorLibrary, Animator, Stance};
 use gothic_audio::PlaySfx;
-use gothic_gameplay::treasure::{Distribution, Roll, TreasureBook, set_from_pairs};
+use gothic_gameplay::treasure::{HeroSkills, Roll, generate_plunder_inventory};
 use gothic_runtime::{Command, CoreCommand, CoreEvent, CoreRes, Event};
 use gothic_sim::script::enums::UseType;
 use gothic_sim::script::host::EntityId;
@@ -126,7 +126,7 @@ fn sfx(w: &mut MessageWriter<PlaySfx>, name: &str, at: Option<Vec3>) {
 #[allow(clippy::too_many_arguments)]
 fn handle_events(
     mut events: MessageReader<CoreEvent>,
-    core: Res<CoreRes>,
+    mut core: ResMut<CoreRes>,
     objects: Res<WorldObjects>,
     mut inter: ResMut<Interaction>,
     mut state: ResMut<PlayState>,
@@ -177,6 +177,7 @@ fn handle_events(
                     }
                     Confirm::Loot(body) => {
                         let a = actor_of(*body);
+                        ensure_plunder(&mut core, &objects, a);
                         let actor = core.0.sim.actor(a);
                         let lines = body_lines(&core, a);
                         inter.window = Some(OpenWindow {
@@ -481,6 +482,34 @@ fn body_lines(core: &CoreRes, body: ActorId) -> Vec<WindowLine> {
         .collect()
 }
 
+/// `gCInventory_PS::GeneratePlunderInvFromTreasureSets` (Game:0x100b71f0): a body's plunder is
+/// rolled once, when somebody first looks into it, with the hero's skills of that moment.
+pub fn ensure_plunder(core: &mut CoreRes, objects: &WorldObjects, body: ActorId) {
+    let inv = &core.0.sim.actor(body).inventory;
+    if inv.generated_plunder {
+        return;
+    }
+    let sets: Vec<String> = inv.treasure_sets.to_vec();
+    let mut book = objects.treasure.book(&core.0.sim.items, &sets);
+    let mut dice = Roll(super::data::seed_of(&core.0.sim.actor(body).name));
+    let sim = &mut core.0.sim;
+    let hero_perks = sim.hero.map(|h| sim.actor(h).perks.clone());
+    struct Perks(Option<std::collections::BTreeSet<String>>);
+    impl HeroSkills for Perks {
+        fn is_skill_active(&self, skill: &str) -> Option<bool> {
+            self.0
+                .as_ref()
+                .map(|p| p.contains(&skill.to_ascii_lowercase()))
+        }
+    }
+    generate_plunder_inventory(
+        &mut sim.actor_mut(body).inventory,
+        &mut book,
+        &mut dice,
+        &Perks(hero_perks),
+    );
+}
+
 /// Open the trade page with a merchant (`gCGUIManager::BeginTrade`): stock the merchant from
 /// its trade treasure sets once, then show the baskets.
 pub fn open_trade(
@@ -491,25 +520,7 @@ pub fn open_trade(
     npc: ActorId,
 ) {
     let sets = core.0.sim.actor(npc).inventory.treasure_sets.clone();
-    let mut book = TreasureBook::default();
-    for name in sets.iter().filter(|n| !n.is_empty()) {
-        let Some(t) = objects.treasure.get(name) else {
-            continue;
-        };
-        let Some(distribution) = Distribution::from_name(&t.distribution) else {
-            continue;
-        };
-        book.insert(
-            name,
-            set_from_pairs(
-                &core.0.sim.items,
-                distribution,
-                t.min_stacks,
-                t.max_stacks,
-                &t.stacks,
-            ),
-        );
-    }
+    let book = objects.treasure.book(&core.0.sim.items, &sets);
     let mut dice = Roll(super::data::seed_of(&core.0.sim.actor(npc).name));
     core.0.sim.trade_open(npc, &book, &mut dice);
     let title = core.0.sim.actor(npc).name.replace('_', " ");
@@ -550,10 +561,14 @@ fn window_input(
         inter.window_enter = false;
         return;
     }
-    if let Some(n) = inter.window_key.take()
-        && n >= 1
-        && let Some(line) = win.lines.get(n - 1)
-    {
+    // Digit keys 1..9, 0 pick the n-th entry (gCHUDListCtrlInvLootStacks key handler); a click
+    // carries the row itself.
+    let picked = inter.window_key.take().and_then(|n| match n {
+        1..=10 => char::from_digit((n % 10) as u32, 10)
+            .and_then(|c| gothic_gameplay::trade::loot_key_index(c, win.lines.len())),
+        _ => Some(n - 1),
+    });
+    if let Some(line) = picked.and_then(|i| win.lines.get(i)) {
         match (&win.kind, &line.action) {
             (WindowKind::Loot { object }, LineAction::Take(i)) => {
                 cmd.write(CoreCommand(Command::TakeLoot {

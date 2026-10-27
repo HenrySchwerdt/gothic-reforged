@@ -21,7 +21,8 @@ use crate::library::{Composition, PartAsset, PartMesh};
 use crate::locomotion::{LocoKey, Locomotion, LocomotionInput, Stance};
 use crate::rig::{EvalStep, Rig};
 use crate::runtime::{
-    Attachment, CharacterComposition, CharacterJoints, PartMeshes, SkeletonJoint, WeaponMount,
+    Attachments, CharacterComposition, CharacterJoints, PartMeshes, SkeletonJoint, WeaponMount,
+    bone_key,
 };
 use anyhow::Result;
 use bevy::camera::primitives::Aabb;
@@ -626,22 +627,18 @@ fn spawn_character(
             .collect();
         part_meshes.0.push((part.name.clone(), entities));
     }
+    let mut attachments = Attachments::default();
     for (meshes, joint, offset, weapon) in &look.attachments {
+        let start_drawn = weapon.is_none() || stance.weapon_drawn();
         let joint = match weapon {
-            Some((drawn, holster)) if !stance.weapon_drawn() => {
-                let _ = drawn;
-                *holster
-            }
+            Some((_, holster)) if !stance.weapon_drawn() => *holster,
             _ => *joint,
         };
+        let bone = bone_key(c, joint);
         for m in meshes {
             let mut e = commands.spawn((
                 Mesh3d(m.mesh.clone()),
                 MeshMaterial3d(m.material.clone()),
-                Attachment {
-                    joint,
-                    offset: *offset,
-                },
                 Transform::default(),
                 Visibility::default(),
                 NoFrustumCulling,
@@ -651,13 +648,20 @@ fn spawn_character(
                 e.insert(WeaponMount {
                     drawn_joint: *drawn,
                     holster_joint: *holster,
+                    drawn_bone: bone_key(c, *drawn),
+                    holster_bone: bone_key(c, *holster),
+                    drawn: start_drawn,
                 });
             }
+            attachments.0.add(e.id(), &bone, Some(*offset));
         }
     }
     commands
         .entity(root)
         .insert((part_meshes, CharacterJoints(joints)));
+    if !attachments.0.is_empty() {
+        commands.entity(root).insert(attachments);
+    }
 }
 
 /// Collect finished builds and commit nearest-first within the frame budget.
