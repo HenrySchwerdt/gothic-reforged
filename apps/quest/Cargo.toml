@@ -10,6 +10,7 @@ name = "gothic_quest"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+gothic-coords = { path = "../../crates/coords" }
 gothic-xr-quest = { path = "../../crates/xr-quest" }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_asset", "bevy_camera"] }
 anyhow.workspace = true

@@ -59,7 +59,7 @@ pub fn nlerp(a: Quat, b: Quat, w: f32) -> Quat {
 /// `M R M` with `M = diag(-1, 1, 1)`, i.e. (x, y, z, w) -> (x, -y, -z, w).
 #[inline]
 pub fn mirror_quat_x(q: Quat) -> Quat {
-    Quat::from_xyzw(q.x, -q.y, -q.z, q.w)
+    gothic_coords::quat(q)
 }
 
 impl Trs {
@@ -68,7 +68,7 @@ impl Trs {
     #[inline]
     pub fn mirror_x(self) -> Trs {
         Trs {
-            t: Vec3::new(-self.t.x, self.t.y, self.t.z),
+            t: gothic_coords::vec3(self.t),
             r: mirror_quat_x(self.r),
             s: self.s,
         }

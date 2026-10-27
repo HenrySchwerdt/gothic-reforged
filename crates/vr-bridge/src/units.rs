@@ -21,13 +21,12 @@ pub fn tri_to_m(t: &Tri) -> [Vec3; 3] {
 
 /// Bevy yaw of a sim yaw (same facing direction).
 pub fn sim_yaw_to_bevy(sim: f32) -> f32 {
-    // Facing (x, z) = (cos, sin); Bevy forward (-sin b, -cos b).
-    (-sim.cos()).atan2(-sim.sin())
+    gothic_coords::sim_yaw_to_engine(sim)
 }
 
 /// Sim yaw of a Bevy yaw (the convention of `gothic_vr::bindings::hero_transform`).
 pub fn bevy_yaw_to_sim(bevy: f32) -> f32 {
-    (-bevy.cos()).atan2(-bevy.sin())
+    gothic_coords::engine_yaw_to_sim(bevy)
 }
 
 #[cfg(test)]

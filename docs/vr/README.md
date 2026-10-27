@@ -16,7 +16,7 @@ local maintainer step; the hooks for it are listed below.
 | `crates/vr-melee` (`gothic-vr-melee`) | VR-04 | swept blade/blunt/pierce contact model, stabs (stick/pull-out), block/parry, `HitEvent`, hitzones, training dummy |
 | `crates/vr-npc` (`gothic-vr-npc`) | VR-05 | active ragdoll (balance, stagger, fall, get-up), combat AI (telegraphs, attack slots, blocking, recoil), Bevy plugin |
 | `crates/vr-interact` (`gothic-vr-interact`) | VR-11 | point / grab / lockpick / drink / spell ring + casting / bow / crouch / dodge / hop mapped onto the core's `Command`s, `CoreApi` + stub core, Bevy plugin |
-| `crates/vr-ui` (`gothic-vr-ui`) | VR-10 | world-space HUD over `gothic-ui`'s page state: wrist vitals, quick-slot wheel, backpack inventory, dialog options beside the NPC, journal book, held map, world-locked subtitles; comfort rules; drawn panels (UI to texture) and a gizmo greybox view |
+| `crates/vr-ui` (`gothic-vr-ui`) | VR-10 | world-space HUD over `gothic-ui`'s page state: wrist vitals, quick-slot wheel, backpack inventory, dialog options beside the NPC, journal book, held map, world-locked subtitles; comfort rules; drawn panels (UI to texture) and a gizmo greybox view; **windows** (trade, loot, recipes, document, quest log, character) as sheets, see `VR_GAME_SYSTEMS.md` |
 | `crates/vr-bridge` (`gothic-vr-bridge`) | VR-09 | adapters to `gothic-physics` / `gothic-runtime`: units, level chunks as avian trimeshes, runtime actors as melee proxies, hits as `Command::Attack`, 30 Hz core ticking beside 90 Hz physics (see `PHYSICS.md`) |
 | `crates/vr-archery` (`gothic-vr-archery`) | VR-06 | quiver/nock/draw/release, ballistic arrows that stick, aim assist, damage hook |
 | `apps/vr-sandbox` (`gothic-vr-sandbox`) | all | greybox level with everything above |
@@ -38,6 +38,7 @@ cargo run -p gothic-vr-sandbox -- --headless             # scripted CI duel (exi
 cargo run -p gothic-vr-npc --example exec_duel           # VR-12: original-AI intents vs scripted player
 
 cargo run -p gothic-vr-interact --example interact_greybox # VR-11: every mapping against a stub core (exit code)
+cargo run -p gothic-vr-ui --example window_sheets -- --out .local/quest/vrui   # every window drawn to PNG
 cargo run -p gothic-vr-ui --example hud_greybox          # VR-10 HUD with fake data (--headless: exit code)
 ```
 

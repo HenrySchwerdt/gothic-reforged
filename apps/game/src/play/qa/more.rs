@@ -538,14 +538,24 @@ pub fn craft_anvil() -> Sc {
     );
     sc.wait(0.6);
     let goal: Goal = Arc::new(|cx| {
+        // The open world holds anvils everywhere: the nearest loaded one.
+        let hero = cx.hero_pos();
+        let o = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
         let o = cx
             .world
             .resource::<crate::walk::play::objects::WorldObjects>();
         o.list
             .iter()
-            .find(|o| {
+            .filter(|o| {
                 o.entity.is_some()
                     && o.def.script_use() == gothic_sim::script::enums::UseType::Anvil
+            })
+            .min_by(|a, b| {
+                a.pos_cm
+                    .distance(hero)
+                    .total_cmp(&b.pos_cm.distance(hero))
             })
             .map(|o| o.pos_cm)
     });
@@ -558,6 +568,12 @@ pub fn craft_anvil() -> Sc {
         Arc::new(|cx| matches!(cx.play().target, Some(Target::Object(_)))),
     );
     sc.act("use key", |cx| cx.use_key());
+    sc.wait(1.0);
+    sc.act("record the interaction log", |cx| {
+        let log: Vec<String> = cx.inter().log.iter().rev().take(6).cloned().collect();
+        let t = cx.play().target;
+        cx.note(format!("after use: target {t:?}, log {log:?}"));
+    });
     sc.until("recipe page", 10.0, |cx| {
         cx.ui().screen == gothic_ui::Screen::Recipe
     });

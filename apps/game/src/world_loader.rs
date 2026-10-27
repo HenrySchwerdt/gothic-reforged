@@ -194,7 +194,7 @@ pub struct Origin(pub Vec3);
 impl Origin {
     /// Gothic world point -> origin-relative mirrored point.
     pub fn point(&self, p: Vec3) -> Vec3 {
-        Vec3::new(self.0.x - p.x, p.y - self.0.y, p.z - self.0.z)
+        gothic_coords::Frame::new(self.0).point(p)
     }
 }
 
@@ -422,10 +422,6 @@ pub fn tile_of(p: Vec3) -> TileKey {
     )
 }
 
-fn flip() -> Mat4 {
-    Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))
-}
-
 fn stem_of(path: &str) -> String {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     name.rsplit_once('.')
@@ -574,7 +570,7 @@ impl Loader {
                         let o = entry.positions.len() as u32;
                         entry.positions.push(world[k].to_array());
                         let nrm = sub.normals.get(k).copied().unwrap_or([0.0, 1.0, 0.0]);
-                        entry.normals.push([-nrm[0], nrm[1], nrm[2]]);
+                        entry.normals.push(gothic_coords::arr3(nrm));
                         entry
                             .uvs
                             .push(sub.uvs.get(k).copied().unwrap_or([0.0, 0.0]));
@@ -819,9 +815,9 @@ impl Loader {
             sub_index.push(si);
             let n = sub.positions.len();
             let positions: Vec<[f32; 3]> =
-                sub.positions.iter().map(|p| [-p[0], p[1], p[2]]).collect();
+                sub.positions.iter().copied().map(gothic_coords::arr3).collect();
             let normals: Vec<[f32; 3]> = if sub.normals.len() == n {
-                sub.normals.iter().map(|n| [-n[0], n[1], n[2]]).collect()
+                sub.normals.iter().copied().map(gothic_coords::arr3).collect()
             } else {
                 vec![[0.0, 1.0, 0.0]; n]
             };
@@ -861,15 +857,15 @@ impl Loader {
             };
             let geom = Arc::new(GeomData {
                 id: self.id(),
-                positions: sub.positions.iter().map(|p| [-p[0], p[1], p[2]]).collect(),
-                normals: sub.normals.iter().map(|v| [-v[0], v[1], v[2]]).collect(),
+                positions: sub.positions.iter().copied().map(gothic_coords::arr3).collect(),
+                normals: sub.normals.iter().copied().map(gothic_coords::arr3).collect(),
                 uvs: sub.uvs.clone(),
                 indices: indices.clone(),
                 colors: vec![[1.0; 4]; n],
                 tangents: sub
                     .tangents
                     .iter()
-                    .map(|t| [-t[0], t[1], t[2], -t[3]])
+                    .map(|t| gothic_coords::tangent4([t[0], t[1], t[2]], t[3]))
                     .collect(),
                 light: vec![],
             });
@@ -978,7 +974,7 @@ impl Loader {
             let tris: Vec<[Vec3; 3]> = ov
                 .collision
                 .iter()
-                .map(|t| t.map(|p| Vec3::new(-p[0], p[1], p[2])))
+                .map(|t| t.map(|p| Vec3::from(gothic_coords::arr3(p))))
                 .collect();
             let result = Some(Arc::new(tris));
             self.collision_meshes.insert(stem, result.clone());
@@ -997,7 +993,7 @@ impl Loader {
                 let tris: Vec<[Vec3; 3]> = nav
                     .triangles_cm()
                     .into_iter()
-                    .map(|t| t.map(|p| Vec3::new(-p[0], p[1], p[2])))
+                    .map(|t| t.map(|p| Vec3::from(gothic_coords::arr3(p))))
                     .collect();
                 if !tris.is_empty() {
                     result = Some(Arc::new(tris));
@@ -1096,8 +1092,8 @@ impl Loader {
             .filter(|r| parse_cell_name(&r.resource).is_none())
             .map(|r| (r.resource.to_string(), r.world_matrix, r.entity_id.clone()))
             .collect();
-        let f = flip();
         let origin = self.origin;
+        let frame = gothic_coords::Frame::new(origin.0);
         for (resource, matrix, entity_id) in hits {
             let m = Mat4::from_cols_array_2d(&matrix);
             if !m.is_finite() {
@@ -1110,8 +1106,7 @@ impl Loader {
             let Some(mesh) = self.mesh(&resource, 0) else {
                 continue;
             };
-            let transform =
-                Mat4::from_translation(Vec3::new(origin.0.x, -origin.0.y, -origin.0.z)) * f * m * f;
+            let transform = frame.mat4(m);
             // Translation of F*M*F is (-tx, ty, tz); the origin shift above makes it
             // origin-relative: (ox - tx, ty - oy, tz - oz).
             let mut any_solid = false;
@@ -1240,7 +1235,7 @@ impl Loader {
             .map(|(p, _)| p.clone())
             .collect();
         let origin = self.origin;
-        let f = flip();
+        let frame = gothic_coords::Frame::new(origin.0);
         for doc in docs {
             if !self.tree_docs.contains_key(&doc) {
                 let list = self
@@ -1266,11 +1261,7 @@ impl Loader {
                     continue;
                 };
                 // The world matrix carries the per-instance scale; the species size is baked in.
-                let transform =
-                    Mat4::from_translation(Vec3::new(origin.0.x, -origin.0.y, -origin.0.z))
-                        * f
-                        * m
-                        * f;
+                let transform = frame.mat4(m);
                 stats.trees += 1;
                 if std::env::var_os("GR_TREE_LOG").is_some() {
                     let (sc, _, ps) = transform.to_scale_rotation_translation();
@@ -1606,13 +1597,7 @@ impl Loader {
                 };
                 // Mirror the left-handed placement into our space: a reflection of x flips the
                 // y and z components of the rotation quaternion.
-                let q = Quat::from_xyzw(
-                    inst.rotation.x,
-                    -inst.rotation.y,
-                    -inst.rotation.z,
-                    inst.rotation.w,
-                )
-                .normalize();
+                let q = gothic_coords::quat(inst.rotation).normalize();
                 // The engine scales (x, y, x): `scale[1]` is the height.
                 let scale = Vec3::new(inst.scale[0], inst.scale[1], inst.scale[0]);
                 let xf =
@@ -1976,7 +1961,7 @@ fn vertex_color(sub: &gothic_formats::xcmsh::Submesh, k: usize) -> [f32; 4] {
 fn vertex_tangent(sub: &gothic_formats::xcmsh::Submesh, k: usize) -> [f32; 4] {
     sub.tangents
         .get(k)
-        .map_or([1.0, 0.0, 0.0, -1.0], |t| [-t[0], t[1], t[2], -1.0])
+        .map_or([1.0, 0.0, 0.0, -1.0], |t| gothic_coords::tangent4(*t, 1.0))
 }
 
 /// Merge opaque / alpha-tested static props of a tile into one mesh per (size class, material),

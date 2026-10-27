@@ -11,6 +11,8 @@
 //! * [`dialog`]: options beside the speaking NPC.
 //! * [`handheld`]: the journal as a book and the map as a sheet in the off hand.
 //! * [`subtitles`]: world-locked subtitles near the speaker.
+//! * [`sheet`], [`views`], [`windows`]: world-space windows (trade, loot, recipes, documents,
+//!   quest log, character) as retained sheets with laser / poke input and scrolling.
 //! * [`hud`]: the whole HUD ([`VrHud`]) following `GuiManager`.
 //! * [`plugin`]: Bevy integration and the greybox gizmo view.
 //! * [`render`]: the drawn HUD (UI rendered to textures on world-space quads).
@@ -18,18 +20,31 @@
 //! All layout and selection logic is Bevy-free and tested without a window.
 pub mod backpack;
 pub mod comfort;
+pub mod comfort_opts;
 pub mod dialog;
+pub mod fade;
 pub mod handheld;
 pub mod hud;
 pub mod panel;
 pub mod plugin;
 pub mod render;
+mod render_sheet;
+pub mod sheet;
 pub mod subtitles;
+pub mod tags;
+pub mod views;
 pub mod wheel;
+pub mod windows;
 pub mod wrist;
 
 pub use hud::{DialogData, HudAction, HudData, Tracked, VrHud};
 pub use panel::Panel;
-pub use plugin::{HudActionMsg, HudDataRes, VrHudRes, VrUiPlugin};
-pub use render::{HudFont, VrUiRenderPlugin};
+pub use plugin::{HudActionMsg, HudDataRes, VrHudRes, VrUiPlugin, WindowActionMsg};
+pub use render::{HudFont, HudHeadingFont, VrUiRenderPlugin};
+pub use comfort_opts::{OptId, VrComfortOptions};
+pub use fade::SleepFade;
+pub use sheet::{MenuEntry, Sheet, SheetAct};
+pub use tags::{FocusData, Floaters, Tag};
+pub use views::{MenuView, WaitView, CharacterView, FileRowView, FilesView, QuestEntry, QuestLogView, WindowView};
+pub use windows::{VrWindow, WindowAction};
 pub use wrist::Vitals;

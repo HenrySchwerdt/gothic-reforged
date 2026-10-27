@@ -37,6 +37,7 @@ mod npc_ai;
 mod ranged;
 mod scenarios;
 mod souls_wire;
+mod spells;
 mod world;
 
 pub const CM: f32 = 0.01;

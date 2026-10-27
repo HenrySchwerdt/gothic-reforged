@@ -165,7 +165,7 @@ fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<Core
     {
         // `ProcessMovements` (G:0xddd40): with the constraint at 0 the body is aligned to the
         // camera direction every frame (`SetAlignmentLookAt`), whatever the wish direction.
-        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
+        face = Some(gothic_coords::forward3(player.yaw) * CAMERA_ALIGN_LENGTH);
     }
     player.face = face.filter(|f| f.length_squared() > 1.0);
 }
@@ -771,7 +771,8 @@ fn focus(
         let Some(p) = core.0.sim.world.actors.get(&a.id).map(|w| w.0) else {
             continue;
         };
-        if !near([p.x, p.y, p.z]) {
+        // A locked focus is kept up to `FocusLockMaxDistance`, beyond the scan range of the mode.
+        if !near([p.x, p.y, p.z]) && state.focus_lock != Some(a.id) {
             continue;
         }
         let t = if a.is_alive() {
@@ -805,18 +806,44 @@ fn focus(
         yaw: fwd.x.atan2(fwd.y),
         reach: FOCUS_REACH,
     };
+    // `gCFocus_PS::OnAction` (Game:0x1006e8e0): the lock key (message 0x27) toggles `FocusLocked`.
+    // Only a character focus can be locked here; `FindFocusEntity` (Game:0x1006da20) keeps a locked
+    // entity while it lives (a character must not be dead) and lies within `FocusLockMaxDistance`,
+    // otherwise it clears the focus and the lock and searches again.
+    if frame.pressed_edge(SessionKey::Lock) && !frame.blocked {
+        state.focus_lock = match state.focus_lock {
+            Some(_) => None,
+            None => state.focus,
+        };
+    }
     let cfg = FocusConfig::hero();
-    let found = find_focus(&cfg, mode, &viewer, &cands);
+    let locked = state.focus_lock.filter(|a| {
+        core.0.sim.world.actors.get(a).is_some_and(|w| {
+            gothic_gameplay::focus::lock_holds(
+                &cfg,
+                &viewer,
+                [w.0.x, w.0.y, w.0.z],
+                core.0.sim.actor(*a).is_alive(),
+            )
+        })
+    });
+    state.focus_lock = locked;
+    let found = match locked {
+        Some(a) => ids.iter().position(|t| *t == Target::Npc(a)),
+        None => find_focus(&cfg, mode, &viewer, &cands),
+    };
     state.target = found.map(|i| ids[i]);
     state.focus = match state.target {
         Some(Target::Npc(a)) => Some(a),
         _ => None,
     };
     // `PSFocus::GetFocusEntity(melee)` for `PS_Melee_Loop`: the same search in the melee mode.
-    state.melee_focus = find_focus(&FocusConfig::hero(), FocusMode::Melee, &viewer, &cands)
-        .and_then(|i| match ids[i] {
-            Target::Npc(a) | Target::Body(a) => Some(a),
-            _ => None,
+    state.melee_focus = locked
+        .or_else(|| {
+            find_focus(&FocusConfig::hero(), FocusMode::Melee, &viewer, &cands).and_then(|i| match ids[i] {
+                Target::Npc(a) | Target::Body(a) => Some(a),
+                _ => None,
+            })
         });
 }
 
@@ -879,7 +906,7 @@ pub(super) fn sync(
     // E01: the animation velocity is the controller's filtered local velocity (forward, right).
     let (vf, vr) = player.ctrl.local_ani_velocity();
     let h = player.ctrl.heading;
-    let fwd = Vec3::new(-h.sin(), 0.0, -h.cos());
+    let fwd = gothic_coords::forward3(h);
     let right = Vec3::new(h.cos(), 0.0, -h.sin());
     let mut v = fwd * vf + right * vr;
     v.y = if player.ctrl.grounded {

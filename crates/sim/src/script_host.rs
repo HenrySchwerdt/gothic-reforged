@@ -339,7 +339,7 @@ impl ScriptTables {
         std::mem::take(&mut self.commands)
     }
 
-    fn enclave_id(&mut self, name: &str) -> EntityId {
+    pub(crate) fn enclave_id(&mut self, name: &str) -> EntityId {
         if let Some(i) = self
             .enclave_names
             .iter()
@@ -1135,9 +1135,30 @@ impl<W: WorldQuery> NpcApi for SimHost<'_, W> {
         }
     }
     fn enclave_alignment(&self, enclave: EntityId) -> se::Alignment {
-        self.enclave_name(enclave)
-            .and_then(|n| self.sim.enclaves.get(&n).map(|e| s_alignment(e.alignment)))
-            .unwrap_or(se::Alignment::None)
+        let Some(name) = self.enclave_name(enclave) else {
+            return se::Alignment::None;
+        };
+        if let Some(e) = self.sim.enclaves.get(&name)
+            && e.alignment != crate::types::Alignment::None
+        {
+            return s_alignment(e.alignment);
+        }
+        // [I] The enclave records of the world data carry no alignment; the camp an enclave
+        // belongs to is the one its garrison (`NpcType::Enclave` members) stands in.
+        let mut counts: std::collections::BTreeMap<crate::types::Alignment, u32> =
+            Default::default();
+        for a in &self.sim.actors {
+            if a.enclave.as_deref() == Some(name.as_str())
+                && a.npc_type == crate::types::NpcType::Enclave
+                && a.alignment != crate::types::Alignment::None
+            {
+                *counts.entry(a.alignment).or_default() += 1;
+            }
+        }
+        counts
+            .into_iter()
+            .max_by_key(|(_, n)| *n)
+            .map_or(se::Alignment::None, |(al, _)| s_alignment(al))
     }
     fn enclave_switched(&self, enclave: EntityId) -> bool {
         self.enclave_extra(enclave).switched
@@ -1706,7 +1727,7 @@ impl<W: WorldQuery> StatsApi for SimHost<'_, W> {
         self.sim.state.learning_points = lp.max(0) as u32;
     }
     fn player_level(&self) -> u32 {
-        self.sim.state.level.max(1)
+        self.sim.state.level
     }
     fn has_damage_receiver(&self, e: EntityId) -> bool {
         self.actor(e).is_some()
@@ -1811,7 +1832,7 @@ impl<W: WorldQuery> WorldApi for SimHost<'_, W> {
     fn set_enclave_known_crime(&mut self, enclave: EntityId, crime: se::PlayerCrime) {
         if let Some(e) = self
             .enclave_name(enclave)
-            .and_then(|n| self.sim.enclaves.get_mut(&n))
+            .map(|n| self.sim.enclaves.entry(n).or_default())
         {
             e.known_crime = crime_s(crime);
         }
@@ -1844,7 +1865,7 @@ impl<W: WorldQuery> WorldApi for SimHost<'_, W> {
     fn set_enclave_crime_count(&mut self, enclave: EntityId, crime: se::PlayerCrime, n: i32) {
         if let Some(e) = self
             .enclave_name(enclave)
-            .and_then(|nm| self.sim.enclaves.get_mut(&nm))
+            .map(|nm| self.sim.enclaves.entry(nm).or_default())
         {
             match crime {
                 se::PlayerCrime::Theft => {
@@ -1865,7 +1886,7 @@ impl<W: WorldQuery> WorldApi for SimHost<'_, W> {
     fn clear_enclave_suspect_comment(&mut self, enclave: EntityId, _crime: se::PlayerCrime) {
         if let Some(e) = self
             .enclave_name(enclave)
-            .and_then(|n| self.sim.enclaves.get_mut(&n))
+            .map(|n| self.sim.enclaves.entry(n).or_default())
         {
             e.suspect_comment = false;
         }
@@ -1889,7 +1910,7 @@ impl<W: WorldQuery> WorldApi for SimHost<'_, W> {
     fn set_enclave_status_raw(&mut self, enclave: EntityId, status: se::EnclaveStatus) {
         if let Some(e) = self
             .enclave_name(enclave)
-            .and_then(|n| self.sim.enclaves.get_mut(&n))
+            .map(|n| self.sim.enclaves.entry(n).or_default())
         {
             e.status = match status {
                 se::EnclaveStatus::Attack => CEnclaveStatus::Attack,

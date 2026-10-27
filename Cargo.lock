@@ -3552,6 +3552,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "gothic-coords",
  "gothic-formats",
  "gothic-portcov",
  "serde_json",
@@ -3610,6 +3611,7 @@ dependencies = [
  "bytemuck",
  "ctt-astcenc",
  "dirs",
+ "gothic-coords",
  "gothic-formats",
  "gothic-gameplay",
  "gothic-importer",
@@ -3620,6 +3622,13 @@ dependencies = [
  "serde_json",
  "texture2ddecoder",
  "xxhash-rust",
+]
+
+[[package]]
+name = "gothic-coords"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]
@@ -3671,6 +3680,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "gothic-coords",
  "gothic-environment",
  "gothic-formats",
  "gothic-portcov",
@@ -3770,6 +3780,7 @@ dependencies = [
  "anyhow",
  "glam",
  "gothic-cook",
+ "gothic-coords",
  "gothic-formats",
  "gothic-physics",
  "gothic-portcov",
@@ -3806,6 +3817,7 @@ dependencies = [
  "bevy",
  "gothic-animation",
  "gothic-cook",
+ "gothic-coords",
  "gothic-environment",
  "gothic-formats",
  "gothic-physics",
@@ -3856,6 +3868,7 @@ dependencies = [
  "gothic-camera",
  "gothic-combat-souls",
  "gothic-cook",
+ "gothic-coords",
  "gothic-env-synth",
  "gothic-environment",
  "gothic-formats",
@@ -4008,14 +4021,17 @@ dependencies = [
  "bevy",
  "glam",
  "gothic-animation",
+ "gothic-coords",
  "gothic-formats",
  "gothic-gameplay",
  "gothic-physics",
  "gothic-runtime",
  "gothic-sim",
+ "gothic-ui",
  "gothic-vr",
  "gothic-vr-melee",
  "gothic-vr-physics",
+ "gothic-vr-ui",
  "serde_json",
 ]
 

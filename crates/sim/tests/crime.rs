@@ -277,12 +277,13 @@ fn knocking_out_a_non_guard_records_the_attack_crime_on_the_victim() {
     assert!(sim.state.npc("Peasant").unwrap().defeated);
     // Defeat XP is paid once: 5 * round(max(10*3, 50)/5) = 50.
     assert_eq!(sim.state.xp, 50);
-    // It wakes after 5 s (defeated by the player) and goes for its attacker [CA 9.4].
-    sim.run_until(200, |s| s.actor(vid).ai_mode != AiMode::Down);
-    assert!((5000..6200).contains(&sim.now_ms()), "{}", sim.now_ms());
-    assert_eq!(
-        sim.actor(vid).hp,
-        1 + 5 * 10,
-        "+10 HP per second while unconscious"
+    // It wakes after 30 s (FUN_10007790: 5 s only when the victim is the player or his party,
+    // 20 s after an arena defeat) and goes for its attacker [CA 9.4].
+    sim.run_until(800, |s| s.actor(vid).ai_mode != AiMode::Down);
+    assert!((30_000..31_200).contains(&sim.now_ms()), "{}", sim.now_ms());
+    assert!(
+        sim.actor(vid).hp > 1 + 5 * 10,
+        "+10 HP per second while unconscious: {}",
+        sim.actor(vid).hp
     );
 }

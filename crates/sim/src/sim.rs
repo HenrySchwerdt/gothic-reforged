@@ -9,7 +9,7 @@ use crate::attitude::{AttitudeCtx, get_attitude, political_attitude};
 use crate::brain::{Strike, Task};
 use crate::combat::{
     Attack, Deity, HitContext, HitOutcome, HitResult, IgnoreReason, PerceptionKind,
-    bow_hit_multiplier, kill_xp,
+    bow_hit_multiplier,
 };
 use crate::config::SimConfig;
 use crate::crime::{
@@ -19,7 +19,7 @@ use crate::crime::{
 use crate::data::NpcRecord;
 use crate::economy::{self, PickpocketResult, PriceCtx, TradeSide};
 use crate::item::{ItemDb, ItemDef, Unmet, check_requirements};
-use crate::perception::{can_perceive, can_receive_perception, fight_hearing_range, sees_within};
+use crate::perception::{can_perceive, can_receive_perception, sees_within};
 use crate::rng::Rng;
 use crate::routine::{
     GameClock, RoutineResolver, TaskContext, follow_distance, routine_time, select_routine_task,
@@ -395,6 +395,10 @@ impl<W: WorldQuery> Sim<W> {
             // Fresh actors start at full resources (`RefreshHitPoints`) [CA 2.13].
             actor.refresh(&self.cfg);
         }
+        if let Some(e) = actor.enclave.clone() {
+            // The script knows an enclave by an entity handle (`GetEnclave`).
+            self.script.enclave_id(&e);
+        }
         self.world.teleport(id, at);
         self.actors.push(actor);
         self.push(EventKind::Spawned { actor: id });
@@ -483,11 +487,6 @@ impl<W: WorldQuery> Sim<W> {
             npc.alignment,
             self.player_alignment,
         ) == Attitude::Friendly
-    }
-
-    fn is_player_side(&self, id: ActorId) -> bool {
-        let a = self.actor(id);
-        a.is_player || (a.party_leader.is_some() && a.party_leader == self.hero && !a.summoned)
     }
 
     // ---- stepping -----------------------------------------------------------------------
@@ -798,28 +797,48 @@ impl<W: WorldQuery> Sim<W> {
         self.apply_outputs(&r.outputs);
     }
 
-    /// `Kill` (S:1bc30) [CA 4.1]: AIMode Dead, quest hooks, XP once for the player side.
+    /// `Kill` (S:1bc30) [CA 4.1]: the ported `gothic_script::down::kill` runs on the victim (last
+    /// fight stamp, hands emptied, AI mode Dead, party dissolved, XP once for the player side,
+    /// enclave notice, plunder); the simulation adds what the engine side does with the result.
     pub fn kill(&mut self, victim: ActorId, killer: Option<ActorId>) {
         let vi = victim.0 as usize;
         self.npc_cancel_plan(vi);
         let name = self.actors[vi].name.clone();
+        let xp0 = (self.state.xp, self.state.level);
         {
             let v = &mut self.actors[vi];
-            v.ai_mode = AiMode::Dead;
             v.brain.task = Task::Dead;
             v.brain.strike = None;
             v.action = Action::None;
             v.target = None;
             v.hp = 0;
         }
+        {
+            let mut host = crate::script_host::SimHost::new(self);
+            let ve = crate::script_host::entity_of(victim);
+            host.self_entity = ve;
+            let ke = killer.map_or(gothic_script::host::EntityId::NONE, crate::script_host::entity_of);
+            gothic_script::down::kill(&mut host, ve, ke);
+        }
+        self.script.felled.clear();
         self.push(EventKind::Killed { victim, killer });
         if self.actors[vi].is_player {
             self.state.game_over = true;
         } else {
             self.quest_killed(&name);
         }
-        if let Some(k) = killer {
-            self.award_kill_xp(victim, k);
+        self.xp_event_since(xp0);
+    }
+
+    /// Report the XP the ported `GiveXP` paid since `before` as the UI event and refresh the hero.
+    fn xp_event_since(&mut self, before: (u64, u32)) {
+        if self.state.xp != before.0 {
+            self.push(EventKind::Xp {
+                amount: self.state.xp.saturating_sub(before.0),
+                level_before: before.1,
+                level_after: self.state.level,
+            });
+            self.refresh_hero();
         }
     }
 
@@ -831,18 +850,6 @@ impl<W: WorldQuery> Sim<W> {
             }
             None => self.state.npc_mut(name).dead = true,
         }
-    }
-
-    fn award_kill_xp(&mut self, victim: ActorId, killer: ActorId) {
-        if !self.is_player_side(killer) || self.actors[victim.0 as usize].defeated_by_player {
-            return;
-        }
-        if self.actors[victim.0 as usize].is_player {
-            return;
-        }
-        self.actors[victim.0 as usize].defeated_by_player = true;
-        let xp = kill_xp(&self.cfg, &self.actors[victim.0 as usize]);
-        self.give_xp(xp);
     }
 
     /// `GiveXP` to the player through the gameplay state, then refresh the hero's stats.
@@ -870,22 +877,28 @@ impl<W: WorldQuery> Sim<W> {
         }
     }
 
-    /// `Defeat` (S:27510) [CA 4.2]: AIMode Down, knocked-out timer, Attack crime, quest hooks.
+    /// `Defeat` (S:27510) [CA 4.2]: the ported `gothic_script::down::defeat` runs on the victim
+    /// (AI mode Down, Attack crime, XP once, fight result, plunder); the simulation sets the
+    /// knocked-out timer (`FUN_10007790`) and tells the quest manager.
     pub fn defeat(&mut self, victim: ActorId, by: Option<ActorId>) {
         let vi = victim.0 as usize;
         let now = self.now_ms();
-        let by_player_side = by.is_some_and(|b| self.is_player_side(b));
-        let by_player = by.is_some_and(|b| self.actors[b.0 as usize].is_player);
         self.npc_cancel_plan(vi);
         let name = self.actors[vi].name.clone();
+        let xp0 = (self.state.xp, self.state.level);
+        let arena = self.actors[vi].attack_reason == AttackReason::Arena;
+        let ve = crate::script_host::entity_of(victim);
         {
-            let arena = self.actors[vi].attack_reason == AttackReason::Arena;
+            let secs = {
+                let mut host = crate::script_host::SimHost::new(self);
+                host.self_entity = ve;
+                gothic_script::down::unconscious_secs(&host, ve)
+            };
             let v = &mut self.actors[vi];
-            v.ai_mode = AiMode::Down;
             v.brain.task = Task::Unconscious;
             v.brain.since_ms = now;
             v.brain.next_second_ms = now + 1000;
-            v.brain.unconscious_secs = vitals::unconscious_secs(by_player_side, arena);
+            v.brain.unconscious_secs = secs as u32;
             v.brain.unconscious_arena = arena;
             v.brain.strike = None;
             v.action = Action::None;
@@ -893,11 +906,14 @@ impl<W: WorldQuery> Sim<W> {
             if v.hp < 1 {
                 v.hp = 1;
             }
-            // The Attack crime is memorised for a non-guard, non-boss victim outside the arena.
-            if by_player && !v.is_guard() && !v.boss && !arena {
-                v.last_player_crime = v.last_player_crime.max(Crime::Attack);
-            }
         }
+        {
+            let mut host = crate::script_host::SimHost::new(self);
+            host.self_entity = ve;
+            let ae = by.map_or(gothic_script::host::EntityId::NONE, crate::script_host::entity_of);
+            gothic_script::down::defeat(&mut host, ve, ae);
+        }
+        self.script.felled.clear();
         self.push(EventKind::Defeated { victim, by });
         match self.db.clone() {
             Some(db) => {
@@ -906,9 +922,7 @@ impl<W: WorldQuery> Sim<W> {
             }
             None => self.state.npc_mut(&name).defeated = true,
         }
-        if let Some(k) = by {
-            self.award_kill_xp(victim, k);
-        }
+        self.xp_event_since(xp0);
     }
 
     fn unconscious_think(&mut self, i: usize, now: u64) {
@@ -948,87 +962,19 @@ impl<W: WorldQuery> Sim<W> {
 
     // ---- perception broadcasts and reactions -------------------------------------------
 
-    /// `SendPerceptionFightSound / Defeat / Murder` [CA 1.1, 10.2].
+    /// `SendPerceptionFightSound / Defeat / Murder` [CA 1.1, 10.2]: the ported
+    /// `gothic_script::assess` functions run on every character that can notice the fight.
     fn broadcast(&mut self, kind: PerceptionKind, attacker: ActorId, victim: ActorId) {
-        let n = self.actors.len();
-        let (ap, vp) = (self.pos(attacker), self.pos(victim));
-        for r in 0..n {
-            let rid = ActorId(r as u32);
-            if rid == attacker || rid == victim {
-                continue;
-            }
-            if !can_receive_perception(&self.actors[r], &self.actors[attacker.0 as usize]) {
-                continue;
-            }
-            if !self.actors[r].ai_controlled || self.actors[r].brain.task == Task::Attack {
-                continue;
-            }
-            let rp = self.pos(rid);
-            match kind {
-                PerceptionKind::FightSound => {
-                    let enclave_attack = self.actors[r]
-                        .enclave
-                        .as_ref()
-                        .and_then(|e| self.enclaves.get(e))
-                        .is_some_and(|e| e.status == EnclaveStatus::Attack);
-                    let range = fight_hearing_range(enclave_attack);
-                    if rp.dist(ap) > range && rp.dist(vp) > range {
-                        continue;
-                    }
-                    let to_att = self.attitude(rid, attacker);
-                    let to_vic = self.attitude(rid, victim);
-                    if matches!(to_att, Attitude::Panic) {
-                        self.start_flee(rid, attacker);
-                    } else if matches!(to_att, Attitude::Hostile | Attitude::Predator) {
-                        self.assess_target(rid, attacker, AttackReason::Enemy);
-                    } else if to_vic == Attitude::Friendly && to_att != Attitude::Friendly {
-                        let same_enclave = self.actors[r].enclave.is_some()
-                            && self.actors[r].enclave == self.actors[victim.0 as usize].enclave;
-                        let reason = if same_enclave {
-                            AttackReason::StopFight
-                        } else {
-                            AttackReason::Enemy
-                        };
-                        self.assess_target(rid, attacker, reason);
-                    }
-                }
-                PerceptionKind::Murder => {
-                    let sees = sees_within(
-                        &self.cfg,
-                        &self.world,
-                        &self.actors[r],
-                        &self.actors[victim.0 as usize],
-                        2000.0,
-                    ) || sees_within(
-                        &self.cfg,
-                        &self.world,
-                        &self.actors[r],
-                        &self.actors[attacker.0 as usize],
-                        2000.0,
-                    );
-                    if !sees {
-                        continue;
-                    }
-                    let vs = self.actors[victim.0 as usize].species;
-                    let reason = if matches!(vs, Species::Pig | Species::Cow) {
-                        AttackReason::Livestock
-                    } else if vs.is_humanoid() && self.attitude(rid, victim) == Attitude::Friendly {
-                        if self.actors[r].enclave.is_some()
-                            && self.actors[r].enclave == self.actors[attacker.0 as usize].enclave
-                        {
-                            AttackReason::StopFight
-                        } else {
-                            AttackReason::Murder
-                        }
-                    } else {
-                        continue;
-                    };
-                    if self.actors[r].species.is_humanoid() {
-                        self.assess_target(rid, attacker, reason);
-                    }
-                }
-                PerceptionKind::Defeat => {} // comment only [CA 10.2]
-            }
+        use gothic_script::assess as a;
+        let (ae, ve) = (
+            crate::script_host::entity_of(attacker),
+            crate::script_host::entity_of(victim),
+        );
+        let mut host = crate::script_host::SimHost::new(self);
+        match kind {
+            PerceptionKind::FightSound => a::send_perception_fight_sound(&mut host, ae, ve),
+            PerceptionKind::Murder => a::send_perception_murder(&mut host, ae, ve),
+            PerceptionKind::Defeat => a::send_perception_defeat(&mut host, ae, ve),
         }
     }
 
@@ -1367,6 +1313,15 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.actors[i].brain.next_perception_ms = now + 100;
         let id = self.actors[i].id;
+        // A gate guard scans only when `OnGateGuard` (S:86c80) says so.
+        if self.script.npc(id).local_cb == gothic_script::routine::state::Callback::OnGateGuard {
+            let mut host = crate::script_host::SimHost::new(self);
+            let guard = crate::script_host::entity_of(id);
+            host.self_entity = guard;
+            if !gothic_script::perception::on_gate_guard(&mut host, guard) {
+                return;
+            }
+        }
         let n = self.actors.len();
         for j in 0..n {
             if j == i {
@@ -1773,6 +1728,13 @@ impl<W: WorldQuery> Sim<W> {
                         _ => AttackReason::Enemy,
                     };
                     self.assess_target(a, b, reason);
+                }
+            }
+            "sleep" => {
+                // Dialog `Sleep` (GAME_RULES 3 id 21): ID1 is the target hour (the bed infos offer
+                // 8, 12, 20, 0): the hero's `PlayerSleep(hour)`.
+                if let Ok(h) = a1.trim().parse::<u32>() {
+                    self.player_sleep(Some(h));
                 }
             }
             "spawn" => {

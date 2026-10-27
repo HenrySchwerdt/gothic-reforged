@@ -215,6 +215,8 @@ pub struct PlayState {
     pub target: Option<Target>,
     /// `PSFocus::GetFocusEntity(melee)`: the focus search in the melee combat mode.
     pub melee_focus: Option<ActorId>,
+    /// `gCFocus_PS::FocusLocked` (this+0x158) with the locked entity (`PSFocus` proxy this+0x130).
+    pub focus_lock: Option<ActorId>,
     /// The hero sneaks (`AniState::Sneak` of the ported state).
     pub sneaking: bool,
     /// The quick bar: template per slot 1..10.
@@ -544,28 +546,21 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
 }
 
 pub(crate) fn sim_to_bevy_yaw(y: f32) -> f32 {
-    (-y.cos()).atan2(-y.sin())
+    gothic_coords::sim_yaw_to_engine(y)
 }
 
 pub(crate) fn bevy_to_sim_yaw(t: f32) -> f32 {
-    // Forward is -Z rotated by `t` about Y: (-sin t, -cos t) = (dx, dz).
-    (-t.cos()).atan2(-t.sin())
+    gothic_coords::engine_yaw_to_sim(t)
 }
 
 /// Shortest signed angle from `from` to `to`.
 pub(crate) fn angle_delta(from: f32, to: f32) -> f32 {
-    let mut d = (to - from) % std::f32::consts::TAU;
-    if d > std::f32::consts::PI {
-        d -= std::f32::consts::TAU;
-    } else if d < -std::f32::consts::PI {
-        d += std::f32::consts::TAU;
-    }
-    d
+    gothic_coords::angle_delta(from, to)
 }
 
 /// Bevy yaw that makes an entity face the horizontal direction `d` (x, z).
 pub(crate) fn yaw_of_dir(dx: f32, dz: f32) -> f32 {
-    (-dx).atan2(-dz)
+    gothic_coords::yaw_of_dir(dx, dz)
 }
 
 /// The environment's time of day is the simulation clock's.

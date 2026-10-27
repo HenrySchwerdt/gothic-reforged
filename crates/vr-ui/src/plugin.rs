@@ -18,6 +18,10 @@ pub struct HudDataRes(pub HudData);
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HudActionMsg(pub HudAction);
 
+/// An action of the open world window (page event, use item, close).
+#[derive(Message, Debug, Clone, PartialEq)]
+pub struct WindowActionMsg(pub crate::windows::WindowAction);
+
 /// Add after `gothic_vr::VrPlugin`; `gizmos: false` for headless hosts that only need the
 /// logic.
 pub struct VrUiPlugin {
@@ -35,6 +39,7 @@ impl Plugin for VrUiPlugin {
         app.init_resource::<VrHudRes>()
             .init_resource::<HudDataRes>()
             .add_message::<HudActionMsg>()
+            .add_message::<WindowActionMsg>()
             .add_systems(
                 Update,
                 update_hud.after(VrSet::Locomotion).before(VrSet::Sync),
@@ -52,6 +57,7 @@ fn update_hud(
     mut data: ResMut<HudDataRes>,
     mut hud: ResMut<VrHudRes>,
     mut out: MessageWriter<HudActionMsg>,
+    mut win: MessageWriter<WindowActionMsg>,
 ) {
     let input = &input.0;
     let world = |p: gothic_vr::Pose| player.as_ref().map_or(p, |pl| pl.world(&p));
@@ -60,8 +66,12 @@ fn update_hud(
         hands: Hand::BOTH.map(|h| input.hand_pose(h).map(world)),
     };
     data.0.subtitle.tick(time.delta_secs());
+    data.0.floaters.tick(time.delta_secs());
     for a in hud.0.update(input, &tracked, &data.0) {
         out.write(HudActionMsg(a));
+    }
+    for a in hud.0.window_actions.drain(..) {
+        win.write(WindowActionMsg(a));
     }
 }
 

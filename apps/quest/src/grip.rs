@@ -1,6 +1,7 @@
 //! Weapon grip frames derived from the weapon mesh (no hand-tuned rotations).
 //!
-//! A one-handed blade is analysed in its native (left-handed) mesh space:
+//! A one-handed blade is analysed in its cooked mesh space, which is already engine space (`gothic-cook` mirrored X;
+//! `docs/research/COORDINATES.md`):
 //! * blade axis `b`: the long axis of the mesh, pointing from the handle to the tip;
 //! * guard: the slice along `b` with the widest cross-section; handle = everything behind it;
 //! * grip centre: middle of the handle (between pommel and guard), on the handle's axis (principal axis of the handle
@@ -174,29 +175,15 @@ pub fn analyse(md: &MeshData) -> Option<GripFrame> {
 }
 
 impl GripFrame {
-    /// Mesh-space frame of the gothic data mirrored across X (the engine-space convention of skeletons and clips).
-    pub fn mirrored(&self) -> GripFrame {
-        let m = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
-        GripFrame {
-            blade: m(self.blade),
-            edge: m(self.edge),
-            flat: -m(self.flat),
-            center: m(self.center),
-            handle_axis: m(self.handle_axis),
-            ..*self
-        }
-    }
-
-    /// Prop-frame visual transform for a mesh spawned mirrored (`Ardea::spawn_static_mirrored`):
+    /// Prop-frame visual transform for a cooked static mesh (already in engine space, `Ardea::spawn_static`):
     /// the grip centre sits at the prop origin, the blade along -Z, the edge along -Y, the flat normal along -X.
     pub fn visual(&self, unit: f32) -> Transform {
-        let mir = self.mirrored();
-        let from = Mat3::from_cols(mir.blade, mir.edge, mir.flat);
+        let from = Mat3::from_cols(self.blade, self.edge, self.flat);
         // Target: blade -> -Z, edge -> -Y, flat -> (-Z) x (-Y) = -X.
         let to = Mat3::from_cols(Vec3::NEG_Z, Vec3::NEG_Y, Vec3::NEG_X);
         let rot = Quat::from_mat3(&(to * from.transpose())).normalize();
         Transform {
-            translation: -(rot * (mir.center * unit)),
+            translation: -(rot * (self.center * unit)),
             rotation: rot,
             scale: Vec3::splat(unit),
         }

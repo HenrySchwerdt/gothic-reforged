@@ -7,6 +7,7 @@ license.workspace = true
 description = "Adapters between the VR physics layer (avian3d) and the game's gothic-physics / gothic-runtime"
 
 [dependencies]
+gothic-coords = { path = "../coords" }
 bevy = { workspace = true, features = ["std", "async_executor", "bevy_log"] }
 avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "default-collider", "xpbd_joints", "parallel", "debug-plugin"] }
 glam = { version = "0.33", features = ["serde"] }
@@ -16,9 +17,11 @@ gothic-sim = { path = "../sim" }
 gothic-vr = { path = "../vr", default-features = false }
 gothic-vr-physics = { path = "../vr-physics" }
 gothic-vr-melee = { path = "../vr-melee" }
+gothic-vr-ui = { path = "../vr-ui" }
+gothic-ui = { path = "../ui" }
+gothic-gameplay = { path = "../gameplay" }
 
 [dev-dependencies]
-gothic-gameplay = { path = "../gameplay" }
 gothic-formats = { path = "../formats" }
 gothic-animation = { path = "../animation" }
 anyhow = { workspace = true }

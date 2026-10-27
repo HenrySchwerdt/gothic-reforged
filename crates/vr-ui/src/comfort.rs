@@ -15,8 +15,9 @@ pub const MIN_TEXT_DMM: f32 = 14.0;
 pub const BODY_TEXT_DMM: f32 = 20.0;
 /// Smallest pointer / touch target, dmm.
 pub const MIN_TARGET_DMM: f32 = 22.0;
-/// Panels the hands touch directly (inventory, quick slots), m from the eyes.
-pub const TOUCH_DISTANCE: RangeInclusive<f32> = 0.45..=0.7;
+/// Panels the hands touch directly (inventory, quick slots), m from the eyes: Meta puts direct
+/// touch at 42-46 cm and warns against the 0.5-0.8 m middle distance.
+pub const TOUCH_DISTANCE: RangeInclusive<f32> = 0.40..=0.46;
 /// Panels used with the laser (dialog options, subtitles), m from the eyes.
 pub const POINT_DISTANCE: RangeInclusive<f32> = 0.9..=2.5;
 /// Comfortable head turn left/right for content, radians.

@@ -35,6 +35,7 @@ pub fn run_callback(host: &mut dyn ScriptHost, npc: EntityId, cb: Callback) -> b
     attack::run_local_callback(host, npc, cb)
         || react::run_callback(host, npc, cb)
         || misc::run_callback(host, npc, cb)
+        || crate::routine::run_callback(host, npc, cb)
 }
 
 #[cfg(test)]
