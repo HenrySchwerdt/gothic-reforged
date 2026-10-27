@@ -124,8 +124,9 @@ fn a_power_cast_costs_the_maximum_mana() {
         mana0 - 30,
         "min 15 at the load, 15 more for the charge"
     );
-    // The damage rule of the DLL only asks whether any mana was used (`ManaUsed == 0` doubles
-    // the attribute bonus), so a power cast is not stronger by itself.
+    // The power cast flies as a path-style Missile projectile, and AssessHit (Script_Game.dll
+    // S:2b580, the check at S:2c0f5, COMBAT_AI_RULES 2.5 [V]) doubles a spell projectile whose
+    // PathStyle == Missile (3); the mana paid only matters when it is 0 (S:2c096 attribute bonus).
     let power_loss = hp0 - sim.actor(orc).hp;
     let (mut plain, hero, orc) = world(1);
     plain.equip(hero, "It_Spell_Fireball").expect("rune");
@@ -133,7 +134,7 @@ fn a_power_cast_costs_the_maximum_mana() {
     settle(&mut plain, 600);
     plain.player_cast(Some(orc), false).expect("cast");
     plain.run_until(900, |s| s.actor(orc).hp < hp0);
-    assert_eq!(hp0 - plain.actor(orc).hp, power_loss);
+    assert_eq!(hp0 - plain.actor(orc).hp, power_loss / 2);
 }
 
 #[test]

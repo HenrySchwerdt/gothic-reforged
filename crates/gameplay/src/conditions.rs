@@ -21,6 +21,11 @@ pub struct Assumptions {
     /// Engine/script-triggered reactions whose trigger source does not exist yet (crime,
     /// guard warnings, pickpocket, heal, animal, friend checks, delivery proximity).
     pub triggered_reactions: bool,
+    /// `EnclaveFriend` / `PoliticalFriend` lines need fame >= 75 (`Execute` refuses with
+    /// `IS_Running_NoEnclaveReputation` / `NoPoliticalReputation`, GAME_RULES 1.6). The NPC's
+    /// enclave / alignment come from its template, which is not decoded, so any enclave
+    /// (alignment) with fame >= 75 counts [I].
+    pub friend_reputation_gate: bool,
 }
 
 impl Assumptions {
@@ -29,6 +34,7 @@ impl Assumptions {
         unknown_npc_inventory: false,
         default_npc_flags: false,
         triggered_reactions: false,
+        friend_reputation_gate: true,
     };
     /// Interactive play without a world: dialog conditions pass, reactions never fire, and
     /// teach/trade/party flags are off until an info script enables them.
@@ -37,6 +43,7 @@ impl Assumptions {
         unknown_npc_inventory: true,
         default_npc_flags: false,
         triggered_reactions: false,
+        friend_reputation_gate: true,
     };
     /// Everything the world might provide is possible (linter, concrete playthrough).
     pub const OPTIMISTIC: Self = Self {
@@ -44,6 +51,7 @@ impl Assumptions {
         unknown_npc_inventory: true,
         default_npc_flags: true,
         triggered_reactions: true,
+        friend_reputation_gate: false,
     };
 }
 
@@ -197,6 +205,27 @@ fn flag(opt: Option<bool>, assume: Assumptions, what: &'static str) -> Result<()
     }
 }
 
+/// `IsFriend` threshold of the enclave / political fame (GAME_RULES constants).
+const FRIEND_FAME: i32 = 75;
+
+fn friend(
+    st: &GameState,
+    assume: Assumptions,
+    prefix: &str,
+    what: &'static str,
+) -> Result<(), Unmet> {
+    if !assume.friend_reputation_gate
+        || st
+            .fame
+            .iter()
+            .any(|(k, v)| k.starts_with(prefix) && *v >= FRIEND_FAME)
+    {
+        Ok(())
+    } else {
+        Err(Unmet::Flag(what))
+    }
+}
+
 fn reaction(assume: Assumptions, what: &'static str) -> Result<(), Unmet> {
     if assume.triggered_reactions {
         Ok(())
@@ -340,7 +369,9 @@ fn predicate(
         // Crime(0): guard/crime flag [I] - a reaction without trigger.
         Crime => reaction(assume, "Crime")?,
         // No predicate beyond the common checks.
-        General | EnclaveFriend | PoliticalFriend | NothingToSay | End | Back | StepBack => {}
+        EnclaveFriend => friend(st, assume, "enc:", "EnclaveFriend (fame >= 75)")?,
+        PoliticalFriend => friend(st, assume, "pol:", "PoliticalFriend (fame >= 75)")?,
+        General | NothingToSay | End | Back | StepBack => {}
         // Status-only types were handled by the quest gate above.
         Running | DoCancel | Success | Won | Failed | Cancelled | Lost | Ready => {}
         Unknown(_) => {}

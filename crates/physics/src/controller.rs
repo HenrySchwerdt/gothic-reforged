@@ -170,9 +170,15 @@ pub struct CharacterController {
     dive_offset: f32,
     dive_input: f32,
     floor_y: f32,
+    /// Seconds in the slide mode so far (`PSRoutine::GetStateTime` of `PS_Slide`).
+    pub slide_time: f32,
     /// The character is steered by the player (slides, wades by step height).
     pub player_controlled: bool,
 }
+
+/// `OnSlide` (S:af0e0): the jump message jumps out of the slide once the `PS_Slide` state is
+/// older than this (float at S:0x101074e8 = 0.6 s) [V].
+pub const SLIDE_JUMP_DELAY: f32 = 0.6;
 
 impl CharacterController {
     pub fn new(config: MovementProfile, position: Vec3) -> Self {
@@ -198,6 +204,7 @@ impl CharacterController {
             dive_offset: 0.0,
             dive_input: 0.0,
             floor_y: position.y,
+            slide_time: 0.0,
             player_controlled: true,
         }
     }
@@ -205,6 +212,11 @@ impl CharacterController {
     /// Current original movement mode (`gECharMovementMode`).
     pub fn movement_mode(&self) -> MovementMode {
         self.machine.mode()
+    }
+
+    /// How far below the swim line the diving character is, cm.
+    pub fn dive_depth(&self) -> f32 {
+        self.dive_offset
     }
 
     /// Mode changes since the last call, for `OnMovementModeChanged`.
@@ -410,7 +422,9 @@ impl CharacterController {
         if let Some(w) = wished {
             self.machine.request_gait(w, &self.config, &ctx);
         }
-        let jump = jump && (self.machine.mode().can_jump() || self.mode == MoveMode::Ground);
+        let jump = jump
+            && (self.machine.mode().can_jump()
+                || matches!(self.mode, MoveMode::Ground | MoveMode::Slide));
         let start = self.position;
         let travel = wish.length() * dt + self.vertical_speed.abs().max(self.slide_speed) * dt;
         let steps = ((travel / (self.config.radius * 0.4)).ceil() as usize).clamp(1, 12);
@@ -641,7 +655,17 @@ impl CharacterController {
                 }
                 self.ground_step(world, dir, want, dt, report);
             }
-            MoveMode::Slide => self.slide_step(world, dt, report),
+            MoveMode::Slide => {
+                self.slide_time += dt;
+                // `OnSlide` -> `PS_Slide_Jump` -> `_AI_Jump` (S:af1d0): movement mode 6 and the
+                // normal jump velocity, after `SLIDE_JUMP_DELAY` seconds of sliding.
+                if jump && self.slide_time > SLIDE_JUMP_DELAY {
+                    gothic_portcov::hit!("on_slide_jump");
+                    self.take_off(report);
+                    return self.air_step(world, dir, want, dt, report);
+                }
+                self.slide_step(world, dt, report)
+            }
             MoveMode::Swim => self.swim_step(world, dir, want, dt),
             MoveMode::Jump | MoveMode::Fall => self.air_step(world, dir, want, dt, report),
         }
@@ -816,6 +840,7 @@ impl CharacterController {
 
     fn begin_slide(&mut self, g: Ground, report: &mut StepReport) {
         self.mode = MoveMode::Slide;
+        self.slide_time = 0.0;
         self.ground_normal = g.normal;
         self.slide_speed = self.speed;
         report.started_sliding = true;
@@ -840,7 +865,9 @@ impl CharacterController {
         let down = Vec3::new(g.normal.x, 0.0, g.normal.z).normalize_or_zero();
         let k = 1.0 - (-dt / c.slide_inertia.max(1.0e-3)).exp();
         self.slide_speed += (c.slide_speed_max - self.slide_speed) * k;
-        self.velocity = down * self.slide_speed;
+        // The slide speed is the speed along the slope: its horizontal part is the cosine of the
+        // ground angle (the feet follow the ground's height at the vertical rest of it).
+        self.velocity = down * self.slide_speed * g.angle_deg().to_radians().cos().max(0.2);
         let mut p = start + self.velocity * dt;
         self.depenetrate(world, &mut p, c.step_height, true);
         self.position = Vec3::new(p.x, self.position.y, p.z);
@@ -937,6 +964,36 @@ impl CharacterController {
 
     /// Move by an external displacement (character pushing) respecting walls; stays on the
     /// ground when it was on the ground.
+    /// Diagnostics for a character that does not move: state, ground under it and how far a
+    /// copy gets in eight directions in one second of full input.
+    pub fn debug_probe(&self, world: &CollisionWorld) -> String {
+        let g = self.sense(
+            world,
+            self.position,
+            self.config.step_height,
+            self.config.step_height + 1.0,
+        );
+        let mut out = format!(
+            "mode {:?} grounded {} speed {:.0} slope_scale {:.2} ground {:?} ",
+            self.mode,
+            self.grounded,
+            self.speed,
+            self.slope_scale,
+            g.map(|g| (g.y, g.angle_deg()))
+        );
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::TAU / 8.0;
+            let mut c = self.clone();
+            let wish = Vec3::new(a.cos(), 0.0, a.sin());
+            for _ in 0..30 {
+                c.step(world, wish, false, 1.0 / 30.0);
+            }
+            let d = (c.position - self.position).with_y(0.0).length();
+            out.push_str(&format!("[{k}:{d:.0}] "));
+        }
+        out
+    }
+
     pub fn nudge(&mut self, world: &CollisionWorld, delta: Vec3) {
         let start = self.position;
         let mut p = start + Vec3::new(delta.x, 0.0, delta.z);
@@ -1153,6 +1210,27 @@ mod tests {
             c.mode
         );
         assert!(c.position.x < 100.0, "slid down, x={}", c.position.x);
+    }
+
+    #[test]
+    fn jump_out_of_a_slide_needs_the_slide_delay() {
+        // `OnSlide` (S:af0e0): the jump message works once the slide state is older than 0.6 s.
+        let mut w = CollisionWorld::new();
+        w.insert_chunk(1, ramp(55.0, 3000.0));
+        let mut c = controller(Vec3::new(2000.0, 2900.0, 0.0));
+        while c.mode != MoveMode::Slide {
+            c.step(&w, Vec3::ZERO, false, DT);
+            assert!(c.position.y > 100.0, "never slid");
+        }
+        let t0 = c.slide_time;
+        // too early: nothing happens
+        let r = c.step(&w, Vec3::ZERO, true, DT);
+        assert!(!r.took_off && c.slide_time < SLIDE_JUMP_DELAY, "t {t0}");
+        run(&mut c, &w, Vec3::ZERO, 0.7);
+        assert_eq!(c.mode, MoveMode::Slide);
+        let r = c.step(&w, Vec3::ZERO, true, DT);
+        assert!(r.took_off, "jumped out of the slide");
+        assert!(c.vertical_speed > 500.0, "v {}", c.vertical_speed);
     }
 
     #[test]

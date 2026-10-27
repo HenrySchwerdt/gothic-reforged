@@ -1,5 +1,5 @@
 //! Core events -> presentation: dialog UI, voices, toasts, hit reactions, death.
-use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall, queue_swing};
+use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall};
 use super::{HeroActor, Mode, NpcActor, PlayState, Roster};
 use crate::walk::Player;
 use bevy::prelude::*;
@@ -342,7 +342,10 @@ fn combat_events(
                     log.hits_on_npcs += 1;
                     log.first_hit_at.get_or_insert(time.elapsed_secs());
                 }
+                // The hero's reaction is an overlay; the NPCs' reactions are script instructions
+                // the simulation hands to `npc_moves` (the hit result picks the stumble clip).
                 if (*damage > 0 || result.is_parry())
+                    && *victim == hero_id
                     && let Some(en) = entity_of(*victim)
                     && let Ok((mut q, _, _)) = anims.get_mut(en)
                 {
@@ -366,21 +369,8 @@ fn combat_events(
                     };
                     super::anim::queue_hit_reaction(&mut q, *result, from_left);
                 }
-                if *attacker != hero_id
-                    && let Some(en) = entity_of(*attacker)
-                    && let Ok((mut q, _, _)) = anims.get_mut(en)
-                {
-                    queue_swing(&mut q);
-                }
             }
-            EventKind::Whiff { attacker, .. } => {
-                if *attacker != hero_id
-                    && let Some(en) = entity_of(*attacker)
-                    && let Ok((mut q, _, _)) = anims.get_mut(en)
-                {
-                    queue_swing(&mut q);
-                }
-            }
+            EventKind::Whiff { .. } => {}
             EventKind::AttackStarted { target, .. } => {
                 if *target == hero_id && !log.fight {
                     log.fight = true;

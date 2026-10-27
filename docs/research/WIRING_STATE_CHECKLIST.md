@@ -1,6 +1,6 @@
 # Per-state behaviour checklist: original vs. our running game
 
-Static audit (2026-10-21): part A = hero states PS_Normal .. PS_Interact*, PS_HUD*, locomotion, camera, focus; part B = PS_Melee*, PS_Ranged*, PS_Magic*, lock-on, hit reactions. Companion of `WIRING_COVERAGE.md` (runtime call counts) and `WIRING_GLUE_SCAN.md`. Counts: part A YES 44 / PARTIAL 33 / NO 33; part B YES 45 / PARTIAL 38 / NO 22. Line numbers drift while other agents edit `hero.rs`, `ranged.rs`, `cam.rs`.
+Static audit (2026-10-21): part A = hero states PS_Normal .. PS_Interact*, PS_HUD*, locomotion, camera, focus; part B = PS_Melee*, PS_Ranged*, PS_Magic*, lock-on, hit reactions. Companion of `WIRING_COVERAGE.md` (runtime call counts) and `WIRING_GLUE_SCAN.md`. Counts: part A YES 56 / PARTIAL 32 / NO 22 (movement rows updated 2026-10-21, branch night/p4-move); part B YES 45 / PARTIAL 38 / NO 22. Line numbers drift while other agents edit `hero.rs`, `ranged.rs`, `cam.rs`.
 
 # Wiring audit: hero states PS_Normal .. PS_Interact*, PS_HUD*, engine locomotion / camera / input
 
@@ -14,8 +14,8 @@ Path prefixes: `P/` = apps/game/src/play/, `W/` = apps/game/src/walk.rs, `PH/` =
 
 * Body motion is NOT run by the original script states. Each frame `P/hero.rs::input` builds a camera-relative wish from the movement keys (hero.rs:354-361), picks a gait (hero.rs:363-370) and `W/player_motion` calls the ported `CharacterController::step_command` (walk.rs:1363). Heading, turn rate, acceleration, slopes, slide, jump, fall, swim are the ported engine (`PH/controller.rs`, `PH/movement.rs`).
 * Script states (`PS_*`) run inside the sim via `Sim::drive_player` (SIM/script_player.rs, `drive_player`) and only for the commands the host sends: `Confirm`, `UseInteractObject`, `PickUp`, `ToggleSneak`, `Jump`, `Dodge`, `MeleeMove`, `Parade`, `UseItem`, bow and magic commands (RT/core.rs:760-826). Only the DATA effects of those states (inventory, stamina, events, busy time) reach the screen; their physical effects (walk to the object, stop, align, tool props, fall, swim) are not reproduced.
-* `HeroTransform` is the only physics -> sim channel (hero.rs:1064, RT/core.rs:752): position and yaw. The physics `StepReport` (landed / took_off / started_sliding) is **discarded** (walk.rs:1363 ignores the return value) and `drain_mode_changes()` has no non-test caller. Likewise `Sim::land` (SIM/sim.rs:1510) and `down::land_from_fall` (S/down.rs:327) are only called from tests. This is the single root cause of the missing fall damage, `ZS_Fall/Land/HeavyLand/Slide`, `PS_Swim`, `ZS_DiveIn` and the rest of `OnMovementModeChanged` (S:adbf0).
-* `second_tick` regenerates with a default `TickEnv` (SIM/sim.rs:550-556), so the sprint / interaction / jump variants of `stamina_tick` (SIM/vitals.rs:83, S:b0520) are never selected: stamina always regenerates +10.
+* `HeroTransform` carries position and yaw to the sim. Since 2026-10-21 (branch night/p4-move) the mode machine is also wired: `P/move_states.rs` forwards every `ModeChange` (`drain_mode_changes`) and the landing of `StepReport` as `Command::HeroModeChanged` -> `Sim::movement_mode_changed` (SIM/moves.rs, port of `OnMovementModeChanged` S:adbf0), which applies fall damage, `Perk_Acrobatic`, `PS_Swim` and the ani states, and answers `Event::ModeChanged` (heavy landing / dive-in clips). The hero's body state (`Command::HeroMovement`) feeds the stamina tick (`IsSprinting`, jumping).
+* `second_tick` regenerates with the hero's body state (`Sim::hero_move`): the sprint / jump variants of `stamina_tick` (SIM/vitals.rs:83, S:b0520) are selected; the interaction variant (-1) is still never passed.
 
 ---------------------------------------------------------------------------------------------------
 
@@ -30,20 +30,20 @@ Original `PS_Normal` (S:80cc0), on entry: AIMode routine; player may swim (`Trea
 | Acceleration 1000 cm/s^2, instant stop without wish (`ProcessControledTranslation`, G:e2410) | YES | PH/controller.rs:728-745 `ground_step` |
 | Turn model: heading follows the wish with `TurnSpeedMax` 200 deg/s (x0.5 sprinting) (`CalcNewRotationAngleAndVelocity`, G:e49f0) | YES | PH/controller.rs:531-544, PH/movement.rs:547 `step_turn` |
 | Walk modifier: held = walk gait; the original latches walk only when the key goes down while moving (`OnPlayerWalk`, S:638b0 tests `IsStanding` / `IsBraking`) | PARTIAL | held / caps-toggle approximation P/controls.rs:166-171, hero.rs:363-369; `Order::Walk` is dropped (hero.rs:600). Port: `PlayerInput::route` Walk branch (crates/input/src/player.rs:239) |
-| Sprint gait (mode 5, 600 cm/s, `Move_Sprint_*` clips exist, stamina -10 per tick, -5 with `Perk_Sprinter`, `IsSprinting` restored after a pick-up) | NO | hero.rs:363-369 only ever picks Sneak / Walk / Run, so `GaitHint::Sprint` (hero.rs:1055) is unreachable; `is_sprinting` stub SIM/script_host.rs:690; drain not applied (SIM/sim.rs:552). What starts a sprint in the original is [U] (wished-mode field +0xac of the control set, `SetWishedMovementMode` G:de9e0) |
+| Sprint gait (mode 5, 600 cm/s, `Move_Sprint_*` clips exist, stamina -10 per tick, -5 with `Perk_Sprinter`, `IsSprinting` restored after a pick-up) | PARTIAL | everything below the trigger is wired: the mode machine and `step_command` run `Gait::Sprint` (600 cm/s), the locomotion mixer plays `Move_Sprint_*`, `Sim::hero_move` makes `IsSprinting` true for the stamina tick (`stamina_tick`, S:b0520: -10 / -5 Sprinter) and `Command::HeroMovement` carries it (P/move_states.rs). What *starts* a sprint for the player is [U]: `OnPlayerWalk` (S:638b0) only latches the walk gait, `gCCharacterControl_PS` has no sprint rule, NPCs sprint through `ZS_Attack_Sprint`; the play layer therefore never requests it |
 | Strafe / back-pedal clips (`Move_*_Left/Right/Back`) from the filtered local velocity (`CalcAniVelocity`, G:e1cd0) | YES | hero.rs:998-1010 `local_ani_velocity`; crates/animation/src/locomotion.rs mixer |
 | Turn-in-place clips `Move_Turn90` | PARTIAL | only when a dialog / combat target gives a turn error (hero.rs:1011-1025, 1058-1062); free standing turns have none |
 | Jump key: `PS_Normal_Jump` pays the jump stamina, `_AI_Jump`, back to loop | YES | hero.rs:620-624 -> `Command::Jump` -> `Sim::player_jump` -> `ps_jump` (S/player/normal.rs:147) + `start_jump`; physics take-off PH/controller.rs:691. `CanJump` (movement-mode test) is approximated by `grounded` (hero.rs:421) |
 | Jump arc: 600 cm/s up, ends at vy < 0.5, air steering (`JumpSteerScaleFactor`) | YES | PH/controller.rs:691-698, `air_step` |
-| Jump out of a slide (`OnSlide` -> `PS_Slide_Jump`, `_AI_Jump`) | NO | `slide_step` has no jump input (PH/controller.rs:821-848); `PS_Slide_Jump` / `OnSlide` have no host caller |
+| Jump out of a slide (`OnSlide` -> `PS_Slide_Jump`, `_AI_Jump`) | YES | `OnSlide` (S:af0e0): jump message after 0.6 s of sliding (float at S:0x101074e8) -> `_AI_Jump` (mode 6, 600 cm/s): `CharacterController::slide_time` / `SLIDE_JUMP_DELAY`, PH/controller.rs `sub_step`; QA `p4_slide` (ignored at 0.45 s, jumps after 0.8 s) |
 | Walk off a ledge higher than StepHeight -> fall mode, fall steering | YES | PH/controller.rs:752-754 `start_fall`, `air_step` |
-| `ZS_Fall` on entering fall mode (`OnMovementModeChanged`: force pose, fall animation) | PARTIAL | `Fall/Loop` clip plays by velocity (locomotion.rs:248, 367) and camera goes to Fall mode (P/cam.rs:93); the script state / callback never runs |
-| Landing clips `Fall_End` / `Fall_Recover`; heavy landing `Fall_Hit` (`ZS_Land`, `ZS_HeavyLand`) | PARTIAL | `MoveKind::Land` plays End/Recover (locomotion.rs:255-262, 368); `Fall_Hit` (exists in .local/hero-motions.txt) never played |
-| Fall damage `floor(160*(t-0.9)^2)`, halved by `Perk_Acrobatic` (+ `ZS_Acrobat`), lethal -> `ZS_RagDollDead`, immune: ghost / god mode / bloodfly | NO | ported three times, called nowhere: `down::land_from_fall` (S/down.rs:327), `Sim::land` (SIM/sim.rs:1510), `physics::fall_damage`; walk.rs:1363 drops `StepReport.landed` (PHYSICS_MOVEMENT.md: "Not wired: fall damage") |
-| `Perk_Acrobatic` learned by falling into water (`GO_Learned`) | NO | needs `OnMovementModeChanged` |
+| `ZS_Fall` on entering fall mode (`OnMovementModeChanged`: force pose, fall animation) | YES | every mode change of the machine reaches `Sim::movement_mode_changed` (SIM/moves.rs, `Command::HeroModeChanged`, P/move_states.rs `after_motion`): `ZS_Fall` -> sim ani state `Fall`; the `Fall/Loop` clip plays by velocity and the camera goes to Fall mode (P/cam.rs:93) |
+| Landing clips `Fall_End` / `Fall_Recover`; heavy landing `Fall_Hit` (`ZS_Land`, `ZS_HeavyLand`) | YES | `MoveKind::Land` (End / Recover) for free landings; a landing that cost hit points plays `Fall_Hit` (`MoveKind::HeavyLand`, `ZS_HeavyLand` S:ae9b0) and the hero cannot move until the clip ends (P/move_states.rs `before_motion`); QA `p4_fall`: 250 cm = `Fall_End`, 1104 / 1500 cm = `Fall_Hit`, 0 cm walked while it plays |
+| Fall damage `floor(160*(t-0.9)^2)`, halved by `Perk_Acrobatic` (+ `ZS_Acrobat`), lethal -> `ZS_RagDollDead`, immune: ghost / god mode / bloodfly | YES | `Sim::movement_mode_changed` (SIM/moves.rs, port of `OnMovementModeChanged` S:adbf0) -> `Sim::land` -> `vitals::fall_damage`; fall time = `Landing::fall_time` (restarts at the jump apex). A landing on ground too steep to stand goes to `ZS_Slide` with no damage (S:adbf0 `LAB_100ae3d9`). QA `p4_fall`: lost hp == formula for 0.70 / 1.50 / 1.76 s. Not done: the `ZS_Acrobat` clip (none in `hero-motions.txt`), ghost status 0x80 immunity (hero never has it) |
+| `Perk_Acrobatic` learned by falling into water (`GO_Learned`) | YES | falling more than 7.45 s (double at S:0x10107658) into deep water teaches it; the `GO_Learned` message is queued (`script.messages`, which the HUD does not show yet); QA `p4_swim` (11500 cm drop) |
 | Slope speed scale, steep limit 49 deg, slide start (`CanWalkOnFloor`, `CanSlide`, `CalcGroundSlopeTransScale`) | YES | PH/controller.rs:733-744, 764-771, 813-819 |
 | Slide mode physics (800 cm/s, inertia 0.4) | YES | PH/controller.rs:821-848 |
-| Slide animation: `Slide_Begin` / `Slide_End` clips, `ZS_Slide`, `ZS_Slide_Loop` | NO | clips exist (.local/hero-motions.txt); `MoveKind` has no Slide (locomotion.rs:116-121); hero skates in the stand / fall pose |
+| Slide animation: `Slide_Begin` / `Slide_End` clips, `ZS_Slide`, `ZS_Slide_Loop` | YES | `MoveKind::Slide` / `SlideEnd` (ANIM/locomotion.rs); QA `p4_slide` sees both clips. The slide moves along the slope at `SlideSpeedMax` (horizontal part x cos(angle)) |
 | Step height 65, `PutToGround` foot filter | YES | PH/controller.rs:750-763, `ground_follow_factor` PH/movement.rs:631 |
 | Moving platforms (`ContributeFloorMovements`), stuck check (`CheckCharacterGotStuck`) | NO | PHYSICS_MOVEMENT.md section 6 open items |
 | Hero vs NPC capsule separation (`CanBePushedWhileIdle` false) | YES | P/nav.rs:80-99 (`crowd::separate`) |
@@ -79,7 +79,7 @@ Original: the duck key press enqueues the sneak message (humans); the state togg
 | Sneak gait speed, `Move_Sneak` / Sneak pose clips | YES | hero.rs:352-364 (`Gait::Sneak`), hero.rs:1050 `input.sneak`; locomotion pose "Sneak" (locomotion.rs:383) |
 | Perception: sneaking player hidden from the poll below 1000, `AssessPlayerSneaking` | YES | SIM/perception.rs:69 reads `ani_state == Sneak` |
 | Sneak while a weapon is drawn (melee / bow / magic variants, crossbow sneak loop) | PARTIAL | same toggle path (`back_to_loop` picks the weapon-mode loop); clip coverage of drawn sneak poses unverified; `PS_Ranged_CrossBowSneak_Loop` ported (S/player/ranged.rs:267) |
-| Sneak ends on entering water / interaction | NO | no hook (needs mode-change events) |
+| Sneak ends on entering water / interaction | YES | `PS_Swim` sets the swim ani state (leaves `Sneak`), `ZS_Fall` the fall state; the stand state returns when the water is left (QA `p4_swim`) |
 
 ---------------------------------------------------------------------------------------------------
 
@@ -89,14 +89,14 @@ Original: entering swim mode (`OnMovementModeChanged`) cuts the current task and
 
 | behaviour (original) | our game | evidence / ported fn to use |
 |---|---|---|
-| Swim mode deeper than `SwimDepth`, surface following, dive offset | PARTIAL | physics PH/controller.rs:653-689 `swim_step`; wired with the SEA level only (walk.rs:1350-1361, comment "lakes and rivers have no recorded level"); dive input never sent (`MoveCommand.dive` / `vertical` stay default, walk.rs:1356-1362) so no diving |
+| Swim mode deeper than `SwimDepth`, surface following, dive offset | YES | physics PH/controller.rs `swim_step`; the water level is the highest water-mesh surface (lakes, rivers: `gCWaterZone_PS` carriers, tile triangles in `WaterSurfaces`, W/walk.rs) under the hero, else the sea level; diving with the `Up` / `Down` session keys (jump / duck, INI names `Up` / `Down`) while in the water (P/move_states.rs). Breath / drowning: [U] (no rule found in the script DLL) |
 | Swim / dive camera modes | YES | P/cam.rs:90-92 from `ctrl.machine.mode()` |
-| Swim animation (`Hero_Swim_*_Move_Walk/Run/Stand`, `Ambient_Loop` exist) | NO | locomotion `MoveKind` has no swim; hero plays stand / walk |
-| `PS_Swim`: items away, torch deleted, focus cleared, effects stopped | NO | `PsSwim` is only a name (S/routine/state.rs:129); no definition, no trigger |
-| `ZS_DiveIn`: splash effect + dive-in clip | NO | name only (S/routine/state.rs:200) |
-| AniState Swim / Dive on the sim actor (NPCs ignore swimmers) | NO | read by SIM/perception.rs:65 and SIM/combat.rs:367 but never set for the hero from the physics mode |
+| Swim animation (`Hero_Swim_*_Move_Walk/Run/Stand`, `Ambient_Loop` exist) | YES | `BodyPose::Swim` / `Wade` select the `Hero_Swim_*` / `Hero_Wade_*` clips (ANIM/locomotion.rs `resolve_motion`); QA `p4_swim` sees `Hero_Wade` while wading and `Hero_Swim_..._Move_Walk` while swimming |
+| `PS_Swim`: items away, torch deleted, focus cleared, effects stopped | PARTIAL | S:af700: swim ani state (sim), `HoldStacks(-1,-1)` = weapon put away (`SetDrawn(false)`); QA `p4_swim` (drawn before, holstered in the water). Not done: torch deletion, focus clear, effect stop |
+| `ZS_DiveIn`: splash effect + dive-in clip | PARTIAL | the dive-in clip (`Hero_Swim_..._Fall_Hit`, `MoveKind::DiveIn`) plays after a fall into water; no `eff_ani_dropinwater_01` splash effect |
+| AniState Swim / Dive on the sim actor (NPCs ignore swimmers) | YES | `Sim::movement_mode_changed` sets `Swim` on `PS_Swim` / `ZS_DiveIn`, back to `Stand` on leaving the water (`Dive` is not set: the script has no diving state) |
 | Wading: water footsteps, shallow-water effects, `GetWaterDepth` | NO | no floor-material feed (P/audio.rs:128 hard-codes `earth`) |
-| Dive-in after a fall (damage replaced, Acrobatic) | NO | see section 1 |
+| Dive-in after a fall (damage replaced, Acrobatic) | YES | no damage for a fall that ends in deep water, `ZS_DiveIn` task; QA `p4_swim` (1500 cm: hp unchanged) |
 
 ---------------------------------------------------------------------------------------------------
 
@@ -124,7 +124,7 @@ Original `PS_Interact`: per use type check requirements and print refusals (`HUD
 |---|---|---|
 | Requirement checks + refusal messages | YES | `check` / `ps_interact` (S/player/interact.rs:372, 434); toasts P/interact.rs (`Refused` arm, `refusal_text`). Missing: `HUD_NotDuringBattle` |
 | Only objects in front and within range can be used | YES | `find_focus` hero.rs:852-938 (see section 8) |
-| Stop movement, wait until still, then use | PARTIAL | the wish is NOT zeroed for timed uses: hero.rs:336 blocks only when a window is open; the hero can keep walking during door / chest / ore animations; held poses end on any move key (hero.rs:373-380, 608-614) |
+| Stop movement, wait until still, then use | YES | timed uses (a `Posed` hero that is not in a held seat / bed pose) zero the wish and the jump (P/move_states.rs `before_motion`); held poses still end on a movement key. The 500 ms wait for a moving hero is not modelled (the controller stops at once) |
 | `_AI_Goto_Ext`: walk to the object's interact point and align | NO | `ps_interact` emits no goto and the host never moves / rotates the hero to the point: the pose plays where he stands (nothing sets `ctrl.position` from an object; grep over apps/) |
 | Tool props in the hands (hammer, pickaxe, saw, drum sticks, shovel, scoop, stick / meat, sword on the anvil) | NO | `AiCommand::HoldInventoryStacks` is only 400 ms of busy time (SIM/script_player.rs, `drive_player`); no mesh attached (only sword / arrow / bow mounts exist: hero.rs:1072-1119) |
 | Pose clips Begin -> Loop -> End for stations and seats | YES | P/pose.rs `build` / `pose_system`, chosen in P/interact.rs `pose_for` + `InteractStarted` |

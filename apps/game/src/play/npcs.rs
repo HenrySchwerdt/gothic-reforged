@@ -128,6 +128,7 @@ pub fn select_roster(file: &NpcFile, looks: &Looks, flags: &super::layers::Layer
             visual: None,
             actor: None,
             failed: false,
+            prefetch_at: None,
         });
     }
     separate(&mut r.cands, &r.docs);
@@ -221,7 +222,29 @@ pub fn register(app: &mut App) {
             .chain()
             .after(update_camera),
     );
+    super::npc_moves::register(app);
+    app.add_systems(Update, los_service);
 }
+
+/// Answers the line-of-sight questions the simulation asked (`eCEntity::IsFreeLOS`): a ray from
+/// eye to eye against the level geometry.
+fn los_service(core: Res<CoreRes>, collision: Res<Collision>) {
+    /// Height of the eyes above the feet in cm [I: the captured NPC capsule is 129 + 2 x 35].
+    const EYE: f32 = 150.0;
+    let world = &core.0.sim.world;
+    for (from, to) in world.take_los_queries() {
+        let a = Vec3::new(from.x, from.y + EYE, from.z);
+        let b = Vec3::new(to.x, to.y + EYE, to.z);
+        let d = b - a;
+        let len = d.length();
+        let free = len < 1.0 || collision.0.raycast(a, d / len, len).is_none();
+        world.answer_los(from, to, free);
+    }
+}
+
+/// Turn rate of a character in radians per second: `TurnSpeedMax` 200 degrees
+/// (`gothic_physics::MovementProfile::human_npc`).
+const NPC_TURN_RATE: f32 = 200.0 * std::f32::consts::PI / 180.0;
 
 /// Per-NPC presentation state.
 #[derive(Component)]
@@ -232,6 +255,8 @@ pub struct NpcMotion {
     pub ground_at: Vec2,
     pub velocity: Vec3,
     pub fallen: bool,
+    /// 0..1: the body stands side-on while a bow is aimed (see `sync_npcs`).
+    pub aim: f32,
 }
 
 /// A whole-body creature: the skeleton resource is the mesh and no body parts are listed.
@@ -405,6 +430,7 @@ fn scan_candidates(
     player: Res<crate::walk::Player>,
     core: Res<CoreRes>,
     state: Res<super::PlayState>,
+    library: Res<ActorLibrary>,
     mut events: MessageReader<gothic_runtime::CoreEvent>,
     mut commands: Commands,
 ) {
@@ -482,6 +508,18 @@ fn scan_candidates(
     want.sort_by(|a, b| a.0.total_cmp(&b.0));
     roster.queue = want.into_iter().map(|w| w.1).collect();
     roster.total = roster.spawned + roster.queue.len() + super::npc_stream::in_flight(&roster);
+    // Hand the nearest bodies' parts to the background decoder (actor parse + texture decode)
+    // so the spawn on the main thread finds them ready.
+    let ahead: Vec<u32> = roster.queue.iter().take(24).copied().collect();
+    for i in ahead {
+        if roster.cands[i as usize].prefetch_at.is_some() {
+            continue;
+        }
+        roster.cands[i as usize].prefetch_at = Some(now);
+        if let Ok(spec) = assemble(&library, &roster.cands[i as usize]) {
+            library.prefetch_parts(&spec.parts);
+        }
+    }
     roster.cost.scan.add(t0.elapsed());
 }
 
@@ -511,6 +549,14 @@ fn spawn_npcs(
     let mut qi = 0;
     while qi < roster.queue.len() && budget > 0 && started.elapsed().as_micros() < 3_000 {
         let ci = roster.queue[qi] as usize;
+        // Wait for the background decoder (at most 1.5 s) instead of decoding on this thread.
+        if let Some(t) = roster.cands[ci].prefetch_at
+            && spawner.library.prefetch_pending() > 0
+            && now - t < 1.5
+        {
+            qi += 1;
+            continue;
+        }
         let home = roster.cands[ci].pos_now(&core);
         let cell = stream.settings.cell_at(home);
         if !collision.0.has_chunk(tile_chunk_id((cell.x, cell.z))) {
@@ -666,6 +712,7 @@ pub(super) fn bind_spawned(
             ground_at: Vec2::new(pos.x, pos.z),
             velocity: Vec3::ZERO,
             fallen: false,
+            aim: 0.0,
         },
     ));
     roster.cands[ci].visual = Some(entity);
@@ -695,7 +742,7 @@ pub(super) fn bind_spawned(
 
 /// Core actor state -> entity transform, locomotion input and fall poses.
 #[allow(clippy::too_many_arguments)]
-fn sync_npcs(
+pub(super) fn sync_npcs(
     time: Res<Time>,
     core: Res<CoreRes>,
     collision: Res<Collision>,
@@ -708,11 +755,11 @@ fn sync_npcs(
         &mut NpcMotion,
         Option<&mut LocomotionInput>,
         &mut Animator,
-        &CombatStance,
+        &mut CombatStance,
     )>,
 ) {
     let dt = time.delta_secs().clamp(1.0e-3, 0.1);
-    for (entity, npc, mut tf, mut m, input, mut animator, cs) in &mut q {
+    for (entity, npc, mut tf, mut m, input, mut animator, mut cs) in &mut q {
         let actor = core.0.sim.actor(npc.0);
         let down = matches!(actor.ai_mode, AiMode::Dead | AiMode::Down) || actor.hp <= 0;
         if down {
@@ -751,7 +798,8 @@ fn sync_npcs(
         m.last_cm = Vec3::new(p.x, m.ground_y, p.z);
         let target = sim_to_bevy_yaw(sim_yaw);
         let delta = angle_delta(m.yaw, target);
-        let step = (7.0 * dt).min(delta.abs()) * delta.signum();
+        // `TurnSpeedMax` of the NPC templates (200 degrees per second).
+        let step = (NPC_TURN_RATE * dt).min(delta.abs()) * delta.signum();
         m.yaw += step;
         // Write only on change so idle characters keep their transform un-flagged (transform
         // propagation, the joint writer and the renderer all skip unchanged entities).
@@ -759,7 +807,18 @@ fn sync_npcs(
         if tf.translation != translation {
             tf.translation = translation;
         }
-        let rotation = Quat::from_rotation_y(m.yaw);
+        // The aim clips leave the body side-on with the left arm along the entity's -X: while a
+        // ranged weapon aims the model turns a quarter so that arm points at the target, as the
+        // hero's does (`hero.rs`, eased in and out).
+        let aiming = actor.drawn
+            && actor.target.is_some()
+            && m.velocity.length() < 60.0
+            && matches!(
+                actor.equipment.weapon_mode(),
+                gothic_sim::item::WeaponMode::Ranged
+            );
+        m.aim += ((if aiming { 1.0 } else { 0.0 }) - m.aim) * (dt * 10.0).min(1.0);
+        let rotation = Quat::from_rotation_y(m.yaw + std::f32::consts::FRAC_PI_2 * m.aim);
         if tf.rotation != rotation {
             tf.rotation = rotation;
         }
@@ -767,21 +826,41 @@ fn sync_npcs(
             tf.scale = Vec3::splat(CM);
         }
         if let Some(mut input) = input {
-            let stance = if actor.drawn { cs.0 } else { Stance::Unarmed };
+            // The hands decide the stance: a fighter that switched to the bow stands as an
+            // archer (`_AI_SelectWeapon`); the stance of the spawn is the fallback for
+            // characters whose weapons the simulation does not hold as items (natural weapons).
+            let stance = if actor.drawn {
+                match super::hero::stance_of(&actor.equipment) {
+                    Stance::Unarmed => cs.0,
+                    held => {
+                        // The overlays of shots and casts follow what the hands hold now.
+                        if cs.0 != held {
+                            cs.0 = held;
+                        }
+                        held
+                    }
+                }
+            } else {
+                Stance::Unarmed
+            };
             let turn_error = if m.velocity.length() < 30.0 {
                 delta - step
             } else {
                 0.0
             };
+            // The guard of `_AI_Parade` stays up as a pose until the next instruction.
+            let parade = actor.ani_state == gothic_sim::types::AniState::Parade;
             if input.velocity != m.velocity
                 || !input.grounded
                 || input.stance != stance
                 || input.turn_error != turn_error
+                || input.parade != parade
             {
                 input.velocity = m.velocity;
                 input.grounded = true;
                 input.stance = stance;
                 input.turn_error = turn_error;
+                input.parade = parade;
             }
         }
     }

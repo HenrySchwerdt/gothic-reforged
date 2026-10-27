@@ -174,8 +174,8 @@ pub fn start_shoot(host: &mut dyn ScriptHost, npc: EntityId) -> bool {
     gothic_portcov::hit!("start_shoot");
     host.set_current_action(npc, Action::Shoot);
     let ammo = match host.slot_use_type(npc, Slot::LeftHand) {
-        UseType::CrossBow => "It_Bolt",
-        _ => "It_Arrow",
+        UseType::CrossBow => "Bolt",
+        _ => "Arrow",
     };
     host.has_items(npc, ammo, 1)
 }

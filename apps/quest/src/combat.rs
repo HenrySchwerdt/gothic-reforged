@@ -7,7 +7,7 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use gothic_sim::actor::Actor;
-use gothic_sim::combat::{Attack, resolve_hit};
+use gothic_sim::legacy_combat::{Attack, resolve_hit};
 use gothic_sim::config::SimConfig;
 use gothic_sim::data::{NpcFile, default_weapon};
 use gothic_sim::item::ItemDb;

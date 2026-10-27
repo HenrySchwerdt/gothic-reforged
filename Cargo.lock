@@ -4000,6 +4000,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "gothic-vr-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "avian3d",
+ "bevy",
+ "glam",
+ "gothic-animation",
+ "gothic-formats",
+ "gothic-gameplay",
+ "gothic-physics",
+ "gothic-runtime",
+ "gothic-sim",
+ "gothic-vr",
+ "gothic-vr-melee",
+ "gothic-vr-physics",
+ "serde_json",
+]
+
+[[package]]
+name = "gothic-vr-interact"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "glam",
+ "gothic-runtime",
+ "gothic-sim",
+ "gothic-vr",
+ "serde",
+]
+
+[[package]]
 name = "gothic-vr-melee"
 version = "0.1.0"
 dependencies = [
@@ -4031,6 +4063,30 @@ dependencies = [
  "avian3d",
  "bevy",
  "glam",
+ "gothic-vr",
+ "serde",
+]
+
+[[package]]
+name = "gothic-vr-sandbox"
+version = "0.1.0"
+dependencies = [
+ "avian3d",
+ "bevy",
+ "gothic-vr",
+ "gothic-vr-archery",
+ "gothic-vr-melee",
+ "gothic-vr-npc",
+ "gothic-vr-physics",
+]
+
+[[package]]
+name = "gothic-vr-ui"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "glam",
+ "gothic-ui",
  "gothic-vr",
  "serde",
 ]

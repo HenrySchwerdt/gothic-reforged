@@ -601,11 +601,7 @@ fn shot_animations(
                     continue;
                 };
                 if *spell {
-                    // The caster's raise already ran; the missile leaves, hit and recover follow.
-                    super::anim::queue_steps(
-                        &mut queue,
-                        &[("Cast", "Raise"), ("Cast", "Hit"), ("Cast", "Recover")],
-                    );
+                    // NPC casters play their clips as script instructions (`npc_moves`).
                 } else if *owner == hero_id {
                     super::anim::queue_steps(&mut queue, &[("Aim", "Recover")]);
                 } else {
@@ -635,8 +631,28 @@ pub struct BowVisual {
 /// Half turn of a drawn bow about the Z axis of `Slot_LeftHand_Weapon` [I], see `bow_sync`.
 const BOW_IN_HAND_TURN: Quat = Quat::from_xyzw(0.0, 0.0, 1.0, 0.0);
 
+/// Where a bow actor sits: at the slot bone of its owner (`root * bone`). The engine links the
+/// item to the slot bone without an offset (`GetBone` of `gCInventorySlot`, 0x100bd8d0;
+/// `AttachItemToSekelton`, 0x100bdb70 passes none). With that identity the drawn string lies
+/// between the right hand and the shooter, which no drawn bow does: the arrow line points 171
+/// degrees away from the view in the `bow_faithful` check. A half turn about the slot's Z axis
+/// gives 9 degrees, the hand at the middle of the string [I, probe `bow_orient`]. The hanging bow
+/// on the back keeps the identity. Used for the hero and for the NPCs (`npc_bows`).
+pub(super) fn bow_slot_transform(
+    root: &GlobalTransform,
+    joint: bevy::math::Affine3A,
+    in_hand: bool,
+) -> Transform {
+    let rot = if in_hand {
+        BOW_IN_HAND_TURN
+    } else {
+        Quat::IDENTITY
+    };
+    Transform::from_matrix(Mat4::from(root.affine() * joint) * Mat4::from_quat(rot))
+}
+
 /// Candidate actor names of an item template (`It_Bow_Hunting` -> `Bow_Hunting_01`).
-fn actor_candidates(template: &str) -> Vec<String> {
+pub(super) fn actor_candidates(template: &str) -> Vec<String> {
     let rest = template.strip_prefix("It_").unwrap_or(template);
     vec![
         format!("{rest}_01"),
@@ -734,21 +750,7 @@ pub(super) fn bow_sync(
         .get(slot)
         .and_then(|&j| hero_anim.joints.get(j as usize))
     {
-        let m = root.affine() * *j;
-        // The engine links the item to the slot bone without an offset (`GetBone` of
-        // `gCInventorySlot`, 0x100bd8d0; `AttachItemToSekelton`, 0x100bdb70 passes none). With
-        // that identity the drawn string lies between the right hand and the shooter, which no
-        // drawn bow does: the arrow line (string hand -> chord of the limb tips) points 171 degrees
-        // away from the view in the `bow_faithful` check. A half turn about the slot's Z axis
-        // gives 9 degrees, the hand at the middle of the string. [I] The offset is inferred from
-        // that geometry (probe `bow_orient`); the item entity's own link transform in the
-        // original is not recovered yet. The hanging bow on the back keeps the identity.
-        let rot = if state.drawn {
-            BOW_IN_HAND_TURN
-        } else {
-            Quat::IDENTITY
-        };
-        *tf = Transform::from_matrix(Mat4::from(m) * Mat4::from_quat(rot));
+        *tf = bow_slot_transform(root, *j, state.drawn);
     }
     vis.set_if_neq(Visibility::Inherited);
     // The string: relaxed, or drawn while the power aim runs (`Cock` played with the draw time).

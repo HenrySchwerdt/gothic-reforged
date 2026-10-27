@@ -165,7 +165,7 @@ pub fn attitude_to_player(host: &dyn ScriptHost, npc: EntityId) -> Attitude {
     ) {
         return Attitude::Angry;
     }
-    Attitude::None
+    host.base_attitude_to_player(npc)
 }
 
 /// Port of `GetAttitude` (S:e3b0): how `a` regards `b`.

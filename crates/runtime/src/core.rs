@@ -98,6 +98,19 @@ pub enum Command {
     ToggleSneak,
     /// Jump.
     Jump,
+    /// The movement mode machine of the hero's body changed the mode
+    /// (`OnMovementModeChanged`, S:adbf0): raw `gECharMovementMode` values and the time spent in
+    /// the left state. Answered by [`Event::ModeChanged`].
+    HeroModeChanged {
+        /// `GetLastMovementMode`.
+        last: u8,
+        /// `GetMovementMode`.
+        mode: u8,
+        /// Seconds in the left state (the fall time when leaving the fall mode).
+        state_secs: f32,
+    },
+    /// What the hero's body is doing (read by the stamina tick, S:b0520).
+    HeroMovement(gothic_sim::vitals::Movement),
     /// Dodge (`ZS_Evade*`).
     Dodge {
         /// Direction.
@@ -141,6 +154,34 @@ pub enum Command {
     },
     /// The hero's instruction (combat move or hold) ended.
     HeroExecDone {
+        /// Sequence number of the event.
+        seq: u32,
+    },
+    /// The host plays the clips of an NPC (its body is shown) and reports their moments back.
+    HostDrivesNpc {
+        actor: ActorId,
+        on: bool,
+    },
+    /// The `Hit` clip of an NPC's combat move reached the damage moment (`OnHit`).
+    NpcMoveHit {
+        actor: ActorId,
+        /// Sequence number of the `NpcMove` event.
+        seq: u32,
+    },
+    /// The clip of an NPC's script instruction moved its body (root motion, in cm).
+    NpcNudge {
+        actor: ActorId,
+        dx: f32,
+        dz: f32,
+    },
+    /// The pose token `Pn` the clips of an NPC's last move ended in (`GetPrimaryPoseExt`).
+    NpcPrimaryPose {
+        actor: ActorId,
+        pose: u8,
+    },
+    /// An NPC's instruction ended.
+    NpcExecDone {
+        actor: ActorId,
         /// Sequence number of the event.
         seq: u32,
     },
@@ -347,6 +388,8 @@ pub enum Event {
     Notice(String),
     /// A simulation event (hit, kill, aggro, ...).
     Sim(EventKind),
+    /// What `OnMovementModeChanged` made of a mode change of the hero's body.
+    ModeChanged(gothic_sim::moves::ModeOutcome),
     /// A character says a stock voice line: play `SVM_<voice>_<key>`
     /// (`gothic_audio::PlayVoice::svm(voice, key)`).
     Voice {
@@ -820,6 +863,18 @@ impl Core {
             }
             Command::ToggleSneak => self.sim.player_toggle_sneak(),
             Command::Jump => self.sim.player_jump(),
+            Command::HeroModeChanged {
+                last,
+                mode,
+                state_secs,
+            } => {
+                let hero = self.hero;
+                let outcome = self
+                    .sim
+                    .movement_mode_changed(hero, *last, *mode, *state_secs);
+                out.push(Event::ModeChanged(outcome));
+            }
+            Command::HeroMovement(m) => self.sim.hero_move = *m,
             Command::Dodge { direction } => {
                 self.sim.player_dodge(*direction);
             }
@@ -844,6 +899,14 @@ impl Core {
             Command::HeroMoveHit { seq } => self.sim.hero_move_hit(*seq),
             Command::HeroExecDone { seq } => self.sim.hero_exec_done(*seq),
             Command::HeroHoldSwap { seq } => self.sim.hero_hold_swap(*seq),
+            Command::HostDrivesNpc { actor, on } => self.sim.set_host_drives_npc(*actor, *on),
+            Command::NpcPrimaryPose { actor, pose } => {
+                // The script counts poses from 1 (`P0` of the clip names is pose 1).
+                self.sim.script.npc_mut(*actor).primary_pose = u32::from(*pose) + 1
+            }
+            Command::NpcNudge { actor, dx, dz } => self.sim.nudge_npc(*actor, *dx, *dz),
+            Command::NpcMoveHit { actor, seq } => self.sim.npc_move_hit(*actor, *seq),
+            Command::NpcExecDone { actor, seq } => self.sim.npc_exec_done(*actor, *seq),
             Command::TakeLoot { object, index } => {
                 let taken = self.sim.script.take_loot(EntityId(*object), *index);
                 for (item, n) in taken {

@@ -96,6 +96,7 @@ fn report(dir: &Path, lib: &mut ActorLibrary, body: &str, skeleton: Option<&str>
         stance: Stance::Unarmed,
         sneak: false,
         parade: false,
+        body: Default::default(),
     };
     let Some(motion) = lib.locomotion_motion(&rig.family, idle) else {
         println!("no idle motion for family {:?}", rig.family);

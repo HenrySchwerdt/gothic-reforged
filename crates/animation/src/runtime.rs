@@ -79,6 +79,12 @@ pub struct WeaponMount {
     pub holster_joint: u16,
 }
 
+/// A host that knows better than the character's stance which of its weapons are in the hand
+/// (an archer with a sword on the back and a bow in the hand): `true` draws this mount's weapon,
+/// `false` holsters it. Without it [`weapon_mount_system`] follows the stance of the parent.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct MountOverride(pub bool);
+
 /// Wall-clock cost of the animation systems in the last frame.
 #[derive(Resource, Default, Debug)]
 pub struct AnimationStats {
@@ -620,13 +626,19 @@ pub fn write_joints_system(
 /// Chooses the drawn or holstered joint for weapons from the parent's stance.
 pub fn weapon_mount_system(
     inputs: Query<&LocomotionInput>,
-    mut mounts: Query<(&WeaponMount, &ChildOf, &mut Attachment)>,
+    mut mounts: Query<(
+        &WeaponMount,
+        &ChildOf,
+        &mut Attachment,
+        Option<&MountOverride>,
+    )>,
 ) {
-    for (mount, parent, mut attachment) in &mut mounts {
+    for (mount, parent, mut attachment, forced) in &mut mounts {
         let Ok(input) = inputs.get(parent.parent()) else {
             continue;
         };
-        let joint = if input.stance.weapon_drawn() {
+        let drawn = forced.map_or_else(|| input.stance.weapon_drawn(), |f| f.0);
+        let joint = if drawn {
             mount.drawn_joint
         } else {
             mount.holster_joint

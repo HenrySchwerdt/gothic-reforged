@@ -185,6 +185,82 @@ pub struct ActorLibrary {
     compositions: HashMap<String, Arc<Composition>>,
     loco: HashMap<(String, LocoKey), Option<String>>,
     family_alias: HashMap<String, String>,
+    data_dir: std::path::PathBuf,
+    prefetch: Option<Prefetch>,
+}
+
+/// Decoded data a worker thread prepared ahead of a spawn: parsed actors (by archive index) and
+/// decoded texture images (by `<stem>.ximg` key). The main thread takes what is there and loads
+/// the rest inline, so a missed prefetch costs time but never correctness.
+#[derive(Default)]
+struct Shared {
+    actors: std::sync::Mutex<HashMap<usize, Arc<Actor>>>,
+    images: std::sync::Mutex<HashMap<String, Option<Image>>>,
+}
+
+struct Prefetch {
+    tx: std::sync::mpsc::Sender<Vec<String>>,
+    shared: Arc<Shared>,
+    /// Parts queued and not finished yet.
+    pending: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Main-thread time spent in the cold paths of the library (nanoseconds, call count): actor
+/// read + parse, texture decode, material file, clip decode, mesh build. For the frame-time
+/// reports of the open world (`profile()`).
+static PROF: [(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64); 5] = [const {
+    (
+        std::sync::atomic::AtomicU64::new(0),
+        std::sync::atomic::AtomicU64::new(0),
+    )
+}; 5];
+const PROF_NAMES: [&str; 5] = [
+    "actor parse",
+    "texture",
+    "material file",
+    "clip",
+    "mesh build",
+];
+
+struct Prof(usize, std::time::Instant);
+impl Prof {
+    fn start(i: usize) -> Self {
+        Self(i, std::time::Instant::now())
+    }
+}
+impl Drop for Prof {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        PROF[self.0]
+            .0
+            .fetch_add(self.1.elapsed().as_nanos() as u64, Relaxed);
+        PROF[self.0].1.fetch_add(1, Relaxed);
+    }
+}
+
+static UNTEXTURED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn note_untextured(what: String) {
+    if let Ok(mut v) = UNTEXTURED.lock()
+        && !v.contains(&what)
+    {
+        v.push(what);
+    }
+}
+
+/// Materials of loaded actors / items that ended up without a diffuse texture (white fallback),
+/// as `<file>: <material> (<why>)`. QA asserts this stays empty.
+pub fn untextured() -> Vec<String> {
+    UNTEXTURED.lock().map(|v| v.clone()).unwrap_or_default()
+}
+
+/// `(what, total ms, calls)` of the cold library paths since start.
+pub fn profile() -> Vec<(&'static str, f64, u64)> {
+    use std::sync::atomic::Ordering::Relaxed;
+    PROF.iter()
+        .zip(PROF_NAMES)
+        .map(|((ns, n), name)| (name, ns.load(Relaxed) as f64 / 1.0e6, n.load(Relaxed)))
+        .collect()
 }
 
 fn basename(path: &str) -> String {
@@ -271,7 +347,118 @@ impl ActorLibrary {
             compositions: HashMap::new(),
             loco: HashMap::new(),
             family_alias: HashMap::new(),
+            data_dir: data_dir.to_path_buf(),
+            prefetch: None,
         })
+    }
+
+    /// Starts the background decoder: it opens its own archive handles and parses the actors
+    /// and decodes the textures of the parts passed to [`Self::prefetch_parts`], so the spawn
+    /// on the main thread finds them ready (actor read + parse and texture decode were about
+    /// 90 % of a cold character build).
+    pub fn start_prefetch(&mut self) {
+        if self.prefetch.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
+        let shared = Arc::new(Shared::default());
+        let pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (dir, out, left) = (self.data_dir.clone(), shared.clone(), pending.clone());
+        let started = std::thread::Builder::new()
+            .name("actor-prefetch".into())
+            .spawn(move || {
+                let Ok(mut lib) = ActorLibrary::open(&dir) else {
+                    return;
+                };
+                let mut seen: std::collections::HashSet<String> = Default::default();
+                while let Ok(names) = rx.recv() {
+                    for name in names {
+                        if seen.insert(name.to_lowercase()) {
+                            lib.prefetch_one(&name, &out);
+                        }
+                        left.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        if started.is_ok() {
+            self.prefetch = Some(Prefetch {
+                tx,
+                shared,
+                pending,
+            });
+        }
+    }
+
+    /// Queue parts (`name` or `name@M<n>`) for the background decoder.
+    pub fn prefetch_parts(&self, names: &[String]) {
+        if let Some(p) = &self.prefetch {
+            p.pending
+                .fetch_add(names.len(), std::sync::atomic::Ordering::Relaxed);
+            let _ = p.tx.send(names.to_vec());
+        }
+    }
+
+    /// Parts the background decoder has not finished yet.
+    pub fn prefetch_pending(&self) -> usize {
+        self.prefetch
+            .as_ref()
+            .map_or(0, |p| p.pending.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Worker side: parse the actor, decode the textures its materials name.
+    fn prefetch_one(&mut self, name: &str, out: &Shared) {
+        let (base, skin) = match name.rsplit_once("@M") {
+            Some((n, s)) if s.chars().all(|c| c.is_ascii_digit()) && !s.is_empty() => {
+                (n, s.parse::<i32>().ok())
+            }
+            _ => (name, None),
+        };
+        let Ok(at) = self.find_actor(base) else {
+            return;
+        };
+        let Ok(actor) = self.parse_actor(at) else {
+            return;
+        };
+        let actor = Arc::new(actor);
+        let mut used: BTreeSet<usize> = BTreeSet::new();
+        for mesh in &actor.meshes {
+            for sub in &mesh.submeshes {
+                if sub.material != 0 && (sub.material as usize) < actor.materials.len() {
+                    used.insert(sub.material as usize);
+                }
+            }
+        }
+        for index in used {
+            let (stem, _, _) = self.material_stem(&actor, index, skin);
+            let Some(stem) = stem else { continue };
+            let key = format!("{}.ximg", stem.to_lowercase());
+            if self.textures.contains_key(&key) {
+                continue;
+            }
+            // Marks the key as handled on this side (the handle itself stays `None`).
+            self.textures.insert(key.clone(), None);
+            let image = self.decode_texture(&stem, &key);
+            if let Ok(mut m) = out.images.lock() {
+                m.insert(key, image);
+            }
+        }
+        if let Ok(mut m) = out.actors.lock() {
+            m.entry(at).or_insert(actor);
+        }
+    }
+
+    /// Read and parse the actor at archive index `at` (remaster override applied).
+    fn parse_actor(&mut self, at: usize) -> Result<Actor> {
+        let _p = Prof::start(0);
+        let path = self.animation.entries[at].path.clone();
+        let mut actor = Actor::parse(&self.animation.read_payload(at)?)
+            .map_err(|e| e.context(format!("parsing {path}")))?;
+        if let Some(ov) = gothic_formats::remaster::Profile::global()
+            .and_then(|p| p.mesh(gothic_formats::remaster::OverrideKind::Actor, &path))
+        {
+            apply_remaster(&mut actor, &ov);
+        }
+        Ok(actor)
     }
 
     /// Motion family (the actor token of the motion names) of the skeleton whose animated
@@ -428,9 +615,33 @@ impl ActorLibrary {
 
     /// Diffuse stem and blend hint of a shader material file.
     fn material_file(&mut self, file: &str) -> Option<MaterialInfo> {
+        let _p = Prof::start(2);
         let at = *self.material_index.get(&file.to_lowercase())?;
         let bytes = self.material_pak.read_payload(at).ok()?;
         let parsed = Xshmat::parse(&bytes).ok()?;
+        if std::env::var_os("GR_MATDEBUG").is_some() {
+            let g = gothic_formats::xshmat::graph::MaterialGraph::parse(&bytes)
+                .ok()
+                .and_then(|g| g.surface());
+            let layers: Vec<String> = g
+                .iter()
+                .flat_map(|r| &r.layers)
+                .map(|l| {
+                    format!(
+                        "{:?} tint {:?}",
+                        l.textures
+                            .iter()
+                            .map(|t| t.path.as_str())
+                            .collect::<Vec<_>>(),
+                        l.tint
+                    )
+                })
+                .collect();
+            eprintln!(
+                "matdebug: file {file}: diffuse {:?} graph layers {layers:?}",
+                parsed.diffuse().map(|d| d.stem().to_string())
+            );
+        }
         Some((
             parsed.diffuse().map(|d| d.stem().to_string()),
             parsed
@@ -508,7 +719,14 @@ impl ActorLibrary {
             self.image_index
                 .contains_key(&format!("{}.ximg", s.to_lowercase()))
         });
+        if std::env::var_os("GR_MATDEBUG").is_some() {
+            eprintln!(
+                "matdebug: {path} material {:?} -> stem {stem:?} blend {blend:?}",
+                material.name
+            );
+        }
         if stem.is_none() || !resolves {
+            note_untextured(format!("{path}: {} (stem {stem:?})", material.name));
             eprintln!(
                 "animation: material {:?} of {path}: no resolvable texture (stem {:?})",
                 material.name, stem
@@ -727,6 +945,7 @@ impl ActorLibrary {
                         m
                     }
                 };
+                let _p = Prof::start(4);
                 meshes.push((skinned_mesh(sub, &remap), material));
             }
         }
@@ -901,6 +1120,7 @@ impl ActorLibrary {
             .xmot_index
             .get(&format!("{key}.xmot"))
             .ok_or_else(|| anyhow!("no .xmot motion named {name:?}"))?;
+        let _p = Prof::start(3);
         let path = self.animation.entries[at].path.clone();
         let raw = RawMotion::parse(&self.animation.read_payload(at)?)
             .map_err(|e| e.context(format!("parsing {path}")))?;
@@ -1052,6 +1272,13 @@ impl ActorLibrary {
             let (mut stem, blend) = self.material_file(&file).unwrap_or((None, None));
             if let (Some(base), Some(sw)) = (stem.as_deref(), switch) {
                 stem = Some(self.switch_stem(base, sw));
+            }
+            let resolves = stem.as_ref().is_some_and(|s| {
+                self.image_index
+                    .contains_key(&format!("{}.ximg", s.to_lowercase()))
+            });
+            if !resolves {
+                note_untextured(format!("{name}: {file} (stem {stem:?})"));
             }
             meshes.push((mesh, (stem, blend)));
         }
