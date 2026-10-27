@@ -260,6 +260,8 @@ pub struct Sim<W: WorldQuery> {
     pub clock: GameClock,
     pub world: W,
     pub items: ItemDb,
+    /// QA: an actor whose script state is driven directly (`qa_enter_state`).
+    pub qa_drive: Option<ActorId>,
     pub actors: Vec<Actor>,
     pub state: GameState,
     pub db: Option<Arc<GameDatabase>>,
@@ -327,6 +329,7 @@ impl<W: WorldQuery> Sim<W> {
             clock: GameClock::at(0, 8),
             world,
             items,
+            qa_drive: None,
             actors: Vec::new(),
             state: GameState::new(),
             db: None,

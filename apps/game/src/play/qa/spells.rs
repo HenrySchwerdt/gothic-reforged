@@ -152,8 +152,15 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 template: name.clone(),
                 amount: 1,
             }));
-            cx.world
-                .write_message(CoreCommand(Command::SelectSpell { template: name }));
+            if name.to_ascii_lowercase().contains("potion") {
+                // Potions are drunk (`UseItem`), they are no runes.
+                cx.world
+                    .write_message(CoreCommand(Command::UseItem { template: name }));
+                cx.st.n.insert(format!("{key}cast"), 1.0);
+            } else {
+                cx.world
+                    .write_message(CoreCommand(Command::SelectSpell { template: name }));
+            }
             return Poll::Wait;
         }
         if phase_t > 1.5 && cx.st.n[&format!("{key}cast")] == 0.0 {
@@ -178,7 +185,7 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 !cx.st
                     .store
                     .get(&format!("{key}ev{i}"))
-                    .is_some_and(|e| e.contains("Cast") || e.contains("Weapon"))
+                    .is_some_and(|e| e.contains("Cast") || e.contains("Weapon") || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty()))
             })
             .map(|(_, n)| n)
             .collect();

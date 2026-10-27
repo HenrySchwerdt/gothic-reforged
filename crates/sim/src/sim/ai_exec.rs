@@ -78,6 +78,8 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.script_enter(id, state);
         self.reflect_script_task(id.0 as usize, now);
+        self.script.npc_mut(id).on_dest = true;
+        self.qa_drive = Some(id);
     }
 
     /// Put the script state machine of `id` into `ZS_Attack` (called when a fight starts).
@@ -185,6 +187,11 @@ impl<W: WorldQuery> Sim<W> {
     /// task state of the point's use type (`ZS_Smith`, `ZS_Guard`, `ZS_Sleep`, ...), whose
     /// `Action` / `AniStateAction` commands reach the presentation as `EventKind::Anim`.
     pub(super) fn script_routine_think(&mut self, i: usize, now: u64) {
+        if self.qa_drive == Some(self.actors[i].id) {
+            // QA: the state entered by `qa_enter_state` runs as it would at its work point.
+            self.script_task_think(i, now);
+            return;
+        }
         use gothic_script::routine::select::select_routine_task;
         use gothic_script::routine::time as rtime;
         let id = self.actors[i].id;
