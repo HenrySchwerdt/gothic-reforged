@@ -836,6 +836,19 @@ impl Core {
             Command::Attack { target } => self.hero_attack(*target),
             Command::SetDrawn(d) => self.sim.actor_mut(self.hero).drawn = *d,
             Command::Confirm { focus } => {
+                // `HasInfo`: is there anything to say to the focused character?
+                self.sim.dialog_info = gothic_sim::script::host::EntityId(*focus)
+                    .0
+                    .checked_sub(1)
+                    .map(ActorId)
+                    .filter(|a| (a.0 as usize) < self.sim.actors.len())
+                    .map(|a| {
+                        let name = self.sim.actor(a).name.clone();
+                        let db = self.db.clone();
+                        let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+                        self.sim.state.triggers = self.sim.dialog_triggers(a);
+                        (a, !eng.root_list(&self.sim.state, &name).is_empty())
+                    });
                 if let Some(c) = self.sim.player_confirm(EntityId(*focus)) {
                     out.push(Event::Confirmed(c));
                 }
@@ -1081,6 +1094,7 @@ impl Core {
         self.sim.gui_open = true;
         let db = self.db.clone();
         let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+        self.sim.state.triggers = self.sim.dialog_triggers(npc);
         let (session, r) = eng.start(&mut self.sim.state, &name);
         out.push(Event::DialogStarted {
             npc,
@@ -1105,7 +1119,24 @@ impl Core {
             return;
         };
         let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+        // The kind of party move the info stands for (`JoinPlayerParty` / `JoinPlayerMob` /
+        // `JoinPlayerSlavery`, `DismissPlayerMob`, `WaitPlayerParty`).
+        let cond = choice
+            .info
+            .map(|id| gothic_gameplay::model::InfoCond::from_raw(db.info(id).condition_type));
+        use gothic_gameplay::model::InfoCond as C;
+        use gothic_sim::script::enums::PartyMemberType as K;
+        self.sim.join_kind = match cond {
+            Some(C::MobJoin | C::MobDismiss) => Some(K::Mob),
+            Some(C::SlaveJoin) => Some(K::Slave),
+            _ => None,
+        };
+        let npc_id = d.npc;
         let r = eng.choose(&mut self.sim.state, &mut d.session, &choice);
+        self.sim.join_kind = None;
+        if cond == Some(C::Wait) {
+            self.sim.wait_party(npc_id);
+        }
         let finished = r.ended || d.session.ended;
         self.absorb(&r, out);
         if finished {

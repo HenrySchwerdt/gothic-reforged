@@ -182,6 +182,12 @@ fn counter_index(c: VoiceCounter) -> usize {
 }
 
 impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
+    fn dialog_has_info(&self, npc: EntityId) -> bool {
+        match (self.sim.dialog_info, actor_of(npc)) {
+            (Some((a, has)), Some(n)) if a == n => has,
+            _ => true,
+        }
+    }
     fn book_progress(&self, book: gothic_script::player::api::Book) -> i32 {
         self.sim.script.player.books[book as usize]
     }
@@ -561,6 +567,26 @@ impl<W: WorldQuery> Sim<W> {
         let mut host = SimHost::new(self);
         host.self_entity = hero;
         Some(f(&mut host, hero))
+    }
+
+    /// Reactions the ported predicates report for a talk with `npc` (`HasGuardNews`,
+    /// `HasBossNews`, `HasHealInfo`, S:bcf00 / S:bd050 / S:bd2c0): the dialog engine offers the
+    /// `EnclaveCrime`, `PoliticalCrime` and `Heal` infos only then.
+    pub fn dialog_triggers(&mut self, npc: ActorId) -> std::collections::BTreeSet<String> {
+        use gothic_script::routine::info::{has_boss_news, has_guard_news, has_heal_info};
+        let mut set = std::collections::BTreeSet::new();
+        let e = entity_of(npc);
+        let host = SimHost::new(self);
+        if has_guard_news(&host, e) {
+            set.insert("EnclaveCrime".to_string());
+        }
+        if has_boss_news(&host, e) {
+            set.insert("PoliticalCrime".to_string());
+        }
+        if has_heal_info(&host, e) {
+            set.insert("Heal".to_string());
+        }
+        set
     }
 
     /// The confirm key on the focused entity (actors are `EntityId(n + 1)`, objects and items

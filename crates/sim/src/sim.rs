@@ -262,6 +262,11 @@ pub struct Sim<W: WorldQuery> {
     pub items: ItemDb,
     /// QA: an actor whose script state is driven directly (`qa_enter_state`).
     pub qa_drive: Option<ActorId>,
+    /// The dialog data has (or has not) an entry for the actor the hero is about to talk to,
+    /// filled in by the core before the confirm key is handled.
+    pub dialog_info: Option<(ActorId, bool)>,
+    /// Member kind the next `join_party` stands for (mob / slavery infos), set by the core.
+    pub join_kind: Option<gothic_script::enums::PartyMemberType>,
     pub actors: Vec<Actor>,
     pub state: GameState,
     pub db: Option<Arc<GameDatabase>>,
@@ -330,6 +335,8 @@ impl<W: WorldQuery> Sim<W> {
             world,
             items,
             qa_drive: None,
+            dialog_info: None,
+            join_kind: None,
             actors: Vec::new(),
             state: GameState::new(),
             db: None,
@@ -1651,7 +1658,11 @@ impl<W: WorldQuery> Sim<W> {
     /// `CanJoinPlayerParty` (S:a80a0) then `JoinPlayerParty` (S:a8480): at most one active
     /// companion [CA 11.4]; waiting ones are dismissed to make room.
     pub fn join_party(&mut self, npc: ActorId) -> bool {
-        use gothic_script::routine::party::{can_join_player_party, join_player_party};
+        use gothic_script::enums::PartyMemberType as K;
+        use gothic_script::routine::party::{
+            can_join_player_party, join_player_mob, join_player_party, join_player_slavery,
+        };
+        let kind = self.join_kind.take().unwrap_or(K::Party);
         let Some(h) = self.hero else { return false };
         let members_before: Vec<ActorId> = self
             .actors
@@ -1665,7 +1676,11 @@ impl<W: WorldQuery> Sim<W> {
             host.self_entity = ne;
             let ok = can_join_player_party(&mut host, ne);
             if ok {
-                join_player_party(&mut host, ne);
+                match kind {
+                    K::Mob => join_player_mob(&mut host, ne),
+                    K::Slave => join_player_slavery(&mut host, ne),
+                    _ => join_player_party(&mut host, ne),
+                };
             }
             ok
         };
@@ -1693,13 +1708,18 @@ impl<W: WorldQuery> Sim<W> {
         self.push(EventKind::PartyLeft { actor: npc });
     }
 
-    /// `DismissPlayerParty` (S:a8690).
+    /// `DismissPlayerParty` (S:a8690), or `DismissPlayerMob` (S:a8b10) for a mob member.
     pub fn dismiss_party(&mut self, npc: ActorId) {
+        let mob = self.join_kind.take() == Some(gothic_script::enums::PartyMemberType::Mob);
         {
             let mut host = crate::script_host::SimHost::new(self);
             let ne = crate::script_host::entity_of(npc);
             host.self_entity = ne;
-            gothic_script::routine::party::dismiss_player_party(&mut host, ne);
+            if mob {
+                gothic_script::routine::party::dismiss_player_mob(&mut host, ne);
+            } else {
+                gothic_script::routine::party::dismiss_player_party(&mut host, ne);
+            }
         }
         self.left_party(npc);
     }
