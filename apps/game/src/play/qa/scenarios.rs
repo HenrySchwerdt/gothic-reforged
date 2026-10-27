@@ -10,6 +10,7 @@ pub const NAMES: &[&str] = &[
     "trade_esc",
     "lockpick",
     "sit_pose",
+    "sleep_bed",
     "quick_slots",
     "teach",
     "loot_chest",
@@ -61,6 +62,7 @@ pub fn build(name: &str) -> Option<Sc> {
         "loot_chest" => super::more::loot_chest(),
         "lockpick" => super::more3::lockpick(),
         "sit_pose" => super::more3::sit_pose(),
+        "sleep_bed" => super::more3::sleep_bed(),
         "quick_slots" => super::more3::quick_slots(),
         "teach" => super::more3::teach(),
         "doors" => super::more3::doors(),
@@ -354,13 +356,21 @@ fn menu_save_load() -> Sc {
     });
     sc.wait(1.5);
     sc.shot("after_save");
-    sc.check("a new save file exists", |cx| {
+    // The slot list holds 20 slots (slot_01..slot_20): with a full folder the new save replaces the
+    // oldest slot, so the file count may not grow. A save written during the scenario is the test.
+    sc.check("a save file was written by the Speichern click", |cx| {
         let n0 = cx.st.n["slots0"] as usize;
         let n = std::fs::read_dir(".local/saves").map_or(0, |d| d.count());
+        let fresh = std::fs::read_dir(".local/saves").is_ok_and(|d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("slot_"))
+                .filter_map(|e| e.metadata().ok()?.modified().ok())
+                .any(|m| m.elapsed().is_ok_and(|t| t.as_secs() < 20))
+        });
         expect(
-            n > n0,
-            format!("{n0} -> {n} files"),
-            format!("still {n} files"),
+            n > n0 || fresh,
+            format!("{n0} -> {n} files, fresh slot write {fresh}"),
+            format!("still {n} files and no slot written in the last 20 s"),
         )
     });
     sc.act("save state hash", |cx| {

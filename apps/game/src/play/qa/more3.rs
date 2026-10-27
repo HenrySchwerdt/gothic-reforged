@@ -362,3 +362,52 @@ pub fn teach() -> Sc {
 pub fn doors() -> Sc {
     super::world::world_doors()
 }
+
+/// Sleeping: the bed state and `Command::Sleep` share `commands::sleep` (`PlayerSleep` S:76440, the
+/// bed's `PS_DuskToDawn` S:66fc0 wakes at 09:00). Hurt hero in a bed -> the clock is at the wake
+/// hour afterwards and hit points, stamina and mana are restored; then the dialog form
+/// `Sleep(20)` advances to 20:00 the same day.
+pub fn sleep_bed() -> Sc {
+    let mut sc = Sc::new(240.0);
+    grab(&mut sc);
+    let goal: Goal = Arc::new(|cx| nearest_object(cx, |o| matches!(o.def.script_use(), UseType::Bed)));
+    approach(
+        &mut sc,
+        "a bed",
+        goal,
+        120.0,
+        -0.3,
+        Arc::new(|cx| matches!(cx.play().target, Some(Target::Object(_)))),
+    );
+    sc.act("setup: hurt, tired, evening (22:00)", |cx| {
+        let hero = cx.core().0.hero;
+        let mut core = cx.core_mut();
+        core.0.sim.clock.game_ms = core.0.sim.clock.game_ms / 86_400_000 * 86_400_000 + 22 * 3_600_000;
+        let a = core.0.sim.actor_mut(hero);
+        a.hp = 10;
+        a.stamina = 5;
+    });
+    sc.act("use key (lie down)", |cx| cx.use_key());
+    sc.wait(8.0);
+    sc.shot("in_bed");
+    sc.check("the bed slept until the wake hour and restored the hero", |cx| {
+        let h = cx.core().0.sim.clock.hour_of_day();
+        let hero = cx.core().0.hero;
+        let a = cx.core().0.sim.actor(hero);
+        let max = a.base.hp_max;
+        let note = format!("hour {h:.2}, hp {}/{max}, stamina {}", a.hp, a.stamina);
+        expect((h - 9.0).abs() < 0.6 && a.hp >= max, note.clone(), note)
+    });
+    sc.act("Command::Sleep { hour: Some(20) }", |cx| {
+        cx.world
+            .write_message(gothic_runtime::CoreCommand(gothic_runtime::Command::Sleep {
+                hour: Some(20),
+            }));
+    });
+    sc.wait(1.0);
+    sc.check("the dialog sleep advanced to 20:00", |cx| {
+        let h = cx.core().0.sim.clock.hour_of_day();
+        expect((h - 20.0).abs() < 0.3, format!("hour {h:.2}"), format!("hour {h:.2}"))
+    });
+    sc
+}
