@@ -353,7 +353,7 @@ pub fn quest_log(core: &Core) -> QuestLogView {
         quests,
         clock: format_clock(&fmt, 0, day, hour, minute),
         hour,
-        with_quest: Vec::new(),
+        with_quest: locations_with_running_quest(core),
         reputation,
     }
 }
@@ -456,6 +456,7 @@ pub fn apply_action(core: &mut Core, open: &OpenWindow, a: &WindowAction, step: 
         (WindowAction::File(c), _) => {
             Applied::File(c.clone())
         }
+        (WindowAction::Wait(h), _) => Applied::Commands(vec![wait_command(*h)]),
         (WindowAction::UseItem(t), _) => Applied::Commands(vec![Command::UseItem {
             template: t.clone(),
         }]),
@@ -516,25 +517,46 @@ pub fn file_command(dir: &std::path::Path, c: &gothic_ui::FileCommand, unix: u64
     }
 }
 
-/// Lower-case names of the locations whose quests are running, from the host's `WorldLocations`
-/// mapping (`quest name -> location`): fills `QuestLogView::with_quest`.
-pub fn locations_with_running_quest(core: &Core, location_of: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
-    let st = core.state();
-    let mut v: Vec<String> = st
+/// The map location a quest belongs to, from the original quest template: `Quest::folder` is the
+/// editor folder (`Varant/Braga/`), whose segments name the town; the first segment (from the
+/// innermost) that is one of the quest page's location buttons (`gothic_ui::map::LOCATIONS`) wins.
+pub fn quest_location(core: &Core, quest: &str) -> Option<String> {
+    let q = core.db.quest_by_name(quest)?;
+    q.folder
+        .split(['/', '\\'])
+        .rev()
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .find(|seg| gothic_ui::map::LOCATIONS.iter().any(|(n, _, _)| *n == seg))
+}
+
+/// Lower-case names of the locations with a running quest (`QuestLogView::with_quest`, the
+/// "Haupt" filter of the quest map).
+pub fn locations_with_running_quest(core: &Core) -> Vec<String> {
+    let mut v: Vec<String> = core
+        .state()
         .quests
         .iter()
         .filter(|(_, q)| q.status == Some(gothic_gameplay::model::QuestStatus::Running))
-        .filter_map(|(n, _)| location_of(n))
-        .map(|s| s.to_ascii_lowercase())
+        .filter_map(|(n, _)| quest_location(core, n))
         .collect();
     v.sort();
     v.dedup();
     v
 }
 
-/// Wait `hours` of world time (the host fades first: `SleepFade::start(hours)` and calls this
-/// when `tick` returns the hours). Returns the new world hour of the day.
-pub fn wait_hours(core: &mut Core, hours: u32) -> u32 {
-    core.sim.state.hours += u64::from(hours);
-    core.sim.state.hours.rem_euclid(24) as u32
+/// The command for the wait picker / any wait: the core's own `PlayerSleep` port advances the
+/// clock, restores the hero and reports `Slept` (no state is poked from the host).
+pub fn wait_command(hours: u32) -> Command {
+    Command::Sleep {
+        hours: Some(hours as f32),
+    }
+}
+
+/// `WindowAction::Wait` as the command (`None` for anything else).
+pub fn wait_action(a: &WindowAction) -> Option<Command> {
+    match a {
+        WindowAction::Wait(h) => Some(wait_command(*h)),
+        _ => None,
+    }
 }

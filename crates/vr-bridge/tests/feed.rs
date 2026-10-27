@@ -5,7 +5,7 @@ use gothic_gameplay::inventory::StackType;
 use gothic_gameplay::model::QuestStatus;
 use gothic_gameplay::state::{LogEntry, LogKind};
 use gothic_gameplay::{GameDatabase, GameState};
-use gothic_runtime::{Command, Core};
+use gothic_runtime::{Command, Core, Event};
 use gothic_sim::actor::Actor;
 use gothic_sim::item::{ItemDb, ItemDef};
 use gothic_sim::types::{ActorId, Species};
@@ -172,4 +172,74 @@ fn a_trade_played_through_the_vr_window_changes_the_core() {
     let a = press(&mut c, &mut win, "Tauschen");
     assert!(matches!(a[0], Applied::Trade(ref o) if o.dealt), "{a:?}");
     assert_eq!(feed::hero_panel(&c).gold, 600);
+}
+
+fn quest_with_folder(name: &str, folder: &str) -> gothic_formats::quest::Quest {
+    let text = format!(
+        "[Quest]\r\nName={name}\r\nType=1\r\nFinishedQuests=\r\nLogTopic=QUEST_{name}\r\nExperiencePoints=0\r\nFolder={folder}\r\nDeliveryEntities=\r\nDeliveryAmounts=\r\nDeliveryCounter\r\nDestinationEntity=\r\n"
+    );
+    gothic_formats::quest::Quest::parse(text.as_bytes()).unwrap()
+}
+
+#[test]
+fn quest_locations_come_from_the_quest_template_folder() {
+    let text = "[LocAdmin_Languages]\r\nLanguages=English\r\nCurrentLanguage=English\r\nCurrentRevision=0\r\n[LocAdmin_Strings]\r\n[LocAdmin_Revisions]\r\n";
+    let mut b = vec![0xFF, 0xFE];
+    for u in text.encode_utf16() {
+        b.extend(u.to_le_bytes());
+    }
+    let strings = gothic_formats::stringtable::StringTable::parse(&b).unwrap();
+    let quests = vec![
+        quest_with_folder("Q_Braga", "Varant/Braga/"),
+        quest_with_folder("Q_Region", "Varant/"),
+        quest_with_folder("Q_Ardea", "Myrtana/Ardea/Hunter/"),
+    ];
+    let db = Arc::new(GameDatabase::from_parts(quests, vec![], strings, "English").unwrap());
+    let mut c = Core::new(db, ItemDb::default(), GameState::new(), 1);
+    assert_eq!(feed::quest_location(&c, "Q_Braga").as_deref(), Some("braga"));
+    assert_eq!(feed::quest_location(&c, "Q_Ardea").as_deref(), Some("ardea"), "innermost known town");
+    assert_eq!(feed::quest_location(&c, "Q_Region"), None);
+    c.sim.state.set_quest_status("Q_Braga", QuestStatus::Running);
+    c.sim.state.set_quest_status("Q_Ardea", QuestStatus::Success);
+    c.sim.state.set_quest_status("Q_Region", QuestStatus::Running);
+    assert_eq!(feed::locations_with_running_quest(&c), ["braga"]);
+}
+
+#[test]
+fn sleeping_is_a_core_command_that_advances_the_clock_and_restores_the_hero() {
+    let (mut c, _) = core();
+    let hero = c.hero;
+    let max = c.sim.actor(hero).hp_max(&c.sim.cfg);
+    c.sim.actors[hero.0 as usize].hp = 10;
+    let h0 = c.sim.clock.hour_of_day();
+    let ev = c.tick(0.033, &[feed::wait_command(3)]);
+    assert!(
+        ev.iter().any(|e| matches!(e, Event::Player(gothic_sim::script::player::api::PlayerEvent::Slept { hours }) if (*hours - 3.0).abs() < 1e-3)),
+        "{ev:?}"
+    );
+    assert_eq!(c.sim.actor(hero).hp, max, "PlayerSleep restores the hero");
+    let h1 = c.sim.clock.hour_of_day();
+    assert!(((h1 - h0 + 24.0) % 24.0 - 3.0).abs() < 0.05, "{h0} -> {h1}");
+    assert_eq!(c.state().hours, c.sim.clock.total_hours(), "the quest clock follows the world clock");
+    // The bed: sleep until the wake-up hour, whatever the hour is.
+    let ev = c.tick(0.033, &[Command::Sleep { hours: None }]);
+    assert!(ev.iter().any(|e| matches!(e, Event::Player(gothic_sim::script::player::api::PlayerEvent::Slept { .. }))));
+    assert!((c.sim.clock.hour_of_day() - 9.0).abs() < 0.05, "{}", c.sim.clock.hour_of_day());
+}
+
+#[test]
+fn the_dialog_sleep_command_goes_through_the_same_port() {
+    let (mut c, _) = core();
+    let hero = c.hero;
+    c.sim.actors[hero.0 as usize].hp = 5;
+    let h0 = c.sim.clock.hour_of_day();
+    c.sim.apply_outputs(&[gothic_gameplay::script::Output::Effect {
+        command: "Sleep".into(),
+        entity1: String::new(),
+        entity2: String::new(),
+        arg1: "6".into(),
+        arg2: String::new(),
+    }]);
+    assert_eq!(c.sim.actor(hero).hp, c.sim.actor(hero).hp_max(&c.sim.cfg));
+    assert!(((c.sim.clock.hour_of_day() - h0 + 24.0) % 24.0 - 6.0).abs() < 0.05);
 }

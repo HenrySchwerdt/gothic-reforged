@@ -94,6 +94,14 @@ pub enum Command {
         /// Raw script entity id of the body.
         body: u32,
     },
+    /// Sleep or wait (`PlayerSleep`, S:76440): `None` sleeps until the wake-up hour like the bed
+    /// (`PS_DuskToDawn`), `Some(h)` advances `h` world hours like the dialog `Sleep` command.
+    /// The clock advances, the hero's hit points, stamina and mana are restored and
+    /// `Event::Player(Slept { hours })` is reported.
+    Sleep {
+        /// Hours, `None` until morning.
+        hours: Option<f32>,
+    },
     /// Toggle sneaking.
     ToggleSneak,
     /// Jump.
@@ -817,6 +825,10 @@ impl Core {
             }
             Command::QuickLoot { body } => {
                 self.sim.player_quick_loot(EntityId(*body));
+            }
+            Command::Sleep { hours } => {
+                self.sim.player_sleep(*hours);
+                self.state_rev += 1;
             }
             Command::ToggleSneak => self.sim.player_toggle_sneak(),
             Command::Jump => self.sim.player_jump(),

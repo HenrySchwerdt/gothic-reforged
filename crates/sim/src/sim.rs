@@ -1703,6 +1703,14 @@ impl<W: WorldQuery> Sim<W> {
                     self.assess_target(a, b, reason);
                 }
             }
+            "sleep" => {
+                // Dialog `Sleep` (GAME_RULES 3 id 21): ID1 hours, ported as the hero's `PlayerSleep`.
+                if let Ok(h) = a1.trim().parse::<f32>()
+                    && h > 0.0
+                {
+                    self.player_sleep(Some(h));
+                }
+            }
             "spawn" => {
                 let tmpl = self.npc_templates.get(&a1.to_ascii_lowercase()).cloned();
                 if let Some(rec) = tmpl {
