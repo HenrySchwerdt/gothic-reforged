@@ -369,6 +369,7 @@ fn drive_triggers(
             }
         }
     }
+    let mut entered: Vec<EntityId> = Vec::new();
     for n in add {
         let s = &tw.src[n as usize];
         let id = c
@@ -377,6 +378,18 @@ fn drive_triggers(
             .spawn_dynamic(&s.name, s.pos_cm, Vec3::splat(SHAPE_RADIUS));
         c.triggers.add(id, &format!("{}#{n}", s.doc), s.def.clone());
         tw.live.insert(n, id);
+        entered.push(id);
+    }
+    // The entity came into the processing range (`eCTrigger_PS::OnCacheIn`,
+    // `OnEnterProcessingRange`): triggers that react to it fire for themselves.
+    if !entered.is_empty() {
+        let clock = c.clock;
+        let scene = c.range.scene();
+        let env = TriggerEnv::new(&scene.tree, &scene.registry);
+        for id in entered {
+            c.triggers.on_cache_in(&env, clock, id);
+            c.triggers.on_enter_processing_range(&env, clock, id);
+        }
     }
     // Contacts: the hero capsule against the trigger sphere.
     let mut touch: Vec<u32> = Vec::new();

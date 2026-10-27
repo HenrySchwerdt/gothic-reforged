@@ -10,6 +10,7 @@
 //!    [`attachment_system`] places equipment.
 use crate::{
     animator::{Animator, Overlay},
+    attach::AttachmentSet,
     library::{ActorLibrary, AssetStores, Composition},
     locomotion::{
         FORWARD, LocalMotion, LocoKey, Locomotion, LocomotionInput, MoveKind, RIGHT, Stance,
@@ -62,21 +63,38 @@ pub struct CharacterJoints(pub Vec<Entity>);
 #[derive(Component)]
 pub struct CharacterComposition(pub Arc<Composition>);
 
-/// Equipment placed at a joint of its parent character each frame.
-#[derive(Component)]
-pub struct Attachment {
-    /// Index into the character's joints.
-    pub joint: u16,
-    /// Offset from the joint (mesh space to slot space).
-    pub offset: Affine3A,
+/// The attachments of a character (`eCVisualAnimation_PS`'s attachment lists, ported in
+/// [`AttachmentSet`]): item meshes that follow a bone of the skeleton.
+#[derive(Component, Default)]
+pub struct Attachments(pub AttachmentSet<Entity>);
+
+/// Bone key of a joint index: the node name when the composition knows it, else `#<index>`
+/// ([`attachment_node`] reads both).
+pub fn bone_key(c: &Composition, joint: u16) -> String {
+    c.joint_by_name
+        .iter()
+        .find(|(_, j)| **j == joint)
+        .map_or_else(|| format!("#{joint}"), |(n, _)| n.clone())
 }
 
-/// Switches an [`Attachment`] between a drawn and a holstered joint depending on the parent's
-/// [`Stance`].
+fn attachment_node(c: &Composition, bone: &str) -> Option<u16> {
+    match bone.strip_prefix('#') {
+        Some(i) => i.parse().ok(),
+        None => c.joint_by_name.get(&bone.to_lowercase()).copied(),
+    }
+}
+
+/// Switches an attachment between a drawn and a holstered bone depending on the parent's
+/// [`Stance`] (re-adding the attachment with the other bone, as the original's
+/// `AddAttachment` replaces the entry of the same entity).
 #[derive(Component)]
 pub struct WeaponMount {
     pub drawn_joint: u16,
     pub holster_joint: u16,
+    pub drawn_bone: String,
+    pub holster_bone: String,
+    /// Which of the two the attachment sits on now.
+    pub drawn: bool,
 }
 
 /// A host that knows better than the character's stance which of its weapons are in the hand
@@ -287,6 +305,7 @@ impl ActorSpawner<'_, '_> {
             part_meshes.0.push((part.name.clone(), mesh_entities));
         }
         commands.entity(root).insert(part_meshes);
+        let mut attachments = Attachments::default();
         for weapon in &spec.weapons {
             let asset = library.static_mesh(&weapon.mesh, &mut stores)?;
             let joint_of = |slot: &str| -> Result<u16> {
@@ -298,28 +317,36 @@ impl ActorSpawner<'_, '_> {
             };
             let drawn = joint_of(&weapon.drawn_slot)?;
             let holster = joint_of(&weapon.holster_slot).unwrap_or(drawn);
-            let start = if spec.stance.weapon_drawn() {
-                drawn
-            } else {
-                holster
-            };
+            let start_drawn = spec.stance.weapon_drawn();
+            let offset = Affine3A::from_mat4(weapon.offset.to_matrix());
+            let (drawn_bone, holster_bone) = (
+                bone_key(&composition, drawn),
+                bone_key(&composition, holster),
+            );
             for m in &asset.meshes {
-                commands.spawn((
-                    Mesh3d(m.mesh.clone()),
-                    MeshMaterial3d(m.material.clone()),
-                    Attachment {
-                        joint: start,
-                        offset: Affine3A::from_mat4(weapon.offset.to_matrix()),
-                    },
-                    WeaponMount {
-                        drawn_joint: drawn,
-                        holster_joint: holster,
-                    },
-                    Transform::default(),
-                    Visibility::default(),
-                    NoFrustumCulling,
-                    ChildOf(root),
-                ));
+                let e = commands
+                    .spawn((
+                        Mesh3d(m.mesh.clone()),
+                        MeshMaterial3d(m.material.clone()),
+                        WeaponMount {
+                            drawn_joint: drawn,
+                            holster_joint: holster,
+                            drawn_bone: drawn_bone.clone(),
+                            holster_bone: holster_bone.clone(),
+                            drawn: start_drawn,
+                        },
+                        Transform::default(),
+                        Visibility::default(),
+                        NoFrustumCulling,
+                        ChildOf(root),
+                    ))
+                    .id();
+                let bone = if start_drawn {
+                    &drawn_bone
+                } else {
+                    &holster_bone
+                };
+                attachments.0.add(e, bone, Some(offset));
             }
         }
         for a in &spec.attachments {
@@ -333,19 +360,25 @@ impl ActorSpawner<'_, '_> {
                     .copied()
                     .ok_or_else(|| anyhow!("no part defines slot {:?}", a.slot))?,
             };
+            let bone = bone_key(&composition, joint);
             for m in &asset.meshes {
-                commands.spawn((
-                    Mesh3d(m.mesh.clone()),
-                    MeshMaterial3d(m.material.clone()),
-                    Attachment { joint, offset },
-                    Transform::default(),
-                    Visibility::default(),
-                    NoFrustumCulling,
-                    ChildOf(root),
-                ));
+                let e = commands
+                    .spawn((
+                        Mesh3d(m.mesh.clone()),
+                        MeshMaterial3d(m.material.clone()),
+                        Transform::default(),
+                        Visibility::default(),
+                        NoFrustumCulling,
+                        ChildOf(root),
+                    ))
+                    .id();
+                attachments.0.add(e, &bone, Some(offset));
             }
         }
         commands.entity(root).insert(CharacterJoints(joints));
+        if !attachments.0.is_empty() {
+            commands.entity(root).insert(attachments);
+        }
         Ok(root)
     }
 
@@ -623,48 +656,72 @@ pub fn write_joints_system(
     };
 }
 
-/// Chooses the drawn or holstered joint for weapons from the parent's stance.
+/// Chooses the drawn or holstered bone for weapons from the parent's stance.
 pub fn weapon_mount_system(
     inputs: Query<&LocomotionInput>,
-    mut mounts: Query<(
-        &WeaponMount,
-        &ChildOf,
-        &mut Attachment,
-        Option<&MountOverride>,
-    )>,
+    mut mounts: Query<(Entity, &mut WeaponMount, &ChildOf, Option<&MountOverride>)>,
+    mut sets: Query<&mut Attachments>,
 ) {
-    for (mount, parent, mut attachment, forced) in &mut mounts {
+    for (entity, mut mount, parent, forced) in &mut mounts {
         let Ok(input) = inputs.get(parent.parent()) else {
             continue;
         };
         let drawn = forced.map_or_else(|| input.stance.weapon_drawn(), |f| f.0);
-        let joint = if drawn {
-            mount.drawn_joint
-        } else {
-            mount.holster_joint
-        };
-        if attachment.joint != joint {
-            attachment.joint = joint;
+        if mount.drawn == drawn {
+            continue;
         }
+        let Ok(mut set) = sets.get_mut(parent.parent()) else {
+            continue;
+        };
+        let offset = set
+            .0
+            .persistent()
+            .iter()
+            .find(|a| a.entity == entity)
+            .map(|a| a.offset);
+        let bone = if drawn {
+            mount.drawn_bone.clone()
+        } else {
+            mount.holster_bone.clone()
+        };
+        set.0.add(entity, &bone, offset);
+        mount.drawn = drawn;
     }
 }
 
-/// Places attachments at their joints (skipped for characters that did not change).
+/// Places attachments at their bones (`eCVisualAnimation_PS::OnProcess`, skipped for
+/// characters that did not change).
 pub fn attachment_system(
-    characters: Query<(&Animator, Ref<GlobalTransform>), bevy::ecs::query::Without<Attachment>>,
-    mut attachments: Query<(Ref<Attachment>, &ChildOf, &mut GlobalTransform)>,
+    mut characters: Query<(
+        &Animator,
+        Ref<GlobalTransform>,
+        &CharacterComposition,
+        &mut Attachments,
+    )>,
+    mut placed: Query<&mut GlobalTransform, bevy::ecs::query::Without<Attachments>>,
 ) {
-    for (attachment, parent, mut global) in &mut attachments {
-        let Ok((animator, root)) = characters.get(parent.parent()) else {
-            continue;
-        };
-        if !animator.joints_dirty && !root.is_changed() && !attachment.is_changed() {
+    for (animator, root, comp, mut set) in &mut characters {
+        if !animator.joints_dirty && !root.is_changed() && !set.is_changed() {
             continue;
         }
-        let Some(joint) = animator.joints.get(attachment.joint as usize) else {
-            continue;
-        };
-        *global = GlobalTransform::from(root.affine() * *joint * attachment.offset);
+        let c = &comp.0;
+        let result = set.bypass_change_detection().0.process(
+            root.affine(),
+            |bone| attachment_node(c, bone),
+            |n| {
+                animator
+                    .joints
+                    .get(n as usize)
+                    .copied()
+                    .unwrap_or(Affine3A::IDENTITY)
+            },
+            |e| placed.contains(e),
+        );
+        for (e, m) in result.placed {
+            if let Ok(mut g) = placed.get_mut(e) {
+                *g = GlobalTransform::from(m);
+            }
+        }
     }
 }
 

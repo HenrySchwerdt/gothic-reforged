@@ -1,6 +1,5 @@
 //! Ardea NPCs: world data -> core actors + assembled animated characters.
 use super::anim::{CombatStance, Fallen, OverlayQueue, play_fall};
-use super::data::{Roll, seed_of};
 use super::objects::WorldObjects;
 use super::{Cand, DocState, NpcActor, NpcExtra, Roster, angle_delta, sim_to_bevy_yaw};
 use crate::walk::{Collision, ORIGIN, Stream, tile_chunk_id, update_camera};
@@ -323,8 +322,6 @@ pub fn gear_of(
             .filter(|s| s.amount > 0)
             .map(|s| (s.item.clone(), s.amount as u32)),
     );
-    let mut roll = Roll(seed_of(&format!("{}{:?}", rec.name, rec.position)));
-    let plunder = objects.treasure.plunder(sets, &mut roll);
     let kind_of = |name: &str| {
         core.0
             .sim
@@ -382,7 +379,6 @@ pub fn gear_of(
         gear.give.push((b.clone(), 1));
         attach(&mut gear, &b, k);
     }
-    gear.give.extend(plunder);
     gear
 }
 

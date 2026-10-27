@@ -2,7 +2,7 @@
 //! items around Ardea with the core, keeps the entity ids the core answers with, shows loose
 //! items in the world and gives the NPCs their routine points.
 use super::data::{
-    Roll, Treasure, WorldObjectDef, load_item_meshes, load_objects, load_recipes, seed_of,
+    Treasure, WorldObjectDef, load_item_meshes, load_objects, load_recipes, seed_of,
 };
 use super::{NpcActor, NpcExtra};
 use crate::walk::{ORIGIN, Player};
@@ -205,8 +205,13 @@ fn send_content(
         let use_type = d.script_use();
         let mut loot = d.stacks.clone();
         if use_type == UseType::Chest {
-            let mut roll = Roll(seed_of(&format!("{}{tag}", d.id)));
-            loot.extend(treasure.plunder(&d.treasure_sets, &mut roll));
+            let mut roll = gothic_gameplay::treasure::Roll(seed_of(&format!("{}{tag}", d.id)));
+            loot.extend(treasure.plunder(
+                &core.0.sim.items,
+                &d.treasure_sets,
+                &mut roll,
+                &gothic_gameplay::treasure::NoHero,
+            ));
             loot.retain(|(item, _)| item_known(&core, item));
         }
         commands.write(CoreCommand(Command::AddObject {

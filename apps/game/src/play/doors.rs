@@ -8,6 +8,7 @@ use crate::walk::{Collision, Player};
 use bevy::prelude::*;
 use gothic_animation::runtime::CharacterComposition;
 use gothic_animation::{ActorLibrary, ActorSpawner, Animator, NpcSpec};
+use gothic_gameplay::mover::{Mover, MoverAction, MoverState};
 use gothic_runtime::{CoreEvent, Event};
 use gothic_sim::script::enums::UseType;
 use std::collections::HashMap;
@@ -22,7 +23,8 @@ const CHUNK_BASE: u64 = 0xD00D_0000_0000_0000;
 struct DoorVis {
     entity: Entity,
     stem: String,
-    open: bool,
+    /// `gCMover_PS` / `gCDoor_PS` state machine; the open / close motions report back to it.
+    mover: Mover,
     chunk: Option<u64>,
 }
 
@@ -44,8 +46,10 @@ impl Doors {
 }
 
 pub fn register(app: &mut App) {
-    app.init_resource::<Doors>()
-        .add_systems(Update, (door_visuals, door_state, door_bodies).chain());
+    app.init_resource::<Doors>().add_systems(
+        Update,
+        (door_visuals, door_state, door_motion_end, door_bodies).chain(),
+    );
 }
 
 fn door_yaw(heading: f32) -> Quat {
@@ -130,7 +134,7 @@ fn door_visuals(
                     DoorVis {
                         entity,
                         stem,
-                        open: false,
+                        mover: closed_door(),
                         chunk: None,
                     },
                 );
@@ -162,7 +166,15 @@ fn door_state(
         let Some(d) = doors.shown.get_mut(&i) else {
             continue;
         };
-        d.open = *open;
+        // gCDoor_PS::SetIsOpen -> gCMover_PS::Open / Close.
+        let action = if Mover::door_status(*open) == 0 {
+            d.mover.open(false)
+        } else {
+            d.mover.close(false)
+        };
+        let Some(MoverAction::Play { .. }) = action else {
+            continue;
+        };
         let name = format!("{}_{}", d.stem, if *open { "Open" } else { "Close" });
         if let Ok(mut a) = anims.get_mut(d.entity) {
             let rig = a.rig.clone();
@@ -171,6 +183,28 @@ fn door_state(
             }
         }
         doors.played.push((i, *open));
+    }
+}
+
+/// A door at rest: closed, its motions end in the state they head for.
+fn closed_door() -> Mover {
+    let mut m = Mover {
+        rest: 1,
+        ..Mover::default()
+    };
+    m.set_door_status(Mover::door_status(false));
+    m
+}
+
+/// gCMover_PS::OnProcess: the motion ran to its end, the mover settles.
+fn door_motion_end(mut doors: ResMut<Doors>, anims: Query<&Animator>) {
+    for d in doors.shown.values_mut() {
+        if !matches!(d.mover.state, MoverState::Opening | MoverState::Closing) {
+            continue;
+        }
+        if anims.get(d.entity).is_ok_and(|a| a.finished()) {
+            d.mover.motion_stopped();
+        }
     }
 }
 
@@ -186,7 +220,7 @@ fn door_bodies(
         let Some(d) = doors.shown.get_mut(&i) else {
             continue;
         };
-        match (!d.open, d.chunk) {
+        match (d.mover.collides(), d.chunk) {
             (true, None) => {
                 let Ok(c) = comps.get(d.entity) else { continue };
                 let Some(part) = c.0.parts.first() else {
