@@ -506,7 +506,7 @@ fn spawn_weapons(
         },
         Visibility::default(),
     ));
-    a.spawn_static_mirrored(
+    a.spawn_static(
         &mut commands,
         "g3_weapon_1h_sword_orcslayer_01.xcmsh",
         sword,
@@ -742,7 +742,7 @@ pub fn spawn_quiver(
             rotation: rot,
             scale: Vec3::splat(0.006),
         };
-        a.spawn_static_mirrored(
+        a.spawn_static(
             commands,
             "g3_weapons_ranged_bow_arrow_01.xcmsh",
             root,

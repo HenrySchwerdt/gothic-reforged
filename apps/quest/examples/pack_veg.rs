@@ -68,8 +68,8 @@ fn main() -> Result<()> {
                     (gz / 10_000.0).floor() as i32,
                 );
                 // Left-handed Gothic space -> Bevy: mirror X (a reflection flips the y/z quaternion parts).
-                let pos = [-e.position[0], e.position[1], e.position[2]];
-                let q = [e.rotation[0], -e.rotation[1], -e.rotation[2], e.rotation[3]];
+                let pos = gothic_coords::arr3(e.position);
+                let q = gothic_coords::quat(bevy::math::Quat::from_array(e.rotation)).to_array();
                 let mut r = [0u8; 52];
                 let mut o = 0;
                 let mut put = |b: &[u8]| {

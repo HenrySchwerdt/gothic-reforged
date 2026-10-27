@@ -432,7 +432,7 @@ fn build_scene(
         .expect("sword grip");
     let (sw, _) = holster_zone(Vec3::ZERO, 1.7, 0.0, "Slot_MeleeBackRight");
     let sword = commands.spawn((sw, Visibility::default())).id();
-    a.spawn_static_mirrored(
+    a.spawn_static(
         &mut commands,
         "g3_weapon_1h_sword_orcslayer_01.xcmsh",
         sword,
@@ -449,7 +449,7 @@ fn build_scene(
             Visibility::default(),
         ))
         .id();
-    a.spawn_static_mirrored(
+    a.spawn_static(
         &mut commands,
         "g3_weapon_1h_sword_orcslayer_01.xcmsh",
         held,

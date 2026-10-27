@@ -4,22 +4,20 @@
 //! every engine transform goes through [`to_view`].
 use bevy::math::{Mat4, Vec3};
 
-const MIRROR: Vec3 = Vec3::new(-1.0, 1.0, 1.0);
-
 /// Engine world transform (columns = axes) as a transform of the mirrored view space. The local
 /// frame of the entity is mirrored too, matching the mirrored emitter parameters.
 pub fn to_view(engine: &Mat4, origin: Vec3) -> Mat4 {
-    Mat4::from_scale(MIRROR) * Mat4::from_translation(-origin) * *engine * Mat4::from_scale(MIRROR)
+    gothic_coords::Frame::new(origin).mat4(*engine)
 }
 
 /// A local (parent-relative) engine transform in the mirrored local frames.
 pub fn to_view_local(engine: &Mat4) -> Mat4 {
-    Mat4::from_scale(MIRROR) * *engine * Mat4::from_scale(MIRROR)
+    gothic_coords::mat4(*engine)
 }
 
 /// Engine position to mirrored origin-relative cm.
 pub fn point_to_view(p: Vec3, origin: Vec3) -> Vec3 {
-    Vec3::new(origin.x - p.x, p.y - origin.y, p.z - origin.z)
+    gothic_coords::Frame::new(origin).point(p)
 }
 
 #[cfg(test)]

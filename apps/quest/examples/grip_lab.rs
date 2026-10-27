@@ -373,7 +373,7 @@ fn build_scene(
                 Visibility::Hidden,
             ))
             .id();
-        a.spawn_static_mirrored(
+        a.spawn_static(
             &mut commands,
             mesh,
             e,

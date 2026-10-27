@@ -468,7 +468,7 @@ fn terrain_bounds(run: &Run, name: &str) -> Option<TerrainBounds> {
     let mesh = Xcmsh::parse(&run.src.read(slot).ok()?).ok()?;
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     for p in mesh.submeshes.iter().flat_map(|s| s.positions.iter()) {
-        let p = [-p[0], p[1], p[2]];
+        let p = gothic_coords::arr3(*p);
         for a in 0..3 {
             lo[a] = lo[a].min(p[a]);
             hi[a] = hi[a].max(p[a]);
@@ -827,7 +827,7 @@ fn cook_collision(run: &Run, names: &BTreeSet<String>) {
                         let base = v.len() as u32;
                         v.extend(m.positions.iter().map(|p| {
                             let c = p.map(|x| x * gothic_formats::xnvmsh::UNITS_PER_METRE);
-                            [-c[0], c[1], c[2]]
+                            gothic_coords::arr3(c)
                         }));
                         idx.extend(m.indices.iter().map(|i| base + i));
                     }
@@ -1064,7 +1064,7 @@ fn cook_cells(
                 return out;
             };
             for t in nav.triangles_cm() {
-                let t = t.map(|p| [-p[0], p[1], p[2]]);
+                let t = t.map(gothic_coords::arr3);
                 let gx = -(t[0][0] + t[1][0] + t[2][0]) / 3.0;
                 let gz = (t[0][2] + t[1][2] + t[2][2]) / 3.0;
                 if region.is_some_and(|r| !r.overlaps_box([gx, gz], [gx, gz])) {

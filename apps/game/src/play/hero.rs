@@ -165,7 +165,7 @@ fn face_target(mut player: ResMut<Player>, state: Res<PlayState>, core: Res<Core
     {
         // `ProcessMovements` (G:0xddd40): with the constraint at 0 the body is aligned to the
         // camera direction every frame (`SetAlignmentLookAt`), whatever the wish direction.
-        face = Some(Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()) * CAMERA_ALIGN_LENGTH);
+        face = Some(gothic_coords::forward3(player.yaw) * CAMERA_ALIGN_LENGTH);
     }
     player.face = face.filter(|f| f.length_squared() > 1.0);
 }
@@ -878,7 +878,7 @@ pub(super) fn sync(
     // E01: the animation velocity is the controller's filtered local velocity (forward, right).
     let (vf, vr) = player.ctrl.local_ani_velocity();
     let h = player.ctrl.heading;
-    let fwd = Vec3::new(-h.sin(), 0.0, -h.cos());
+    let fwd = gothic_coords::forward3(h);
     let right = Vec3::new(h.cos(), 0.0, -h.sin());
     let mut v = fwd * vf + right * vr;
     v.y = if player.ctrl.grounded {

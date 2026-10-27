@@ -223,7 +223,7 @@ impl Clip {
     pub fn mirror_x(&mut self) {
         for n in &mut self.nodes {
             n.rest = n.rest.mirror_x();
-            n.pos = n.pos.map(|v| Vec3::new(-v.x, v.y, v.z));
+            n.pos = n.pos.map(gothic_coords::vec3);
             n.rot = n.rot.map(crate::pose::mirror_quat_x);
         }
     }

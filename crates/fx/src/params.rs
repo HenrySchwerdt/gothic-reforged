@@ -47,8 +47,9 @@ impl Range3 {
     /// The same box in the x-mirrored space (x -> -x).
     pub fn mirrored_x(&self) -> Self {
         let mut r = *self;
-        r.min[0] = -self.max[0];
-        r.max[0] = -self.min[0];
+        let (lo, hi) = gothic_coords::aabb(self.min.into(), self.max.into());
+        r.min = lo.into();
+        r.max = hi.into();
         r
     }
 }
@@ -422,7 +423,7 @@ impl EmitterParams {
     /// is left-handed and the loader mirrors every world position the same way).
     pub fn mirrored_x(&self) -> Self {
         let mut p = self.clone();
-        let flip = |v: [f32; 3]| [-v[0], v[1], v[2]];
+        let flip = gothic_coords::arr3;
         p.start_box = self.start_box.mirrored_x();
         p.start_offset = flip(self.start_offset);
         p.start_velocity = self.start_velocity.mirrored_x();

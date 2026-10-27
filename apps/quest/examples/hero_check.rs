@@ -261,7 +261,7 @@ fn main() {
         println!(
             "WEAPON mesh bounds {lo:?}..{hi:?} long axis {long:?} blade dir (native) {blade_native:?}"
         );
-        let blade_mirror = Vec3::new(-blade_native.x, blade_native.y, blade_native.z);
+        let blade_mirror = blade_native; // cooked meshes are already engine space
         let orc = app
             .world_mut()
             .run_system_once(
@@ -555,11 +555,11 @@ fn main() {
         // Controller grip frame of a right hand holding the sword in the natural pose: -Z = thumb side (blade out of the fist),
         // -Y = along the fingers, X = back of the hand (palm normal -X for the right hand).
         let fist_axis = Vec3::NEG_Z;
-        let blade_in_prop = vis.rotation * Vec3::new(-g.blade.x, g.blade.y, g.blade.z);
-        let flat_in_prop = vis.rotation * (-Vec3::new(-g.flat.x, g.flat.y, g.flat.z));
-        let edge_in_prop = vis.rotation * Vec3::new(-g.edge.x, g.edge.y, g.edge.z);
+        let blade_in_prop = vis.rotation * g.blade;
+        let flat_in_prop = vis.rotation * g.flat;
+        let edge_in_prop = vis.rotation * g.edge;
         let handle_in_prop =
-            vis.rotation * Vec3::new(-g.handle_axis.x, g.handle_axis.y, g.handle_axis.z);
+            vis.rotation * g.handle_axis;
         let ang = |a: Vec3, b: Vec3| a.dot(b).clamp(-1.0, 1.0).acos().to_degrees();
         println!(
             "GRIP blade vs fist axis {:.2} deg (must be < 5): {}",

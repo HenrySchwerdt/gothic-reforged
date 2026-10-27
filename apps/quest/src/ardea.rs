@@ -177,7 +177,7 @@ pub fn build(app: &mut App, dir: PathBuf) -> anyhow::Result<()> {
     let world_mode = dir.join("world.idx").is_file();
     let cache = Arc::new(Cache::open(&dir)?);
     let c = start_gothic();
-    let focus = Vec3::new(-c[0], 0.0, c[1]);
+    let focus = Vec3::new(-c[0], 0.0, c[1]); // gothic_coords::vec3 of the (x, z) start
     let r = if world_mode {
         -1.0
     } else {
@@ -315,17 +315,18 @@ pub(crate) fn build_image(t: &TextureData) -> Option<(Image, Vec2)> {
     Some((img, uvs))
 }
 
-/// Reflects a mesh across X (positions, normals, tangents) and reverses the triangle winding.
+/// Cooked **actor** meshes are stored in the Gothic frame (`gothic-cook` `actor.rs`); this brings one into engine space:
+/// positions and normals through `gothic_coords::arr3`, and the winding reversed. Actor triangles are stored with the
+/// numeric cross product along the normal, the opposite of static `.xcmsh` meshes (`docs/research/COORDINATES.md`), so
+/// the reflection alone would leave them back-facing. Cooked **static** meshes are already engine space: never pass
+/// those through here (that was the double mirror of the weapons).
 pub fn mirror_mesh_x(m: &mut Mesh) {
     use bevy::mesh::VertexAttributeValues as V;
-    if let Some(V::Float32x3(p)) = m.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
-        for v in p.iter_mut() {
-            v[0] = -v[0];
-        }
-    }
-    if let Some(V::Float32x3(n)) = m.attribute_mut(Mesh::ATTRIBUTE_NORMAL) {
-        for v in n.iter_mut() {
-            v[0] = -v[0];
+    for attr in [Mesh::ATTRIBUTE_POSITION, Mesh::ATTRIBUTE_NORMAL] {
+        if let Some(V::Float32x3(p)) = m.attribute_mut(attr) {
+            for v in p.iter_mut() {
+                *v = gothic_coords::arr3(*v);
+            }
         }
     }
     match m.indices_mut() {
@@ -408,44 +409,6 @@ impl Ardea {
                 MeshMaterial3d(q),
                 Transform::IDENTITY,
                 Aabb::from_min_max(Vec3::from(s.bounds_min), Vec3::from(s.bounds_max)),
-                ChildOf(holder),
-            ));
-        }
-        true
-    }
-
-    /// Like [`Self::spawn_static`] for meshes that live in the left-handed Gothic frame but are attached to the mirrored
-    /// skeletons/props: vertices and normals are reflected across X and the winding reversed (no negative scales, so
-    /// back-face culling stays correct).
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_static_mirrored(
-        &mut self,
-        commands: &mut Commands,
-        mesh_name: &str,
-        parent: Entity,
-        local: Transform,
-        meshes: &mut Assets<Mesh>,
-        qmats: &mut Assets<QuestMaterial>,
-        images: &mut Assets<Image>,
-    ) -> bool {
-        let Ok(md) = self.cache.load_mesh(AssetId::of(mesh_name)) else {
-            return false;
-        };
-        let holder = commands
-            .spawn((local, Visibility::default(), ChildOf(parent)))
-            .id();
-        for s in md.submeshes() {
-            let Some(q) = self.qmaterial(s.material, qmats, images) else {
-                continue;
-            };
-            let (mut mesh, _) = build_mesh(&md, s, 0);
-            mirror_mesh_x(&mut mesh);
-            let (lo, hi) = (Vec3::from(s.bounds_min), Vec3::from(s.bounds_max));
-            commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(q),
-                Transform::IDENTITY,
-                Aabb::from_min_max(Vec3::new(-hi.x, lo.y, lo.z), Vec3::new(-lo.x, hi.y, hi.z)),
                 ChildOf(holder),
             ));
         }
