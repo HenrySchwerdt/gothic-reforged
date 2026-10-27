@@ -217,6 +217,9 @@ pub struct PlayState {
     pub melee_focus: Option<ActorId>,
     /// `gCFocus_PS::FocusLocked` (this+0x158) with the locked entity (`PSFocus` proxy this+0x130).
     pub focus_lock: Option<ActorId>,
+    /// `gCFocus_PS` focus direction vector (+0x18c): the horizontal (x, z) direction the movement
+    /// keys last pointed to; the focus angles use it in the keys look-at mode.
+    pub focus_dir: [f32; 2],
     /// The hero sneaks (`AniState::Sneak` of the ported state).
     pub sneaking: bool,
     /// The quick bar: template per slot 1..10.

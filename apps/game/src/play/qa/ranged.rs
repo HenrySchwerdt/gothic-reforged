@@ -703,6 +703,70 @@ pub fn hud_focus() -> Sc {
     sc
 }
 
+/// gCFocus_PS::OnAction (Game:0x1006e8e0) / GetAngles (Game:0x1006c530): with the sword drawn
+/// (`PS_Melee_Loop` sets `FocusLookAtMode` 2, "keys") every movement-key message moves the focus
+/// direction vector by the camera's flattened forward / right axis; the focus angles are measured
+/// against it, so strafing right makes the target to the right the one in view.
+pub fn focus_steer() -> Sc {
+    let mut sc = Sc::new(90.0);
+    grab(&mut sc);
+    sc.wait(2.0);
+    sc.act("Space: draw the sword", |cx| cx.tap(KeyCode::Space));
+    sc.wait(2.0);
+    sc.check("the melee loop selected the keys look-at mode", |cx| {
+        let m = cx.core().0.sim.script.player.focus_modes.1;
+        expect(m == 2, format!("look-at mode {m}"), format!("look-at mode {m}, want 2"))
+    });
+    sc.act("hold D (strafe right)", |cx| cx.key_down(KeyCode::KeyD));
+    sc.wait(0.4);
+    sc.act("release D", |cx| cx.key_up(KeyCode::KeyD));
+    sc.wait(0.2);
+    sc.check("the focus direction points to the camera's right", |cx| {
+        let right = {
+            let mut q = cx
+                .world
+                .query_filtered::<&GlobalTransform, With<crate::walk::PlayerCamera>>();
+            q.single(cx.world)
+                .map(|t| {
+                    let r = t.rotation() * Vec3::X;
+                    Vec2::new(r.x, r.z).normalize_or_zero()
+                })
+                .unwrap_or(Vec2::ZERO)
+        };
+        let d = Vec2::from_array(cx.play().focus_dir);
+        let dot = d.dot(right);
+        expect(
+            dot > 0.9,
+            format!("focus_dir {d:?}, camera right {right:?}, dot {dot:.2}"),
+            format!("focus_dir {d:?}, camera right {right:?}, dot {dot:.2}"),
+        )
+    });
+    sc.act("hold A (strafe left)", |cx| cx.key_down(KeyCode::KeyA));
+    sc.wait(1.0);
+    sc.act("release A", |cx| cx.key_up(KeyCode::KeyA));
+    sc.check("strafing left turns the direction to the camera's left", |cx| {
+        let right = {
+            let mut q = cx
+                .world
+                .query_filtered::<&GlobalTransform, With<crate::walk::PlayerCamera>>();
+            q.single(cx.world)
+                .map(|t| {
+                    let r = t.rotation() * Vec3::X;
+                    Vec2::new(r.x, r.z).normalize_or_zero()
+                })
+                .unwrap_or(Vec2::ZERO)
+        };
+        let d = Vec2::from_array(cx.play().focus_dir);
+        let dot = d.dot(right);
+        expect(
+            dot < -0.5,
+            format!("dot {dot:.2}"),
+            format!("focus_dir {d:?}, camera right {right:?}, dot {dot:.2}"),
+        )
+    });
+    sc
+}
+
 /// Close-up poses: sword in hand, bow in Aim_Aim from behind and from the side, arrow on the
 /// string, fireball at the cast and at the release (frames are cropped around the hero by the
 /// caller of the scenario).
