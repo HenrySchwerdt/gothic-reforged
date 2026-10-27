@@ -842,13 +842,7 @@ impl Core {
                     .checked_sub(1)
                     .map(ActorId)
                     .filter(|a| (a.0 as usize) < self.sim.actors.len())
-                    .map(|a| {
-                        let name = self.sim.actor(a).name.clone();
-                        let db = self.db.clone();
-                        let eng = Engine::with(&db, Assumptions::PERMISSIVE);
-                        self.sim.state.triggers = self.sim.dialog_triggers(a);
-                        (a, !eng.root_list(&self.sim.state, &name).is_empty())
-                    });
+                    .map(|a| (a, self.has_dialog_info(a)));
                 if let Some(c) = self.sim.player_confirm(EntityId(*focus)) {
                     out.push(Event::Confirmed(c));
                 }
@@ -1084,6 +1078,15 @@ impl Core {
     }
 
     // ---- dialog ---------------------------------------------------------------------
+
+    /// `HasInfo`: does the dialog data have something to say to the hero for `npc` right now?
+    pub fn has_dialog_info(&mut self, npc: ActorId) -> bool {
+        let name = self.sim.actor(npc).name.clone();
+        let db = self.db.clone();
+        let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+        self.sim.state.triggers = self.sim.dialog_triggers(npc);
+        !eng.root_list(&self.sim.state, &name).is_empty()
+    }
 
     fn start_dialog(&mut self, npc: ActorId, out: &mut Vec<Event>) {
         if self.dialog.is_some() {
