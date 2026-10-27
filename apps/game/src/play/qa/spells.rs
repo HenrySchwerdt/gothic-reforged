@@ -88,6 +88,10 @@ fn collect(sc: &mut Sc, key: &'static str) {
             if !s.contains(&format!("{kind},")) {
                 s.push_str(&kind);
                 s.push(',');
+                if kind != "Phase" && kind != "Cast" {
+                    let full = cx.st.store.entry(format!("{key}full{idx}")).or_default();
+                    full.push_str(&format!(" | {}", &e[..e.len().min(150)]));
+                }
             }
         }
         if idx >= 0
@@ -127,7 +131,8 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             if i >= 0 {
                 let ev = cx.st.store.get(&format!("{key}ev{i}")).cloned().unwrap_or_default();
                 let st = cx.st.store.get(&format!("{key}st{i}")).cloned().unwrap_or_default();
-                cx.note(format!("spell {}: events {ev} victim states {st}", list[i as usize]));
+                let full = cx.st.store.get(&format!("{key}full{i}")).cloned().unwrap_or_default();
+                cx.note(format!("spell {}: events {ev} victim states {st}{full}", list[i as usize]));
             }
             let n = (i + 1) as usize;
             if n >= list.len() {
@@ -137,6 +142,12 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             cx.st.n.insert(format!("{key}t0"), f64::from(cx.now));
             cx.st.n.insert(format!("{key}cast"), 0.0);
             let name = list[n].clone();
+            if let Some(t) = tgt {
+                // Setup: the victim goes back to an idle routine state (a sleeper or a stunned
+                // character would hide the next spell's effect).
+                let idle = gothic_sim::script::routine::state::State::from_name("ZS_HangAround").unwrap();
+                cx.core_mut().0.sim.qa_enter_state(t, idle);
+            }
             cx.world.write_message(CoreCommand(Command::GiveHero {
                 template: name.clone(),
                 amount: 1,
@@ -167,7 +178,7 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 !cx.st
                     .store
                     .get(&format!("{key}ev{i}"))
-                    .is_some_and(|e| e.contains("Cast"))
+                    .is_some_and(|e| e.contains("Cast") || e.contains("Weapon"))
             })
             .map(|(_, n)| n)
             .collect();

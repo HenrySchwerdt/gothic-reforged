@@ -63,6 +63,23 @@ impl<W: WorldQuery> Sim<W> {
         self.actors[id.0 as usize].brain.goto = None;
     }
 
+    /// QA hook: put an idle actor into any script state, as its routine or a reaction would
+    /// (`state` runs through `run_script_states` like every other task).
+    pub fn qa_enter_state(&mut self, id: ActorId, state: State) {
+        let now = self.now_ms();
+        {
+            let a = &mut self.actors[id.0 as usize];
+            a.ai_mode = AiMode::Routine;
+            a.brain.task = Task::Routine;
+            a.brain.busy_until_ms = now;
+            if a.hp < 1 {
+                a.hp = 1;
+            }
+        }
+        self.script_enter(id, state);
+        self.reflect_script_task(id.0 as usize, now);
+    }
+
     /// Put the script state machine of `id` into `ZS_Attack` (called when a fight starts).
     pub(super) fn script_begin_attack(&mut self, id: ActorId) {
         self.script_enter(id, State::Attack);
@@ -267,6 +284,12 @@ impl<W: WorldQuery> Sim<W> {
                 use_type,
             });
         }
+        if cmd == AiCommand::StandUp {
+            // `_AI_StandUp` (S:4a950): leave any sitting, lying or kneeling pose.
+            let mut host = SimHost::new(self);
+            host.self_entity = entity(id);
+            gothic_script::combat::commands::start_stand_up(&mut host, entity(id));
+        }
         match cmd {
             AiCommand::Attack { action, target } => {
                 let tid = actor_id(target);
@@ -343,6 +366,12 @@ impl<W: WorldQuery> Sim<W> {
             }
             AiCommand::Shoot { target } => {
                 let tid = actor_id(target);
+                {
+                    // `_AI_Shoot` (S:4a710): the action becomes Shoot, one projectile is needed.
+                    let mut host = SimHost::new(self);
+                    host.self_entity = entity(id);
+                    gothic_script::combat::commands::start_shoot(&mut host, entity(id));
+                }
                 self.face(i, tid);
                 let loaded = matches!(
                     self.actors[i].equipment.right_use(),
