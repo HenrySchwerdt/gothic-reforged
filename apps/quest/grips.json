@@ -1,5 +1,5 @@
 {
-  "_doc": "Authored grip data per weapon mesh (our own values; native mesh space, centimetres, gothic left-handed coordinates before the engine X mirror). Stored values win over the automatic analysis in grip.rs. center = point on the handle that sits in the middle of the fist; blade = direction from the handle out along the blade; edge = direction of the cutting edge (flat normal = blade x edge); curl.grip = finger flexion 0..1 for middle/ring/little and (x0.7) thumb, curl.trigger = index flexion 0..1.",
+  "_doc": "Authored grip data per weapon mesh (our own values; cooked mesh space (engine space: the Gothic X mirror is already applied), centimetres). Stored values win over the automatic analysis in grip.rs. center = point on the handle that sits in the middle of the fist; blade = direction from the handle out along the blade; edge = direction of the cutting edge (flat normal = blade x edge); curl.grip = finger flexion 0..1 for middle/ring/little and (x0.7) thumb, curl.trigger = index flexion 0..1.",
   "g3_weapon_1h_sword_orcslayer_01.xcmsh": {
     "curl": {
       "grip": 1.0,

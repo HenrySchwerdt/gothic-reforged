@@ -135,7 +135,7 @@ fn spawn_orcs(
         // skeleton, identity offset, mesh mirrored like the actors): no extra rotation.
         match rig.by_name.get("Slot_RightHand_Weapon") {
             Some(&si) => {
-                let ok = a.spawn_static_mirrored(
+                let ok = a.spawn_static(
                     &mut commands,
                     "g3_weapon_orc_halberd_01.xcmsh",
                     rig.joints[si],

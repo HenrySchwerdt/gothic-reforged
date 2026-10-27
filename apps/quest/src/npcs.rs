@@ -204,14 +204,10 @@ impl Manifest {
 // Worker-side part building (cooked actor -> CPU data)
 // ---------------------------------------------------------------------------------------------------------------------
 
-fn mirror_quat(q: [f32; 4]) -> Quat {
-    Quat::from_xyzw(q[0], -q[1], -q[2], q[3]).normalize()
-}
-
 fn node_local(n: &ActorNodeRec) -> Transform {
     Transform {
-        translation: Vec3::new(-n.position[0], n.position[1], n.position[2]),
-        rotation: mirror_quat(n.rotation),
+        translation: Vec3::from(gothic_coords::arr3(n.position)),
+        rotation: gothic_coords::quat_xyzw(n.rotation),
         scale: Vec3::from(n.scale),
     }
 }
