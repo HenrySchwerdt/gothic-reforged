@@ -23,17 +23,17 @@ use gothic_vr::Pose;
 const PX_PER_M: f32 = 2400.0;
 const MAX_PX: f32 = 1600.0;
 
-const LEATHER: Color = Color::srgba(0.10, 0.08, 0.06, 0.88);
-const LEATHER_DARK: Color = Color::srgba(0.05, 0.04, 0.03, 0.92);
-const BRASS: Color = Color::srgb(0.78, 0.63, 0.36);
-const BRASS_DIM: Color = Color::srgba(0.78, 0.63, 0.36, 0.35);
-const TEXT: Color = Color::srgb(0.94, 0.89, 0.79);
-const TEXT_DIM: Color = Color::srgb(0.62, 0.57, 0.49);
+pub(crate) const LEATHER: Color = Color::srgba(0.10, 0.08, 0.06, 0.88);
+pub(crate) const LEATHER_DARK: Color = Color::srgba(0.05, 0.04, 0.03, 0.92);
+pub(crate) const BRASS: Color = Color::srgb(0.78, 0.63, 0.36);
+pub(crate) const BRASS_DIM: Color = Color::srgba(0.78, 0.63, 0.36, 0.35);
+pub(crate) const TEXT: Color = Color::srgb(0.94, 0.89, 0.79);
+pub(crate) const TEXT_DIM: Color = Color::srgb(0.62, 0.57, 0.49);
 const PARCHMENT: Color = Color::srgb(0.87, 0.80, 0.65);
 const INK: Color = Color::srgb(0.22, 0.15, 0.09);
-const HEALTH: Color = Color::srgb(0.78, 0.12, 0.10);
-const MANA: Color = Color::srgb(0.20, 0.38, 0.90);
-const STAMINA: Color = Color::srgb(0.30, 0.70, 0.28);
+pub(crate) const HEALTH: Color = Color::srgb(0.78, 0.12, 0.10);
+pub(crate) const MANA: Color = Color::srgb(0.20, 0.38, 0.90);
+pub(crate) const STAMINA: Color = Color::srgb(0.30, 0.70, 0.28);
 
 /// The drawn parts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,10 +46,12 @@ pub enum SurfaceKind {
     BookLeft,
     BookRight,
     Map,
+    /// Trade, loot, recipes, document, quest log, character.
+    Window,
 }
 
 impl SurfaceKind {
-    const ALL: [SurfaceKind; 8] = [
+    const ALL: [SurfaceKind; 9] = [
         SurfaceKind::Wrist,
         SurfaceKind::Dialog,
         SurfaceKind::Subtitle,
@@ -58,6 +60,7 @@ impl SurfaceKind {
         SurfaceKind::BookLeft,
         SurfaceKind::BookRight,
         SurfaceKind::Map,
+        SurfaceKind::Window,
     ];
 }
 
@@ -202,6 +205,7 @@ fn placement(kind: SurfaceKind, hud: &VrHud) -> Option<(Pose, Vec2, f32)> {
             })
         }),
         SurfaceKind::Map => hud.map.as_ref().map(|(_, panel)| p(panel)),
+        SurfaceKind::Window => hud.window.as_ref().map(|w| p(&w.panel)),
     }
 }
 
@@ -219,7 +223,7 @@ fn item_name(template: &str) -> String {
 }
 
 /// Text size for `s` at most `size`, shrunk to fit `width` pixels (about 0.58 em per glyph).
-fn fit(s: &str, size: f32, width: f32) -> f32 {
+pub(crate) fn fit(s: &str, size: f32, width: f32) -> f32 {
     size.min(width / (s.chars().count().max(1) as f32 * 0.58))
 }
 
@@ -248,10 +252,27 @@ fn content_key(kind: SurfaceKind, hud: &VrHud, data: &HudData) -> String {
         SurfaceKind::Map => hud.map.as_ref().map_or_else(String::new, |(m, _)| {
             format!("{:?}{:?}{:?}", m.markers, m.player, hud.map_label)
         }),
+        SurfaceKind::Window => hud.window.as_ref().map_or_else(String::new, window_key),
     }
 }
 
-fn text(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+fn window_key(w: &crate::windows::VrWindow) -> String {
+    let sum: usize = w
+        .sheet
+        .items
+        .iter()
+        .map(|i| {
+            i.text.len() * 3
+                + i.value.len()
+                + i.count.unsigned_abs() as usize
+                + usize::from(i.enabled)
+                + usize::from(i.selected) * 7
+        })
+        .sum();
+    format!("{}{}{:?}{}", w.view.name(), w.sheet.items.len(), w.hovered, sum)
+}
+
+pub(crate) fn text(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
         Text::new(s),
         TextFont {
@@ -270,7 +291,7 @@ fn apply_font(font: Res<HudFont>, mut texts: Query<&mut TextFont, Added<HudText>
 }
 
 /// The framed background every leather panel shares.
-fn frame(px: UVec2) -> Node {
+pub(crate) fn frame(px: UVec2) -> Node {
     let b = (px.x.min(px.y) as f32 * 0.012).max(2.0);
     Node {
         width: Val::Percent(100.0),
@@ -587,6 +608,11 @@ fn build(
                         Color::srgb(0.45, 0.35, 0.22),
                     ));
                 });
+        }
+        SurfaceKind::Window => {
+            if let Some(w) = &hud.window {
+                crate::render_sheet::build_sheet(&w.sheet, w.hovered, px, parent);
+            }
         }
         SurfaceKind::Map => {
             let Some((map, _)) = &hud.map else { return };

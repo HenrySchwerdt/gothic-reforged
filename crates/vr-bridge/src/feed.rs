@@ -1,0 +1,436 @@
+//! The core's state as the view models the VR UI shows, and the VR UI's window actions as
+//! calls on the core. Everything here is a projection: no rule is decided in this module.
+//! Trade prices, baskets and the deal are `gothic_sim` (`trade_*`), recipes are the script
+//! host's, the quest log is `GameState`; VR only chooses the layout (`gothic-vr-ui`).
+//!
+//! The desktop host does the same in `apps/game/src/play/windows.rs`; the two stay in step
+//! because both call the same `Sim` functions and the same `gothic-ui` view models.
+use gothic_gameplay::dialog::Choice;
+use gothic_gameplay::inventory::{Inventory, Stack};
+use gothic_gameplay::state::{GameState, LogKind};
+use gothic_gameplay::trade::{self, GOLD_TEMPLATE, ListMode, Step};
+use gothic_gameplay::transcript::quest_title;
+use gothic_runtime::{Command, Core};
+use gothic_sim::sim::Sim;
+use gothic_sim::types::ActorId;
+use gothic_sim::world::WorldQuery;
+use gothic_ui::journal::{clock_from_ms, format_clock, quest_rows, status_line};
+use gothic_ui::{
+    Ingredient, LootView, PageEvent, PageRow, PlayerPanel, RecipeRow, RecipeView, TradeView,
+};
+use gothic_vr_ui::{CharacterView, QuestEntry, QuestLogView, Vitals, WindowAction};
+use std::collections::HashMap;
+
+/// Localised name of an item template (`FO_<template>`), the template without prefix and
+/// underscores when the loc table has none.
+pub fn item_name(core: &Core, template: &str) -> String {
+    core.db
+        .text(&format!("FO_{template}"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| gothic_vr_ui::views::guess_name(template))
+}
+
+/// Names of every template in `templates`, for `HudData::names`.
+pub fn names<'a>(
+    core: &Core,
+    templates: impl IntoIterator<Item = &'a str>,
+) -> HashMap<String, String> {
+    templates
+        .into_iter()
+        .map(|t| (t.to_string(), item_name(core, t)))
+        .collect()
+}
+
+/// Health, mana and stamina of the hero.
+pub fn vitals(core: &Core) -> Vitals {
+    let hero = core.sim.actor(core.hero);
+    Vitals {
+        health: (hero.hp.max(0) as f32, hero.hp_max(&core.sim.cfg) as f32),
+        mana: (hero.mana as f32, hero.mana_max() as f32),
+        stamina: (hero.stamina as f32, hero.stamina_max(&core.sim.cfg) as f32),
+    }
+}
+
+fn gold_of(inv: &Inventory) -> i64 {
+    i64::from(inv.count(GOLD_TEMPLATE))
+}
+
+/// The hero's inventory as rows (`key` = stack index, the key `UseItem` is looked up by).
+pub fn hero_panel(core: &Core) -> PlayerPanel {
+    let inv = &core.sim.actor(core.hero).inventory;
+    PlayerPanel {
+        title: String::new(),
+        rows: inv
+            .stacks()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.amount > 0)
+            .map(|(i, s)| PageRow {
+                item: s.template.clone(),
+                count: s.amount,
+                key: i,
+                ..Default::default()
+            })
+            .collect(),
+        gold: gold_of(inv),
+    }
+}
+
+/// `HudAction::InventoryItem(key)` -> the command that uses / equips / drinks the item
+/// (`OnPlayerUseStack`; weapons and armor are worn by the same script).
+pub fn use_stack(core: &Core, key: usize) -> Option<Command> {
+    core.sim
+        .actor(core.hero)
+        .inventory
+        .stack(key)
+        .map(|s| Command::UseItem {
+            template: s.template.clone(),
+        })
+}
+
+fn rows_of<W: WorldQuery>(
+    sim: &Sim<W>,
+    npc: ActorId,
+    inv: &Inventory,
+    player_side: bool,
+    mode: ListMode,
+) -> Vec<PageRow> {
+    let ctx = sim.trade_price_ctx(npc).unwrap_or_default();
+    inv.stacks()
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| player_side || Sim::<W>::trader_offers(s))
+        .filter_map(|(i, s): (usize, &Stack)| {
+            let count = trade::list_count(s, mode);
+            (count > 0).then(|| PageRow {
+                item: s.template.clone(),
+                count,
+                price: sim.trade_unit_price(ctx, s, player_side),
+                key: i,
+                locked: mode == ListMode::Remaining && !trade::can_move(s, mode, player_side),
+                label: None,
+            })
+        })
+        .collect()
+}
+
+/// The trade page with `npc` (open it with `Sim::trade_open` first, as the desktop host does).
+pub fn trade_view(core: &mut Core, npc: ActorId, hint: &str) -> TradeView {
+    let totals = core.sim.trade_totals(npc);
+    let sim = &core.sim;
+    let hero = &sim.actor(core.hero).inventory;
+    let trader = &sim.actor(npc).inventory;
+    let vendor_gold = trader
+        .stacks()
+        .iter()
+        .filter(|s| s.template.eq_ignore_ascii_case(GOLD_TEMPLATE))
+        .map(|s| i64::from(trade::list_count(s, ListMode::Remaining)))
+        .sum();
+    TradeView {
+        vendor: sim.actor(npc).name.replace('_', " "),
+        vendor_rows: rows_of(sim, npc, trader, false, ListMode::Remaining),
+        vendor_gold,
+        player: PlayerPanel {
+            title: String::new(),
+            rows: rows_of(sim, npc, hero, true, ListMode::Remaining),
+            gold: gold_of(hero),
+        },
+        ask_rows: rows_of(sim, npc, trader, false, ListMode::Basket),
+        offer_rows: rows_of(sim, npc, hero, true, ListMode::Basket),
+        ask_total: totals.ask,
+        offer_total: totals.offer,
+        deal: totals.deal_enabled(),
+        balance: totals.balance_enabled(),
+        hint: hint.to_string(),
+    }
+}
+
+/// What a trade page event did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TradeOutcome {
+    /// The view must be rebuilt.
+    pub changed: bool,
+    /// The deal went through.
+    pub dealt: bool,
+    /// The move was refused (play the deny sound).
+    pub refused: bool,
+}
+
+/// Apply a trade `PageEvent` exactly like the desktop host (`step` = how many per click).
+pub fn apply_trade_event(core: &mut Core, npc: ActorId, e: &PageEvent, step: i32) -> TradeOutcome {
+    let mut out = TradeOutcome::default();
+    match e {
+        PageEvent::TradeAdd { player_side, key } => {
+            out.refused = core.sim.trade_step(npc, *player_side, *key, true, step) == Step::Refused;
+            out.changed = true;
+        }
+        PageEvent::TradeRemove { player_side, key } => {
+            core.sim.trade_step(npc, *player_side, *key, false, step);
+            out.changed = true;
+        }
+        PageEvent::TradeClear { player_side } => {
+            core.sim.trade_clear(npc, *player_side);
+            out.changed = true;
+        }
+        PageEvent::TradeBalance => {
+            core.sim.trade_balance(npc);
+            out.changed = true;
+        }
+        PageEvent::TradeDeal => {
+            out.dealt = core.sim.trade_deal(npc).is_ok();
+            out.refused = !out.dealt;
+            out.changed = true;
+        }
+        _ => {}
+    }
+    if out.changed {
+        core.sync_inventory();
+    }
+    out
+}
+
+/// One line of a container or body: `(template, amount, text)`.
+pub type LootLine = (String, i32, String);
+
+/// A chest / body window; `lines` in the order `Command::TakeLoot { index }` expects.
+pub fn loot_view(core: &Core, title: &str, lines: &[LootLine], with_gold: bool) -> LootView {
+    LootView {
+        title: title.replace('_', " "),
+        rows: lines
+            .iter()
+            .enumerate()
+            .map(|(key, (item, count, text))| PageRow {
+                item: item.clone(),
+                count: *count,
+                key,
+                label: (!text.is_empty()).then(|| text.clone()),
+                ..Default::default()
+            })
+            .collect(),
+        pool_gold: with_gold.then(|| {
+            lines
+                .iter()
+                .filter(|l| l.0.eq_ignore_ascii_case(GOLD_TEMPLATE))
+                .map(|l| i64::from(l.1))
+                .sum()
+        }),
+        take_all: with_gold,
+        player: hero_panel(core),
+        hint: String::new(),
+    }
+}
+
+/// `LootTake` / `LootTakeAll` of container `object` -> `Command::TakeLoot`.
+pub fn loot_command(object: u32, e: &PageEvent) -> Option<Command> {
+    match e {
+        PageEvent::LootTake { key } => Some(Command::TakeLoot {
+            object,
+            index: Some(*key),
+        }),
+        PageEvent::LootTakeAll => Some(Command::TakeLoot {
+            object,
+            index: None,
+        }),
+        _ => None,
+    }
+}
+
+/// The recipes of a work station (`ids` = registered recipe ids; `key` of a row = its index
+/// in `ids`, which `PageEvent::Craft` echoes).
+pub fn recipe_view(core: &Core, title: &str, ids: &[i32], footer: &str) -> RecipeView {
+    let hero = core.sim.actor(core.hero);
+    let recipes = ids
+        .iter()
+        .enumerate()
+        .filter_map(|(key, id)| {
+            let r = core.sim.script.recipe_of(*id)?;
+            let ingredients: Vec<Ingredient> = r
+                .ingredients
+                .iter()
+                .map(|(t, need)| Ingredient {
+                    item: t.clone(),
+                    name: item_name(core, t),
+                    need: *need,
+                    have: hero.inventory.count(t),
+                })
+                .collect();
+            let skilled = r.required_perk.is_empty() || hero.has_perk(&r.required_perk);
+            Some(RecipeRow {
+                key,
+                product: r.result.clone(),
+                name: item_name(core, &r.result),
+                description: core
+                    .db
+                    .text(&format!("FD_{}", r.result))
+                    .unwrap_or_default(),
+                craftable: skilled && ingredients.iter().all(|i| i.have >= i.need),
+                ingredients,
+                requirement: if r.required_perk.is_empty() {
+                    String::new()
+                } else {
+                    item_name(core, &r.required_perk)
+                },
+            })
+        })
+        .collect();
+    RecipeView {
+        title: title.to_string(),
+        recipes,
+        gold: gold_of(&hero.inventory),
+        hint: footer.to_string(),
+    }
+}
+
+/// `PageEvent::Craft { key }` -> `Command::Craft` of recipe `ids[key]`.
+pub fn craft_command(ids: &[i32], e: &PageEvent) -> Option<Command> {
+    match e {
+        PageEvent::Craft { key } => ids.get(*key).map(|id| Command::Craft { recipe: *id }),
+        _ => None,
+    }
+}
+
+/// Text of a log entry (`AddQuestLog` key -> localised text, dialog excerpt, status line).
+fn log_text(core: &Core, kind: &LogKind) -> Option<String> {
+    match kind {
+        LogKind::Status(_) => status_line(kind).map(String::from),
+        LogKind::Text(key) => Some(core.db.text(key).unwrap_or_else(|| key.clone())),
+        LogKind::Dialog(t) => Some(t.clone()),
+    }
+}
+
+/// The quest log: every quest that has started, its tab and its log (newest first).
+pub fn quest_log(core: &Core) -> QuestLogView {
+    let st: &GameState = core.state();
+    let mut quests = Vec::new();
+    for tab in 0..3 {
+        for row in quest_rows(st, tab, |n| quest_title(&core.db, n)) {
+            let log = st
+                .log
+                .iter()
+                .rev()
+                .filter(|e| e.quest == row.name)
+                .filter_map(|e| log_text(core, &e.kind))
+                .collect();
+            quests.push(QuestEntry {
+                name: row.name,
+                title: row.title,
+                tab,
+                log,
+            });
+        }
+    }
+    let (day, hour, minute) = clock_from_ms(st.hours.saturating_mul(3_600_000));
+    let fmt = core.db.text("HUD_Time").unwrap_or_default();
+    let reputation = st
+        .fame
+        .iter()
+        .filter(|(_, v)| **v != 0)
+        .map(|(k, v)| {
+            (
+                k.split_once(':').map_or(k.as_str(), |(_, n)| n).to_string(),
+                *v,
+            )
+        })
+        .collect();
+    QuestLogView {
+        quests,
+        clock: format_clock(&fmt, 0, day, hour, minute),
+        reputation,
+    }
+}
+
+/// Attributes, protection, skills and equipment of the hero.
+pub fn character(core: &Core) -> CharacterView {
+    let hero = core.sim.actor(core.hero);
+    let st = core.state();
+    let b = &hero.base;
+    let attributes = vec![
+        ("Staerke".to_string(), b.str),
+        ("Geschick".to_string(), b.dex),
+        ("Wissen".to_string(), b.int),
+        ("Schmieden".to_string(), b.smithing),
+        ("Diebeskunst".to_string(), b.theft),
+        ("Alchemie".to_string(), b.alchemy),
+    ];
+    let protection = [
+        ("Klingen", "PROT_BLADE"),
+        ("Stumpf", "PROT_BLUNT"),
+        ("Geschosse", "PROT_PROJECTILE"),
+        ("Feuer", "PROT_FIRE"),
+        ("Eis", "PROT_ICE"),
+    ]
+    .into_iter()
+    .map(|(n, tag)| (n.to_string(), hero.equipment.modifier_sum(tag)))
+    .collect();
+    let eq = &hero.equipment;
+    let equipment = [
+        ("Rechts", &eq.right),
+        ("Links", &eq.left),
+        ("Koerper", &eq.body),
+    ]
+    .into_iter()
+    .filter_map(|(slot, it)| it.as_ref().map(|i| (slot.to_string(), i.name.clone())))
+    .collect();
+    CharacterView {
+        level: st.level,
+        xp: st.xp,
+        xp_next: GameState::xp_next(st.level),
+        learning_points: st.learning_points,
+        vitals: vitals(core),
+        attributes,
+        protection,
+        skills: st
+            .skills
+            .iter()
+            .map(|s| (s.replace('_', " "), true))
+            .collect(),
+        equipment,
+    }
+}
+
+/// Dialog options from a `MenuChanged` event (`Command::Choose { index }` takes the index).
+pub fn dialog_options(menu: &[Choice]) -> Vec<String> {
+    menu.iter().map(|c| c.label.clone()).collect()
+}
+
+/// What a window action turned into.
+#[derive(Debug, Clone)]
+pub enum Applied {
+    /// Core commands to send with the next `Core::tick`.
+    Commands(Vec<Command>),
+    /// The trade page changed (rebuild it with [`trade_view`]).
+    Trade(TradeOutcome),
+    /// The window closes; the host sends `GuiOpen(false)` / `EndInteraction`.
+    Close,
+    Nothing,
+}
+
+/// The window the host has open (decides how page events map to the core).
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpenWindow {
+    Trade { npc: ActorId },
+    Loot { object: u32 },
+    Station { recipes: Vec<i32> },
+    Other,
+}
+
+/// Turn a window action into core calls. Trade moves happen right here (`Sim` calls, like the
+/// desktop); everything else is a `Command` for the next tick.
+pub fn apply_action(core: &mut Core, open: &OpenWindow, a: &WindowAction, step: i32) -> Applied {
+    match (a, open) {
+        (WindowAction::Close, _) | (WindowAction::Page(PageEvent::Close), _) => Applied::Close,
+        (WindowAction::UseItem(t), _) => Applied::Commands(vec![Command::UseItem {
+            template: t.clone(),
+        }]),
+        (WindowAction::Page(e), OpenWindow::Trade { npc }) => {
+            Applied::Trade(apply_trade_event(core, *npc, e, step))
+        }
+        (WindowAction::Page(e), OpenWindow::Loot { object }) => {
+            loot_command(*object, e).map_or(Applied::Nothing, |c| Applied::Commands(vec![c]))
+        }
+        (WindowAction::Page(e), OpenWindow::Station { recipes }) => {
+            craft_command(recipes, e).map_or(Applied::Nothing, |c| Applied::Commands(vec![c]))
+        }
+        _ => Applied::Nothing,
+    }
+}

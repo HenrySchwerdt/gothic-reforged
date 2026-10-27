@@ -12,7 +12,7 @@ pub const ROWS: usize = 4;
 pub const CELL: f32 = 0.06;
 /// Height of the paging strip under the grid, m.
 pub const STRIP: f32 = 0.05;
-const PANEL_DISTANCE: f32 = 0.55;
+const PANEL_DISTANCE: f32 = 0.45;
 const PANEL_PITCH: f32 = 25.0 * std::f32::consts::PI / 180.0;
 
 /// The hand is behind the head and around shoulder height: reaching into the backpack.

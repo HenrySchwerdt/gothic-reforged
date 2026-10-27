@@ -14,7 +14,9 @@ use crate::dialog::DialogPanel;
 use crate::handheld::{Book, HeldMap, MAP_SIZE, PAGE_SIZE, held_pose, journal_lines};
 use crate::panel::Panel;
 use crate::subtitles::{SubtitleView, layout};
+use crate::views::{WindowView, guess_name};
 use crate::wheel::QuickWheel;
+use crate::windows::{VrWindow, WindowAction};
 use crate::wrist::{Vitals, wrist_panel, wrist_visible};
 use glam::{Vec2, Vec3};
 use gothic_ui::journal::QuestRow;
@@ -56,6 +58,20 @@ pub struct HudData {
     pub speaker_head: Option<Vec3>,
     pub quests: Vec<QuestRow>,
     pub map: Option<(MapSheet, Vec<MapMarker>, Vec2)>,
+    /// The window to show (trade, loot, recipes, document, quest log, character); `None`
+    /// closes it. The host builds it from the core (`gothic-vr-bridge::feed`).
+    pub window: Option<WindowView>,
+    /// Localised item names by template (the HUD falls back to a guess from the template).
+    pub names: std::collections::HashMap<String, String>,
+}
+
+impl HudData {
+    pub fn name(&self, template: &str) -> String {
+        self.names
+            .get(template)
+            .cloned()
+            .unwrap_or_else(|| guess_name(template))
+    }
 }
 
 /// HUD -> host.
@@ -67,6 +83,9 @@ pub enum HudAction {
     InventoryItem(usize),
     /// A dialog option was chosen (`ChooseOption`).
     ChooseOption(usize),
+    /// The off hand's `Y` with no window open: show the tablet (quest log / character);
+    /// the host puts the window into `HudData::window`.
+    OpenTablet,
     /// The page changed (the host mirrors it into the flat UI / the core's GUI state).
     Page(Option<PageId>),
 }
@@ -86,6 +105,10 @@ pub struct VrHud {
     pub subtitle: Option<SubtitleView>,
     /// Map label under the laser.
     pub map_label: Option<String>,
+    /// The open window, if any.
+    pub window: Option<VrWindow>,
+    /// Actions of the window since the last drain (the plugin sends them as messages).
+    pub window_actions: Vec<WindowAction>,
 }
 
 impl Default for VrHud {
@@ -102,6 +125,8 @@ impl Default for VrHud {
             wrist: None,
             subtitle: None,
             map_label: None,
+            window: None,
+            window_actions: Vec::new(),
         }
     }
 }
@@ -261,6 +286,33 @@ impl VrHud {
                 self.map = Some((map, panel));
             }
             _ => self.map = None,
+        }
+
+        if data.window.is_none() && input.just_pressed(off, VrButton::Secondary) {
+            out.push(HudAction::OpenTablet);
+        }
+
+        // World window (trade, loot, recipes, documents, quest log, character).
+        match &data.window {
+            Some(v) => {
+                let namer = |t: &str| data.name(t);
+                match self.window.as_mut() {
+                    Some(w) => {
+                        if w.view != *v {
+                            w.set_view(v.clone(), &namer);
+                        }
+                    }
+                    None => {
+                        self.window = Some(VrWindow::open(v.clone(), &head, &namer));
+                        self.backpack = None;
+                    }
+                }
+                if let Some(w) = self.window.as_mut() {
+                    let acts = w.update(input, t, main, &namer);
+                    self.window_actions.extend(acts);
+                }
+            }
+            None => self.window = None,
         }
 
         // Vitals on the wrist (after the page changes of this frame).
