@@ -13,7 +13,6 @@ world 18 / 46, animation 10 / 38, audio 20 / 6, render rules 1 / 6, fx 17 / 2.
 | gameplay/treasure | `generate_plunder`, `generate_plunder_inventory` | `Treasure::plunder` host re-implementation (own roll, no `half_to_full`, no trophy / mining rules) | chests at world spawn, bodies lazily when first looted (`ensure_plunder`, hero perks of that moment); NPC `Gear.give` no longer carries plunder |
 | gameplay/trade | `loot_key_index` | digit key arithmetic in `interact.rs` | `loot_chest` QA |
 | gameplay/focus | `lock_holds` | not wired by this branch: the merger keeps its own lock in hero.rs (player focus code is not mine) | - |
-| gameplay/inventory/order | `compare`, `compare_*` | unsorted stack lists in the inventory / trade pages | `trade_click`, `hud_focus` (compare 24k) |
 | world/trigger | `on_cache_in`, `on_enter_processing_range` | none (nobody called the range hooks) | `triggers` QA: 133 each |
 | world/sector | `update_all`, `collect` | `sync_sectors` loop that re-implemented `UpdateSectors`; `capture()` now writes `CollectSectors` into the save image | `sector_switch`, `menu_save_load` QA |
 | render rules | `lights::packet` (and `weight_sphere`) | `lights::select` + hand packing in `walk/env.rs` for the character light set | `startup_sanity` |
@@ -44,16 +43,27 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
 * `audio::emitter::{step, select_sample, voice_path}`: world `eCAudioEmitter_PS` entities are not created (`AudioEmitterPs`
   has no spawner); sfx templates use the same property set but go through `PlayEffectSound`. `lipsync::viseme_for_label`
   is for `.lip` label text, the game reads the binary `.xlip` frames.
-* `audio::sequencer::{set_accept_triggers, execute_stop}`: music trigger rows carry `DisableTriggers` (parsed, not applied)
-  and a stop trigger is never raised; the original's caller of `SetAcceptTriggers` still has to be found (REA pass).
+* `audio::sequencer::set_accept_triggers`: only the console command calls it in the original (see dump findings); `execute_stop`
+  runs on a stop trigger, which the game never raises.
 
-## Blocked
+## Dump findings (`.local/research/engine/Game`, replaces the failed REA attempt)
 
-* REA pass (inventory sort citation, `SetAcceptTriggers` caller, world emitter spawner): `open_binary` on Game.dll succeeds but
-  every query (`procedure_callers`, `procedure_pseudo_code`, `search_procedures`) times out and the session is dropped;
-  there is no Game.dll snapshot under `.local/research/`. The stack-list sort in `windows.rs` is therefore **uncited**
-  (`gCInventoryStack::Compare` is ported; where the original calls it is unknown). Needs a pre-analysed snapshot of Game.dll
-  (headless Ghidra export) before this can proceed.
+* `gCMusicSequencer::SetAcceptTriggers` has exactly one caller: `gCSession::OnConsoleCommand` (Game, console command that
+  toggles the music trigger acceptance). No game code calls it, so `set_accept_triggers` is a console / debug function and is
+  **dead for play by design**; `DisableTriggers` of a trigger row is not read by it.
+* `gCInventory_PS::OnSortInventory` (0x100b49e0) does not sort: it calls the listeners (`this+0x38` list, vfn +0xc) and
+  purges them. `gCInventoryStack::Compare` (0x100c2460) has no static caller and no data reference in the dump (it is reached
+  through a function pointer / template instantiation that the decompilation does not show), `SetSortIndex` has no caller.
+  So **where the original sorts the stack lists is not recoverable here**; the UI sort added earlier was removed again
+  (cite-or-reject). The `order::compare*` family stays unreached until a caller is found.
+* Worn state: the original has no separate equipment record. Worn items are stacks linked to `gCInventorySlot`s
+  (`Slot::RightHand` ... `Helmet`), the scripts ask `FindStackIndex(slot)` / `HoldStacks`. So the stack list is the single
+  source of truth there. Our `Equipment` is a second model with different semantics (it keeps the weapon while holstered and
+  `npc_stow_melee` / `npc_ready_melee` stash hand contents in `brain.melee_kit`); `Sim::mirror_equipment` keeps the stack list
+  consistent but the flip (Equipment derived) means re-expressing `_AI_SelectWeapon`'s swaps, `drop_slot`, `unequip_stack`
+  (script_host), magic `remove_item` and persist as `hold_stacks` / `unequip_stack` calls first. Not done: needs its own
+  parity pass over the combat QA (10 mutation sites listed by `grep "equipment\.\(left\|right\|body\) ="`).
+* World audio emitters: not searched in this round.
 
 ## Open (feature work, not dead)
 

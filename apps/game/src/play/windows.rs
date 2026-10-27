@@ -141,37 +141,14 @@ fn gold_of(inv: &Inventory) -> i64 {
 }
 
 /// The hero's inventory as the right-hand panel.
-/// Localised names for the stack order (`FO_<template>` of the string table).
-struct Names<'a>(&'a CoreRes);
-
-impl gothic_gameplay::inventory::OrderContext for Names<'_> {
-    fn focus_name(&self, template: &str) -> String {
-        self.0
-            .0
-            .db
-            .text(&format!("FO_{template}"))
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| template.replace('_', " "))
-    }
-}
-
-/// The stacks in display order (`gCInventoryStack::Compare`, Game:0x100c2460): weapons, armor,
-/// jewellery, consumables ... each group by its own comparators; keys stay the real indices.
-fn ordered<'a>(
-    inv: &'a Inventory,
-    cx: &dyn gothic_gameplay::inventory::OrderContext,
-) -> Vec<(usize, &'a Stack)> {
-    let mut v: Vec<(usize, &Stack)> = inv.stacks().iter().enumerate().collect();
-    v.sort_by(|a, b| gothic_gameplay::inventory::order::compare(a.1, b.1, cx).cmp(&0));
-    v
-}
-
 fn hero_panel(core: &CoreRes) -> PlayerPanel {
     let inv = &core.0.sim.actor(core.0.hero).inventory;
     PlayerPanel {
         title: String::new(),
-        rows: ordered(inv, &Names(core))
-            .into_iter()
+        rows: inv
+            .stacks()
+            .iter()
+            .enumerate()
             .filter(|(_, s)| s.amount > 0)
             .map(|(i, s)| PageRow {
                 item: s.template.clone(),
@@ -192,8 +169,9 @@ fn rows_of<W: WorldQuery>(
     mode: ListMode,
 ) -> Vec<PageRow> {
     let ctx = sim.trade_price_ctx(npc).unwrap_or_default();
-    ordered(inv, &gothic_gameplay::inventory::PlainOrder)
-        .into_iter()
+    inv.stacks()
+        .iter()
+        .enumerate()
         .filter(|(_, s)| player_side || Sim::<W>::trader_offers(s))
         .filter_map(|(i, s): (usize, &Stack)| {
             let count = trade::list_count(s, mode);
