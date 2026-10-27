@@ -496,9 +496,11 @@ impl Ctx<'_> {
                 self.st.chapter = self.amount(name, &s.id1, 0);
             }
             Cmd::Sleep => {
-                // [R 3 id 21] ID1 hours, advances time.
-                let h = self.amount(name, &s.id1, 0);
-                self.st.hours += u64::from(h);
+                // ID1 is the target hour of the day (the bed infos offer 8, 12, 20, 0; `PlayerSleep`
+                // S:76440 advances to the next such hour). Without a sim the quest clock follows.
+                let target = u64::from(self.amount(name, &s.id1, 0) % 24);
+                let now = self.st.hours % 24;
+                self.st.hours += if target > now { target - now } else { 24 - now + target };
                 self.effect(s);
             }
             Cmd::EndGame => {

@@ -705,7 +705,10 @@ fn ps_interact_door(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
 
 // ---- sleeping -------------------------------------------------------------------------------------------
 
-/// Hour at which the hero wakes (`PS_DuskToDawn_Loop` waits for the clock to pass 8).
+/// Hour at which the hero wakes. `PS_DuskToDawn_Loop` (S:671d0) keeps the fast clock running while
+/// `GetHour() <= 8` (compare at 672c8..672d1, the `jle` loops) and, when it started after 8, while
+/// `GetHour() >= 8` (6727c..67287) until the clock wraps; it stops at the first hour greater than 8,
+/// i.e. 09:00. (`COMBAT_AI_RULES.md` said 08:00, which was wrong.)
 pub const WAKE_HOUR: f32 = 9.0;
 
 /// Port of `PlayerSleep` (S:76440): advance the world by `hours` (playing time follows) and
@@ -719,6 +722,13 @@ pub fn player_sleep(host: &mut dyn ScriptHost, hours: f32) {
         host.pm_set_pool(pool, max);
     }
     host.emit(PlayerEvent::Slept { hours });
+}
+
+/// Hours `PlayerSleep` (S:76440) advances for its argument `target` (an hour of the day): when the
+/// target is later than the current world time (`fcomi` at 764ca, `jbe` at 764ce) the difference,
+/// otherwise `24 - now + target` (the `24.0` constant at 0x10107678): the next occurrence.
+pub fn hours_until_hour(now: f32, target: f32) -> f32 {
+    if target > now { target - now } else { 24.0 - now + target }
 }
 
 /// Hours of sleep from the given hour of the day until the wake-up hour.
@@ -766,14 +776,14 @@ fn ps_dusk_to_dawn(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     gothic_portcov::hit!("ps_dusk_to_dawn");
     match step(host, p) {
         0 => {
-            host.emit(PlayerEvent::TimeScale(0.3));
+            // The slow clock (`SetFactor(3840)`, `timer.fTimeScale=0.3`) is the `TimeScale` event
+            // `commands::sleep` reports around the skip.
             host.queue_ai(p, AiCommand::WaitMs { ms: 500 });
             Flow::Yield
         }
         1 => {
-            let hours = hours_until_wake(host.world_hour());
-            player_sleep(host, hours);
-            host.emit(PlayerEvent::TimeScale(1.0));
+            // The same entry point as `Command::Sleep { hour: None }`.
+            crate::player::commands::sleep(host, None);
             host.queue_ai(p, AiCommand::StandUp);
             Flow::Yield
         }

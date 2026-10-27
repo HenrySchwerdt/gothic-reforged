@@ -17,9 +17,11 @@ gothic-sim = { path = "../sim" }
 gothic-vr = { path = "../vr", default-features = false }
 gothic-vr-physics = { path = "../vr-physics" }
 gothic-vr-melee = { path = "../vr-melee" }
+gothic-vr-ui = { path = "../vr-ui" }
+gothic-ui = { path = "../ui" }
+gothic-gameplay = { path = "../gameplay" }
 
 [dev-dependencies]
-gothic-gameplay = { path = "../gameplay" }
 gothic-formats = { path = "../formats" }
 gothic-animation = { path = "../animation" }
 anyhow = { workspace = true }

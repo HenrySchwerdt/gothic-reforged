@@ -23,17 +23,17 @@ use gothic_vr::Pose;
 const PX_PER_M: f32 = 2400.0;
 const MAX_PX: f32 = 1600.0;
 
-const LEATHER: Color = Color::srgba(0.10, 0.08, 0.06, 0.88);
-const LEATHER_DARK: Color = Color::srgba(0.05, 0.04, 0.03, 0.92);
-const BRASS: Color = Color::srgb(0.78, 0.63, 0.36);
-const BRASS_DIM: Color = Color::srgba(0.78, 0.63, 0.36, 0.35);
-const TEXT: Color = Color::srgb(0.94, 0.89, 0.79);
-const TEXT_DIM: Color = Color::srgb(0.62, 0.57, 0.49);
+pub(crate) const LEATHER: Color = Color::srgba(0.02, 0.09, 0.08, 0.92);
+pub(crate) const LEATHER_DARK: Color = Color::srgba(0.0, 0.05, 0.04, 0.95);
+pub(crate) const BRASS: Color = Color::srgb(0.62, 0.52, 0.36);
+pub(crate) const BRASS_DIM: Color = Color::srgba(0.62, 0.52, 0.36, 0.35);
+pub(crate) const TEXT: Color = Color::srgb(0.878, 0.769, 0.584);
+pub(crate) const TEXT_DIM: Color = Color::srgb(0.60, 0.53, 0.40);
 const PARCHMENT: Color = Color::srgb(0.87, 0.80, 0.65);
 const INK: Color = Color::srgb(0.22, 0.15, 0.09);
-const HEALTH: Color = Color::srgb(0.78, 0.12, 0.10);
-const MANA: Color = Color::srgb(0.20, 0.38, 0.90);
-const STAMINA: Color = Color::srgb(0.30, 0.70, 0.28);
+pub(crate) const HEALTH: Color = Color::srgb(0.624, 0.094, 0.075);
+pub(crate) const MANA: Color = Color::srgb(0.20, 0.38, 0.90);
+pub(crate) const STAMINA: Color = Color::srgb(0.30, 0.70, 0.28);
 
 /// The drawn parts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,10 +46,14 @@ pub enum SurfaceKind {
     BookLeft,
     BookRight,
     Map,
+    /// Trade, loot, recipes, document, quest log, character.
+    Window,
+    /// World text tags (focus name, floating texts), slot 0..4.
+    Tag(u8),
 }
 
 impl SurfaceKind {
-    const ALL: [SurfaceKind; 8] = [
+    const ALL: [SurfaceKind; 17] = [
         SurfaceKind::Wrist,
         SurfaceKind::Dialog,
         SurfaceKind::Subtitle,
@@ -58,6 +62,15 @@ impl SurfaceKind {
         SurfaceKind::BookLeft,
         SurfaceKind::BookRight,
         SurfaceKind::Map,
+        SurfaceKind::Window,
+        SurfaceKind::Tag(0),
+        SurfaceKind::Tag(1),
+        SurfaceKind::Tag(2),
+        SurfaceKind::Tag(3),
+        SurfaceKind::Tag(4),
+        SurfaceKind::Tag(5),
+        SurfaceKind::Tag(6),
+        SurfaceKind::Tag(7),
     ];
 }
 
@@ -86,9 +99,18 @@ impl Surface {
 #[derive(Resource, Clone)]
 pub struct HudFont(pub Handle<Font>);
 
+/// Heading face (the original's Times New Roman Bold Italic); headings use [`HudFont`] when it
+/// is not inserted.
+#[derive(Resource, Clone)]
+pub struct HudHeadingFont(pub Handle<Font>);
+
 /// Marks text spawned by the HUD so [`HudFont`] reaches it.
 #[derive(Component)]
 struct HudText;
+
+/// Marks heading text (window titles, buttons) for [`HudHeadingFont`].
+#[derive(Component)]
+pub(crate) struct HudHeading;
 
 /// Adds the rendered surfaces (needs a renderer; use with `VrUiPlugin { gizmos: false }`).
 pub struct VrUiRenderPlugin;
@@ -202,6 +224,12 @@ fn placement(kind: SurfaceKind, hud: &VrHud) -> Option<(Pose, Vec2, f32)> {
             })
         }),
         SurfaceKind::Map => hud.map.as_ref().map(|(_, panel)| p(panel)),
+        SurfaceKind::Window => hud.window.as_ref().map(|w| p(&w.panel)),
+        SurfaceKind::Tag(i) => hud.tags.get(i as usize).map(|t| {
+            let w = t.text.chars().count().max(1) as f32 * t.height * 0.6 + t.height;
+            let h = t.height * if t.bar.is_some() { 2.1 } else { 1.4 };
+            (t.pose, Vec2::new(w, h), t.alpha)
+        }),
     }
 }
 
@@ -219,7 +247,7 @@ fn item_name(template: &str) -> String {
 }
 
 /// Text size for `s` at most `size`, shrunk to fit `width` pixels (about 0.58 em per glyph).
-fn fit(s: &str, size: f32, width: f32) -> f32 {
+pub(crate) fn fit(s: &str, size: f32, width: f32) -> f32 {
     size.min(width / (s.chars().count().max(1) as f32 * 0.58))
 }
 
@@ -227,7 +255,7 @@ fn content_key(kind: SurfaceKind, hud: &VrHud, data: &HudData) -> String {
     match kind {
         SurfaceKind::Wrist => {
             let f = data.vitals.fractions();
-            format!("{:.2}{:.2}{:.2}", f[0], f[1], f[2])
+            format!("{:.2}{:.2}{:.2}{:?}", f[0], f[1], f[2], data.noise.map(|n| (n * 50.0) as i32))
         }
         SurfaceKind::Dialog => hud.dialog.as_ref().map_or_else(String::new, |d| {
             format!("{:?}{:?}{:?}", d.options, d.rows(), d.list.selected())
@@ -248,10 +276,31 @@ fn content_key(kind: SurfaceKind, hud: &VrHud, data: &HudData) -> String {
         SurfaceKind::Map => hud.map.as_ref().map_or_else(String::new, |(m, _)| {
             format!("{:?}{:?}{:?}", m.markers, m.player, hud.map_label)
         }),
+        SurfaceKind::Window => hud.window.as_ref().map_or_else(String::new, window_key),
+        SurfaceKind::Tag(i) => hud
+            .tags
+            .get(i as usize)
+            .map_or_else(String::new, |t| format!("{}{:?}{:?}", t.text, t.color, t.bar.map(|b| (b * 50.0) as i32))),
     }
 }
 
-fn text(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
+fn window_key(w: &crate::windows::VrWindow) -> String {
+    let sum: usize = w
+        .sheet
+        .items
+        .iter()
+        .map(|i| {
+            i.text.len() * 3
+                + i.value.len()
+                + i.count.unsigned_abs() as usize
+                + usize::from(i.enabled)
+                + usize::from(i.selected) * 7
+        })
+        .sum();
+    format!("{}{}{:?}{}", w.view.name(), w.sheet.items.len(), w.hovered, sum)
+}
+
+pub(crate) fn text(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     (
         Text::new(s),
         TextFont {
@@ -263,14 +312,22 @@ fn text(s: impl Into<String>, size: f32, color: Color) -> impl Bundle {
     )
 }
 
-fn apply_font(font: Res<HudFont>, mut texts: Query<&mut TextFont, Added<HudText>>) {
-    for mut t in &mut texts {
-        t.font = FontSource::Handle(font.0.clone());
+fn apply_font(
+    font: Res<HudFont>,
+    heading: Option<Res<HudHeadingFont>>,
+    mut texts: Query<(&mut TextFont, Has<HudHeading>), Added<HudText>>,
+) {
+    for (mut t, is_heading) in &mut texts {
+        let f = match (&heading, is_heading) {
+            (Some(h), true) => h.0.clone(),
+            _ => font.0.clone(),
+        };
+        t.font = FontSource::Handle(f);
     }
 }
 
 /// The framed background every leather panel shares.
-fn frame(px: UVec2) -> Node {
+pub(crate) fn frame(px: UVec2) -> Node {
     let b = (px.x.min(px.y) as f32 * 0.012).max(2.0);
     Node {
         width: Val::Percent(100.0),
@@ -288,6 +345,7 @@ fn build(
     hud: &VrHud,
     data: &HudData,
     px: UVec2,
+    assets: Option<&gothic_ui::UiAssets>,
     parent: &mut ChildSpawnerCommands,
 ) {
     let w = px.x as f32;
@@ -299,10 +357,12 @@ fn build(
             parent
                 .spawn((frame(px), BackgroundColor(LEATHER), BorderColor::all(BRASS)))
                 .with_children(|p| {
-                    for (i, (label, color)) in [("HP", HEALTH), ("MP", MANA), ("SP", STAMINA)]
-                        .into_iter()
-                        .enumerate()
-                    {
+                    let mut rows = vec![("HP", HEALTH, f[0], format!("{:.0}", vals[0].0)), ("MP", MANA, f[1], format!("{:.0}", vals[1].0)), ("SP", STAMINA, f[2], format!("{:.0}", vals[2].0))];
+                    if let Some(n) = data.noise {
+                        // Pickpocket noise: green while quiet, red when the NPC is about to notice.
+                        rows.push(("!", Color::srgb(0.30 + 0.5 * n, 0.70 - 0.5 * n, 0.2), n.clamp(0.0, 1.0), String::new()));
+                    }
+                    for (label, color, frac, value) in rows {
                         p.spawn(Node {
                             flex_grow: 1.0,
                             align_items: AlignItems::Center,
@@ -325,7 +385,7 @@ fn build(
                             .with_children(|track| {
                                 track.spawn((
                                     Node {
-                                        width: Val::Percent(f[i] * 100.0),
+                                        width: Val::Percent(frac * 100.0),
                                         height: Val::Percent(100.0),
                                         border_radius: BorderRadius::all(Val::Px(h * 0.03)),
                                         ..default()
@@ -333,7 +393,7 @@ fn build(
                                     BackgroundColor(color),
                                 ));
                             });
-                            row.spawn(text(format!("{:.0}", vals[i].0), h * 0.15, TEXT));
+                            row.spawn(text(value, h * 0.15, TEXT));
                         });
                     }
                 });
@@ -588,6 +648,62 @@ fn build(
                     ));
                 });
         }
+        SurfaceKind::Tag(i) => {
+            if let Some(t) = hud.tags.get(i as usize) {
+                let c = Color::srgb(t.color[0], t.color[1], t.color[2]);
+                let size = h / if t.bar.is_some() { 2.1 } else { 1.4 } * 0.85;
+                parent
+                    .spawn(Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        row_gap: Val::Px(size * 0.15),
+                        ..default()
+                    })
+                    .with_children(|p| {
+                        // The original's outline: four dark copies under the name.
+                        p.spawn(Node { ..default() }).with_children(|n| {
+                            for (dx, dy) in [(-1.5, -1.5), (1.5, 1.5)] {
+                                n.spawn((
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Px(dx),
+                                        top: Val::Px(dy),
+                                        ..default()
+                                    },
+                                    text(t.text.clone(), size, Color::BLACK),
+                                ));
+                            }
+                            n.spawn(text(t.text.clone(), size, c));
+                        });
+                        if let Some(b) = t.bar {
+                            p.spawn((
+                                Node {
+                                    width: Val::Percent(80.0),
+                                    height: Val::Px(size * 0.22),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                            ))
+                            .with_child((
+                                Node {
+                                    width: Val::Percent(b.clamp(0.0, 1.0) * 100.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(HEALTH),
+                            ));
+                        }
+                    });
+            }
+        }
+        SurfaceKind::Window => {
+            if let Some(w) = &hud.window {
+                crate::render_sheet::build_sheet(&w.sheet, w.hovered, px, assets, data, parent);
+            }
+        }
         SurfaceKind::Map => {
             let Some((map, _)) = &hud.map else { return };
             parent
@@ -688,6 +804,7 @@ fn update_surfaces(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cameras: Query<&mut Camera>,
     mut surfaces: Query<(&mut Surface, &mut Transform, &mut Visibility)>,
+    assets: Option<Res<gothic_ui::UiAssets>>,
 ) {
     for (mut s, mut t, mut vis) in &mut surfaces {
         let shown = placement(s.kind, &hud.0);
@@ -722,7 +839,7 @@ fn update_surfaces(
             s.px = px;
             s.key.clear();
         }
-        let key = content_key(s.kind, &hud.0, &data.0);
+        let key = format!("{}{}", content_key(s.kind, &hud.0, &data.0), assets.as_ref().map_or(0, |a| a.pages.len()));
         if key != s.key {
             s.key = key;
             let (kind, px) = (s.kind, s.px);
@@ -730,7 +847,7 @@ fn update_surfaces(
                 .entity(s.root)
                 .despawn_children()
                 .with_children(|p| {
-                    build(kind, &hud.0, &data.0, px, p);
+                    build(kind, &hud.0, &data.0, px, assets.as_deref(), p);
                 });
         }
     }

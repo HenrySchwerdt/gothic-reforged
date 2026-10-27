@@ -7,7 +7,7 @@
 //! Layouts are rebuilt from the original `g3.gui.res` and atlas art (see
 //! `docs/research/UI_ORIGINAL.md`); screens are visual ports only, not gameplay-complete.
 pub mod assets;
-mod atlas;
+pub mod atlas;
 pub mod demo;
 pub mod dialogmenu;
 pub mod files;
@@ -31,7 +31,7 @@ mod screens_read;
 mod screens_world;
 pub mod settings;
 pub mod stats;
-mod style;
+pub mod style;
 pub mod texteffect;
 pub mod userini;
 

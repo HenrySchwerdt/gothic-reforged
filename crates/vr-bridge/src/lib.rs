@@ -17,9 +17,13 @@
 //! * [`actors`]: every actor of the `gothic-runtime` core gets a kinematic avian proxy with
 //!   melee hitzones that follows the core's position; VR melee hits on a proxy become the
 //!   core's `Command::Attack`, so the original combat rules deal the damage.
+//! * [`feed`]: the core's state as the view models of the VR windows and HUD (dialog options,
+//!   quest log, character, trade, loot, recipes) and the window actions applied to the core.
 //! * [`tick`]: ticks the core at its 30 Hz in `Update`, because `CorePlugin` sets the fixed
 //!   timestep to 30 Hz while avian and the VR layer run their fixed steps at 90 Hz.
 pub mod actors;
+pub mod dialog_flow;
+pub mod feed;
 pub mod level;
 pub mod tick;
 pub mod units;

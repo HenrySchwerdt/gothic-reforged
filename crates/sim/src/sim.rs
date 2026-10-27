@@ -1775,6 +1775,13 @@ impl<W: WorldQuery> Sim<W> {
                     self.assess_target(a, b, reason);
                 }
             }
+            "sleep" => {
+                // Dialog `Sleep` (GAME_RULES 3 id 21): ID1 is the target hour (the bed infos offer
+                // 8, 12, 20, 0): the hero's `PlayerSleep(hour)`.
+                if let Ok(h) = a1.trim().parse::<u32>() {
+                    self.player_sleep(Some(h));
+                }
+            }
             "spawn" => {
                 let tmpl = self.npc_templates.get(&a1.to_ascii_lowercase()).cloned();
                 if let Some(rec) = tmpl {

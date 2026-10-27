@@ -14,7 +14,9 @@ use crate::dialog::DialogPanel;
 use crate::handheld::{Book, HeldMap, MAP_SIZE, PAGE_SIZE, held_pose, journal_lines};
 use crate::panel::Panel;
 use crate::subtitles::{SubtitleView, layout};
+use crate::views::{WindowView, guess_name};
 use crate::wheel::QuickWheel;
+use crate::windows::{VrWindow, WindowAction};
 use crate::wrist::{Vitals, wrist_panel, wrist_visible};
 use glam::{Vec2, Vec3};
 use gothic_ui::journal::QuestRow;
@@ -56,6 +58,34 @@ pub struct HudData {
     pub speaker_head: Option<Vec3>,
     pub quests: Vec<QuestRow>,
     pub map: Option<(MapSheet, Vec<MapMarker>, Vec2)>,
+    /// The window to show (trade, loot, recipes, document, quest log, character); `None`
+    /// closes it. The host builds it from the core (`gothic-vr-bridge::feed`).
+    pub window: Option<WindowView>,
+    /// The focused character (name above the head, attitude colour, health).
+    pub focus: Option<crate::tags::FocusData>,
+    /// Game messages (`gothic_ui::GameMessages`): shown as short toasts below the view.
+    pub messages: gothic_ui::GameMessages,
+    /// Pickpocket noise 0..1 (`Pickpocket::noise`), shown as a fourth bar on the watch.
+    pub noise: Option<f32>,
+    /// The VR comfort options (main hand, subtitles are read from here).
+    pub comfort: crate::comfort_opts::VrComfortOptions,
+    /// Rising texts (XP, damage), pushed by the host from `Event::XpGained` / hits.
+    pub floaters: crate::tags::Floaters,
+    /// Localised item names by template (the HUD falls back to a guess from the template).
+    pub names: std::collections::HashMap<String, String>,
+    /// Icon file name (`IT_1H_OrcSlayer_01.tga`) by item template, for the item pictures.
+    pub icons: std::collections::HashMap<String, String>,
+    /// Fixed texts of the windows (the original loc-table entries via `Labels::from_text`).
+    pub labels: crate::views::Labels,
+}
+
+impl HudData {
+    pub fn name(&self, template: &str) -> String {
+        self.names
+            .get(template)
+            .cloned()
+            .unwrap_or_else(|| guess_name(template))
+    }
 }
 
 /// HUD -> host.
@@ -67,6 +97,9 @@ pub enum HudAction {
     InventoryItem(usize),
     /// A dialog option was chosen (`ChooseOption`).
     ChooseOption(usize),
+    /// The off hand's `Y` with no window open: show the tablet (quest log / character);
+    /// the host puts the window into `HudData::window`.
+    OpenTablet,
     /// The page changed (the host mirrors it into the flat UI / the core's GUI state).
     Page(Option<PageId>),
 }
@@ -86,6 +119,14 @@ pub struct VrHud {
     pub subtitle: Option<SubtitleView>,
     /// Map label under the laser.
     pub map_label: Option<String>,
+    /// The open window, if any.
+    pub window: Option<VrWindow>,
+    /// Actions of the window since the last drain (the plugin sends them as messages).
+    pub window_actions: Vec<WindowAction>,
+    /// World text tags: the focus name first, then the floating texts.
+    pub tags: Vec<crate::tags::Tag>,
+    /// Yaw the toasts hang at; follows the head lazily (only when it turned more than 35 degrees).
+    toast_yaw: Option<f32>,
 }
 
 impl Default for VrHud {
@@ -102,6 +143,10 @@ impl Default for VrHud {
             wrist: None,
             subtitle: None,
             map_label: None,
+            window: None,
+            window_actions: Vec::new(),
+            tags: Vec::new(),
+            toast_yaw: None,
         }
     }
 }
@@ -112,6 +157,52 @@ pub fn fingertip(grip: &Pose) -> Vec3 {
 }
 
 impl VrHud {
+    /// The main hand follows the comfort option.
+    pub fn apply_options(&mut self, o: &crate::comfort_opts::VrComfortOptions) {
+        self.main_hand = o.main_hand();
+    }
+
+    /// Game messages as world-locked toasts below the view direction: they hang at a yaw that
+    /// follows the head only when it turned far (no head-locked UI), newest at the top.
+    fn toasts(&mut self, data: &HudData, head: &Pose) -> Vec<crate::tags::Tag> {
+        let msgs: Vec<_> = data.messages.lines().collect();
+        if msgs.is_empty() {
+            return Vec::new();
+        }
+        let f = head.forward();
+        let yaw = (-f.x).atan2(-f.z);
+        let turned = self.toast_yaw.is_none_or(|y| {
+            let d = (yaw - y + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            d.abs() > 35f32.to_radians()
+        });
+        if turned {
+            self.toast_yaw = Some(yaw);
+        }
+        let y = self.toast_yaw.unwrap_or(yaw);
+        let dir = Vec3::new(-y.sin(), 0.0, -y.cos());
+        msgs.iter()
+            .rev()
+            .take(3)
+            .enumerate()
+            .map(|(i, m)| {
+                let at = head.position + dir * 1.4 - Vec3::Y * (0.5 + 0.08 * i as f32);
+                let c = match m.kind {
+                    gothic_ui::MessageKind::Error => [0.85, 0.30, 0.25],
+                    gothic_ui::MessageKind::SaveOk => [0.64, 0.84, 0.47],
+                    gothic_ui::MessageKind::Info => [0.878, 0.769, 0.584],
+                };
+                crate::tags::Tag {
+                    text: m.text.clone(),
+                    color: c,
+                    pose: Pose::new(at, crate::comfort::facing(at, head.position)),
+                    height: crate::comfort::dmm(22.0, 1.4),
+                    alpha: gothic_ui::GameMessages::alpha(m),
+                    bar: None,
+                }
+            })
+            .collect()
+    }
+
     fn set_page(&mut self, page: Option<PageId>, out: &mut Vec<HudAction>) {
         if self.gui.set_page(page) {
             out.push(HudAction::Page(self.gui.page()));
@@ -263,10 +354,54 @@ impl VrHud {
             _ => self.map = None,
         }
 
+        if data.window.is_none() && input.just_pressed(off, VrButton::Secondary) {
+            out.push(HudAction::OpenTablet);
+        }
+
+        // World window (trade, loot, recipes, documents, quest log, character).
+        match &data.window {
+            Some(v) => {
+                let name = |t: &str| data.name(t);
+                let namer = crate::views::Ctx { name: &name, labels: &data.labels };
+                match self.window.as_mut() {
+                    Some(w) if std::mem::discriminant(&w.view) == std::mem::discriminant(v) => {
+                        if w.view != *v {
+                            w.set_view(v.clone(), &namer);
+                        }
+                    }
+                    _ => {
+                        self.window = Some(VrWindow::open(v.clone(), &head, &namer));
+                        self.backpack = None;
+                    }
+                }
+                if let Some(w) = self.window.as_mut() {
+                    let acts = w.update(input, t, main, &namer);
+                    self.window_actions.extend(acts);
+                }
+            }
+            None => self.window = None,
+        }
+
         // Vitals on the wrist (after the page changes of this frame).
         self.wrist = op
-            .map(|p| wrist_panel(&p, off))
+            .map(|p| {
+                let mut w = wrist_panel(&p, off);
+                if data.noise.is_some() {
+                    w.size.y *= 1.35;
+                }
+                w
+            })
             .filter(|w| self.gui.flags().bars && wrist_visible(w, head.position));
+
+        // Focus name and floating texts, in the world.
+        self.tags.clear();
+        if let Some(f) = &data.focus {
+            self.tags.push(crate::tags::focus_tag(f, &head, 1.0));
+        }
+        self.tags.extend(data.floaters.tags(&head));
+        let toasts = self.toasts(data, &head);
+        self.tags.extend(toasts);
+        self.tags.truncate(8);
 
         // Subtitles.
         self.subtitle = layout(&data.subtitle, data.speaker_head, &head);

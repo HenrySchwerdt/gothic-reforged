@@ -85,6 +85,11 @@ impl LockSession {
         }
     }
 
+    /// Hand rotation when the pick went in (the neutral pose).
+    pub fn start_rotation(&self) -> Quat {
+        self.start
+    }
+
     pub fn progress(&self) -> usize {
         self.progress
     }
