@@ -562,7 +562,7 @@ fn site_activation(
                     }
                 }
                 let mut c = commands.entity(entity);
-                c.remove::<(FxActive, FxEffect, FxEmitter)>();
+                c.try_remove::<(FxActive, FxEffect, FxEmitter)>();
                 c.despawn_related::<Children>();
             } else {
                 active += 1;
@@ -580,7 +580,7 @@ fn site_activation(
         match site {
             FxSite::Emitter(params) => {
                 if let Some(key) = BatchKey::of(params) {
-                    commands.entity(entity).insert((
+                    commands.entity(entity).try_insert((
                         FxActive,
                         FxEmitter {
                             emitter: Emitter::new(params.clone(), seed),
@@ -596,7 +596,7 @@ fn site_activation(
                 let Some(seq) = lib.0.effects.lookup(name) else {
                     continue;
                 };
-                commands.entity(entity).insert((
+                commands.entity(entity).try_insert((
                     FxActive,
                     FxEffect {
                         player: EffectPlayer::start(Arc::new(seq.clone()), *permanent),
@@ -756,13 +756,13 @@ fn run_effects(
                     if let Ok((_, egt)) = emitters.get(*e) {
                         commands
                             .entity(*e)
-                            .remove::<ChildOf>()
-                            .insert(egt.compute_transform());
+                            .try_remove::<ChildOf>()
+                            .try_insert(egt.compute_transform());
                     }
                 }
-                commands.entity(entity).despawn();
+                commands.entity(entity).try_despawn();
             } else {
-                commands.entity(entity).remove::<FxEffect>();
+                commands.entity(entity).try_remove::<FxEffect>();
             }
         }
     }
@@ -803,7 +803,7 @@ fn update_emitters(
         fx.emitter.set_transform(m);
         fx.emitter.update(dt);
         if fx.emitter.is_finished() {
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
         }
     }
     stats.update_ms = t0.elapsed().as_secs_f32() * 1000.0;
@@ -945,7 +945,7 @@ fn build_batches(
             *t = at;
             *g = GlobalTransform::from(at);
         } else {
-            commands.entity(entity).insert(at);
+            commands.entity(entity).try_insert(at);
         }
     }
     stats.emitters = n_emitters;
