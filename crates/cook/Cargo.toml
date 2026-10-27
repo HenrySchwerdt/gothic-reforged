@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+gothic-coords = { path = "../coords" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

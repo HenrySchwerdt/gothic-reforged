@@ -715,7 +715,7 @@ impl ActorLibrary {
         for mesh in &actor.meshes {
             for sub in &mesh.submeshes {
                 for p in &sub.positions {
-                    let p = Vec3::new(-p[0], p[1], p[2]);
+                    let p = Vec3::from(gothic_coords::arr3(*p));
                     min = min.min(p);
                     max = max.max(p);
                 }
@@ -1024,12 +1024,12 @@ impl ActorLibrary {
             // Mirrored into engine space like the actors (x -> -x, winding reversed by the
             // reflection, so no index swap).
             let (bmin, bmax) = (sub.bounds_min, sub.bounds_max);
-            min = min.min(Vec3::new(-bmax[0], bmin[1], bmin[2]));
-            max = max.max(Vec3::new(-bmin[0], bmax[1], bmax[2]));
+            let (lo, hi) = gothic_coords::aabb(Vec3::from(bmin), Vec3::from(bmax));
+            min = min.min(lo);
+            max = max.max(hi);
             let indices = sub.indices.clone();
-            let mirror_v = |v: &[f32; 3]| [-v[0], v[1], v[2]];
-            let positions: Vec<[f32; 3]> = sub.positions.iter().map(mirror_v).collect();
-            let normals: Vec<[f32; 3]> = sub.normals.iter().map(mirror_v).collect();
+            let positions: Vec<[f32; 3]> = sub.positions.iter().copied().map(gothic_coords::arr3).collect();
+            let normals: Vec<[f32; 3]> = sub.normals.iter().copied().map(gothic_coords::arr3).collect();
             let mut mesh = Mesh::new(
                 PrimitiveTopology::TriangleList,
                 RenderAssetUsages::RENDER_WORLD,
@@ -1099,12 +1099,12 @@ fn alpha_mode(blend: Option<(u32, u8)>) -> AlphaMode {
 }
 
 fn skinned_mesh(sub: &ActorSubmesh, remap: &[u16]) -> Mesh {
-    // Mirrored into engine space (x -> -x); the reflection also reverses the winding, which
-    // replaces the index swap the unmirrored data needed.
-    let indices = sub.indices.clone();
-    let mirror_v = |v: &[f32; 3]| [-v[0], v[1], v[2]];
-    let positions: Vec<[f32; 3]> = sub.positions.iter().map(mirror_v).collect();
-    let normals: Vec<[f32; 3]> = sub.normals.iter().map(mirror_v).collect();
+    // Mirrored into engine space (x -> -x). Actor triangles are stored with the opposite winding
+    // of static meshes (see `gothic_coords::flip_winding`), so they are swapped here.
+    let mut indices = sub.indices.clone();
+    gothic_coords::flip_winding(&mut indices);
+    let positions: Vec<[f32; 3]> = sub.positions.iter().copied().map(gothic_coords::arr3).collect();
+    let normals: Vec<[f32; 3]> = sub.normals.iter().copied().map(gothic_coords::arr3).collect();
     let joints: Vec<[u16; 4]> = sub
         .joints
         .iter()

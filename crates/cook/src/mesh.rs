@@ -75,13 +75,13 @@ fn convert_vertex(sub: &Submesh, k: usize) -> Vertex {
     let ao = sub.colors5.get(k).map_or(255, |c| c[3]);
     let w = sub.colors4.get(k).map_or(255, |c| c[3]);
     Vertex {
-        pos: [-p[0], p[1], p[2]],
-        normal: [-n[0], n[1], n[2]],
+        pos: gothic_coords::arr3(p),
+        normal: gothic_coords::arr3(n),
         uv: sub.uvs.get(k).copied().unwrap_or([0.0, 0.0]),
         tangent: sub
             .tangents
             .get(k)
-            .map_or([1.0, 0.0, 0.0, -1.0], |t| [-t[0], t[1], t[2], -1.0]),
+            .map_or([1.0, 0.0, 0.0, -1.0], |t| gothic_coords::tangent4(*t, 1.0)),
         color: [ao, ao, ao, w],
     }
 }

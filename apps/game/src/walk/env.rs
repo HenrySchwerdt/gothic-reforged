@@ -124,11 +124,7 @@ impl OrigEnv {
         );
         for l in &payload.lights {
             // Gothic cm -> origin-relative mirrored metres (same mapping as the world tiles).
-            let p = Vec3::new(
-                self.origin.x - l.position.x,
-                l.position.y - self.origin.y,
-                l.position.z - self.origin.z,
-            ) * 0.01;
+            let p = gothic_coords::Frame::new(self.origin).point(l.position) * gothic_coords::CM_TO_M;
             self.light_grid
                 .entry((
                     (p.x / LIGHT_CELL).floor() as i32,

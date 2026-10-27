@@ -114,6 +114,27 @@ pub fn heading(angle: f32) -> f32 {
     -angle
 }
 
+// ---- triangle winding ----------------------------------------------------------------------------
+
+/// Reverses the winding of every triangle of an index list (swaps the 2nd and 3rd index).
+///
+/// Winding is **not** uniform across the Gothic formats. Measured on the installed data (the sign
+/// of `(b - a) x (c - a)` against the stored vertex normals, mean over all triangles): static
+/// `.xcmsh` meshes score -1.000 (the numeric cross product points *against* the normal), skinned
+/// `.xact` actor meshes score +0.997. The reflection `F` flips the sign of the numeric cross
+/// product, so after it
+///
+/// * **static meshes keep their indices** (they become counter-clockwise = Bevy front faces),
+/// * **actor meshes need this swap** (they would otherwise be back faces).
+///
+/// Materials with `cull_mode: None` hide the difference; anything that culls, uses a depth
+/// pre-pass normal or relies on `front_facing` does not.
+pub fn flip_winding(indices: &mut [u32]) {
+    for t in indices.chunks_exact_mut(3) {
+        t.swap(1, 2);
+    }
+}
+
 // ---- matrices ------------------------------------------------------------------------------------
 
 fn flip4() -> Mat4 {
@@ -186,6 +207,13 @@ pub fn yaw_of_dir(dx: f32, dz: f32) -> f32 {
 #[inline]
 pub fn forward_of_yaw(yaw: f32) -> (f32, f32) {
     (-yaw.sin(), -yaw.cos())
+}
+
+/// The horizontal forward unit vector of an engine yaw.
+#[inline]
+pub fn forward3(yaw: f32) -> Vec3 {
+    let (x, z) = forward_of_yaw(yaw);
+    Vec3::new(x, 0.0, z)
 }
 
 /// Engine yaw of a simulation yaw. The simulation works in the mirrored world and measures

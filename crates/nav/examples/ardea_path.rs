@@ -14,7 +14,7 @@ use std::time::Instant;
 
 /// Gothic position -> cooked space (X mirrored).
 fn cooked(p: [f32; 3]) -> Vec3 {
-    Vec3::new(-p[0], p[1], p[2])
+    Vec3::from(gothic_coords::arr3(p))
 }
 
 fn main() -> Result<()> {

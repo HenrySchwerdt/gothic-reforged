@@ -176,7 +176,7 @@ pub(super) fn play_camera(
         ),
     };
     if !c.placed {
-        let heading = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
+        let heading = gothic_coords::forward3(player.yaw);
         c.state.reset(&hero, heading);
         c.placed = true;
         c.last_hero = hero_pos;
@@ -261,7 +261,7 @@ pub(super) fn play_camera(
         c.state.enable_special_bow_mode(want_special);
     }
     if frame.reset_camera {
-        let heading = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
+        let heading = gothic_coords::forward3(player.yaw);
         c.state.reset(&hero, heading);
     }
     if script.active && !in_dialog {

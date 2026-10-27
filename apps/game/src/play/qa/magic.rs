@@ -159,7 +159,7 @@ fn turn_to(sc: &mut Sc, label: &str, yaw_add: f32) {
         let yaw0 = cx.st.n["turn_from"] as f32;
         let to = yaw0 + yaw_add;
         let hero = cx.hero_pos();
-        let dir = Vec3::new(-to.sin(), 0.0, -to.cos());
+        let dir = gothic_coords::forward3(to);
         let err = cx.aim_at(hero + dir * 1000.0, -0.05);
         if err < 0.02 {
             Poll::Done

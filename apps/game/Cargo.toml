@@ -15,6 +15,7 @@ render-plus-pcss = ["viewer", "gothic-render-plus/pcss"]
 viewer = ["dep:gothic-animation", "dep:gothic-ui", "dep:gothic-audio", "dep:gothic-runtime", "dep:gothic-nav", "dep:gothic-sim", "dep:gothic-gameplay", "dep:gothic-cook", "dep:gothic-fx", "dep:gothic-env-synth", "dep:gothic-combat-souls", "dep:gothic-render-plus", "dep:gothic-audio-plus", "dep:gothic-mods", "dep:gothic-modtool", "dep:gothic-mods-script", "dep:gothic-video", "dep:gothic-static-render", "bevy/3d_bevy_render", "bevy/bevy_winit", "bevy/multi_threaded", "bevy/bevy_log", "bevy/bevy_gizmos", "bevy/default_font"]
 
 [dependencies]
+gothic-coords = { path = "../../crates/coords" }
 bevy = { workspace = true, features = ["std", "async_executor"] }
 gothic-world = { path = "../../crates/world" }
 gothic-environment = { path = "../../crates/environment" }
