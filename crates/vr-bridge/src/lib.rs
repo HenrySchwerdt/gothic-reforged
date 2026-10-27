@@ -22,6 +22,7 @@
 //! * [`tick`]: ticks the core at its 30 Hz in `Update`, because `CorePlugin` sets the fixed
 //!   timestep to 30 Hz while avian and the VR layer run their fixed steps at 90 Hz.
 pub mod actors;
+pub mod dialog_flow;
 pub mod feed;
 pub mod level;
 pub mod tick;

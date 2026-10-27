@@ -23,15 +23,15 @@ use gothic_vr::Pose;
 const PX_PER_M: f32 = 2400.0;
 const MAX_PX: f32 = 1600.0;
 
-pub(crate) const LEATHER: Color = Color::srgba(0.10, 0.08, 0.06, 0.88);
-pub(crate) const LEATHER_DARK: Color = Color::srgba(0.05, 0.04, 0.03, 0.92);
-pub(crate) const BRASS: Color = Color::srgb(0.78, 0.63, 0.36);
-pub(crate) const BRASS_DIM: Color = Color::srgba(0.78, 0.63, 0.36, 0.35);
-pub(crate) const TEXT: Color = Color::srgb(0.94, 0.89, 0.79);
-pub(crate) const TEXT_DIM: Color = Color::srgb(0.62, 0.57, 0.49);
+pub(crate) const LEATHER: Color = Color::srgba(0.02, 0.09, 0.08, 0.92);
+pub(crate) const LEATHER_DARK: Color = Color::srgba(0.0, 0.05, 0.04, 0.95);
+pub(crate) const BRASS: Color = Color::srgb(0.62, 0.52, 0.36);
+pub(crate) const BRASS_DIM: Color = Color::srgba(0.62, 0.52, 0.36, 0.35);
+pub(crate) const TEXT: Color = Color::srgb(0.878, 0.769, 0.584);
+pub(crate) const TEXT_DIM: Color = Color::srgb(0.60, 0.53, 0.40);
 const PARCHMENT: Color = Color::srgb(0.87, 0.80, 0.65);
 const INK: Color = Color::srgb(0.22, 0.15, 0.09);
-pub(crate) const HEALTH: Color = Color::srgb(0.78, 0.12, 0.10);
+pub(crate) const HEALTH: Color = Color::srgb(0.624, 0.094, 0.075);
 pub(crate) const MANA: Color = Color::srgb(0.20, 0.38, 0.90);
 pub(crate) const STAMINA: Color = Color::srgb(0.30, 0.70, 0.28);
 
