@@ -66,6 +66,7 @@ fn update_hud(
         hands: Hand::BOTH.map(|h| input.hand_pose(h).map(world)),
     };
     data.0.subtitle.tick(time.delta_secs());
+    data.0.floaters.tick(time.delta_secs());
     for a in hud.0.update(input, &tracked, &data.0) {
         out.write(HudActionMsg(a));
     }

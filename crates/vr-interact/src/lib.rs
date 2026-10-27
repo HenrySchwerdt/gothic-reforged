@@ -14,11 +14,15 @@
 //! * [`mapper`]: the Bevy-free [`InteractMapper`] that turns tracked poses and buttons into
 //!   commands.
 //! * [`lockpick`]: the physical lock-turning mini-game.
+//! * [`lockpick_two`]: lockpicking with both hands (tension wrench + pick).
+//! * [`craft_gestures`]: anvil hammering and pickpocketing as timed gestures.
 //! * [`core_api`]: the [`CoreApi`] trait (implemented for the real `Core`) and a stub core
 //!   for demos and tests.
 //! * [`plugin`]: Bevy integration (`VrInputRes` in, `CoreCommand` messages out).
 pub mod core_api;
+pub mod craft_gestures;
 pub mod lockpick;
+pub mod lockpick_two;
 pub mod mapper;
 pub mod plugin;
 pub mod targets;

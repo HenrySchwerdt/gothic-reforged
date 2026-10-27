@@ -77,6 +77,13 @@ pub enum ItemKind {
 
 /// What pressing an item does. The window turns it into a [`crate::windows::WindowAction`]
 /// for the host or handles it itself (tabs, row selection, scrolling).
+/// What the save / load page's buttons do with the selected slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileOp {
+    Do,
+    Delete,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SheetAct {
     /// A page event of the flat UI (trade, loot, craft, close): the host applies it with the
@@ -88,6 +95,8 @@ pub enum SheetAct {
     Tab(usize),
     /// Select list row `n` (recipes, quests).
     Select(usize),
+    /// Save-game page: run the selected slot's load / save / delete.
+    File(FileOp),
     /// Turn to page `n` (documents).
     Turn(i32),
     Close,

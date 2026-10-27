@@ -289,3 +289,51 @@ fn hud_opens_the_tablet_on_y_and_shows_the_host_window() {
     step(&mut hud, &mut input, &frame, &data);
     assert!(hud.window.is_none());
 }
+
+#[test]
+fn save_page_selects_a_slot_then_sends_the_file_command() {
+    let view = WindowView::Files(FilesView {
+        save_mode: false,
+        can_save: true,
+        rows: vec![
+            FileRowView { key: "quick.json".into(), title: "Schnellspeicherung".into(), clock: "1. Tag, 12:23".into(), manual: false },
+            FileRowView { key: "manual_5.json".into(), title: "Ardea".into(), clock: "2. Tag, 08:00".into(), manual: true },
+        ],
+    });
+    let mut r = Rig::new(view);
+    // Nothing selected: Laden is greyed.
+    let k = r.find("Laden");
+    assert!(r.press(k).is_empty());
+    let k = r.find("Ardea");
+    assert!(r.press(k).is_empty(), "selecting a slot is local");
+    let k = r.find("Löschen");
+    assert_eq!(r.press(k), [WindowAction::File(gothic_ui::FileCommand::Delete { key: "manual_5.json".into() })]);
+    let k = r.find("Laden");
+    assert_eq!(r.press(k), [WindowAction::File(gothic_ui::FileCommand::Load { key: "manual_5.json".into() })]);
+}
+
+#[test]
+fn focus_name_hangs_above_the_head_and_floaters_rise_and_fade() {
+    let eye = Pose::new(HEAD, Quat::IDENTITY);
+    let f = FocusData {
+        name: "Krieger".into(),
+        attitude: gothic_ui::FocusAttitude::Hostile,
+        health: Some(0.6),
+        head: Vec3::new(0.0, 1.7, -3.0),
+    };
+    let t = tags::focus_tag(&f, &eye, 1.0);
+    assert!(t.pose.position.y > 1.9 && (t.pose.position.z + 3.0).abs() < 1e-3);
+    assert!(t.height > 0.0 && t.height <= tags::NAME_MAX_M);
+    assert_eq!(t.bar, Some(0.6));
+    assert!(t.color[0] > t.color[1] * 3.0, "hostile is red");
+    let mut fl = Floaters::default();
+    fl.push("+250 EP", [0.9, 0.85, 0.4], Vec3::new(0.0, 1.4, -0.5), 2.0);
+    let y0 = fl.tags(&eye)[0].pose.position.y;
+    fl.tick(1.0);
+    let t1 = &fl.tags(&eye)[0];
+    assert!(t1.pose.position.y > y0 + 0.3 && t1.alpha == 1.0);
+    fl.tick(0.9);
+    assert!(fl.tags(&eye)[0].alpha < 0.5, "fades at the end");
+    fl.tick(0.5);
+    assert!(fl.items.is_empty());
+}

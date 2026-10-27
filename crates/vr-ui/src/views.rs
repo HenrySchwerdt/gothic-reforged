@@ -11,7 +11,7 @@
 //! [`Labels`]: the original loc-table keys where the flat UI has them, the flat UI's own
 //! fallbacks (real German, with umlauts) otherwise.
 use crate::panel::wrap;
-use crate::sheet::{ItemKind, Rect, Sheet, SheetAct, SheetItem};
+use crate::sheet::{FileOp, ItemKind, Rect, Sheet, SheetAct, SheetItem};
 use crate::wrist::Vitals;
 use glam::Vec2;
 use gothic_ui::atlas as art;
@@ -56,6 +56,12 @@ pub struct Labels {
     pub you_get: String,
     pub you_give: String,
     pub page: String,
+    pub save_game: String,
+    pub load_game: String,
+    pub save: String,
+    pub load: String,
+    pub delete: String,
+    pub back: String,
 }
 
 impl Default for Labels {
@@ -97,6 +103,12 @@ impl Default for Labels {
             you_get: s("Du bekommst"),
             you_give: s("Du gibst"),
             page: s("Seite"),
+            save_game: s("Spiel speichern"),
+            load_game: s("Spiel laden"),
+            save: s("Speichern"),
+            load: s("Laden"),
+            delete: s("Löschen"),
+            back: s("Zurück"),
         }
     }
 }
@@ -174,8 +186,28 @@ pub struct CharacterView {
     pub equipment: Vec<(String, String)>,
 }
 
+/// One listed save: the caption as the flat page builds it (`gothic_ui::files::caption`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FileRowView {
+    /// Host key (file name), echoed in the command.
+    pub key: String,
+    pub title: String,
+    pub clock: String,
+    /// Quick and auto saves cannot be deleted.
+    pub manual: bool,
+}
+
+/// The save / load page (`gCHUDMenuFiles2`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FilesView {
+    pub save_mode: bool,
+    pub can_save: bool,
+    pub rows: Vec<FileRowView>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowView {
+    Files(FilesView),
     Trade(TradeView),
     Loot(LootView),
     Recipe(RecipeView),
@@ -193,6 +225,7 @@ impl WindowView {
             WindowView::Document(_) => "document",
             WindowView::Quests(_) => "quests",
             WindowView::Character(_) => "character",
+            WindowView::Files(_) => "files",
         }
     }
 }
@@ -230,6 +263,7 @@ pub fn build(view: &WindowView, ui: &WindowUi, cx: &Ctx) -> Sheet {
         WindowView::Document(v) => document(v, ui, cx),
         WindowView::Quests(v) => quests(v, ui, cx),
         WindowView::Character(v) => character(v, ui, cx),
+        WindowView::Files(v) => files(v, ui, cx),
     }
 }
 
@@ -640,4 +674,36 @@ pub fn skill_group(key: &str) -> usize {
     } else {
         6
     }
+}
+
+/// The save / load page in the original's design space (`screens_menu.rs::files_page`).
+fn files(v: &FilesView, ui: &WindowUi, cx: &Ctx) -> Sheet {
+    let l = cx.labels;
+    let title = if v.save_mode { &l.save_game } else { &l.load_game };
+    let mut s = Sheet::new(title.clone(), Vec2::new(1024.0, 768.0), WINDOW_DMM, WINDOW_DISTANCE);
+    s.backdrop(gothic_ui::atlas::MENU_FILES_BG, 0.0, 0.0, 1024.0, 768.0);
+    heading(&mut s, title, 271.0, 30.0, 482.0);
+    let sel = ui.selected.filter(|i| *i < v.rows.len());
+    let btn = |s: &mut Sheet, x: f32, y: f32, w: f32, text: &str, on: bool, act: SheetAct| {
+        let r = s.px(x, y, w, 32.0);
+        s.push(SheetItem::new(r, ItemKind::Button, text).enabled(on).act(act).size(19.0));
+    };
+    let (main, on) = if v.save_mode { (&l.save, v.can_save) } else { (&l.load, sel.is_some()) };
+    btn(&mut s, 93.0, 271.0, 172.0, main, on, SheetAct::File(FileOp::Do));
+    let deletable = sel.is_some_and(|i| v.rows[i].manual);
+    btn(&mut s, 93.0, 319.0, 172.0, &l.delete, deletable, SheetAct::File(FileOp::Delete));
+    btn(&mut s, 462.0, 682.0, 100.0, &l.back, true, SheetAct::Close);
+    let list = s.px(337.0, 89.0, 552.0, 552.0);
+    let (region, range) = s.region(list, v.rows.len(), 48.0, ui.top(0));
+    for (k, i) in range.enumerate() {
+        let r = &v.rows[i];
+        let rc = s.px(337.0, 89.0 + 48.0 * k as f32, 552.0, 48.0);
+        let mut it = SheetItem::new(rc, ItemKind::Row, &r.title)
+            .value(r.clock.clone())
+            .selected(Some(i) == sel)
+            .act(SheetAct::Select(i));
+        it.region = Some(region);
+        s.push(it);
+    }
+    s
 }

@@ -430,6 +430,9 @@ pub enum Applied {
     Commands(Vec<Command>),
     /// The trade page changed (rebuild it with [`trade_view`]).
     Trade(TradeOutcome),
+    /// A save-page command: the host lists / deletes files and maps the rest with
+    /// [`file_command`].
+    File(gothic_ui::FileCommand),
     /// The window closes; the host sends `GuiOpen(false)` / `EndInteraction`.
     Close,
     Nothing,
@@ -449,6 +452,9 @@ pub enum OpenWindow {
 pub fn apply_action(core: &mut Core, open: &OpenWindow, a: &WindowAction, step: i32) -> Applied {
     match (a, open) {
         (WindowAction::Close, _) | (WindowAction::Page(PageEvent::Close), _) => Applied::Close,
+        (WindowAction::File(c), _) => {
+            Applied::File(c.clone())
+        }
         (WindowAction::UseItem(t), _) => Applied::Commands(vec![Command::UseItem {
             template: t.clone(),
         }]),
@@ -462,5 +468,49 @@ pub fn apply_action(core: &mut Core, open: &OpenWindow, a: &WindowAction, step: 
             craft_command(recipes, e).map_or(Applied::Nothing, |c| Applied::Commands(vec![c]))
         }
         _ => Applied::Nothing,
+    }
+}
+
+/// The save / load page from the host's slot list (`gothic_ui::SlotRow`s, newest first).
+pub fn files_view(
+    core: &Core,
+    rows: &[gothic_ui::SlotRow],
+    can_save: bool,
+    save_mode: bool,
+) -> gothic_vr_ui::FilesView {
+    let quick = core
+        .db
+        .text("HUD_QuickSave")
+        .unwrap_or_else(|| "Schnellspeicherung".into());
+    let fmt = core.db.text("HUD_File_SaveGame_Format").unwrap_or_default();
+    gothic_vr_ui::FilesView {
+        save_mode,
+        can_save,
+        rows: rows
+            .iter()
+            .map(|r| {
+                let (title, clock) = gothic_ui::files::caption(r, &quick, &fmt);
+                gothic_vr_ui::FileRowView {
+                    key: r.key.clone(),
+                    title,
+                    clock,
+                    manual: r.kind == gothic_ui::SlotKind::Manual,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// A save-page button as the core command (`dir` = the host's save directory). New slots are
+/// named `manual_<unix>.json` (the core classifies the slot by the file name); deleting a file is
+/// the host's file-system business (`None`).
+pub fn file_command(dir: &std::path::Path, c: &gothic_ui::FileCommand, unix: u64) -> Option<Command> {
+    match c {
+        gothic_ui::FileCommand::Load { key } => Some(Command::Load(dir.join(key))),
+        gothic_ui::FileCommand::Save { key: Some(k) } => Some(Command::Save(dir.join(k))),
+        gothic_ui::FileCommand::Save { key: None } => {
+            Some(Command::Save(dir.join(format!("manual_{unix}.json"))))
+        }
+        _ => None,
     }
 }

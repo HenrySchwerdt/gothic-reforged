@@ -61,6 +61,10 @@ pub struct HudData {
     /// The window to show (trade, loot, recipes, document, quest log, character); `None`
     /// closes it. The host builds it from the core (`gothic-vr-bridge::feed`).
     pub window: Option<WindowView>,
+    /// The focused character (name above the head, attitude colour, health).
+    pub focus: Option<crate::tags::FocusData>,
+    /// Rising texts (XP, damage), pushed by the host from `Event::XpGained` / hits.
+    pub floaters: crate::tags::Floaters,
     /// Localised item names by template (the HUD falls back to a guess from the template).
     pub names: std::collections::HashMap<String, String>,
     /// Icon file name (`IT_1H_OrcSlayer_01.tga`) by item template, for the item pictures.
@@ -113,6 +117,8 @@ pub struct VrHud {
     pub window: Option<VrWindow>,
     /// Actions of the window since the last drain (the plugin sends them as messages).
     pub window_actions: Vec<WindowAction>,
+    /// World text tags: the focus name first, then the floating texts.
+    pub tags: Vec<crate::tags::Tag>,
 }
 
 impl Default for VrHud {
@@ -131,6 +137,7 @@ impl Default for VrHud {
             map_label: None,
             window: None,
             window_actions: Vec::new(),
+            tags: Vec::new(),
         }
     }
 }
@@ -324,6 +331,13 @@ impl VrHud {
         self.wrist = op
             .map(|p| wrist_panel(&p, off))
             .filter(|w| self.gui.flags().bars && wrist_visible(w, head.position));
+
+        // Focus name and floating texts, in the world.
+        self.tags.clear();
+        if let Some(f) = &data.focus {
+            self.tags.push(crate::tags::focus_tag(f, &head, 1.0));
+        }
+        self.tags.extend(data.floaters.tags(&head));
 
         // Subtitles.
         self.subtitle = layout(&data.subtitle, data.speaker_head, &head);

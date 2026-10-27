@@ -48,10 +48,12 @@ pub enum SurfaceKind {
     Map,
     /// Trade, loot, recipes, document, quest log, character.
     Window,
+    /// World text tags (focus name, floating texts), slot 0..4.
+    Tag(u8),
 }
 
 impl SurfaceKind {
-    const ALL: [SurfaceKind; 9] = [
+    const ALL: [SurfaceKind; 14] = [
         SurfaceKind::Wrist,
         SurfaceKind::Dialog,
         SurfaceKind::Subtitle,
@@ -61,6 +63,11 @@ impl SurfaceKind {
         SurfaceKind::BookRight,
         SurfaceKind::Map,
         SurfaceKind::Window,
+        SurfaceKind::Tag(0),
+        SurfaceKind::Tag(1),
+        SurfaceKind::Tag(2),
+        SurfaceKind::Tag(3),
+        SurfaceKind::Tag(4),
     ];
 }
 
@@ -215,6 +222,11 @@ fn placement(kind: SurfaceKind, hud: &VrHud) -> Option<(Pose, Vec2, f32)> {
         }),
         SurfaceKind::Map => hud.map.as_ref().map(|(_, panel)| p(panel)),
         SurfaceKind::Window => hud.window.as_ref().map(|w| p(&w.panel)),
+        SurfaceKind::Tag(i) => hud.tags.get(i as usize).map(|t| {
+            let w = t.text.chars().count().max(1) as f32 * t.height * 0.6 + t.height;
+            let h = t.height * if t.bar.is_some() { 2.1 } else { 1.4 };
+            (t.pose, Vec2::new(w, h), t.alpha)
+        }),
     }
 }
 
@@ -262,6 +274,10 @@ fn content_key(kind: SurfaceKind, hud: &VrHud, data: &HudData) -> String {
             format!("{:?}{:?}{:?}", m.markers, m.player, hud.map_label)
         }),
         SurfaceKind::Window => hud.window.as_ref().map_or_else(String::new, window_key),
+        SurfaceKind::Tag(i) => hud
+            .tags
+            .get(i as usize)
+            .map_or_else(String::new, |t| format!("{}{:?}{:?}", t.text, t.color, t.bar.map(|b| (b * 50.0) as i32))),
     }
 }
 
@@ -626,6 +642,57 @@ fn build(
                         Color::srgb(0.45, 0.35, 0.22),
                     ));
                 });
+        }
+        SurfaceKind::Tag(i) => {
+            if let Some(t) = hud.tags.get(i as usize) {
+                let c = Color::srgb(t.color[0], t.color[1], t.color[2]);
+                let size = h / if t.bar.is_some() { 2.1 } else { 1.4 } * 0.85;
+                parent
+                    .spawn(Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        row_gap: Val::Px(size * 0.15),
+                        ..default()
+                    })
+                    .with_children(|p| {
+                        // The original's outline: four dark copies under the name.
+                        p.spawn(Node { ..default() }).with_children(|n| {
+                            for (dx, dy) in [(-1.5, -1.5), (1.5, 1.5)] {
+                                n.spawn((
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Px(dx),
+                                        top: Val::Px(dy),
+                                        ..default()
+                                    },
+                                    text(t.text.clone(), size, Color::BLACK),
+                                ));
+                            }
+                            n.spawn(text(t.text.clone(), size, c));
+                        });
+                        if let Some(b) = t.bar {
+                            p.spawn((
+                                Node {
+                                    width: Val::Percent(80.0),
+                                    height: Val::Px(size * 0.22),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                            ))
+                            .with_child((
+                                Node {
+                                    width: Val::Percent(b.clamp(0.0, 1.0) * 100.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(HEALTH),
+                            ));
+                        }
+                    });
+            }
         }
         SurfaceKind::Window => {
             if let Some(w) = &hud.window {

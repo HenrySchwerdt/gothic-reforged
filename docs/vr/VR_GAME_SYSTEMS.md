@@ -58,8 +58,8 @@ branch; **layout** = sheet + builder + tests, the host event wiring is in the In
 | 1 | HUD bars health / endurance / mana (3 framed bars, 807,688) | **Wrist watch** on the off hand, shows when the palm faces the eyes; low-health pulse. Damage vignette is not used (comfort) | `feed::vitals(core)` -> `HudData.vitals` | done (`wrist.rs`) |
 | 2 | Quick bar 10 slots | **Quick-slot wheel** at the main hand, opened with the off-hand button; keys 1-0 map to wheel slots | `HudAction::UseQuickSlot(i)` -> `Command::UseItem` / `SelectSpell` per slot; `PlayerEvent::QuickSlot` | done (`wheel.rs`) |
 | 3 | Compass / heading | **Wrist compass ring** is part of the watch (plan: heading from `PlayerHeading`); the held map shows the player marker | heading from hero yaw | plan |
-| 4 | Focus name (enemy name above NPC, focus bar) | Name **floats above the NPC's head** at laser distance, health bar under it; only for the pointed/looked-at NPC | `Command::HeroControl { focus }`, `actor` hp via `Sim` | plan (data exists: `PSFocus`) |
-| 5 | Dialog: bottom band, options, NPC subtitle | **Options panel beside the speaking NPC**, selected by laser + trigger or a fingertip; stick flick scrolls; **subtitle world-locked at the speaker's head** (never head-locked); the NPC's voice plays 3D | `Event::DialogStarted / LineSpoken / MenuChanged / DialogEnded` in, `Command::Talk`, `Choose { index }`, `EndDialog` out; `feed::dialog_options` | done (`dialog.rs`, `subtitles.rs`, `feed.rs`) |
+| 4 | Focus name (enemy name above NPC, focus bar) | Name **floats above the NPC's head** at laser distance, health bar under it; only for the pointed/looked-at NPC | `Command::HeroControl { focus }`, `actor` hp via `Sim` | done (`tags.rs`: `HudData.focus`, original attitude colours, health bar, name always at most 16 cm high) |
+| 5 | Dialog: bottom band, options, NPC subtitle | **Options panel beside the speaking NPC**, selected by laser + trigger or a fingertip; stick flick scrolls; **subtitle world-locked at the speaker's head** (never head-locked); the NPC's voice plays 3D | `Event::DialogStarted / LineSpoken / MenuChanged / DialogEnded` in, `Command::Talk`, `Choose { index }`, `EndDialog` out; `feed::dialog_options` | done (`dialog.rs`, `subtitles.rs`, `vr-bridge::dialog_flow`: lines in order with voice + subtitle at the speaker, options only after the last line, `Choose`, trigger skips a line) |
 | 6 | Quest log page (tabs Aktuell / Erfolgreich / Gescheitert, list, detail, reputation, clock) | **Tablet**: spawned in front of the player on `Y`, world-locked; 3 tabs, list left, log of the selected quest right, clock and reputation under it. (The existing held *journal book* remains as the diegetic alternative for the same data.) | read-only from `GameState` + `db.text`; `feed::quest_log` | done (`views::quests`, `feed::quest_log`) |
 | 7 | World map with quest markers | **Held map sheet** in the off hand (already built), laser shows marker labels; zoom = bring it closer. Quest-category markers from `MapMarker` | `MapData`, hero position | done (`handheld.rs`) |
 | 8 | Inventory (5x10 grid, categories, gold) | **Backpack** over the shoulder: grab-or-poke grid in arm's reach (0.4-0.46 m); item hover shows name and stats; press = use/equip/drink, drop item out of the panel = `Drop` (plan) | `HudAction::InventoryItem(key)` -> `feed::use_stack` -> `Command::UseItem`; gold from `Inventory::count(GOLD)` | done (`backpack.rs`) |
@@ -68,14 +68,14 @@ branch; **layout** = sheet + builder + tests, the host event wiring is in the In
 | 11 | Skills & learning from teachers | Teacher dialog options (`Teach`) are normal dialog rows with cost shown by the core's `teach_cost`; learning is a dialog `Choose`. No separate page | dialog `Choice.label` carries the text; `TeachCost` | done through dialog |
 | 12 | Loot / chest window, body plunder, take all | **Chests open by hand** (grab the lid; `UseInteractObject`), then a **loot window** floats over the chest; or grab an item out and the window shows the rest. Bodies: crouch + hold over them = `QuickLoot`, or poke "Alles nehmen" | `Command::UseInteractObject`, `TakeLoot { object, index }`, `QuickLoot { body }`; `feed::loot_view` / `loot_command` | done (`views::loot`, `feed.rs`) |
 | 13 | Trade page (vendor / player lists, baskets, balance, deal) | **Trade window** at 1.25 m: vendor left, player right, baskets in the middle, "Ausgleichen" and "Handeln". Optional: the merchant's counter holds real props (plan) | `Sim::trade_step / trade_clear / trade_balance / trade_deal`; prices `trade_unit_price`; `feed::trade_view`, `apply_trade_event` | done (`views::trade`, `feed.rs`) |
-| 14 | Crafting: smithing anvil, alchemy, cooking cauldron, fry, sharpen, poison, bless | Walk to the station (`UseInteractObject` -> `PlayerEvent::Window`), the **recipe window** floats over it; hammering at the anvil is a physical mini-gesture that only *times* the `Craft` command (plan: hits counted, never changes the result) | `PlayerEvent::Window(Smithing/Alchemy/Cooking/...)`, `Command::Craft { recipe }`, `Event::CraftResult`; `feed::recipe_view`, `craft_command` | done (window); gesture plan |
-| 15 | Lockpicking (bend-and-turn minigame) | **Two hands at the lock**: off hand holds the tension wrench, main hand turns the pick; the existing `vr-interact::lockpick` physical turn decides `success`, the core still rolls the skill when `None` | `Command::Lockpick { object, success }`, `Event::Player(LockPicked)` | done (`vr-interact/lockpick.rs`) |
+| 14 | Crafting: smithing anvil, alchemy, cooking cauldron, fry, sharpen, poison, bless | Walk to the station (`UseInteractObject` -> `PlayerEvent::Window`), the **recipe window** floats over it; hammering at the anvil is a physical mini-gesture that only *times* the `Craft` command (plan: hits counted, never changes the result) | `PlayerEvent::Window(Smithing/Alchemy/Cooking/...)`, `Command::Craft { recipe }`, `Event::CraftResult`; `feed::recipe_view`, `craft_command` | done: window (`views::recipe`, original recipe card + list art) and the hammer gesture (`vr-interact::craft_gestures::Hammer`: counted blows on the anvil face, then `Command::Craft`; the result is still the core's) |
+| 15 | Lockpicking (bend-and-turn minigame) | **Two hands at the lock**: off hand holds the tension wrench, main hand turns the pick; the existing `vr-interact::lockpick` physical turn decides `success`, the core still rolls the skill when `None` | `Command::Lockpick { object, success }`, `Event::Player(LockPicked)` | done (`lockpick.rs` one hand, `lockpick_two.rs` two hands: tension wrench with load / over-torque, pick turns only under load) |
 | 16 | Reading books / letters / notes | Book or letter **held in the off hand** (page turn by main-hand swipe) or, for long texts, the **document window** at 0.9 m with page flicks; skill books fire `PlayerEvent::BookRead` | `PlayerEvent::Window(Book / Letter)`, book text from the host | done (`views::document`, `handheld.rs`) |
-| 17 | Sleeping / waiting / bed | Lie down = `UseInteractObject(bed)`; the screen fades (comfort), time scale from `PlayerEvent::TimeScale`; "Wait" is a wrist-clock gesture (plan) | `PlayerEvent::Slept`, `TimeScale` | plan |
-| 18 | Pickpocketing | Sneak up behind (crouch), reach into the pouch at the NPC's belt: grab = the core's `PickPocket` info/`Command::Confirm`; sound-and-visibility meter on the wrist | `Confirmed`, dialog `PickPocket` | plan |
+| 17 | Sleeping / waiting / bed | Lie down = `UseInteractObject(bed)`; the screen fades (comfort), time scale from `PlayerEvent::TimeScale`; "Wait" is a wrist-clock gesture (plan) | `PlayerEvent::Slept`, `TimeScale` | sleep done (`fade.rs`: fade out, time skip while dark, fade in, driven by `PlayerEvent::Slept`); the wait-hours picker is not built |
+| 18 | Pickpocketing | Sneak up behind (crouch), reach into the pouch at the NPC's belt: grab = the core's `PickPocket` info/`Command::Confirm`; sound-and-visibility meter on the wrist | `Confirmed`, dialog `PickPocket` | gesture done (`craft_gestures::Pickpocket`: from behind, still hand in the pouch, grip held; `Success` makes the host start the core's `PickPocket` info); the noise / visibility meter on the watch is not built |
 | 19 | Sneaking indicator | Real **crouch** (head below threshold) toggles sneak; a small eye glyph on the watch, lit/dim by `Event` detection state | `Command::ToggleSneak` (done in `vr-interact`) | done (toggle), indicator plan |
-| 20 | Save / load / main menu / options | **Menu tablet** (`Menu` button) in front of the player, same world-lock rules; options map to `UserOptions.ini` pages through `gothic-ui` | `Command::Save(path)`, `Load(path)`, `Event::Saved / Loaded` | plan (sheet builder reusable) |
-| 21 | Floating texts (XP, damage), game messages | World-space text popping from the NPC / the hero's chest, short and non-blocking; game messages as a one-line toast under the subtitles | `Event::XpGained`, `Sim(Hit)`, `Notice` | plan |
+| 20 | Save / load / main menu / options | **Menu tablet** (`Menu` button) in front of the player, same world-lock rules; options map to `UserOptions.ini` pages through `gothic-ui` | `Command::Save(path)`, `Load(path)`, `Event::Saved / Loaded` | save / load done (`views::files` on the original files page art, `feed::files_view`, `file_command` -> `Command::Save/Load`, delete is the host's file work); main menu and options pages are not built |
+| 21 | Floating texts (XP, damage), game messages | World-space text popping from the NPC / the hero's chest, short and non-blocking; game messages as a one-line toast under the subtitles | `Event::XpGained`, `Sim(Hit)`, `Notice` | floating texts done (`tags::Floaters`: rise from where they happened, fade); game messages as a toast are not built |
 | 22 | Spells: rune/scroll select, cast | Off-hand spell ring, casting hand aims (already in `vr-interact`) | `SelectSpell`, `CastSpell`, `AbortCast` | done |
 | 23 | Bow / crossbow | Draw the string by hand (`vr-archery`), `ReadyRanged / AimRanged / ReleaseRanged` | done |
 | 24 | Weapon draw / melee | Grab the weapon from the hip; physical blows -> `Command::Attack` via `vr-bridge::actors` | done |
@@ -129,9 +129,17 @@ Windows are world-locked when they appear (`windows::place`: horizontal heading 
    data.inventory = feed::hero_panel(&core);
    data.names.extend(feed::names(&core, data.inventory.rows.iter().map(|r| r.item.as_str())));
    ```
-   Dialog: on `Event::DialogStarted/MenuChanged` set
-   `data.dialog = Some(DialogData { options: feed::dialog_options(&menu), npc_head })`; on
-   `DialogEnded` set `None`; `LineSpoken` -> `data.subtitle.say(...)`, `speaker_head`.
+   Dialogue: keep a `DialogFlow`; `flow.on_event(&event)` for every core event, `flow.tick(dt)` each
+   frame and `dialog_flow::apply_to_hud(&out, &mut data, npc_head, &head_of)` for each output
+   (`Say` also starts the 3D voice: `PlayVoice::spatial(key, speaker)`); a trigger press on the
+   subtitle calls `flow.finish_line()`; `HudAction::ChooseOption(i)` -> `flow.choose(i)` ->
+   `(Command::Choose, out)`; the leave key -> `flow.leave()` (`EndDialog`). Focus: set
+   `data.focus` (name from the focus entity, `FocusAttitude`, health) every frame, `None` to clear;
+   XP / damage: `data.floaters.push(text, rgb, world_pos, secs)` from `Event::XpGained` / `Sim(Hit)`.
+   Save / load: `WindowView::Files(feed::files_view(..))`; `Applied::File(c)` -> `feed::file_command`.
+   Sleep: `SleepFade::start(hours)` on `PlayerEvent::Slept`, advance the clock when `tick` returns
+   the hours. Craft / lock / pocket gestures: feed `Hammer::step`, `TwoHandLock::step`,
+   `Pickpocket::step` with the tracked hands and send the resulting commands.
 4. Windows: set `data.window = Some(WindowView::Trade(feed::trade_view(&mut core, npc, hint)))`
    when the desktop logic would open the trade page (`Interaction.window`); likewise
    `Loot(feed::loot_view(..))`, `Recipe(feed::recipe_view(..))`, `Document(..)`. The tablet:
@@ -147,7 +155,15 @@ Windows are world-locked when they appear (`windows::place`: horizontal heading 
 6. Open the trade with `Sim::trade_open` first exactly like
    `apps/game/src/play/interact.rs::open_trade` (treasure sets from the host's object data).
 
-Known gaps: item icons are placeholder squares (the real atlas needs `gothic_ui::UiAssets`);
-localisation of the fixed labels ("Handel", "Tagebuch") is German constants in `views.rs`;
-focus names, floating texts, save/load menu, sleeping and pickpocketing are specified above but
-not built.
+Look: the windows are drawn in the original's design space on the original view backgrounds, with
+item icons from `g3.igl` (`UiAssets::item_pic`), body font Times New Roman Bold and heading font
+Times New Roman Bold Italic (`HudFont` / `HudHeadingFont`), text `#E0C495`. The host loads them like
+the flat UI (`gothic_ui::assets::load_install_assets`) and inserts the `UiAssets` resource; without
+it the windows fall back to flat panels. Fixed texts come from the original loc table
+(`feed::labels` = `Labels::from_text`, the `HUD_*` keys the flat UI reads), otherwise the flat UI's
+own German strings (with umlauts); item names are `FO_<template>`, attribute names `ATTRIB_<tag>`.
+Compare renders: `.local/quest/vrui/compare_quests.png`, `compare_character.png`.
+
+Known gaps: the quest map has no location markers yet (`QuestLogView` needs the host's
+`LocationsData`); the main menu / options pages, game-message toasts, the wait-hours picker and the
+noise meter are specified, not built; focus / floating texts are drawn as five fixed surfaces.

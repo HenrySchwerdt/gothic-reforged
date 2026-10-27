@@ -197,6 +197,18 @@ fn windows() -> Vec<(&'static str, WindowView)> {
         ("document", WindowView::Document(doc)),
         ("quests", WindowView::Quests(quests)),
         ("character", WindowView::Character(character)),
+        (
+            "files",
+            WindowView::Files(FilesView {
+                save_mode: false,
+                can_save: true,
+                rows: vec![
+                    FileRowView { key: "quick.json".into(), title: "Schnellspeicherung".into(), clock: "1. Tag, 12:23".into(), manual: false },
+                    FileRowView { key: "auto_1.json".into(), title: "Ardea".into(), clock: "1. Tag, 11:50".into(), manual: false },
+                    FileRowView { key: "manual_5.json".into(), title: "Vor dem Kampf".into(), clock: "2. Tag, 08:00".into(), manual: true },
+                ],
+            }),
+        ),
     ]
 }
 
@@ -252,6 +264,16 @@ fn drive(
     x.hand_mut(Hand::Right).pose = Some(Pose::new(RIGHT, Quat::IDENTITY));
     let slot = (f / PER_WINDOW) as usize;
     let phase = f % PER_WINDOW;
+    if slot == s.list.len() && phase == 0 {
+        data.0.window = None;
+        data.0.focus = Some(FocusData {
+            name: "Krieger".into(),
+            attitude: gothic_ui::FocusAttitude::Hostile,
+            health: Some(0.7),
+            head: Vec3::new(0.3, 1.7, -2.5),
+        });
+        data.0.floaters.push("+250 EP", [0.9, 0.85, 0.4], Vec3::new(-0.3, 1.5, -1.5), 30.0);
+    }
     if phase == 0 {
         data.0.window = s.list.get(slot).map(|(_, v)| v.clone());
     }
@@ -298,7 +320,20 @@ fn dump(
             }
         }
     }
-    if s.frame > PER_WINDOW * s.list.len() as u32 + 5 {
+    if slot == s.list.len() && phase == PER_WINDOW - 5 {
+        let _ = std::fs::create_dir_all(&out.0);
+        for (sf, vis) in &surfaces {
+            if let gothic_vr_ui::render::SurfaceKind::Tag(i) = sf.kind
+                && *vis == Visibility::Visible
+            {
+                let path = out.0.join(format!("tag{i}.png"));
+                commands
+                    .spawn(bevy::render::view::screenshot::Screenshot::image(sf.image().clone()))
+                    .observe(bevy::render::view::screenshot::save_to_disk(path));
+            }
+        }
+    }
+    if s.frame > PER_WINDOW * (s.list.len() as u32 + 1) + 5 {
         exit.write(AppExit::Success);
     }
 }

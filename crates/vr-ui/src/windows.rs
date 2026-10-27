@@ -25,6 +25,8 @@ pub enum WindowAction {
     Page(PageEvent),
     /// `Command::UseItem { template }`.
     UseItem(String),
+    /// A save-page button on the selected slot (the host carries out the file work).
+    File(gothic_ui::FileCommand),
     /// The player closed the window (the host sends `Command::GuiOpen(false)` /
     /// `EndInteraction` as the desktop does).
     Close,
@@ -108,6 +110,24 @@ impl VrWindow {
             SheetAct::Page(e) => Some(WindowAction::Page(e)),
             SheetAct::UseItem(t) => Some(WindowAction::UseItem(t)),
             SheetAct::Close => Some(WindowAction::Close),
+            SheetAct::File(op) => {
+                let WindowView::Files(f) = &self.view else {
+                    return None;
+                };
+                let row = self.ui.selected.and_then(|i| f.rows.get(i));
+                match (op, f.save_mode, row) {
+                    (crate::sheet::FileOp::Do, true, r) => Some(WindowAction::File(gothic_ui::FileCommand::Save {
+                        key: r.map(|r| r.key.clone()),
+                    })),
+                    (crate::sheet::FileOp::Do, false, Some(r)) => {
+                        Some(WindowAction::File(gothic_ui::FileCommand::Load { key: r.key.clone() }))
+                    }
+                    (crate::sheet::FileOp::Delete, _, Some(r)) => {
+                        Some(WindowAction::File(gothic_ui::FileCommand::Delete { key: r.key.clone() }))
+                    }
+                    _ => None,
+                }
+            }
             SheetAct::Tab(t) => {
                 self.ui.tab = t;
                 self.ui.selected = None;
