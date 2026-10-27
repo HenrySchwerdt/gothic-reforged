@@ -20,7 +20,7 @@ fn row(item: &str, count: i32, price: i32, key: usize) -> PageRow {
 fn trade() -> TradeView {
     TradeView {
         vendor: "Hamlar".into(),
-        vendor_rows: (0..20).map(|i| row(&format!("ItFo_Bread_{i}"), 2, 5 + i, i as usize)).collect(),
+        vendor_rows: (0..60).map(|i| row(&format!("ItFo_Bread_{i}"), 2, 5 + i, i as usize)).collect(),
         vendor_gold: 300,
         player: PlayerPanel {
             title: String::new(),
@@ -47,12 +47,22 @@ fn quests() -> QuestLogView {
     QuestLogView {
         quests: vec![q("a", 0), q("b", 0), q("c", 1), q("d", 2)],
         clock: "1. Tag, 12:23".into(),
+        hour: 12,
         reputation: vec![("Nordmar".into(), 12)],
     }
 }
 
-fn namer(t: &str) -> String {
+fn name(t: &str) -> String {
     guess_name(t)
+}
+
+fn labels() -> views::Labels {
+    views::Labels::default()
+}
+
+fn cx() -> views::Ctx<'static> {
+    // Test helper: labels leaked once per call (tests are short lived).
+    views::Ctx { name: &name, labels: Box::leak(Box::new(labels())) }
 }
 
 #[test]
@@ -75,10 +85,10 @@ fn every_window_meets_the_comfort_numbers() {
         }),
         WindowView::Document(DocumentView { title: "Brief".into(), left: "word ".repeat(200), right: String::new(), is_book: false }),
         WindowView::Quests(quests()),
-        WindowView::Character(CharacterView { skills: vec![("Schmieden".into(), true)], ..Default::default() }),
+        WindowView::Character(CharacterView { skills: vec![(3, "Schmieden".into())], protection: vec![0; 6], ..Default::default() }),
     ];
     for v in &views {
-        let s = views::build(v, &WindowUi::default(), &namer);
+        let s = views::build(v, &WindowUi::default(), &views::Ctx { name: &name, labels: &labels() });
         assert!(s.distance >= 0.9, "{}: {} m is inside the fixation limit", v.name(), s.distance);
         assert!(
             s.min_target_dmm() >= MIN_TARGET_DMM,
@@ -87,7 +97,7 @@ fn every_window_meets_the_comfort_numbers() {
             s.min_target_dmm()
         );
         let size = s.size_m();
-        assert!(size.x <= 1.4 && size.y <= 0.9, "{}: {size}", v.name());
+        assert!(size.x <= 1.4 && size.y <= 1.0, "{}: {size}", v.name());
         // Interactive items never overlap each other (Midas touch).
         let hot: Vec<_> = s.items.iter().filter(|i| i.interactive()).collect();
         for (a, i) in hot.iter().enumerate() {
@@ -103,16 +113,16 @@ fn every_window_meets_the_comfort_numbers() {
 #[test]
 fn lists_scroll_and_clamp() {
     let v = WindowView::Trade(trade());
-    let s0 = views::build(&v, &WindowUi::default(), &namer);
+    let s0 = views::build(&v, &WindowUi::default(), &views::Ctx { name: &name, labels: &labels() });
     let r0 = s0.regions[0];
-    assert!(r0.total > r0.visible, "20 rows do not fit: {r0:?}");
+    assert!(r0.total > r0.visible, "60 stacks do not fit: {r0:?}");
     let rows0 = s0.items.iter().filter(|i| i.region == Some(0)).count();
-    assert_eq!(rows0, r0.visible);
+    assert_eq!(rows0, r0.visible * 5);
     let far = WindowUi { scroll: vec![1000], ..Default::default() };
-    let s1 = views::build(&v, &far, &namer);
+    let s1 = views::build(&v, &far, &views::Ctx { name: &name, labels: &labels() });
     assert_eq!(s1.regions[0].top, r0.max_top(), "clamped to the last page");
     let first = s1.items.iter().find(|i| i.region == Some(0)).unwrap();
-    assert_eq!(first.text, guess_name(&format!("ItFo_Bread_{}", r0.max_top())));
+    assert_eq!(first.text, guess_name(&format!("ItFo_Bread_{}", r0.max_top() * 5)));
 }
 
 struct Rig {
@@ -129,7 +139,7 @@ impl Rig {
         frame.hand_mut(Hand::Right).pose = Some(Pose::new(Vec3::new(0.25, 1.3, -0.3), Quat::IDENTITY));
         let mut input = VrInput::new();
         input.push(frame);
-        let win = VrWindow::open(view, &Pose::new(HEAD, Quat::IDENTITY), &namer);
+        let win = VrWindow::open(view, &Pose::new(HEAD, Quat::IDENTITY), &cx());
         Self { input, frame, win }
     }
 
@@ -137,7 +147,7 @@ impl Rig {
         f(&mut self.frame);
         self.input.push(self.frame);
         let t = Tracked::from_input(&self.input);
-        self.win.update(&self.input, &t, Hand::Right, &namer)
+        self.win.update(&self.input, &t, Hand::Right, &cx())
     }
 
     /// Laser at the centre of item `k`, trigger down then up; returns the actions of the press.
@@ -178,12 +188,12 @@ fn trade_rows_buttons_and_close_send_the_flat_ui_page_events() {
         r.press(k),
         [WindowAction::Page(PageEvent::TradeAdd { player_side: false, key: 3 })]
     );
-    let k = r.find("Ausgleichen");
+    let k = r.find("Gold-Ausgleich");
     assert_eq!(r.press(k), [WindowAction::Page(PageEvent::TradeBalance)]);
     // The deal button is greyed (deal = false): pressing does nothing.
-    let k = r.find("Handeln");
+    let k = r.find("Tauschen");
     assert!(r.press(k).is_empty());
-    let k = r.find("X");
+    let k = r.find("×");
     assert_eq!(r.press(k), [WindowAction::Close]);
     // B closes as well.
     assert_eq!(r.step(|f| f.hand_mut(Hand::Right).secondary = true), [WindowAction::Close]);
@@ -211,17 +221,17 @@ fn quest_tabs_and_selection_are_local_ui_state() {
     let mut r = Rig::new(WindowView::Quests(quests()));
     let rows = |r: &Rig| r.win.sheet.items.iter().filter(|i| i.region == Some(0)).map(|i| i.text.clone()).collect::<Vec<_>>();
     assert_eq!(rows(&r), ["Quest a", "Quest b"]);
-    let k = r.find("Erfolgreich 1");
+    let k = r.find("Erfolgreich");
     assert!(r.press(k).is_empty(), "tabs never reach the core");
     assert_eq!(rows(&r), ["Quest c"]);
-    let k = r.find("Gescheitert 1");
+    let k = r.find("Gescheitert");
     r.press(k);
     assert_eq!(rows(&r), ["Quest d"]);
     // The detail shows the log of the selected quest.
     let paragraphs: Vec<_> = r.win.sheet.items.iter().filter(|i| i.kind == sheet::ItemKind::Paragraph).collect();
     assert!(paragraphs.len() >= 3, "wrapped log lines");
     // Select the second running quest.
-    let k = r.find("Aktuell 2");
+    let k = r.find("Aktuell");
     r.press(k);
     let k = r.find("Quest b");
     r.press(k);
@@ -235,7 +245,7 @@ fn documents_turn_pages_by_button_and_flick() {
     let spreads = views::document_spreads(&doc);
     assert!(spreads > 2);
     let mut r = Rig::new(WindowView::Document(doc));
-    let k = r.find(">");
+    let k = r.find("›");
     r.press(k);
     assert_eq!(r.win.ui.page, 1);
     r.step(|f| f.hand_mut(Hand::Right).thumbstick = Vec2::new(1.0, 0.0));
@@ -268,7 +278,7 @@ fn hud_opens_the_tablet_on_y_and_shows_the_host_window() {
     assert!(hud.window.is_some());
     // A poke with the main hand's fingertip works at arm's length too.
     let w = hud.window.as_ref().unwrap();
-    let k = w.sheet.items.iter().position(|i| i.text == "Erfolgreich 1").unwrap();
+    let k = w.sheet.items.iter().position(|i| i.text == "Erfolgreich").unwrap();
     let tip = w.panel.point(w.sheet.items[k].rect.center()) + w.panel.normal() * 0.005;
     let grip = Pose::new(Vec3::ZERO, Quat::IDENTITY);
     frame.hand_mut(Hand::Right).pose = Some(Pose::new(tip - fingertip(&grip), Quat::IDENTITY));

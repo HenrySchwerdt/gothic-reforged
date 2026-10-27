@@ -54,9 +54,9 @@ pub fn place(head: &Pose, distance: f32) -> Pose {
 }
 
 impl VrWindow {
-    pub fn open(view: WindowView, head: &Pose, namer: views::Namer) -> Self {
+    pub fn open(view: WindowView, head: &Pose, cx: &views::Ctx) -> Self {
         let ui = WindowUi::default();
-        let sheet = views::build(&view, &ui, namer);
+        let sheet = views::build(&view, &ui, cx);
         let pose = place(head, sheet.distance);
         let panel = Panel::new(pose, sheet.size_m());
         Self {
@@ -71,16 +71,17 @@ impl VrWindow {
     }
 
     /// New contents (same window kind): selection and scroll stay, the layout is rebuilt.
-    pub fn set_view(&mut self, view: WindowView, namer: views::Namer) {
+    pub fn set_view(&mut self, view: WindowView, cx: &views::Ctx) {
         if std::mem::discriminant(&view) != std::mem::discriminant(&self.view) {
             self.ui = WindowUi::default();
         }
         self.view = view;
-        self.rebuild(namer);
+        self.rebuild(cx);
+        self.panel.size = self.sheet.size_m();
     }
 
-    pub fn rebuild(&mut self, namer: views::Namer) {
-        self.sheet = views::build(&self.view, &self.ui, namer);
+    pub fn rebuild(&mut self, cx: &views::Ctx) {
+        self.sheet = views::build(&self.view, &self.ui, cx);
         // Remember clamped scroll positions so a shrinking list does not leave a gap.
         self.ui.scroll = self.sheet.regions.iter().map(|r| r.top).collect();
         if let Some(h) = self.hovered
@@ -134,7 +135,7 @@ impl VrWindow {
         input: &VrInput,
         t: &Tracked,
         main: Hand,
-        namer: views::Namer,
+        cx: &views::Ctx,
     ) -> Vec<WindowAction> {
         let mut out = Vec::new();
         if input.just_pressed(main, VrButton::Secondary)
@@ -190,7 +191,7 @@ impl VrWindow {
             dirty = true;
         }
         if dirty {
-            self.rebuild(namer);
+            self.rebuild(cx);
             self.hovered = uv.and_then(|uv| self.sheet.hit(uv));
         }
         out

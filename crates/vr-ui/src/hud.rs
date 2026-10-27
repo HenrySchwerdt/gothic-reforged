@@ -63,6 +63,10 @@ pub struct HudData {
     pub window: Option<WindowView>,
     /// Localised item names by template (the HUD falls back to a guess from the template).
     pub names: std::collections::HashMap<String, String>,
+    /// Icon file name (`IT_1H_OrcSlayer_01.tga`) by item template, for the item pictures.
+    pub icons: std::collections::HashMap<String, String>,
+    /// Fixed texts of the windows (the original loc-table entries via `Labels::from_text`).
+    pub labels: crate::views::Labels,
 }
 
 impl HudData {
@@ -295,14 +299,15 @@ impl VrHud {
         // World window (trade, loot, recipes, documents, quest log, character).
         match &data.window {
             Some(v) => {
-                let namer = |t: &str| data.name(t);
+                let name = |t: &str| data.name(t);
+                let namer = crate::views::Ctx { name: &name, labels: &data.labels };
                 match self.window.as_mut() {
-                    Some(w) => {
+                    Some(w) if std::mem::discriminant(&w.view) == std::mem::discriminant(v) => {
                         if w.view != *v {
                             w.set_view(v.clone(), &namer);
                         }
                     }
-                    None => {
+                    _ => {
                         self.window = Some(VrWindow::open(v.clone(), &head, &namer));
                         self.backpack = None;
                     }

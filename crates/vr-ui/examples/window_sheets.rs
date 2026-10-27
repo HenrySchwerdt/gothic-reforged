@@ -17,7 +17,7 @@ use std::time::Duration;
 
 const EYE: Vec3 = Vec3::new(0.0, 1.7, 0.0);
 const RIGHT: Vec3 = Vec3::new(0.25, 1.3, -0.3);
-const PER_WINDOW: u32 = 60;
+const PER_WINDOW: u32 = 90;
 
 fn row(item: &str, count: i32, price: i32, key: usize) -> PageRow {
     PageRow {
@@ -31,22 +31,22 @@ fn row(item: &str, count: i32, price: i32, key: usize) -> PageRow {
 
 fn windows() -> Vec<(&'static str, WindowView)> {
     let goods = [
-        ("ItMw_Kurzschwert", 1, 640),
-        ("ItMw_Streitaxt", 1, 1200),
-        ("ItRw_Jagdbogen", 1, 420),
-        ("ItRw_Pfeil", 40, 2),
-        ("ItPo_Heiltrank", 5, 45),
-        ("ItFo_Brot", 12, 3),
-        ("ItFo_Braten", 8, 8),
-        ("ItMi_Fackel", 6, 4),
-        ("ItAr_Lederruestung", 1, 800),
-        ("ItSc_Feuerball", 2, 150),
+        ("It_1H_Sword_01", 1, 640),
+        ("It_2H_Axe_Lumberjack", 1, 1200),
+        ("It_Bow_01", 1, 420),
+        ("Arrow", 40, 2),
+        ("It_Potion", 5, 45),
+        ("It_Bread", 12, 3),
+        ("It_Bacon", 8, 8),
+        ("It_Torch", 6, 4),
+        ("It_Armor_Ass_L", 1, 800),
+        ("It_Scroll", 2, 150),
     ];
     let mine = [
-        ("ItMi_Wolfsfell", 4, 12),
-        ("ItMi_Erzbrocken", 9, 20),
-        ("ItFo_Apfel", 3, 1),
-        ("ItMi_Dietrich", 7, 5),
+        ("It_Wolf_Fur", 4, 12),
+        ("It_Ore", 9, 20),
+        ("It_Apple", 3, 1),
+        ("It_Alligator_Leather", 7, 5),
     ];
     let trade = TradeView {
         vendor: "Hamlar".into(),
@@ -65,8 +65,8 @@ fn windows() -> Vec<(&'static str, WindowView)> {
                 .collect(),
             gold: 230,
         },
-        ask_rows: vec![row("ItPo_Heiltrank", 2, 45, 4)],
-        offer_rows: vec![row("ItMi_Wolfsfell", 3, 12, 20)],
+        ask_rows: vec![row("It_Potion", 2, 45, 4)],
+        offer_rows: vec![row("It_Wolf_Fur", 3, 12, 20)],
         ask_total: 90,
         offer_total: 36,
         deal: false,
@@ -76,10 +76,10 @@ fn windows() -> Vec<(&'static str, WindowView)> {
     let loot = LootView {
         title: "Alte Truhe".into(),
         rows: vec![
-            row("ItMi_Gold", 85, 0, 0),
-            row("ItPo_Heiltrank", 2, 0, 1),
-            row("ItWr_Brief", 1, 0, 2),
-            row("ItMi_Dietrich", 3, 0, 3),
+            row("It_Gold", 85, 0, 0),
+            row("It_Potion", 2, 0, 1),
+            row("It_Bernado_Letter", 1, 0, 2),
+            row("It_Alligator_Leather", 3, 0, 3),
         ],
         pool_gold: Some(85),
         take_all: true,
@@ -97,29 +97,29 @@ fn windows() -> Vec<(&'static str, WindowView)> {
         recipes: vec![
             RecipeRow {
                 key: 0,
-                product: "ItMw_Kurzschwert".into(),
+                product: "It_1H_Sword_01".into(),
                 name: "Kurzschwert".into(),
-                description: "Eine einfache, gut ausgewogene Klinge fuer den Anfang.".into(),
+                description: "Eine einfache, gut ausgewogene Klinge für den Anfang.".into(),
                 ingredients: vec![
-                    ing("ItMi_Stahl", "Stahlbarren", 2, 3),
-                    ing("ItMi_Holz", "Holz", 1, 0),
+                    ing("It_IronOre", "Stahlbarren", 2, 3),
+                    ing("It_IronOreNugget", "Holz", 1, 0),
                 ],
                 requirement: "Schmiedekunst 1".into(),
                 craftable: false,
             },
             RecipeRow {
                 key: 1,
-                product: "ItMw_Streitaxt".into(),
+                product: "It_2H_Axe_Lumberjack".into(),
                 name: "Streitaxt".into(),
                 description: "Schwer und verheerend.".into(),
-                ingredients: vec![ing("ItMi_Stahl", "Stahlbarren", 3, 3)],
+                ingredients: vec![ing("It_IronOre", "Stahlbarren", 3, 3)],
                 requirement: String::new(),
                 craftable: true,
             },
             RecipeRow {
                 key: 2,
                 name: "Dolch".into(),
-                product: "ItMw_Dolch".into(),
+                product: "It_Sword".into(),
                 craftable: true,
                 ..Default::default()
             },
@@ -128,19 +128,19 @@ fn windows() -> Vec<(&'static str, WindowView)> {
         hint: String::new(),
     };
     let doc = DocumentView {
-        title: "Das Tagebuch des Jaegers".into(),
-        left: "Der Winter kam frueh in diesem Jahr. Die Woelfe wagen sich bis an die Palisade, und \
-               niemand im Dorf will mehr nach Einbruch der Dunkelheit vor die Tuer. Ich habe die \
-               Fallen am alten Weg erneuert und die Felle zum Haendler gebracht, doch er zahlt \
-               kaum die Haelfte dessen, was sie wert sind."
+        title: "Das Tagebuch des Jägers".into(),
+        left: "Der Winter kam früh in diesem Jahr. Die Wölfe wagen sich bis an die Palisade, und \
+               niemand im Dorf will mehr nach Einbruch der Dunkelheit vor die Tür. Ich habe die \
+               Fallen am alten Weg erneuert und die Felle zum Händler gebracht, doch er zahlt \
+               kaum die Hälfte dessen, was sie wert sind."
             .repeat(2),
         right: String::new(),
         is_book: false,
     };
     let quests = QuestLogView {
         quests: [
-            ("Die Woelfe von Ardea", 0),
-            ("Erz fuer den Schmied", 0),
+            ("Die Wölfe von Ardea", 0),
+            ("Erz für den Schmied", 0),
             ("Briefe an den Hauptmann", 0),
             ("Das gestohlene Schaf", 1),
             ("Der Schmuggler", 2),
@@ -152,14 +152,15 @@ fn windows() -> Vec<(&'static str, WindowView)> {
             title: (*t).into(),
             tab: *tab,
             log: vec![
-                "Der Jaeger bittet dich, die Woelfe zu vertreiben, die das Dorf bedrohen. Such ihre Hoehle im Norden."
+                "Der Jäger bittet dich, die Wölfe zu vertreiben, die das Dorf bedrohen. Such ihre Höhle im Norden."
                     .into(),
                 "Aufgabe begonnen".into(),
             ],
         })
         .collect(),
-        clock: "3. Tag, 14:05".into(),
-        reputation: vec![("Nordmar".into(), 12), ("Ardea".into(), 40)],
+        clock: "1. Tag, 12:23".into(),
+        hour: 12,
+        reputation: vec![("Ruf in Nordmar".into(), 0), ("Ruf bei den Orks".into(), 0), ("Ruf bei den Rebellen".into(), 0), ("Ruf beim Waldvolk".into(), 0), ("Ruf bei den Assassinen".into(), 0), ("Ruf bei den Nomaden".into(), 0)],
     };
     let character = CharacterView {
         level: 4,
@@ -172,21 +173,21 @@ fn windows() -> Vec<(&'static str, WindowView)> {
             stamina: (90.0, 150.0),
         },
         attributes: vec![
-            ("Staerke".into(), 120),
+            ("Stärke".into(), 120),
             ("Geschick".into(), 90),
             ("Wissen".into(), 10),
-            ("Schmieden".into(), 15),
-            ("Diebeskunst".into(), 5),
-            ("Alchemie".into(), 0),
+            ("Schmiedekunst".into(), 10),
+            ("Diebeskunst".into(), 10),
+            ("Alchemie".into(), 10),
         ],
-        protection: vec![("Klingen".into(), 12), ("Stumpf".into(), 8), ("Feuer".into(), 2)],
-        skills: ["Einhaender 1", "Bogen 1", "Jagen 1", "Schleichen 1", "Schmieden 1"]
+        protection: vec![12, 8, 5, 2, 0, 0],
+        skills: [(0, "Einhänder 1"), (0, "Bogen 1"), (1, "Jagen 1"), (1, "Schleichen 1"), (3, "Schmieden 1")]
             .iter()
-            .map(|s| ((*s).into(), true))
+            .map(|(g, s)| (*g, (*s).into()))
             .collect(),
         equipment: vec![
-            ("Rechts".into(), "ItMw_Kurzschwert".into()),
-            ("Koerper".into(), "ItAr_Lederruestung".into()),
+            ("Rechts".into(), "It_1H_Sword_01".into()),
+            ("Körper".into(), "It_Armor_Ass_L".into()),
         ],
     };
     vec![
@@ -233,7 +234,7 @@ fn main() -> AppExit {
             frame: 0,
             list: windows(),
         })
-        .add_systems(Startup, load_font)
+        .add_systems(Startup, load_assets)
         .add_systems(First, drive)
         .add_systems(Last, dump);
     app.run()
@@ -302,19 +303,27 @@ fn dump(
     }
 }
 
-fn load_font(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+/// The installation's UI art, fonts and the item catalog (`--install`, `--items`); everything is
+/// read at run time and only drawn into gitignored PNGs.
+fn load_assets(
+    mut commands: Commands,
+    mut fonts: ResMut<Assets<Font>>,
+    mut images: ResMut<Assets<Image>>,
+    mut data: ResMut<HudDataRes>,
+) {
     let args: Vec<String> = std::env::args().collect();
-    let given = args
-        .iter()
-        .position(|a| a == "--font")
-        .and_then(|i| args.get(i + 1).cloned());
-    for path in given
-        .into_iter()
-        .chain(["C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf"].map(String::from))
-    {
-        if let Ok(bytes) = std::fs::read(&path) {
-            commands.insert_resource(HudFont(fonts.add(Font::from_bytes(bytes))));
-            return;
-        }
+    let arg = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1).cloned());
+    let install = arg("--install").unwrap_or_else(|| "D:/SteamLibrary/steamapps/common/Gothic 3".into());
+    if std::path::Path::new(&install).join("Data").exists() {
+        let a = gothic_ui::assets::load_install_assets(std::path::Path::new(&install), &mut fonts, &mut images);
+        commands.insert_resource(HudFont(a.font.clone()));
+        commands.insert_resource(HudHeadingFont(a.heading.clone()));
+        commands.insert_resource(a);
+    } else {
+        warn!("no installation at {install}: flat panels and the fallback font");
+    }
+    let items = arg("--items").unwrap_or_else(|| "C:/Users/PowerTower/dev/gothic-reforged/.local/items.json".into());
+    if let Ok(cat) = gothic_ui::ItemCatalog::load(std::path::Path::new(&items)) {
+        data.0.icons = cat.iter().filter_map(|(n, i)| Some((n.to_string(), i.icon.clone()?))).collect();
     }
 }

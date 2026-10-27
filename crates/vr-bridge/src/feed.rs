@@ -30,6 +30,23 @@ pub fn item_name(core: &Core, template: &str) -> String {
         .unwrap_or_else(|| gothic_vr_ui::views::guess_name(template))
 }
 
+/// Fixed window texts from the original loc table (`HUD_*` keys), flat UI fallbacks otherwise.
+pub fn labels(core: &Core) -> gothic_vr_ui::views::Labels {
+    gothic_vr_ui::views::Labels::from_text(&|k| core.db.text(k))
+}
+
+/// Icon file name (`IT_1H_OrcSlayer_01.tga`) of every template, from the item catalog the flat UI
+/// loads (`ItemCatalog`), for `HudData::icons`.
+pub fn icons<'a>(
+    catalog: &gothic_ui::ItemCatalog,
+    templates: impl IntoIterator<Item = &'a str>,
+) -> HashMap<String, String> {
+    templates
+        .into_iter()
+        .filter_map(|t| Some((t.to_string(), catalog.get(t)?.icon.clone()?)))
+        .collect()
+}
+
 /// Names of every template in `templates`, for `HudData::names`.
 pub fn names<'a>(
     core: &Core,
@@ -335,38 +352,44 @@ pub fn quest_log(core: &Core) -> QuestLogView {
     QuestLogView {
         quests,
         clock: format_clock(&fmt, 0, day, hour, minute),
+        hour,
         reputation,
     }
 }
 
-/// Attributes, protection, skills and equipment of the hero.
+/// Attributes, protection, skills and equipment of the hero (the values the flat character
+/// page shows: `GameState::attributes`, `ATTRIB_<tag>` names).
 pub fn character(core: &Core) -> CharacterView {
     let hero = core.sim.actor(core.hero);
     let st = core.state();
-    let b = &hero.base;
-    let attributes = vec![
-        ("Staerke".to_string(), b.str),
-        ("Geschick".to_string(), b.dex),
-        ("Wissen".to_string(), b.int),
-        ("Schmieden".to_string(), b.smithing),
-        ("Diebeskunst".to_string(), b.theft),
-        ("Alchemie".to_string(), b.alchemy),
-    ];
+    let val = |tag: &str| st.attributes.get(&tag.to_ascii_lowercase()).copied().unwrap_or(0);
+    let attributes = ["STR", "HNT", "INT", "SMT", "THF", "ALC"]
+        .into_iter()
+        .map(|tag| {
+            let name = if tag == "HNT" {
+                "Jagdgeschick".to_string()
+            } else {
+                core.db.text(&format!("ATTRIB_{tag}")).unwrap_or_else(|| tag.to_string())
+            };
+            (name, val(tag))
+        })
+        .collect();
     let protection = [
-        ("Klingen", "PROT_BLADE"),
-        ("Stumpf", "PROT_BLUNT"),
-        ("Geschosse", "PROT_PROJECTILE"),
-        ("Feuer", "PROT_FIRE"),
-        ("Eis", "PROT_ICE"),
+        "prot_blade",
+        "prot_impact",
+        "prot_missile",
+        "prot_fire",
+        "prot_ice",
+        "prot_lightning",
     ]
     .into_iter()
-    .map(|(n, tag)| (n.to_string(), hero.equipment.modifier_sum(tag)))
+    .map(val)
     .collect();
     let eq = &hero.equipment;
     let equipment = [
-        ("Rechts", &eq.right),
-        ("Links", &eq.left),
-        ("Koerper", &eq.body),
+        ("Rechte Hand", &eq.right),
+        ("Linke Hand", &eq.left),
+        ("Körper", &eq.body),
     ]
     .into_iter()
     .filter_map(|(slot, it)| it.as_ref().map(|i| (slot.to_string(), i.name.clone())))
@@ -382,7 +405,14 @@ pub fn character(core: &Core) -> CharacterView {
         skills: st
             .skills
             .iter()
-            .map(|s| (s.replace('_', " "), true))
+            .map(|k| {
+                let name = core
+                    .db
+                    .text(&format!("FO_it_{k}"))
+                    .or_else(|| core.db.text(&format!("FO_{k}")))
+                    .unwrap_or_else(|| k.replace('_', " "));
+                (gothic_vr_ui::views::skill_group(k), name)
+            })
             .collect(),
         equipment,
     }

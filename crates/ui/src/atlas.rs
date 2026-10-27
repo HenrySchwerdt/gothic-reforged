@@ -6,7 +6,7 @@
 //! is exactly as large as its background). See `docs/research/UI_ORIGINAL.md`.
 use crate::assets::Page;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pic {
     pub page: Page,
     pub x: f32,

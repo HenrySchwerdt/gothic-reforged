@@ -37,7 +37,7 @@ pub mod wrist;
 pub use hud::{DialogData, HudAction, HudData, Tracked, VrHud};
 pub use panel::Panel;
 pub use plugin::{HudActionMsg, HudDataRes, VrHudRes, VrUiPlugin, WindowActionMsg};
-pub use render::{HudFont, VrUiRenderPlugin};
+pub use render::{HudFont, HudHeadingFont, VrUiRenderPlugin};
 pub use sheet::{Sheet, SheetAct};
 pub use views::{CharacterView, QuestEntry, QuestLogView, WindowView};
 pub use windows::{VrWindow, WindowAction};

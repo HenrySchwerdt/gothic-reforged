@@ -89,9 +89,18 @@ impl Surface {
 #[derive(Resource, Clone)]
 pub struct HudFont(pub Handle<Font>);
 
+/// Heading face (the original's Times New Roman Bold Italic); headings use [`HudFont`] when it
+/// is not inserted.
+#[derive(Resource, Clone)]
+pub struct HudHeadingFont(pub Handle<Font>);
+
 /// Marks text spawned by the HUD so [`HudFont`] reaches it.
 #[derive(Component)]
 struct HudText;
+
+/// Marks heading text (window titles, buttons) for [`HudHeadingFont`].
+#[derive(Component)]
+pub(crate) struct HudHeading;
 
 /// Adds the rendered surfaces (needs a renderer; use with `VrUiPlugin { gizmos: false }`).
 pub struct VrUiRenderPlugin;
@@ -284,9 +293,17 @@ pub(crate) fn text(s: impl Into<String>, size: f32, color: Color) -> impl Bundle
     )
 }
 
-fn apply_font(font: Res<HudFont>, mut texts: Query<&mut TextFont, Added<HudText>>) {
-    for mut t in &mut texts {
-        t.font = FontSource::Handle(font.0.clone());
+fn apply_font(
+    font: Res<HudFont>,
+    heading: Option<Res<HudHeadingFont>>,
+    mut texts: Query<(&mut TextFont, Has<HudHeading>), Added<HudText>>,
+) {
+    for (mut t, is_heading) in &mut texts {
+        let f = match (&heading, is_heading) {
+            (Some(h), true) => h.0.clone(),
+            _ => font.0.clone(),
+        };
+        t.font = FontSource::Handle(f);
     }
 }
 
@@ -309,6 +326,7 @@ fn build(
     hud: &VrHud,
     data: &HudData,
     px: UVec2,
+    assets: Option<&gothic_ui::UiAssets>,
     parent: &mut ChildSpawnerCommands,
 ) {
     let w = px.x as f32;
@@ -611,7 +629,7 @@ fn build(
         }
         SurfaceKind::Window => {
             if let Some(w) = &hud.window {
-                crate::render_sheet::build_sheet(&w.sheet, w.hovered, px, parent);
+                crate::render_sheet::build_sheet(&w.sheet, w.hovered, px, assets, data, parent);
             }
         }
         SurfaceKind::Map => {
@@ -714,6 +732,7 @@ fn update_surfaces(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cameras: Query<&mut Camera>,
     mut surfaces: Query<(&mut Surface, &mut Transform, &mut Visibility)>,
+    assets: Option<Res<gothic_ui::UiAssets>>,
 ) {
     for (mut s, mut t, mut vis) in &mut surfaces {
         let shown = placement(s.kind, &hud.0);
@@ -748,7 +767,7 @@ fn update_surfaces(
             s.px = px;
             s.key.clear();
         }
-        let key = content_key(s.kind, &hud.0, &data.0);
+        let key = format!("{}{}", content_key(s.kind, &hud.0, &data.0), assets.as_ref().map_or(0, |a| a.pages.len()));
         if key != s.key {
             s.key = key;
             let (kind, px) = (s.kind, s.px);
@@ -756,7 +775,7 @@ fn update_surfaces(
                 .entity(s.root)
                 .despawn_children()
                 .with_children(|p| {
-                    build(kind, &hud.0, &data.0, px, p);
+                    build(kind, &hud.0, &data.0, px, assets.as_deref(), p);
                 });
         }
     }

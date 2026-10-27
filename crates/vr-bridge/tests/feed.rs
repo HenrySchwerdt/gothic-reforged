@@ -141,7 +141,9 @@ fn quest_log_reads_the_game_state() {
 #[test]
 fn a_trade_played_through_the_vr_window_changes_the_core() {
     let (mut c, smith) = core();
-    let namer = |t: &str| gothic_vr_ui::views::guess_name(t);
+    let name = |t: &str| gothic_vr_ui::views::guess_name(t);
+    let labels = gothic_vr_ui::views::Labels::default();
+    let namer = gothic_vr_ui::views::Ctx { name: &name, labels: &labels };
     let head = Pose::new(Vec3::new(0.0, 1.7, 0.0), Quat::IDENTITY);
     let mut win = VrWindow::open(WindowView::Trade(feed::trade_view(&mut c, smith, "")), &head, &namer);
     let mut input = VrInput::new();
@@ -166,8 +168,8 @@ fn a_trade_played_through_the_vr_window_changes_the_core() {
     };
     let a = press(&mut c, &mut win, "1H Sword 01");
     assert!(matches!(a[0], Applied::Trade(ref o) if o.changed && !o.refused), "{a:?}");
-    press(&mut c, &mut win, "Ausgleichen");
-    let a = press(&mut c, &mut win, "Handeln");
+    press(&mut c, &mut win, "Gold-Ausgleich");
+    let a = press(&mut c, &mut win, "Tauschen");
     assert!(matches!(a[0], Applied::Trade(ref o) if o.dealt), "{a:?}");
     assert_eq!(feed::hero_panel(&c).gold, 600);
 }
