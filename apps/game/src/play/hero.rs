@@ -713,6 +713,7 @@ fn quick_use(
 /// priorities of the hero template, `gothic_gameplay::focus`); the view direction is the camera's.
 #[allow(clippy::too_many_arguments)]
 fn focus(
+    frame: Res<InputFrame>,
     player: Res<Player>,
     core: Res<CoreRes>,
     objects: Res<WorldObjects>,

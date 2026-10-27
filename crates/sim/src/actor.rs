@@ -107,6 +107,9 @@ pub struct Actor {
     pub routine_name: String,
     /// Weapon drawn (weapon mode ready) [CA 10.2 `AssessPlayerWeapon`].
     pub drawn: bool,
+    /// Signature of the worn items / drawn flag the stack list was last linked for
+    /// (`Sim::mirror_equipment`).
+    pub link_sig: u64,
     /// Driven by the brain. NPCs yes; the hero only when used as a headless bot.
     pub ai_controlled: bool,
     pub brain: Brain,
@@ -142,6 +145,7 @@ impl Actor {
             stamina: 0,
             mana: 0,
             equipment: Equipment::default(),
+            link_sig: 0,
             inventory: Inventory::new(),
             perks: BTreeSet::new(),
             ai_mode: AiMode::Routine,
@@ -430,6 +434,17 @@ impl Actor {
         };
         self.store_stat(tag, &s);
         ok
+    }
+
+    /// What the stack list has to agree with: the worn items in slot order and the drawn flag.
+    pub fn equipment_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for i in self.equipment.all() {
+            i.name.to_ascii_lowercase().hash(&mut h);
+        }
+        self.drawn.hash(&mut h);
+        h.finish() | 1
     }
 
     /// `IsGuard`: enclave-type NPC with an alignment [CA 10.4, I on the enclave match].

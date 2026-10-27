@@ -619,6 +619,9 @@ impl Core {
             self.command(c, &mut out);
         }
         self.clock += f64::from(dt);
+        // Writes to the game state since the last tick (a granted item) reach the hero's bag
+        // before the step links its equipment; otherwise the bag would win the comparison.
+        self.sync_inventory();
         self.sync_sectors(&mut out);
         self.update_processing_range(&mut out);
         self.acc += dt;
