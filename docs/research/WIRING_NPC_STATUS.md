@@ -38,3 +38,41 @@ new `spell_zoo`, `routine_zoo`, `crime_theft`. Scope: `crates/script/src/**` exc
 
 `npc_orc1` ("the damage lands at 60 percent of the Hit clip", tolerance 0.2 s) failed on 2 of 5 runs while the machine was
 shared by five agents (frame hitches), passed on the others; not changed by this work.
+
+
+## Routine points: how the original resolves them, and what is really missing (day/cov-npc)
+
+**Resolution rule (decompile).** A character refers to its routine points with `bCPropertyID` values (20 bytes:
+16-byte GUID plus a validity word, `PROPERTY_STREAMS.md`). `eCEntityProxy::ResolveEntity` (Engine 0x1022e470) looks the
+entity up with the proxy's `bCPropertyID` (proxy + 8) as the key; `eCEntityProxy::Compare` (0x1022e250) is
+`bCPropertyID::operator==` (SharedBase 0x1000ea00), which compares exactly four dwords (offsets 0, 4, 8, 0xc = 16 bytes);
+`bCGuid::operator==` (0x100025b0 -> 0x10002120) also compares 16 bytes. The last 4 bytes are not part of the identity.
+Implemented once in `gothic_session::guid` (`guid_key`, `GuidIndex`); `apps/game` (`WorldObjects::by_guid`) uses it, the Quest
+host can replace its own `take(32)` code by the same type.
+
+**Exporter.** `gothic-inspector object-dump` now runs a first pass over every world document that collects the identities
+used in `gCNavigation_PS.WorkingPoints / RelaxingPoints / SleepingPoints` (3 943 distinct identities for the 10 279 characters of the
+world) and then exports every entity with such an identity whatever its classes (fields `routine_point`, `classes`), and lists the
+references no world document answers under `unresolved_routine_points`. Result for the whole world: 28 786 entities (was 28 776; 10 more,
+e.g. `gCAnchor_PS` entities such as `Geldern_Hang_Elite`, `Faring_Patrol_Arena`), 165 identities that no document answers.
+
+**The "missing" points are no points.** Of the 165 unresolved identities, three account for 17 000 of the 17 342 references:
+`6d62c61f...` (working slot), `aef515f1...` (sleeping slot) and `ef0ebc55...` (relaxing slot) are the slot defaults every character
+without a point of its own carries (per slot exactly one id; 136 / 170 / 171 of the 315 characters within 150 m of Ardea). They are in
+no `.node` / `.lrentdat` entity and in no template (`TemplateCatalog`, 1 192 NPC templates and all other `.tple`), so the original's
+`ResolveEntity` returns null for them as well; a character with such a slot has no point there. One more id is unresolved,
+the null id counts 65. For the 315 characters near Ardea: 648 references, 170 resolve (exact match on the 40 digits: 137), 477 are
+slot defaults, 1 is unknown; characters with at least one point 63 (exact) -> 72 (16-byte match); the exporter change adds nothing
+inside Ardea (its 10 new entities lie elsewhere). Across the world: 23 404 references, exact 5 358 -> 6 127 by 16-byte match, characters
+with a point 2 248 -> 2 524.
+
+## Open issue found by `spell_zoo` (equipment refactor, not changed here)
+
+After the merge of `day/desktop2` (equipment derived from the stack list, commit 53f1f4c) the hero's runes granted at run time
+behave differently in the running game: (1) `Command::GiveHero` put the item into the game state only, the stack had no rule data and
+could not be held, so a second rune never replaced the first (fixed in `Core`: the item goes into the hero's bag with its
+`ItemInfo`; `crates/runtime/tests/spells.rs` covers consecutive casts at core level and passes). (2) In the QA run the casts still
+act "one spell behind" for part of the list (the effect of the previous rune appears: `Poison` -> the ice bomb area, `Sleep` ->
+ice bomb, `SummonSkeleton` -> `Shadowbeast`), while the same sequence at core level is correct. The difference between the two is
+the presentation: the hero's `HoldInventoryStacks` instruction is executed by the host (`hero_hold_swap`) with the stack indices
+of the time the state queued it. Owner: equipment / hero presentation (desktop2).

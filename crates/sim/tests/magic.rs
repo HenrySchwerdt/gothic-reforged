@@ -394,3 +394,30 @@ fn the_bow_hangs_on_the_back_when_the_hands_are_emptied() {
         "{stacks:?}"
     );
 }
+
+/// Selecting another rune puts it into the hand in place of the one held.
+#[test]
+fn selecting_another_rune_replaces_the_one_in_the_hand() {
+    let (mut sim, hero, _) = world(1);
+    let hand = |sim: &Sim<Grid2dWorld>| {
+        sim.actor(hero)
+            .equipment
+            .right
+            .as_ref()
+            .map(|d| d.name.clone())
+    };
+    for name in ["It_Spell_Fireball", "It_Spell_SummonSkeleton"] {
+        let info = sim.items.info(name);
+        sim.actor_mut(hero).inventory.add_items(
+            name,
+            info,
+            1,
+            0,
+            gothic_gameplay::inventory::StackType::Normal,
+        );
+    }
+    assert!(sim.player_select_spell("It_Spell_Fireball"));
+    assert_eq!(hand(&sim).as_deref(), Some("It_Spell_Fireball"));
+    assert!(sim.player_select_spell("It_Spell_SummonSkeleton"));
+    assert_eq!(hand(&sim).as_deref(), Some("It_Spell_SummonSkeleton"));
+}

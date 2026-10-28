@@ -32,7 +32,8 @@ fn spell_items(cx: &Cx, batch: Batch) -> Vec<String> {
     let mut best: std::collections::BTreeMap<String, String> = Default::default();
     for i in cx.core().0.sim.items.iter() {
         let Some(sp) = i.spell.clone() else { continue };
-        if sp.contains("Template") {
+        // Blessing is no rune: the item opens the bless window (`Modify`), nothing to select.
+        if sp.contains("Template") || sp == "Spl_BlessWeapon" {
             continue;
         }
         let keep = match batch {
@@ -73,11 +74,20 @@ fn collect(sc: &mut Sc, key: &'static str) {
     let mut cur: MessageCursor<CoreEvent> = MessageCursor::default();
     sc.watch(move |cx| {
         let idx = cx.st.n.get(&format!("{key}i")).copied().unwrap_or(-1.0) as i64;
+        let hero_entity = cx.core().0.hero.0 + 1;
         let evs: Vec<String> = {
             let msgs = cx.world.resource::<Messages<CoreEvent>>();
             cur.read(msgs)
                 .filter_map(|e| match &e.0 {
+                    // Only the hero's own casts count (the shaman casts at him all the time).
+                    Event::Magic(
+                        gothic_sim::script::magic::api::MagicEvent::Phase { caster, .. }
+                        | gothic_sim::script::magic::api::MagicEvent::Cast { caster, .. },
+                    ) if caster.0 != hero_entity => None,
                     Event::Magic(m) => Some(format!("{m:?}")),
+                    Event::Notice(t) => Some(format!("Notice {{ {t} }}")),
+                    Event::CastRefused(e) => Some(format!("CastRefused {{ {e:?} }}")),
+                    Event::CastStarted(st) => Some(format!("CastStarted {{ {st:?} }}")),
                     _ => None,
                 })
                 .collect()
@@ -142,21 +152,39 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             cx.st.n.insert(format!("{key}t0"), f64::from(cx.now));
             cx.st.n.insert(format!("{key}cast"), 0.0);
             let name = list[n].clone();
-            {
+            let was_transformed = {
                 // Setup: the hero is in his own shape again (a transformation lasts 30 to 60 s).
                 let mut core = cx.core_mut();
+                let any = !core.0.sim.script.magic.transforms.is_empty();
                 for t in core.0.sim.script.magic.transforms.iter_mut() {
                     t.until_ms = 0;
                 }
-            }
+                any
+            };
             if let Some(t) = tgt {
                 // Setup: the victim goes back to an idle routine state (a sleeper or a stunned
                 // character would hide the next spell's effect).
                 let idle = gothic_sim::script::routine::state::State::from_name("ZS_HangAround").unwrap();
                 cx.core_mut().0.sim.qa_enter_state(t, idle);
             }
-            // (the item is handed over a second later: the end of a transformation empties the hands)
-            cx.st.store.insert(format!("{key}pending"), name);
+            if was_transformed {
+                // (the item is handed over a second later: the end of a transformation empties the hands)
+                cx.st.store.insert(format!("{key}pending"), name);
+            } else {
+                cx.world.write_message(CoreCommand(Command::GiveHero {
+                    template: name.clone(),
+                    amount: 1,
+                }));
+                if name.to_ascii_lowercase().contains("potion") {
+                    // Potions are drunk (`UseItem`), they are no runes.
+                    cx.world
+                        .write_message(CoreCommand(Command::UseItem { template: name }));
+                    cx.st.n.insert(format!("{key}cast"), 1.0);
+                } else {
+                    cx.world
+                        .write_message(CoreCommand(Command::SelectSpell { template: name }));
+                }
+            }
             return Poll::Wait;
         }
         if phase_t > 1.0
@@ -186,7 +214,7 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             .st
             .store
             .get(&format!("{key}ev{i}"))
-            .is_some_and(|e| !e.contains("Cast") && !e.contains("Weapon") && !e.contains("Transform"));
+            .is_some_and(|e| !e.split(',').any(|k| k == "Cast") && !e.contains("Weapon") && !e.contains("Transform"));
         if phase_t > 3.2 && cx.st.n[&format!("{key}cast")] == 1.0 && fizzled {
             cx.st.n.insert(format!("{key}cast"), 2.0);
             cx.world.write_message(CoreCommand(Command::CastSpell {
@@ -216,7 +244,7 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 !cx.st
                     .store
                     .get(&format!("{key}ev{i}"))
-                    .is_some_and(|e| e.contains("Cast") || e.contains("Weapon") || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty()))
+                    .is_some_and(|e| e.split(',').any(|k| k == "Cast") || e.contains("Weapon") || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty()))
             })
             .map(|(_, n)| n)
             .collect();
