@@ -121,7 +121,22 @@ impl Actor {
                 .stacks()
                 .iter()
                 .any(|s| s.template.eq_ignore_ascii_case(&old.name));
-            if !has_stack && !eq.all().any(|d| d.name.eq_ignore_ascii_case(&old.name)) {
+            if has_stack || eq.all().any(|d| d.name.eq_ignore_ascii_case(&old.name)) {
+                continue;
+            }
+            // only into a place that is still free: an item that was used up (its stack is
+            // gone) must not push out what the hands hold now
+            let kind = old.use_kind();
+            let free = if left_type(kind) {
+                eq.left.is_none()
+            } else if right_type(kind) || ammo(kind) {
+                eq.right.is_none()
+            } else if kind == Use::Body {
+                eq.body.is_none()
+            } else {
+                true
+            };
+            if free {
                 eq.equip(old.clone());
             }
         }
@@ -216,6 +231,12 @@ impl Actor {
         }
         self.inventory.take_stat_events();
         self.inventory.clear_link_events();
+        self.forget(template);
+        self.derive_equipment(items);
+    }
+
+    /// The item leaves what is worn (it is gone or taken off; stackless fixtures included).
+    pub fn forget(&mut self, template: &str) {
         let eq = &mut self.equipment;
         for f in [&mut eq.left, &mut eq.right, &mut eq.body] {
             if f.as_ref()
@@ -226,7 +247,6 @@ impl Actor {
         }
         eq.accessories
             .retain(|d| !d.name.eq_ignore_ascii_case(template));
-        self.derive_equipment(items);
     }
 
     /// The weapon of the right hand or, when the hands are empty, of its carry slot.

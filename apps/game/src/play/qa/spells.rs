@@ -139,10 +139,28 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
         let tgt = tgt_id(cx);
         if i < 0 || phase_t > 5.0 {
             if i >= 0 {
-                let ev = cx.st.store.get(&format!("{key}ev{i}")).cloned().unwrap_or_default();
-                let st = cx.st.store.get(&format!("{key}st{i}")).cloned().unwrap_or_default();
-                let full = cx.st.store.get(&format!("{key}full{i}")).cloned().unwrap_or_default();
-                cx.note(format!("spell {}: events {ev} victim states {st}{full}", list[i as usize]));
+                let ev = cx
+                    .st
+                    .store
+                    .get(&format!("{key}ev{i}"))
+                    .cloned()
+                    .unwrap_or_default();
+                let st = cx
+                    .st
+                    .store
+                    .get(&format!("{key}st{i}"))
+                    .cloned()
+                    .unwrap_or_default();
+                let full = cx
+                    .st
+                    .store
+                    .get(&format!("{key}full{i}"))
+                    .cloned()
+                    .unwrap_or_default();
+                cx.note(format!(
+                    "spell {}: events {ev} victim states {st}{full}",
+                    list[i as usize]
+                ));
             }
             let n = (i + 1) as usize;
             if n >= list.len() {
@@ -164,8 +182,36 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             if let Some(t) = tgt {
                 // Setup: the victim goes back to an idle routine state (a sleeper or a stunned
                 // character would hide the next spell's effect).
-                let idle = gothic_sim::script::routine::state::State::from_name("ZS_HangAround").unwrap();
+                let idle =
+                    gothic_sim::script::routine::state::State::from_name("ZS_HangAround").unwrap();
                 cx.core_mut().0.sim.qa_enter_state(t, idle);
+            }
+            {
+                // Setup for the spells with a casting condition (`can_cast`, S:798d0): the dusk
+                // spell does not work between 6:00 and 20:00, `Spl_DestroyEvil` needs an evil
+                // (undead, demon, golem ...) target.
+                let orig = cx.st.store.remove(&format!("{key}species"));
+                let mut saved = None;
+                {
+                    let mut core = cx.core_mut();
+                    if name.eq_ignore_ascii_case("It_Spell_DuskToDawn") {
+                        let day = core.0.sim.clock.game_ms / 86_400_000 * 86_400_000;
+                        core.0.sim.clock.game_ms = day + 22 * 3_600_000;
+                    }
+                    if let Some(t) = tgt {
+                        let a = core.0.sim.actor_mut(t);
+                        if let Some(o) = orig {
+                            a.species = gothic_sim::types::Species::from_name(&o);
+                        }
+                        if name.eq_ignore_ascii_case("It_Spell_DestroyEvil") {
+                            saved = Some(format!("{:?}", a.species).to_ascii_lowercase());
+                            a.species = gothic_sim::types::Species::Skeleton;
+                        }
+                    }
+                }
+                if let Some(c) = saved {
+                    cx.st.store.insert(format!("{key}species"), c);
+                }
             }
             if was_transformed {
                 // (the item is handed over a second later: the end of a transformation empties the hands)
@@ -210,11 +256,9 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             return Poll::Wait;
         }
         // A cast that fizzled (the victim was out of sight for a moment) is tried once more.
-        let fizzled = cx
-            .st
-            .store
-            .get(&format!("{key}ev{i}"))
-            .is_some_and(|e| !e.split(',').any(|k| k == "Cast") && !e.contains("Weapon") && !e.contains("Transform"));
+        let fizzled = cx.st.store.get(&format!("{key}ev{i}")).is_some_and(|e| {
+            !e.split(',').any(|k| k == "Cast") && !e.contains("Weapon") && !e.contains("Transform")
+        });
         if phase_t > 3.2 && cx.st.n[&format!("{key}cast")] == 1.0 && fizzled {
             cx.st.n.insert(format!("{key}cast"), 2.0);
             cx.world.write_message(CoreCommand(Command::CastSpell {
@@ -231,43 +275,50 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
         }
         Poll::Wait
     });
-    sc.check(format!("{label}: every spell produced a Cast event"), move |cx| {
-        let list: Vec<String> = cx.st.store[&format!("{key}list")]
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect();
-        let bad: Vec<&String> = list
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                !cx.st
-                    .store
-                    .get(&format!("{key}ev{i}"))
-                    .is_some_and(|e| e.split(',').any(|k| k == "Cast") || e.contains("Weapon") || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty()))
-            })
-            .map(|(_, n)| n)
-            .collect();
-        expect(
-            bad.is_empty(),
-            format!("{} spells cast", list.len()),
-            format!("no Cast event for {bad:?}"),
-        )
-    });
+    sc.check(
+        format!("{label}: every spell produced a Cast event"),
+        move |cx| {
+            let list: Vec<String> = cx.st.store[&format!("{key}list")]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            let bad: Vec<&String> = list
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    !cx.st.store.get(&format!("{key}ev{i}")).is_some_and(|e| {
+                        e.split(',').any(|k| k == "Cast")
+                            || e.contains("Weapon")
+                            || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty())
+                    })
+                })
+                .map(|(_, n)| n)
+                .collect();
+            expect(
+                bad.is_empty(),
+                format!("{} spells cast", list.len()),
+                format!("no Cast event for {bad:?}"),
+            )
+        },
+    );
 }
 
 pub fn spell_zoo() -> Sc {
     let mut sc = Sc::new(1800.0);
     grab(&mut sc);
     super::npc_ai::find_and_place(&mut sc, "Shaman", 900.0);
-    sc.act("the victim stands still and does not fight back (setup)", |cx| {
-        // An isolated target: the shaman's own spells would interrupt the hero's cast state and
-        // mix its events into the list (`ai_controlled` off: it thinks and attacks no more).
-        if let Some(t) = tgt_id(cx) {
-            let _: ActorId = t;
-            cx.core_mut().0.sim.actor_mut(t).ai_controlled = false;
-        }
-    });
+    sc.act(
+        "the victim stands still and does not fight back (setup)",
+        |cx| {
+            // An isolated target: the shaman's own spells would interrupt the hero's cast state and
+            // mix its events into the list (`ai_controlled` off: it thinks and attacks no more).
+            if let Some(t) = tgt_id(cx) {
+                let _: ActorId = t;
+                cx.core_mut().0.sim.actor_mut(t).ai_controlled = false;
+            }
+        },
+    );
     batch_steps(&mut sc, "p", Batch::Person, "person spells");
     super::npc_ai::find_and_place(&mut sc, "Wolf", 700.0);
     sc.act("the wolf stands still too (setup)", |cx| {
