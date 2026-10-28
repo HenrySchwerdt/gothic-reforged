@@ -1307,6 +1307,37 @@ fn door_focused() -> std::sync::Arc<dyn Fn(&mut Cx) -> bool + Send + Sync> {
 /// the object's `ScriptUseFunc` (`OB_Medium`, ...) gives its weight class, the use key tilts, the
 /// next use key asks for holding, which a weak hero is refused with `TooHeavy` and sent back to
 /// `PS_Normal`.
+/// Boulders on active layers with no character within 8 m (a character beside it would take the
+/// focus), nearest to `from` first: `(position, use function, registered)`.
+fn lonely_boulders(cx: &mut Cx, from: Vec3) -> Vec<(Vec3, String, bool)> {
+    let actors: Vec<Vec3> = {
+        let c = cx.core();
+        c.0.sim
+            .actors
+            .iter()
+            .filter(|a| a.id != c.0.hero)
+            .filter_map(|a| c.0.sim.world.actors.get(&a.id).map(|w| Vec3::new(w.0.x, w.0.y, w.0.z)))
+            .collect()
+    };
+    let w = cx
+        .world
+        .resource::<crate::walk::play::objects::WorldObjects>();
+    let mut v: Vec<(Vec3, String, bool)> = w
+        .list
+        .iter()
+        .enumerate()
+        .filter(|(i, o)| {
+            !o.def.is_item
+                && o.def.script_use() == gothic_sim::script::enums::UseType::OrcBoulder
+                && w.layer_on(*i)
+                && actors.iter().all(|a| (*a - o.pos_cm).length() > 800.0)
+        })
+        .map(|(_, o)| (o.pos_cm, o.def.use_func.clone(), o.entity.is_some()))
+        .collect();
+    v.sort_by(|a, b| (a.0 - from).length().total_cmp(&(b.0 - from).length()));
+    v
+}
+
 pub fn world_boulder() -> Sc {
     use super::more::{Goal, approach};
     use gothic_sim::script::enums::UseType;
@@ -1314,55 +1345,30 @@ pub fn world_boulder() -> Sc {
     let mut sc = Sc::new(400.0);
     grab(&mut sc);
     sc.act("setup: stand next to an orc boulder", |cx| {
-        let at = {
-            let w = cx
-                .world
-                .resource::<crate::walk::play::objects::WorldObjects>();
-            w.list
-                .iter()
-                .enumerate()
-                .filter(|(i, o)| {
-                    !o.def.is_item
-                        && o.def.script_use() == UseType::OrcBoulder
-                        && w.layer_on(*i)
-                })
-                .map(|(_, o)| (o.pos_cm, o.def.use_func.clone()))
-                .next()
-        };
-        let (p, f) = at.unwrap_or((Vec3::ZERO, String::new()));
+        let from = cx.hero_pos();
+        let (p, f) = lonely_boulders(cx, from)
+            .first()
+            .map(|b| (b.0, b.1.clone()))
+            .unwrap_or((Vec3::ZERO, String::new()));
         cx.note(format!("boulder at {p:?}, use function {f:?}"));
+        cx.st.n.insert("bx".into(), f64::from(p.x));
+        cx.st.n.insert("by".into(), f64::from(p.y));
+        cx.st.n.insert("bz".into(), f64::from(p.z));
         place_hero(cx, p + Vec3::new(250.0, 400.0, 0.0));
     });
     sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
     sc.wait(6.0);
+    // The boulder chosen in the setup step (the nearest registered one would change as the
+    // streaming brings characters and layers in).
     let goal: Goal = Arc::new(|cx| {
-        let hero = cx.hero_pos();
-        let w = cx
-            .world
-            .resource::<crate::walk::play::objects::WorldObjects>();
-        w.list
-            .iter()
-            .enumerate()
-            .filter(|(i, o)| {
-                o.entity.is_some()
-                    && w.layer_on(*i)
-                    && !o.def.is_item
-                    && o.def.script_use() == UseType::OrcBoulder
-                    && (o.pos_cm - hero).length() < 20_000.0
-            })
-            .map(|(_, o)| o)
-            .min_by(|a, b| {
-                (a.pos_cm - hero)
-                    .length()
-                    .total_cmp(&(b.pos_cm - hero).length())
-            })
-            .map(|o| o.pos_cm)
+        let (x, y, z) = (cx.st.n.get("bx")?, cx.st.n.get("by")?, cx.st.n.get("bz")?);
+        Some(Vec3::new(*x as f32, *y as f32, *z as f32))
     });
     approach(
         &mut sc,
         "orc boulder",
         goal,
-        160.0,
+        270.0,
         -0.3,
         Arc::new(|cx| matches!(cx.play().target, Some(crate::walk::play::Target::Object(_)))),
     );
@@ -1378,10 +1384,19 @@ pub fn world_boulder() -> Sc {
     sc.check("the use key starts the tilting state", |cx| {
         let (task, state, _) = cx.core().0.sim.hero_script_state();
         let name = state.map(|s| s.name()).unwrap_or("-");
+        let log: Vec<String> = cx
+            .inter()
+            .log
+            .iter()
+            .rev()
+            .filter(|l| !l.starts_with("projectile"))
+            .take(6)
+            .cloned()
+            .collect();
         expect(
             name.contains("OrcBoulder"),
             format!("task {task:?}, state {name}"),
-            format!("task {task:?}, state {name}"),
+            format!("task {task:?}, state {name}, log {log:?}"),
         )
     });
     sc.act("use key: ask for the next stage", |cx| cx.use_key());

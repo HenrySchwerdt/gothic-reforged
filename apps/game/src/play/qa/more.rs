@@ -100,6 +100,13 @@ pub fn approach(sc: &mut Sc, label: &str, goal: Goal, stop: f32, aim_pitch: f32,
         if ok(cx) {
             Poll::Done
         } else if cx.t > 10.0 {
+            let hero = cx.player().ctrl.position;
+            let goal_at = goal(cx);
+            let target = cx.play().target;
+            cx.note(format!(
+                "{l} not focused: hero {hero:?}, goal {goal_at:?}, flat distance {:?} cm, target {target:?}",
+                goal_at.map(|p| Vec2::new(p.x - hero.x, p.z - hero.z).length())
+            ));
             Poll::Fail(format!("{l} never became the focus"))
         } else {
             Poll::Wait
