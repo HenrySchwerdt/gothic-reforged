@@ -84,6 +84,9 @@ fn collect(sc: &mut Sc, key: &'static str) {
                         | gothic_sim::script::magic::api::MagicEvent::Cast { caster, .. },
                     ) if caster.0 != hero_entity => None,
                     Event::Magic(m) => Some(format!("{m:?}")),
+                    Event::Notice(t) => Some(format!("Notice {{ {t} }}")),
+                    Event::CastRefused(e) => Some(format!("CastRefused {{ {e:?} }}")),
+                    Event::CastStarted(st) => Some(format!("CastStarted {{ {st:?} }}")),
                     _ => None,
                 })
                 .collect()
@@ -210,7 +213,7 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             .st
             .store
             .get(&format!("{key}ev{i}"))
-            .is_some_and(|e| !e.contains("Cast") && !e.contains("Weapon") && !e.contains("Transform"));
+            .is_some_and(|e| !e.split(',').any(|k| k == "Cast") && !e.contains("Weapon") && !e.contains("Transform"));
         if phase_t > 3.2 && cx.st.n[&format!("{key}cast")] == 1.0 && fizzled {
             cx.st.n.insert(format!("{key}cast"), 2.0);
             cx.world.write_message(CoreCommand(Command::CastSpell {
@@ -240,7 +243,7 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 !cx.st
                     .store
                     .get(&format!("{key}ev{i}"))
-                    .is_some_and(|e| e.contains("Cast") || e.contains("Weapon") || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty()))
+                    .is_some_and(|e| e.split(',').any(|k| k == "Cast") || e.contains("Weapon") || (list[*i].to_ascii_lowercase().contains("potion") && !e.is_empty()))
             })
             .map(|(_, n)| n)
             .collect();
