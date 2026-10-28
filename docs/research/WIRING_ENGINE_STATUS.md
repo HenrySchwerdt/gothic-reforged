@@ -132,11 +132,26 @@ stacks in the state yet. Left for the dialog owner.
 * `gCInventoryStack::Drop` (Game:0x100c06a0): see the comment of `dropped_items` in `play/objects.rs`; item creation is
   `gCInventorySlot::SpawnItem(owner, template, true)` or the already attached item entity, then `gCItem_PS::SetDropped`,
   `SetQuality` and a physics impulse.
-* Which motions play in mix mode is **not in the code**: `eCWrapper_emfx2Actor::PlayMotion` builds one of three instance types
-  from the descriptor's mode field (`eSMotionDesc` +4: 0, 1 or 2; 2 allocates the mix variant), and `SetBlendMode` has no caller
-  in any of the five dumps. So the original decides per `PlayMotion` call (script / animation data), and the host's choice of
-  which of its overlays are mix cannot be derived from the code. The `anim.rs` overlay glue is therefore left as it is; no
-  guess was made about which actions are additive.
+* **Which motions play as mix: none.** The descriptor field `eSMotionDesc` +4 is the *play mode*, not the blend mode:
+  `eCWrapper_emfx2Actor::PlayMotion` (0x100476f0) builds a forward (0), backward (1) or ping-pong (2) instance from it
+  (`EMotionFX::PlayModeForward/Backward/PingPong`). The sites that fill it: `gCScriptProcessingUnit::sAIPlayAniStart`
+  (`AI_PlayAni`, 0x1016a...: mode 0, or 1 when the instruction's flag at +0x10 is set; speed from the instruction +0x14; loops
+  2 or -1; weight from a constant), `eCVisualAnimation_PS::OnProcess` (0x10032d40: idle / start motions in slot 0, mode 0,
+  speed 1, loops 1) and `UpdateAim` (0x10030230: aim overlays in slots 4 and 5, played with owner 2). The mix flag
+  (instance +0x4c, `SetBlendMode` 0x10049d10, mode 2 only) is written by no code in the Engine, Game, GUI, GFC or SharedBase
+  dumps (no caller of `SetBlendMode`, `GetBlendMode` only reads it), so in the shipped game every layer is a normal
+  weight-lerp layer (`FUN_102fb5b0` lerps by the layer weight when the flag is 0).
+  Consequence: the original has no additive overlays and no body mask at all. A motion in a slot replaces the nodes it has
+  tracks for (blended by weight and the intro / extro fades); the combat moves (`sAICombatMove*`) and `AI_PlayAni` play on
+  the instruction's slot (0 = the primary slot, which is also the locomotion slot). The host's masked upper-body overlay
+  (`anim.rs`) is therefore a host construct, not a port: the faithful presentation is a full-body clip in the primary slot while
+  an attack or hit lasts. That changes how the combat looks (legs follow the clip, no sliding upper-body swing over a walk) and
+  every QA that reads `Animator::overlay` (hit-window and clip-percentage checks) would have to read the primary slot; it was
+  not done in this round, it needs its own pass with before/after renders.
+* Drop physics: `gCInventoryStack::Drop` scales a vector obtained from the physics property set (vfn +0x170) by the constant
+  `DAT_103080fc` = **150.0** (read from Game.dll) and applies it as an impulse at the item's world position (vfn +0x1c8). The
+  vector's meaning (direction / mass term) sits in the physics property set's virtual function and is not resolved, and the
+  host has no rigid bodies for loose items, so the settle is not ported; items still appear at the character's feet.
 
 ## EMotionFX in the dump (mix mode)
 
