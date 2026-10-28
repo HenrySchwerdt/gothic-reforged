@@ -369,23 +369,17 @@ fn ps_magic_staff_parade_loop(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     Flow::Yield
 }
 
-/// Port of `PS_MagicPotion` (S:7d870): the hero stops, puts his hands down, drinks (the spell
-/// potions of the animal forms and the like) and the potion's spell is cast as a quick cast.
+/// Port of `PS_MagicPotion` (S:7d870): the hero stops, drinks (the spell potions of the animal
+/// forms and the like) and the potion's spell is cast as a quick cast (`_AI_Cast` with the spell
+/// of the potion's template item). The potion sits in the right hand while the spell is read
+/// from it ([`crate::player::use_item::use_stack`] put it there), is used up by the cast and the
+/// hands go down afterwards. [I] The original puts the hands down first and reads the spell from
+/// the template item; the port keeps the potion in the hand until the cast instead.
 fn ps_magic_potion(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
     gothic_portcov::hit!("ps_magic_potion");
     match step(host, p) {
         0 => {
             host.full_stop(p);
-            host.queue_ai(
-                p,
-                AiCommand::HoldInventoryStacks {
-                    right: -1,
-                    left: -1,
-                },
-            );
-            Flow::Yield
-        }
-        1 => {
             host.set_current_action(p, Action::Drink);
             host.queue_ai(
                 p,
@@ -397,7 +391,18 @@ fn ps_magic_potion(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
             Flow::Yield
         }
         _ => {
+            let potion = host.slot_item_name(p, Slot::RightHand);
             cast::run_cast(host, p, false);
+            if !potion.is_empty() {
+                host.remove_item(p, &potion, 1);
+            }
+            host.queue_ai(
+                p,
+                AiCommand::HoldInventoryStacks {
+                    right: -1,
+                    left: -1,
+                },
+            );
             continue_routine(host, p);
             Flow::Done
         }

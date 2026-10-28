@@ -204,6 +204,16 @@ pub fn spell_transform() -> Sc {
     sc
 }
 
+/// Setup: a sleeping spot where the character stands (its destination point).
+fn sleeping_spot(cx: &mut super::Cx, id: gothic_sim::types::ActorId) {
+    use gothic_sim::script::enums::UseType;
+    use gothic_sim::script::host::EntityId;
+    let pos = cx.core().0.sim.world_pos(id);
+    let sim = &mut cx.core_mut().0.sim;
+    let point = sim.script.add_point(UseType::SleepGround, EntityId::NONE, pos);
+    sim.script.npc_mut(id).dest = point;
+}
+
 /// `sleep_perception`: a sleeping character wakes into `ZS_ReactToFootsteps` when the hero walks
 /// by (`OnSleep`, S:86dc0, from the `ZS_Sleep` task callback); a sleeping animal answers to
 /// `OnAnimalSleep` (S:89f20).
@@ -217,6 +227,7 @@ pub fn sleep_perception() -> Sc {
         cx.st
             .n
             .insert("os0".into(), gothic_portcov::count("on_sleep") as f64);
+        sleeping_spot(cx, id);
         cx.core_mut().0.sim.qa_enter_state(id, State::Sleep);
     });
     sc.act("the hero walks around him", |cx| {
@@ -253,6 +264,7 @@ pub fn sleep_perception() -> Sc {
             "oa0".into(),
             gothic_portcov::count("on_animal_sleep") as f64,
         );
+        sleeping_spot(cx, id);
         cx.core_mut().0.sim.qa_enter_state(id, State::AnimalSleep);
     });
     sc.wait(5.0);
@@ -333,7 +345,11 @@ pub fn talk_refuse() -> Sc {
                 return super::ok("coverage build off: not counted");
             }
             let n = gothic_portcov::count("start_say_refuse_talk") as f64;
-            expect(n > cx.st.n["rt0"], format!("{n} refusals"), "no refusal line")
+            expect(
+                n > cx.st.n.get("rt0").copied().unwrap_or(f64::MAX),
+                format!("{n} refusals"),
+                "no refusal line",
+            )
         },
     );
     sc

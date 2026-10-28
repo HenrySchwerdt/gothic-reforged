@@ -1085,7 +1085,13 @@ impl Core {
         let db = self.db.clone();
         let eng = Engine::with(&db, Assumptions::PERMISSIVE);
         self.sim.state.triggers = self.sim.dialog_triggers(npc);
-        !eng.root_list(&self.sim.state, &name).is_empty()
+        // The player's generic root infos (goodbye, ...) are offered to everybody; only the
+        // character's own infos and the partner-dependent ones (trade, teach, party, ...) count.
+        !eng.own_root_available(&self.sim.state, &name).is_empty()
+            || eng
+                .root_list(&self.sim.state, &name)
+                .iter()
+                .any(|&i| eng.hero_info_depends_on_partner(i))
     }
 
     fn start_dialog(&mut self, npc: ActorId, out: &mut Vec<Event>) {
