@@ -401,8 +401,11 @@ pub fn clip_fog(start: f32, end: f32, far: f32) -> (f32, f32) {
 }
 
 /// Port of `eCHemisphere_PS::UpdateSHHemisphere` (0x100ecf50) for the weather-driven hemisphere:
-/// the general ambient is the constant term, the back light adds `colour * 0.282` to L0 and
-/// `colour * 0.4886 * dir` to L1. The back light direction is the side opposite the light [I].
+/// every colour is scaled by the hemisphere intensity first. The general ambient is scaled by
+/// the L0 constant 0.282095 too (`fld [0x10426c94]` before the `bCVector4::GetScaled` call at
+/// 0x100ed0f8 writes it into the accumulator at +0x84: the decompiler drops that argument); the
+/// back light adds `colour * 0.282` to L0 and `colour * 0.4886 * dir` to L1 (helper 0x100edbf0).
+/// The back light direction is the side opposite the light [I].
 pub fn hemisphere_sh(
     general: [f32; 3],
     back: [f32; 3],
@@ -412,7 +415,7 @@ pub fn hemisphere_sh(
     gothic_portcov::hit!("hemisphere_sh");
     let mut sh = [[0.0; 3]; 4];
     for c in 0..3 {
-        sh[0][c] = (general[c] + back[c] * SH_L0) * k;
+        sh[0][c] = (general[c] + back[c]) * SH_L0 * k;
         for a in 0..3 {
             sh[1 + a][c] = back[c] * SH_L1 * back_dir[a] * k;
         }
@@ -961,7 +964,7 @@ mod tests {
     #[test]
     fn sh_constants_and_back_light() {
         let sh = hemisphere_sh([1.0; 3], [2.0; 3], [0.0, 0.0, 1.0], 0.5);
-        assert!((sh[0][0] - (1.0 + 2.0 * SH_L0) * 0.5).abs() < 1e-6);
+        assert!((sh[0][0] - (1.0 + 2.0) * SH_L0 * 0.5).abs() < 1e-6);
         assert!((sh[3][1] - 2.0 * SH_L1 * 0.5).abs() < 1e-6);
         assert_eq!(sh[1][0], 0.0);
     }
