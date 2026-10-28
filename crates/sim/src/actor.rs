@@ -107,6 +107,8 @@ pub struct Actor {
     pub routine_name: String,
     /// Weapon drawn (weapon mode ready) [CA 10.2 `AssessPlayerWeapon`].
     pub drawn: bool,
+    /// `Entity::SetLookAtTarget`: whom the head follows (the animation's look-at constraint).
+    pub look_at: Option<ActorId>,
     /// Driven by the brain. NPCs yes; the hero only when used as a headless bot.
     pub ai_controlled: bool,
     pub brain: Brain,
@@ -142,6 +144,7 @@ impl Actor {
             stamina: 0,
             mana: 0,
             equipment: Equipment::default(),
+            look_at: None,
             inventory: Inventory::new(),
             perks: BTreeSet::new(),
             ai_mode: AiMode::Routine,

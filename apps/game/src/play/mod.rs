@@ -15,6 +15,8 @@ mod cam;
 mod controls;
 mod data;
 mod doors;
+mod emitters;
+pub(crate) mod look_at;
 mod er_pack;
 mod events;
 mod fx;
@@ -43,7 +45,6 @@ mod souls;
 mod souls_hud;
 mod souls_wire;
 mod teleport;
-mod emitters;
 mod triggers;
 mod uibridge;
 mod windows;
@@ -475,6 +476,14 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     for (item, _, slot) in kit::START_KIT {
         if (1..=10).contains(slot) {
             quick[*slot as usize - 1] = Some((*item).to_string());
+            // The stack carries its quick slot (`QuickSlot`: key 1..9, 0 for slot 10).
+            let hero = core.hero;
+            let inv = &mut core.sim.actor_mut(hero).inventory;
+            let at =
+                inv.find_stack_index(item, gothic_gameplay::inventory::FindQuality::Any, 0, -1);
+            if at >= 0 {
+                inv.set_stack_hot_key(at as usize, i32::from(*slot) % 10);
+            }
         }
     }
     app.insert_resource(PlayState { quick, ..default() });
@@ -522,6 +531,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     teleport::register(app);
     triggers::register(app);
     emitters::register(app);
+    look_at::register(app);
     routines::register(app);
     nav::register(app, &data_dir);
     events::register(app);

@@ -2034,6 +2034,12 @@ impl<W: WorldQuery> gothic_script::host::CombatApi for SimHost<'_, W> {
     fn has_free_los_knee(&self, a: EntityId, b: EntityId) -> bool {
         self.has_free_los(a, b)
     }
+    fn set_look_at(&mut self, npc: EntityId, target: EntityId) {
+        let target = actor_of(target);
+        if let Some(a) = self.actor_mut(npc) {
+            a.look_at = target;
+        }
+    }
     fn set_state_position(&mut self, npc: EntityId, pos: u32) {
         if let Some(a) = self.actor_mut(npc) {
             a.state_position = pos as i32;

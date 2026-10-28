@@ -328,14 +328,53 @@ fn item_list(
     inv: &gothic_gameplay::inventory::Inventory,
     cat: Option<i32>,
 ) -> Vec<(String, String, u32)> {
-    let mut v: Vec<_> = inv
+    // The stacks in display order: `gCInventoryStack::Compare` (Game:0x100c2460), categories in
+    // enum order, inside one by its own chain (weapons: quality, quick slot, name ...). The
+    // original's list control shows the stack array in this order (`gCHUDListCtrlInvStacks`
+    // 0x100a1570: category filter, category 0 hidden). The reference screenshot of the weapon
+    // tab lists the quick-slot items first (sword 1, bow 3, arrows 4).
+    let mut inv = inv.clone();
+    inv.rebind(&UiCatalog(&cx.s.items));
+    let mut stacks: Vec<_> = inv.stacks().to_vec();
+    gothic_gameplay::inventory::order::sort_stacks(&mut stacks, &Names(&cx.s.db));
+    stacks
         .iter()
-        .filter(|(k, n)| k.as_str() != GOLD_ITEM && **n > 0)
-        .filter(|(k, _)| cat.is_none_or(|c| item_category(cx.s, k) == c))
-        .map(|(k, n)| (item_name(&cx.s.db, k), k.clone(), *n))
-        .collect();
-    v.sort();
-    v
+        .filter(|s| s.template.as_str() != GOLD_ITEM && s.amount > 0)
+        .filter(|s| cat.is_none_or(|c| item_category(cx.s, &s.template) == c))
+        .map(|s| {
+            (
+                item_name(&cx.s.db, &s.template),
+                s.template.clone(),
+                s.amount as u32,
+            )
+        })
+        .collect()
+}
+
+/// The UI's item table as the inventory rules' catalog (category and use type matter here).
+struct UiCatalog<'a>(&'a crate::items::ItemCatalog);
+
+impl gothic_gameplay::inventory::ItemCatalog for UiCatalog<'_> {
+    fn item(&self, name: &str) -> Option<std::sync::Arc<gothic_gameplay::inventory::ItemInfo>> {
+        let i = self.0.get(name)?;
+        Some(std::sync::Arc::new(gothic_gameplay::inventory::ItemInfo {
+            name: i.name.clone(),
+            category: gothic_gameplay::inventory::Category::from_i32(i.category),
+            use_type: gothic_gameplay::inventory::use_type_from_name(&i.use_type),
+            gold_value: i.value as i32,
+            mission_item: i.mission_item,
+            ..Default::default()
+        }))
+    }
+}
+
+/// Localised names for the comparators (`FO_<template>`).
+struct Names<'a>(&'a gothic_gameplay::GameDatabase);
+
+impl gothic_gameplay::inventory::OrderContext for Names<'_> {
+    fn focus_name(&self, template: &str) -> String {
+        item_name(self.0, template)
+    }
 }
 
 fn item_category(s: &GameSession, name: &str) -> i32 {

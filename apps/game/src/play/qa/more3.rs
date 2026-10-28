@@ -411,3 +411,97 @@ pub fn sleep_bed() -> Sc {
     });
     sc
 }
+
+/// Head look-at (`eCLookAtConstraint`, `Entity::SetLookAtTarget`): a character told to look at
+/// another turns its head node towards it (the animator applies the rotation after the clips)
+/// and relaxes when the target is cleared.
+pub fn look_at() -> Sc {
+    use crate::walk::play::look_at::LookAt;
+    use crate::walk::play::NpcActor;
+    use gothic_animation::Animator;
+    let mut sc = Sc::new(90.0);
+    grab(&mut sc);
+    sc.wait(3.0);
+    sc.act("pick a character and a target to its side", |cx| {
+        let mut q = cx
+            .world
+            .query_filtered::<(&NpcActor, &GlobalTransform), With<Animator>>();
+        let all: Vec<_> = q
+            .iter(cx.world)
+            .map(|(n, g)| (n.0, g.translation(), g.forward().as_vec3(), g.right().as_vec3()))
+            .collect();
+        let hero = cx.core().0.hero;
+        let alive = |cx: &Cx, id| cx.core().0.sim.actor(id).is_alive();
+        let mut best: Option<(f32, gothic_sim::types::ActorId, gothic_sim::types::ActorId)> = None;
+        for (a, pa, f, r) in &all {
+            if !alive(cx, *a) {
+                continue;
+            }
+            for (b, pb, ..) in &all {
+                let d = *pb - *pa;
+                let dist = d.length();
+                if a == b || !(3.0..=20.0).contains(&dist) || !alive(cx, *b) {
+                    continue;
+                }
+                let dir = d / dist;
+                // 45 degrees off the facing under either axis convention
+                let score = (dir.dot(*f).abs() - 0.7).abs() + (dir.dot(*r).abs() - 0.7).abs();
+                if best.is_none_or(|(s, ..)| score < s) {
+                    best = Some((score, *a, *b));
+                }
+            }
+        }
+        let _ = hero;
+        if let Some((_, a, b)) = best {
+            cx.st.n.insert("who".into(), f64::from(a.0));
+            cx.st.n.insert("target".into(), f64::from(b.0));
+            cx.core_mut().0.sim.actor_mut(a).look_at = Some(b);
+            cx.note(format!("actor {} looks at actor {}", a.0, b.0));
+        }
+    });
+    sc.wait(3.0);
+    sc.check(
+        "the head turns towards the target: a look-at rotation is applied to the head node",
+        |cx| {
+            let who = cx.st.n.get("who").copied().unwrap_or(-1.0) as u32;
+            let mut q = cx.world.query::<(&NpcActor, &Animator, &LookAt)>();
+            let found = q
+                .iter(cx.world)
+                .find(|(n, ..)| n.0.0 == who)
+                .map(|(_, a, l)| {
+                    (
+                        a.look.first().map_or(0.0, |(_, r)| r.angle_between(Quat::IDENTITY)),
+                        l.following.map(|t| t.0),
+                    )
+                });
+            let want = cx.st.n.get("target").copied().unwrap_or(-1.0) as u32;
+            let note = format!("rotation and followed target {found:?}, wanted {want}");
+            expect(
+                found.is_some_and(|(ang, f)| ang > 0.05 && f == Some(want)),
+                note.clone(),
+                note,
+            )
+        },
+    );
+    sc.shot("head_turned");
+    sc.act("clear the target", |cx| {
+        let who = cx.st.n.get("who").copied().unwrap_or(-1.0) as u32;
+        cx.core_mut()
+            .0
+            .sim
+            .actor_mut(gothic_sim::types::ActorId(who))
+            .look_at = None;
+    });
+    sc.wait(4.0);
+    sc.check("the head relaxes when the target is cleared", |cx| {
+        let who = cx.st.n.get("who").copied().unwrap_or(-1.0) as u32;
+        let mut q = cx.world.query::<(&NpcActor, &Animator)>();
+        let left = q
+            .iter(cx.world)
+            .find(|(n, _)| n.0.0 == who)
+            .map(|(_, a)| a.look.len());
+        let note = format!("look rotations left {left:?}");
+        expect(left == Some(0), note.clone(), note)
+    });
+    sc
+}

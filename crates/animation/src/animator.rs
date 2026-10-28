@@ -17,9 +17,19 @@ use crate::{
 };
 use bevy::{
     ecs::component::Component,
-    math::{Affine3A, Quat},
+    math::{Affine3A, Mat3A, Quat, Vec3},
 };
 use std::sync::Arc;
+
+/// The rotation of a matrix with its scale taken out.
+fn rotation_of(m: &Affine3A) -> Quat {
+    let c = m.matrix3;
+    Quat::from_mat3a(&Mat3A::from_cols(
+        c.x_axis.normalize(),
+        c.y_axis.normalize(),
+        c.z_axis.normalize(),
+    ))
+}
 
 /// Default cross-fade time in seconds (`eCAnimationAdmin` standard fade).
 pub const DEFAULT_FADE: f32 = blend::STANDARD_FADE;
@@ -73,6 +83,9 @@ pub struct Animator {
     pub paused: bool,
     /// Extract root motion for the primary slot each frame.
     pub root_motion_enabled: bool,
+    /// Extra rotations of rig nodes in the entity frame (`eCLookAtConstraint`: the head turned
+    /// towards the target), applied after the clips.
+    pub look: Vec<(u16, Quat)>,
     /// Root motion of the last update, in model space (see [`RootMotion`]).
     pub root_motion: RootMotion,
     pose: Vec<Trs>,
@@ -119,6 +132,7 @@ impl Animator {
             speed: 1.0,
             paused: false,
             root_motion_enabled: true,
+            look: Vec::new(),
             root_motion: RootMotion::default(),
             pose,
             model,
@@ -409,10 +423,45 @@ impl Animator {
             }
         }
         crate::rig::evaluate(&self.plan, &self.pose, &mut self.model);
+        if !self.look.is_empty() {
+            self.apply_look();
+        }
         for (j, &n) in self.joint_nodes.iter().enumerate() {
             self.joints[j] = self.facing * self.model[n as usize];
         }
         self.joints_dirty = true;
+    }
+
+    /// The look-at rotations (`self.look`, entity frame) turned into the local pose of their
+    /// nodes: the rotation is applied in the frame of the node's parent.
+    fn apply_look(&mut self) {
+        let facing = rotation_of(&self.facing);
+        let look = self.look.clone();
+        for (node, q) in look {
+            let n = node as usize;
+            let slot = self.rig.slot_of.get(n).copied().unwrap_or(crate::rig::NONE);
+            let parent = self
+                .rig
+                .eff_parent
+                .get(n)
+                .copied()
+                .unwrap_or(crate::rig::NONE);
+            if slot == crate::rig::NONE || parent == crate::rig::NONE {
+                continue;
+            }
+            let pr = rotation_of(&self.model[parent as usize]);
+            let qm = facing.inverse() * q * facing;
+            let p = &mut self.pose[slot as usize];
+            p.r = (pr.inverse() * qm * pr) * p.r;
+            // the parents' matrices stay valid: only this node and below change
+            crate::rig::evaluate(&self.plan, &self.pose, &mut self.model);
+        }
+    }
+
+    /// Position of a rig node in the entity frame (`None` when it is not planned).
+    pub fn node_entity_pos(&self, node: u16) -> Option<Vec3> {
+        let m = self.model.get(node as usize)?;
+        Some((self.facing * *m).translation.into())
     }
 
     /// Local pose of every rig slot after the last evaluation.
