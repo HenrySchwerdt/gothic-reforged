@@ -684,3 +684,47 @@ pub fn item_drop() -> Sc {
     );
     sc
 }
+
+/// Renders for the comparison of the script clips on the whole body (the original has no body
+/// mask): the hero walks forward and takes a hit reaction, then swings. Run once with
+/// `GR_OVERLAY_UPPER=1` (the old upper-body rule) and once without; the shots are
+/// `.local/qa/overlay_visual/*.png`.
+pub fn overlay_visual() -> Sc {
+    use crate::walk::play::HeroActor;
+    use crate::walk::play::anim::OverlayQueue;
+    let mut sc = Sc::new(60.0);
+    grab(&mut sc);
+    sc.wait(2.0);
+    sc.act("walk forward", |cx| cx.key_down(KeyCode::KeyW));
+    sc.wait(1.5);
+    sc.shot("walk");
+    sc.act("a stumble reaction while walking", |cx| {
+        let mut q = cx
+            .world
+            .query_filtered::<&mut OverlayQueue, With<HeroActor>>();
+        for mut o in q.iter_mut(cx.world) {
+            o.0.clear();
+            o.0.push_back(("QuickStumble", "Hit"));
+        }
+    });
+    sc.wait(0.35);
+    sc.shot("stumble_a");
+    sc.wait(0.3);
+    sc.shot("stumble_b");
+    sc.wait(1.5);
+    sc.act("a swing while walking", |cx| {
+        let mut q = cx
+            .world
+            .query_filtered::<&mut OverlayQueue, With<HeroActor>>();
+        for mut o in q.iter_mut(cx.world) {
+            o.0.clear();
+            o.0.push_back(("Attack", "Hit"));
+        }
+    });
+    sc.wait(0.4);
+    sc.shot("swing_a");
+    sc.wait(0.4);
+    sc.shot("swing_b");
+    sc.act("stop", |cx| cx.key_up(KeyCode::KeyW));
+    sc
+}

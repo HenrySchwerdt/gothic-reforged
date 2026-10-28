@@ -8,7 +8,7 @@
 //! Controls: the original key bindings, see [`controls`] (WASD / QE, Shift, Ctrl, Alt, Space,
 //! 1..0 quick slots, mouse attacks and parry, L I C M B, F5 F6 F9 F10); developer keys of this
 //! port: F fly, V camera. The original shows no help overlay and neither does this mode.
-mod anim;
+pub(crate) mod anim;
 mod audio;
 mod barks;
 mod cam;
