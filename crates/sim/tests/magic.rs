@@ -484,3 +484,19 @@ fn a_used_up_rune_does_not_come_back_over_the_next_one() {
         Some("It_Spell_IceBomb")
     );
 }
+
+#[test]
+fn dropping_a_hand_slot_unlinks_the_stack_and_puts_the_item_in_the_world() {
+    use gothic_script::host::{EntityId, InventoryApi};
+    let (mut sim, hero, _orc) = world(2);
+    sim.equip(hero, "It_Bow_Test").expect("bow");
+    let items = sim.items.clone();
+    sim.actor_mut(hero)
+        .hold(None, items.get("It_Bow_Test"), &items);
+    let before = sim.script.loose_item_count();
+    let mut host = gothic_sim::script_host::SimHost::new(&mut sim);
+    host.drop_slot(EntityId(hero.0 + 1), gothic_script::enums::Slot::LeftHand);
+    assert_eq!(sim.script.loose_item_count(), before + 1);
+    assert!(sim.actor(hero).equipment.left.is_none());
+    assert_eq!(sim.actor(hero).inventory.count("It_Bow_Test"), 0);
+}

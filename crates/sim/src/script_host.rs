@@ -285,6 +285,11 @@ impl ScriptTables {
         id
     }
 
+    /// Number of loose item entities the scripts know.
+    pub fn loose_item_count(&self) -> usize {
+        self.items.len()
+    }
+
     /// Add a loose item entity.
     pub fn add_item(&mut self, name: &str, pos: Pos) -> EntityId {
         self.items.push(ItemRec {
@@ -1552,10 +1557,35 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
         self.sim.actors[id.0 as usize].drawn = right >= 0 || left >= 0;
     }
     fn drop_slot(&mut self, e: EntityId, slot: se::Slot) {
-        if let Some(a) = actor_of(e) {
-            self.sim.script.dropped.push((a, slot));
+        let Some(id) = actor_of(e) else { return };
+        self.sim.script.dropped.push((id, slot));
+        // `PSInventory::DropSlot` (Game:0x100b4530): the stack of the hand slot is unlinked and
+        // deleted, the item lands in the world at the character's feet.
+        let hand = match slot {
+            se::Slot::RightHand => Some(gothic_gameplay::inventory::Slot::RightHand),
+            se::Slot::LeftHand | se::Slot::EquipLeftHand => {
+                Some(gothic_gameplay::inventory::Slot::LeftHand)
+            }
+            _ => None,
+        };
+        let template = self.equipped(e, slot).map(|i| i.name.clone());
+        let items = &self.sim.items;
+        let a = &mut self.sim.actors[id.0 as usize];
+        a.inventory.rebind(items);
+        let dropped = hand.and_then(|h| a.inventory.drop_slot(h));
+        a.inventory.clear_link_events();
+        if let Some(gothic_gameplay::inventory::InventoryEvent::Dropped { template, .. }) = dropped
+        {
+            let at = self.sim.world.position(id).unwrap_or_default();
+            self.sim.script.add_item(&template, at);
+            self.sim.actors[id.0 as usize].forget(&template);
+            self.sim.actors[id.0 as usize].derive_equipment(&self.sim.items);
+            return;
         }
-        self.unwear_slot(e, slot);
+        // nothing linked in that hand (fixture equipment): it just leaves the hands
+        if let Some(t) = template {
+            self.sim.unwear(id, &t);
+        }
     }
     fn delete_unequipped_stacks(&mut self, e: EntityId) {
         if let Some(a) = self.actor_mut(e) {
@@ -2224,15 +2254,18 @@ mod tests {
             Pos::flat(300.0, 0.0),
         );
         s.actor_mut(man).base_attitude_to_player = crate::types::Attitude::Neutral;
-        let spot = s
-            .script
-            .add_point(se::UseType::SleepGround, EntityId::NONE, Pos::flat(300.0, 0.0));
+        let spot = s.script.add_point(
+            se::UseType::SleepGround,
+            EntityId::NONE,
+            Pos::flat(300.0, 0.0),
+        );
         s.script.npc_mut(man).dest = spot;
         s.qa_enter_state(man, State::Sleep);
         let mut seen = Vec::new();
         for i in 0..300 {
             // The hero strolls around the sleeper.
-            s.world.teleport(hero, Pos::flat(380.0 + (i % 40) as f32 * 3.0, 0.0));
+            s.world
+                .teleport(hero, Pos::flat(380.0 + (i % 40) as f32 * 3.0, 0.0));
             s.step();
             seen.push(s.script.npc(man).state);
         }
@@ -2262,21 +2295,28 @@ mod tests {
             Pos::flat(300.0, 0.0),
         );
         s.actor_mut(wolf).base_attitude_to_player = crate::types::Attitude::Hostile;
-        let spot = s
-            .script
-            .add_point(se::UseType::SleepGround, EntityId::NONE, Pos::flat(300.0, 0.0));
+        let spot = s.script.add_point(
+            se::UseType::SleepGround,
+            EntityId::NONE,
+            Pos::flat(300.0, 0.0),
+        );
         s.script.npc_mut(wolf).dest = spot;
         s.qa_enter_state(wolf, State::AnimalSleep);
         let mut seen = Vec::new();
         for i in 0..400 {
             // The hero is far away while the wolf lies down, then comes close.
-            let x = if i < 100 { 5000.0 } else { 380.0 + (i % 40) as f32 * 3.0 };
+            let x = if i < 100 {
+                5000.0
+            } else {
+                380.0 + (i % 40) as f32 * 3.0
+            };
             s.world.teleport(hero, Pos::flat(x, 0.0));
             s.step();
             seen.push((s.script.npc(wolf).state, s.script.npc(wolf).task_cb));
         }
         assert!(
-            seen.iter().any(|(st, _)| *st == Some(State::AnimalSleepSleepGround)),
+            seen.iter()
+                .any(|(st, _)| *st == Some(State::AnimalSleepSleepGround)),
             "{:?}",
             seen.last()
         );
