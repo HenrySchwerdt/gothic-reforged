@@ -1320,8 +1320,13 @@ pub fn world_boulder() -> Sc {
                 .resource::<crate::walk::play::objects::WorldObjects>();
             w.list
                 .iter()
-                .filter(|o| !o.def.is_item && o.def.script_use() == UseType::OrcBoulder)
-                .map(|o| (o.pos_cm, o.def.use_func.clone()))
+                .enumerate()
+                .filter(|(i, o)| {
+                    !o.def.is_item
+                        && o.def.script_use() == UseType::OrcBoulder
+                        && w.layer_on(*i)
+                })
+                .map(|(_, o)| (o.pos_cm, o.def.use_func.clone()))
                 .next()
         };
         let (p, f) = at.unwrap_or((Vec3::ZERO, String::new()));
@@ -1337,12 +1342,15 @@ pub fn world_boulder() -> Sc {
             .resource::<crate::walk::play::objects::WorldObjects>();
         w.list
             .iter()
-            .filter(|o| {
+            .enumerate()
+            .filter(|(i, o)| {
                 o.entity.is_some()
+                    && w.layer_on(*i)
                     && !o.def.is_item
                     && o.def.script_use() == UseType::OrcBoulder
                     && (o.pos_cm - hero).length() < 20_000.0
             })
+            .map(|(_, o)| o)
             .min_by(|a, b| {
                 (a.pos_cm - hero)
                     .length()
