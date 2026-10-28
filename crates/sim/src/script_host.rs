@@ -1533,7 +1533,17 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
         // stack held means everything hangs on the back again.
         let Some(id) = actor_of(e) else { return };
         let items = &self.sim.items;
-        let (r, l) = self.sim.actors[id.0 as usize].weapon_defs(items);
+        let (mut r, l) = self.sim.actors[id.0 as usize].weapon_defs(items);
+        // a bow takes the arrows of the quiver into the right hand, nothing else
+        if l.as_ref().is_some_and(|d| {
+            matches!(
+                d.use_kind(),
+                crate::item::Use::Bow | crate::item::Use::CrossBow
+            )
+        }) && left >= 0
+        {
+            r = None;
+        }
         self.sim.hold(
             id,
             r.as_ref().filter(|_| right >= 0),
