@@ -440,16 +440,33 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
         })
     }
     fn consume_item(&mut self, e: EntityId, template: &str) -> bool {
-        if !PlayerApi::remove_item(self, e, template, 1) {
-            return false;
-        }
-        let heal = self.sim.items.get(template).map_or(0, |d| d.heal_amount());
-        let Some(id) = actor_of(e) else { return true };
-        let max = self.sim.actors[id.0 as usize].hp_max(&self.sim.cfg);
+        let Some(id) = actor_of(e) else { return false };
+        let items = &self.sim.items;
         let a = &mut self.sim.actors[id.0 as usize];
+        a.inventory.rebind(items);
+        let Some(idx) = a.inventory.stacks().iter().position(|s| {
+            s.template.eq_ignore_ascii_case(template) && s.amount > 0 && !s.is_linked()
+        }) else {
+            return false;
+        };
         let before = a.hp;
-        a.hp = (a.hp + heal).min(max);
-        let healed = a.hp - before;
+        if a.is_player && !a.uses_npc_formulas() {
+            // `gCInventory_PS::ConsumeItems` (Game:0x100b7970): the modifiers are applied as
+            // one-off consumption through the player memory (`gCPlayerMemory_PS::Consume`).
+            a.inventory.consume_items(idx, 1);
+            for (kind, tag, op, value) in a.inventory.take_stat_events() {
+                a.apply_stat(kind, &tag, op, value);
+            }
+            a.inventory.remove_items(idx, 1);
+            a.inventory.clear_link_events();
+        } else {
+            // Characters without an attribute store only heal.
+            a.inventory.remove_items(idx, 1);
+            let heal = items.get(template).map_or(0, |d| d.heal_amount());
+            let max = a.hp_max(&self.sim.cfg);
+            a.hp = (a.hp + heal).min(max);
+        }
+        let healed = self.sim.actors[id.0 as usize].hp - before;
         if healed > 0 {
             self.sim.push(EventKind::Potion { actor: id, healed });
         }

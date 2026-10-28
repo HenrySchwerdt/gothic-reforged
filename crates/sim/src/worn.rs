@@ -121,7 +121,22 @@ impl Actor {
                 .stacks()
                 .iter()
                 .any(|s| s.template.eq_ignore_ascii_case(&old.name));
-            if !has_stack && !eq.all().any(|d| d.name.eq_ignore_ascii_case(&old.name)) {
+            if has_stack || eq.all().any(|d| d.name.eq_ignore_ascii_case(&old.name)) {
+                continue;
+            }
+            // only into a place that is still free: an item that was used up (its stack is
+            // gone) must not push out what the hands hold now
+            let kind = old.use_kind();
+            let free = if left_type(kind) {
+                eq.left.is_none()
+            } else if right_type(kind) || ammo(kind) {
+                eq.right.is_none()
+            } else if kind == Use::Body {
+                eq.body.is_none()
+            } else {
+                true
+            };
+            if free {
                 eq.equip(old.clone());
             }
         }

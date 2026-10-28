@@ -370,10 +370,15 @@ fn a_transformation_potion_turns_the_hero_into_an_animal() {
     );
     sim.drain_events();
     let out = sim.player_use_item("It_Potion_Wolf");
-    assert!(matches!(
-        out,
-        Some(gothic_script::player::use_item::UseOutcome::Magic(State::PsMagicPotion))
-    ), "{out:?}");
+    assert!(
+        matches!(
+            out,
+            Some(gothic_script::player::use_item::UseOutcome::Magic(
+                State::PsMagicPotion
+            ))
+        ),
+        "{out:?}"
+    );
     sim.run_ticks(400);
     let ev = events_of(&mut sim);
     let tf: Vec<_> = ev
@@ -390,7 +395,10 @@ fn a_transformation_potion_turns_the_hero_into_an_animal() {
         "{tf:?} state {:?} task {:?} / {:?}",
         sim.script.npc(hero).state,
         sim.script.npc(hero).task,
-        ev.iter().map(|e| format!("{:?}", e.kind)).filter(|k| k.contains("Magic")).collect::<Vec<_>>()
+        ev.iter()
+            .map(|e| format!("{:?}", e.kind))
+            .filter(|k| k.contains("Magic"))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -419,4 +427,60 @@ fn selecting_another_rune_replaces_the_one_in_the_hand() {
     assert_eq!(hand(&sim).as_deref(), Some("It_Spell_Fireball"));
     assert!(sim.player_select_spell("It_Spell_SummonSkeleton"));
     assert_eq!(hand(&sim).as_deref(), Some("It_Spell_SummonSkeleton"));
+}
+
+#[test]
+fn a_used_up_rune_does_not_come_back_over_the_next_one() {
+    // The real item export (skipped where it is not available).
+    let Some(text) = [
+        ".local/items.json",
+        "../../.local/items.json",
+        "C:/Users/PowerTower/dev/gothic-reforged/.local/items.json",
+    ]
+    .iter()
+    .find_map(|p| std::fs::read_to_string(p).ok()) else {
+        return;
+    };
+    let items = gothic_sim::item::ItemDb::from_json(&text).expect("items");
+    let mut a =
+        gothic_sim::actor::Actor::npc(ActorId(0), "Hero", gothic_sim::types::Species::Human, 1, 1);
+    let (Some(poison), Some(ice)) = (
+        items.get("It_Spell_Poison").cloned(),
+        items.get("It_Spell_IceBomb").cloned(),
+    ) else {
+        return;
+    };
+    a.inventory.add_items(
+        "It_Spell_Poison",
+        items.info("It_Spell_Poison"),
+        1,
+        0,
+        gothic_gameplay::inventory::StackType::Normal,
+    );
+    a.wear(&poison, &items);
+    assert_eq!(
+        a.equipment.right.as_ref().map(|d| d.name.as_str()),
+        Some("It_Spell_Poison")
+    );
+    // the first rune's stack is gone (used up) while it still stands in the equipment
+    a.inventory.take("It_Spell_Poison", 0);
+    let k = a
+        .inventory
+        .stacks()
+        .iter()
+        .position(|s| s.template == "It_Spell_Poison")
+        .unwrap();
+    a.inventory.delete_stack(k);
+    a.inventory.add_items(
+        "It_Spell_IceBomb",
+        items.info("It_Spell_IceBomb"),
+        1,
+        0,
+        gothic_gameplay::inventory::StackType::Normal,
+    );
+    a.wear(&ice, &items);
+    assert_eq!(
+        a.equipment.right.as_ref().map(|d| d.name.as_str()),
+        Some("It_Spell_IceBomb")
+    );
 }
