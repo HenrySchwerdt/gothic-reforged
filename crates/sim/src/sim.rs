@@ -119,6 +119,14 @@ pub enum EventKind {
         actor: ActorId,
         healed: i32,
     },
+    /// An item left a character's hands into the world (`PSInventory::DropSlot`): the loose
+    /// item entity the scripts know, to be shown and picked up by the presentation.
+    ItemDropped {
+        actor: ActorId,
+        template: String,
+        entity: u32,
+        pos: Pos,
+    },
     Fall {
         actor: ActorId,
         damage: i32,

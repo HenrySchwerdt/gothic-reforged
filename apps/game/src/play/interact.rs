@@ -127,7 +127,7 @@ fn sfx(w: &mut MessageWriter<PlaySfx>, name: &str, at: Option<Vec3>) {
 fn handle_events(
     mut events: MessageReader<CoreEvent>,
     mut core: ResMut<CoreRes>,
-    objects: Res<WorldObjects>,
+    mut objects: ResMut<WorldObjects>,
     mut inter: ResMut<Interaction>,
     mut state: ResMut<PlayState>,
     player: Res<Player>,
@@ -281,10 +281,12 @@ fn handle_events(
                             kind: ToastKind::Item,
                         });
                         if let Some(i) = inter.pending_item.take()
-                            && let Some(o) = objects.list.get(i)
-                            && let Some(v) = o.visual
+                            && let Some(o) = objects.list.get_mut(i)
                         {
-                            commands.entity(v).despawn();
+                            o.taken = true;
+                            if let Some(v) = o.visual.take() {
+                                commands.entity(v).despawn();
+                            }
                         }
                     }
                     PlayerEvent::Crafted { template, amount } => {

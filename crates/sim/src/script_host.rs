@@ -1577,7 +1577,13 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
         if let Some(gothic_gameplay::inventory::InventoryEvent::Dropped { template, .. }) = dropped
         {
             let at = self.sim.world.position(id).unwrap_or_default();
-            self.sim.script.add_item(&template, at);
+            let entity = self.sim.script.add_item(&template, at);
+            self.sim.push(crate::sim::EventKind::ItemDropped {
+                actor: id,
+                template: template.clone(),
+                entity: entity.0,
+                pos: at,
+            });
             self.sim.actors[id.0 as usize].forget(&template);
             self.sim.actors[id.0 as usize].derive_equipment(&self.sim.items);
             return;
