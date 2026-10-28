@@ -127,6 +127,17 @@ count-level calls `item_count` / `add_item` / `take_item` / `npc.inventory.add` 
 (`Transfer::notify`, ported) to replace `questmgr::on_receive_item`; learning (`LearnSkill`, `CanLearnSkill`) has no skill
 stacks in the state yet. Left for the dialog owner.
 
+## Drop path of the original and which motions are mix (this round)
+
+* `gCInventoryStack::Drop` (Game:0x100c06a0): see the comment of `dropped_items` in `play/objects.rs`; item creation is
+  `gCInventorySlot::SpawnItem(owner, template, true)` or the already attached item entity, then `gCItem_PS::SetDropped`,
+  `SetQuality` and a physics impulse.
+* Which motions play in mix mode is **not in the code**: `eCWrapper_emfx2Actor::PlayMotion` builds one of three instance types
+  from the descriptor's mode field (`eSMotionDesc` +4: 0, 1 or 2; 2 allocates the mix variant), and `SetBlendMode` has no caller
+  in any of the five dumps. So the original decides per `PlayMotion` call (script / animation data), and the host's choice of
+  which of its overlays are mix cannot be derived from the code. The `anim.rs` overlay glue is therefore left as it is; no
+  guess was made about which actions are additive.
+
 ## EMotionFX in the dump (mix mode)
 
 EMotionFX is linked statically into Engine.dll: `MotionLayerSystem` (7 functions), `MotionSystem` (2), `SkeletalMotionInstance` (6),

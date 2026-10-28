@@ -216,6 +216,15 @@ fn take_registrations(mut events: MessageReader<CoreEvent>, mut objects: ResMut<
 /// Items that left a character's hands (`PSInventory::DropSlot`, a knocked-out or killed
 /// character drops its weapons): the loose item entity the scripts know gets a world entry, so
 /// it is shown, focused and picked up like the items of the world documents.
+///
+/// Original path (`gCInventoryStack::Drop`, Game:0x100c06a0): the stack's item entity, if the
+/// character has one attached, is detached from the skeleton (`DetachItemFromSkeleton`) and moved
+/// to the owner's world node (`MoveToWorldNode`); without one `gCInventorySlot::SpawnItem(owner,
+/// template, true)` creates it from the template. Then the entity's `gCItem_PS` gets
+/// `SetDropped(true)` (+0x148 = 1, +0x144 = 0) and `SetQuality(stack quality)`, and its physics
+/// property set (id 0xd) is pushed with a scaled impulse (`DAT_103080fc`) so it falls and settles
+/// under physics. Declared approximation here: the item appears at the character's feet at the
+/// moment of the drop (no rigid body to settle, no impulse).
 fn dropped_items(
     mut events: MessageReader<CoreEvent>,
     mut objects: ResMut<WorldObjects>,
