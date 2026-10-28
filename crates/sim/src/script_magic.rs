@@ -332,15 +332,16 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
         let Some(name) = self.slot_item(e, slot).map(|i| i.name.clone()) else {
             return;
         };
-        let Some(a) = self.actor_mut(e) else { return };
-        let take = (n.max(0) as u32).min(a.inventory.count(&name));
-        a.inventory.take(&name, take);
-        if a.inventory.count(&name) == 0 {
-            match slot {
-                se::Slot::RightHand => a.equipment.right = None,
-                _ => a.equipment.left = None,
-            }
+        let Some(id) = actor_of(e) else { return };
+        let have = self.sim.actors[id.0 as usize].inventory.count(&name);
+        let take = (n.max(0) as u32).min(have);
+        if take >= have {
+            // the last of them: the stack leaves the hand first (the bag only removes from
+            // stacks that are not linked)
+            self.sim.unwear(id, &name);
         }
+        let a = &mut self.sim.actors[id.0 as usize];
+        a.inventory.take(&name, take);
     }
     fn cast_spell(&self, caster: EntityId) -> String {
         self.sim

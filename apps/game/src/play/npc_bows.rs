@@ -31,11 +31,6 @@ fn bow_of(core: &CoreRes, npc: gothic_sim::types::ActorId) -> Option<(String, Us
     if let Some(l) = a.equipment.left.as_ref().filter(|d| is_bow(d.use_kind())) {
         return Some((l.name.clone(), l.use_kind(), a.drawn));
     }
-    if let Some((l, _)) = a.brain.melee_kit.as_ref()
-        && let Some(l) = l.as_ref().filter(|d| is_bow(d.use_kind()))
-    {
-        return Some((l.name.clone(), l.use_kind(), false));
-    }
     a.inventory
         .iter()
         .filter_map(|(t, _)| core.0.sim.items.get(t))

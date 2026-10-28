@@ -96,7 +96,7 @@ impl NpcRecord {
         a.base_attitude_to_player = self.base_attitude();
         for e in &self.inventory.equipped {
             if let Some(i) = items.get(&e.template) {
-                a.equipment.equip(i.clone());
+                a.wear(i, items);
             }
         }
         for s in &self.inventory.stacks {

@@ -455,14 +455,32 @@ impl<W: WorldQuery> Sim<W> {
         self.equip_def(id, def).map_err(|u| format!("{u:?}"))
     }
 
+    /// Put `def` on `id` (`gCInventory_PS::EquipStack`).
+    pub fn wear(&mut self, id: ActorId, def: &ItemDef) {
+        let items = &self.items;
+        self.actors[id.0 as usize].wear(def, items);
+    }
+
+    /// `HoldStacks` for `id`: the given items into the hands, the rest back to the carry slots.
+    pub fn hold(&mut self, id: ActorId, right: Option<&ItemDef>, left: Option<&ItemDef>) {
+        let items = &self.items;
+        self.actors[id.0 as usize].hold(right, left, items);
+    }
+
+    /// `UnEquipStack` by template.
+    pub fn unwear(&mut self, id: ActorId, template: &str) {
+        let items = &self.items;
+        self.actors[id.0 as usize].unwear(template, items);
+    }
+
     pub fn equip_def(&mut self, id: ActorId, def: ItemDef) -> Result<(), Unmet> {
         let a = &self.actors[id.0 as usize];
         // NPC equipment ignores requirements (loot is generated for them).
         if a.is_player {
             check_requirements(&def, |t| a.attribute(&self.cfg, t), &a.perks)?;
         }
-        let a = &mut self.actors[id.0 as usize];
-        a.equipment.equip(def);
+        let items = &self.items;
+        self.actors[id.0 as usize].wear(&def, items);
         Ok(())
     }
 
@@ -502,91 +520,7 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.drive_player();
         self.tick_magic();
-        self.mirror_equipment();
         self.apply_inventory_stats();
-    }
-
-    /// Keep every actor's stack list in step with what the combat rules wear: worn items are
-    /// equipped into their carry slots (`gCInventory_PS::EquipStack`), the weapons in the hands
-    /// are held (`HoldStacks`) and what is no longer worn goes back (`UnEquipStack`). The
-    /// `Equipment` stays the source of the numbers (its modifiers are summed by the combat
-    /// rules), so the apply / unapply attribute events of the linking are dropped here: they
-    /// would count the same modifiers twice. Consumed-item events still reach the hero.
-    fn mirror_equipment(&mut self) {
-        use gothic_gameplay::inventory::StackType;
-        for i in 0..self.actors.len() {
-            let sig = self.actors[i].equipment_signature();
-            if sig == self.actors[i].link_sig {
-                continue;
-            }
-            let items = &self.items;
-            let a = &mut self.actors[i];
-            a.link_sig = sig;
-            // Ammunition stays a plain count: shots take it from the bag, which only removes
-            // from unlinked stacks.
-            let worn: Vec<String> = a
-                .equipment
-                .all()
-                .filter(|d| {
-                    !matches!(
-                        d.use_kind(),
-                        crate::item::Use::Arrow | crate::item::Use::Bolt
-                    )
-                })
-                .map(|d| d.name.clone())
-                .collect();
-            let eq = |x: &str, y: &str| x.eq_ignore_ascii_case(y);
-            // Whatever is linked but no longer worn goes back into the bag.
-            let stale: Vec<usize> = a
-                .inventory
-                .stacks()
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| s.is_equipped() && !worn.iter().any(|w| eq(w, &s.template)))
-                .map(|(k, _)| k)
-                .collect();
-            for k in stale {
-                a.inventory.unequip_stack(k);
-            }
-            let mut stack_of = |inv: &mut gothic_gameplay::inventory::Inventory, name: &str| {
-                let k = inv
-                    .stacks()
-                    .iter()
-                    .position(|s| eq(&s.template, name) && !s.is_equipped())
-                    .or_else(|| {
-                        let k = inv.add_items(name, items.info(name), 1, 0, StackType::Normal);
-                        (k >= 0).then_some(k as usize)
-                    });
-                if let Some(k) = k {
-                    inv.equip_stack(k);
-                }
-                k
-            };
-            let mut right = -1;
-            let mut left = -1;
-            let (r_name, l_name) = (
-                a.equipment.right.as_ref().map(|d| d.name.clone()),
-                a.equipment.left.as_ref().map(|d| d.name.clone()),
-            );
-            for name in &worn {
-                let k = stack_of(&mut a.inventory, name);
-                if r_name.as_deref().is_some_and(|r| eq(r, name)) {
-                    right = k.map_or(-1, |k| k as i32);
-                } else if l_name.as_deref().is_some_and(|l| eq(l, name)) {
-                    left = k.map_or(-1, |k| k as i32);
-                }
-            }
-            if a.drawn {
-                a.inventory.hold_stacks(right, left);
-            } else {
-                a.inventory.hold_stacks(-1, -1);
-            }
-            for (kind, tag, op, value) in a.inventory.take_stat_events() {
-                if kind == gothic_gameplay::inventory::StatKind::Consume && a.is_player {
-                    a.apply_stat(kind, &tag, op, value);
-                }
-            }
-        }
     }
 
     /// Hand the attribute modifier events of worn and consumed items to the hero

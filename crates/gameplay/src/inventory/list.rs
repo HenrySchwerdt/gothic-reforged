@@ -258,6 +258,21 @@ impl Inventory {
         out
     }
 
+    /// Drop the link and stack-change events (what the host mirrors on the skeleton) for a
+    /// host that does not mirror them; quest and drop events stay queued.
+    pub fn clear_link_events(&mut self) {
+        self.events.retain(|e| {
+            !matches!(
+                e,
+                InventoryEvent::Linked { .. }
+                    | InventoryEvent::Unlinked { .. }
+                    | InventoryEvent::DefaultLinked { .. }
+                    | InventoryEvent::DefaultUnlinked { .. }
+                    | InventoryEvent::StackChanged(_)
+            )
+        });
+    }
+
     fn rebuild_counts(&mut self) {
         self.counts.clear();
         for s in &self.stacks {

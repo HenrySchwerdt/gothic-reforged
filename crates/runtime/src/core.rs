@@ -588,7 +588,7 @@ impl Core {
         let Some(def) = self.sim.items.get(item).cloned() else {
             return false;
         };
-        self.sim.actor_mut(self.hero).equipment.equip(def);
+        self.sim.wear(self.hero, &def);
         true
     }
 
@@ -839,7 +839,7 @@ impl Core {
                     && species.can_attack()
                     && let Some(w) = gothic_sim::data::default_weapon(&self.sim.items, species)
                 {
-                    self.sim.actor_mut(id).equipment.equip(w);
+                    self.sim.wear(id, &w);
                 }
                 out.push(Event::ActorSpawned {
                     actor: id,
@@ -1018,7 +1018,7 @@ impl Core {
             }
             Command::EquipNpc { actor, template } => {
                 if let Some(def) = self.sim.items.get(template).cloned() {
-                    self.sim.actor_mut(*actor).equipment.equip(def);
+                    self.sim.wear(*actor, &def);
                 }
             }
             Command::GiveNpc {
