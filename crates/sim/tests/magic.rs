@@ -298,6 +298,47 @@ fn the_real_spell_export_matches_the_templates() {
     let _ = DamageDef::new("Fire", 1);
 }
 
+#[test]
+fn the_bow_hangs_on_the_back_when_the_hands_are_emptied() {
+    // The real item export (skipped where it is not available).
+    let Some(text) = [
+        ".local/items.json",
+        "../../.local/items.json",
+        "C:/Users/PowerTower/dev/gothic-reforged/.local/items.json",
+    ]
+    .iter()
+    .find_map(|p| std::fs::read_to_string(p).ok()) else {
+        return;
+    };
+    let items = gothic_sim::item::ItemDb::from_json(&text).expect("items");
+    let mut a =
+        gothic_sim::actor::Actor::npc(ActorId(0), "Hero", gothic_sim::types::Species::Human, 1, 1);
+    let bow = items.get("It_Bow_Hunting").cloned().expect("bow");
+    let arrow = items.get("Arrow").cloned().expect("arrow");
+    a.inventory.insert("Arrow", 20);
+    a.wear(&bow, &items);
+    a.wear(&arrow, &items);
+    a.hold(None, Some(&bow), &items);
+    a.drawn = true;
+    a.wear(&bow, &items);
+    a.hold(None, Some(&bow), &items);
+    assert_eq!(
+        a.equipment.left.as_ref().map(|d| d.name.as_str()),
+        Some("It_Bow_Hunting")
+    );
+    a.hold(None, None, &items);
+    let stacks: Vec<_> = a
+        .inventory
+        .stacks()
+        .iter()
+        .map(|s| (s.template.clone(), s.slot, s.use_type(), s.category()))
+        .collect();
+    assert_eq!(
+        a.equipment.left.as_ref().map(|d| d.name.as_str()),
+        Some("It_Bow_Hunting"),
+        "{stacks:?}"
+    );
+}
 /// A transformation potion: drunk through `PS_MagicPotion`, the potion's spell turns the hero into
 /// the animal of its `Spawn` template (`MagicTransform`, S:57880) and `TransformBack` ends it.
 #[test]
