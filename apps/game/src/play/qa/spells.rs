@@ -155,6 +155,13 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 let idle = gothic_sim::script::routine::state::State::from_name("ZS_HangAround").unwrap();
                 cx.core_mut().0.sim.qa_enter_state(t, idle);
             }
+            // (the item is handed over a second later: the end of a transformation empties the hands)
+            cx.st.store.insert(format!("{key}pending"), name);
+            return Poll::Wait;
+        }
+        if phase_t > 1.0
+            && let Some(name) = cx.st.store.remove(&format!("{key}pending"))
+        {
             cx.world.write_message(CoreCommand(Command::GiveHero {
                 template: name.clone(),
                 amount: 1,
@@ -168,6 +175,10 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                 cx.world
                     .write_message(CoreCommand(Command::SelectSpell { template: name }));
             }
+            cx.st.n.insert(format!("{key}t0"), f64::from(cx.now));
+            return Poll::Wait;
+        }
+        if cx.st.store.contains_key(&format!("{key}pending")) {
             return Poll::Wait;
         }
         // A cast that fizzled (the victim was out of sight for a moment) is tried once more.
