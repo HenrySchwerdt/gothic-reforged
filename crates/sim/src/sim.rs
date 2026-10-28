@@ -410,8 +410,16 @@ impl<W: WorldQuery> Sim<W> {
             self.script.enclave_id(&e);
         }
         self.world.teleport(id, at);
+        let dead = actor.ai_mode == AiMode::Dead;
         self.actors.push(actor);
         self.push(EventKind::Spawned { actor: id });
+        if dead {
+            // A character that comes into the world dead enters through `Rtn_Dead` (S:86a80).
+            let mut host = crate::script_host::SimHost::new(self);
+            let e = crate::script_host::entity_of(id);
+            host.self_entity = e;
+            gothic_script::routine::select::rtn_dead(&mut host, e);
+        }
         id
     }
 
@@ -423,6 +431,13 @@ impl<W: WorldQuery> Sim<W> {
         h.mana = h.mana_max();
         let id = self.spawn(h, at);
         self.hero = Some(id);
+        {
+            // The player entity enters through `Rtn_Player` (S:86ba0): `PS_Normal`.
+            let mut host = crate::script_host::SimHost::new(self);
+            let e = crate::script_host::entity_of(id);
+            host.self_entity = e;
+            gothic_script::routine::select::rtn_player(&mut host, e, 0);
+        }
         id
     }
 
