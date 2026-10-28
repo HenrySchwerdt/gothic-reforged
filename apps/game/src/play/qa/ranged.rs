@@ -767,6 +767,78 @@ pub fn focus_steer() -> Sc {
     sc
 }
 
+/// A mage's staff parries with the right button (`OnMagicHandleInput` S:7d360: use key 2 while
+/// `GetUseType(FindStackIndex(LeftHand))` is the staff, 0xc, queues action 0x10;
+/// `PS_Magic_Loop` S:7a590 turns it into `PS_Magic_StaffParade`). `PS_Magic` holds the staff in
+/// the left hand next to the spell in the right.
+pub fn staff_parade() -> Sc {
+    use gothic_sim::item::Use;
+    let mut sc = Sc::new(120.0);
+    grab(&mut sc);
+    sc.act("setup: fireball rune in quick slot 6, a staff worn, mana", |cx| {
+        cx.world
+            .resource_mut::<crate::walk::play::PlayState>()
+            .quick[5] = Some("It_Spell_Fireball".into());
+        super::scenarios::grant(cx, "It_Spell_Fireball", 1);
+        super::scenarios::grant(cx, "It_Staff", 1);
+        set_hero_full(cx);
+    });
+    sc.wait(1.0);
+    sc.act("wear the staff", |cx| {
+        cx.world
+            .write_message(gothic_runtime::CoreCommand(gothic_runtime::Command::UseItem {
+                template: "It_Staff".into(),
+            }));
+    });
+    sc.wait(1.0);
+    sc.act("what the staff became", |cx| {
+        let c = cx.core();
+        let hero = c.0.hero;
+        let stacks: Vec<String> = c
+            .0
+            .sim
+            .actor(hero)
+            .inventory
+            .stacks()
+            .iter()
+            .filter(|s| s.template.contains("Staff") || s.template.contains("Spell_Fire"))
+            .map(|s| format!("{} slot {:?} x{}", s.template, s.slot, s.amount))
+            .collect();
+        let eq = &c.0.sim.actor(hero).equipment;
+        let (l, r) = (eq.left.as_ref().map(|i| i.name.clone()), eq.right.as_ref().map(|i| i.name.clone()));
+        drop(c);
+        cx.note(format!("stacks {stacks:?}, left {l:?}, right {r:?}"));
+    });
+    sc.act("quick slot 6: the spell", |cx| cx.tap(KeyCode::Digit6));
+    sc.wait(3.0);
+    sc.check("in magic mode the spell is in the right hand and the staff in the left", |cx| {
+        let eq = &cx.core().0.sim.actor(cx.core().0.hero).equipment;
+        let left = eq.left.as_ref().map(|i| (i.name.clone(), i.use_kind()));
+        let right = eq.right.as_ref().map(|i| (i.name.clone(), i.use_kind()));
+        let (_, st, _) = cx.core().0.sim.hero_script_state();
+        expect(
+            left.as_ref().is_some_and(|l| l.1 == Use::Staff)
+                && right.as_ref().is_some_and(|r| r.1 == Use::Cast),
+            format!("left {left:?}, right {right:?}, state {st:?}"),
+            format!("left {left:?}, right {right:?}, state {st:?}"),
+        )
+    });
+    sc.act("right button: the parade", |cx| cx.mouse_click(MouseButton::Right));
+    sc.wait(1.0);
+    sc.check("the staff parade state is entered", |cx| {
+        let trace = cx.world.resource::<crate::walk::play::PlayState>().sneaking;
+        let _ = trace;
+        let (_, st, _) = cx.core().0.sim.hero_script_state();
+        let name = st.map(|s| s.name()).unwrap_or("-");
+        expect(
+            name.contains("StaffParade"),
+            format!("state {name}"),
+            format!("state {name}"),
+        )
+    });
+    sc
+}
+
 /// Close-up poses: sword in hand, bow in Aim_Aim from behind and from the side, arrow on the
 /// string, fireball at the cast and at the release (frames are cropped around the hero by the
 /// caller of the scenario).

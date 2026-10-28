@@ -1486,6 +1486,17 @@ pub fn world_fry() -> Sc {
         };
         let p = at.unwrap_or(Vec3::ZERO);
         cx.note(format!("barbecue at {p:?}"));
+        // A campfire beside it would take the focus (a sitting place): take it out of the picture.
+        {
+            let mut w = cx
+                .world
+                .resource_mut::<crate::walk::play::objects::WorldObjects>();
+            for c in w.list.iter_mut() {
+                if c.def.script_use() == UseType::Campfire && (c.pos_cm - p).length() < 900.0 {
+                    c.taken = true;
+                }
+            }
+        }
         cx.st.n.insert("bx".into(), f64::from(p.x));
         cx.st.n.insert("by".into(), f64::from(p.y));
         cx.st.n.insert("bz".into(), f64::from(p.z));

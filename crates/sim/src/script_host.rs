@@ -594,6 +594,22 @@ impl<'a, W: WorldQuery> SimHost<'a, W> {
             _ => None,
         }
     }
+
+    /// The item linked to a carry slot (`BackRight`, `BackLeft`, `Bow`, `Crossbow`) of the stack list:
+    /// a weapon that hangs on the back while the hands hold something else.
+    fn carried(&self, e: EntityId, slot: se::Slot) -> Option<crate::item::ItemDef> {
+        use gothic_gameplay::inventory::Slot as G;
+        let a = self.actor(e)?;
+        let g = match slot {
+            se::Slot::BackLeft => G::BackLeft,
+            se::Slot::BackRight => G::BackRight,
+            se::Slot::Bow => G::Bow,
+            se::Slot::Crossbow => G::Crossbow,
+            _ => return None,
+        };
+        let stack = a.inventory.find_stack(g)?;
+        self.sim.items.get(&stack.template).cloned()
+    }
 }
 
 impl<W: WorldQuery> ScriptCtx for SimHost<'_, W> {
@@ -1509,7 +1525,7 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
             .assure_items(&info, template, flags, count.min(i32::MAX as u32) as i32)
     }
     fn find_stack_index(&self, e: EntityId, slot: se::Slot) -> i32 {
-        if self.equipped(e, slot).is_some() {
+        if self.equipped(e, slot).is_some() || self.carried(e, slot).is_some() {
             slot as i32 + 1
         } else {
             -1
@@ -1544,6 +1560,13 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
         {
             r = None;
         }
+        // A left stack named by a carry slot (the mage's staff on the back, `PS_Magic`) is the
+        // item that hangs there.
+        let carried_left = [se::Slot::BackRight, se::Slot::BackLeft]
+            .into_iter()
+            .find(|s| left == *s as i32 + 1)
+            .and_then(|s| self.carried(e, s));
+        let l = carried_left.or(l);
         self.sim.hold(
             id,
             r.as_ref().filter(|_| right >= 0),
@@ -1569,6 +1592,9 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
             && self.actor(e).is_some_and(|a| !a.drawn)
         {
             return se::UseType::None;
+        }
+        if let Some(d) = self.carried(e, slot) {
+            return s_use_kind(d.use_kind());
         }
         self.equipped(e, slot)
             .map_or(se::UseType::None, |i| s_use_kind(i.use_kind()))

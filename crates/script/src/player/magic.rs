@@ -9,7 +9,7 @@
 //! `PS_Magic_Reload` re-holds the spell (after the reload delay of the spell) or, for a used-up
 //! scroll, drops back to `PS_Normal`.
 
-use crate::enums::{Action, AiMode, AniState, Slot};
+use crate::enums::{Action, AiMode, AniState, Slot, UseType};
 use crate::helpers::WeaponMode;
 use crate::host::{AiCommand, Attribute, EntityId, ScriptHost};
 use crate::magic::api::MagicEvent;
@@ -87,7 +87,16 @@ fn ps_magic(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
             let right = host.find_stack_index(p, Slot::RightHand);
             let name = host.stack_spell(p, right);
             host.set_last_spell(p, &name);
-            host.queue_ai(p, AiCommand::HoldInventoryStacks { right, left: -1 });
+            // A mage's staff goes into the LEFT hand while the spell is held in the right:
+            // `OnMagicHandleInput` (S:7d360) parries with the use key 2 when
+            // `GetUseType(FindStackIndex(LeftHand))` is the staff (0xc), `PS_Magic_Loop` (S:7a590)
+            // and `OnPlayerSelectWeapon` (S:63cc0) read the same slot. The staff waits on the back
+            // (`BackRight`, `Slot_StaffBack`) until the hero draws it.
+            let left = [Slot::LeftHand, Slot::BackRight]
+                .into_iter()
+                .find(|s| host.slot_use_type(p, *s) == UseType::Staff)
+                .map_or(-1, |s| host.find_stack_index(p, s));
+            host.queue_ai(p, AiCommand::HoldInventoryStacks { right, left });
             Flow::Yield
         }
         1 => {
