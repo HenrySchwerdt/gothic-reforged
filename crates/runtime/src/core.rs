@@ -747,16 +747,17 @@ impl Core {
             }
             saved.push(gothic_world::sector::SectorSave { name, enabled: on });
         }
-        // `gCSectorPersistence_PS::UpdateSectors`: re-apply the image of the flags.
-        let unknown = scene.sectors.update_all(&mut scene.tree, &saved);
+        // `gCSector::Enable` (Game:0x10192cd0) for what `SetSectorStatus` wrote; a loaded save
+        // goes through `gCSectorPersistence_PS::UpdateSectors` in `restore`.
         for s in &saved {
-            if unknown.contains(&s.name) {
+            let Some(sw) = scene.sectors.enable(&mut scene.tree, &s.name, s.enabled) else {
                 continue;
-            }
+            };
             let shown = scene
                 .sectors
                 .sector(&s.name)
                 .map_or_else(|| s.name.clone(), |x| x.name.clone());
+            let _ = sw;
             out.push(Event::SectorSwitched {
                 sector: shown,
                 enabled: s.enabled,

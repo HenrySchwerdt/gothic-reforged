@@ -120,15 +120,41 @@ Callers found with `index.json` (static call sites only):
 So the remaining inventory functions have no inventory / trade / teach screen caller in the original: the screens call
 `TransferItemsTo`, the trade list `FUN_100a1fa0` and `GetTransactionAmount`; everything else is script or dialog driven.
 
+Dialog `Give` / `Teach` (not changed, owned by the NPC / dialog bridge): `gameplay::script::Ctx::transfer` moves items with the
+count-level calls `item_count` / `add_item` / `take_item` / `npc.inventory.add` of the `GameState`; the original's
+`gCInfo_PS::Give` calls `TransferItemsTo`. Switching needs both sides as real stack lists with item data
+(the game state's inventories are count-only until `rebind`) and the quest-manager notification
+(`Transfer::notify`, ported) to replace `questmgr::on_receive_item`; learning (`LearnSkill`, `CanLearnSkill`) has no skill
+stacks in the state yet. Left for the dialog owner.
+
+## Drop path of the original and which motions are mix (this round)
+
+* `gCInventoryStack::Drop` (Game:0x100c06a0): see the comment of `dropped_items` in `play/objects.rs`; item creation is
+  `gCInventorySlot::SpawnItem(owner, template, true)` or the already attached item entity, then `gCItem_PS::SetDropped`,
+  `SetQuality` and a physics impulse.
+* Which motions play in mix mode is **not in the code**: `eCWrapper_emfx2Actor::PlayMotion` builds one of three instance types
+  from the descriptor's mode field (`eSMotionDesc` +4: 0, 1 or 2; 2 allocates the mix variant), and `SetBlendMode` has no caller
+  in any of the five dumps. So the original decides per `PlayMotion` call (script / animation data), and the host's choice of
+  which of its overlays are mix cannot be derived from the code. The `anim.rs` overlay glue is therefore left as it is; no
+  guess was made about which actions are additive.
+
 ## EMotionFX in the dump (mix mode)
 
 EMotionFX is linked statically into Engine.dll: `MotionLayerSystem` (7 functions), `MotionSystem` (2), `SkeletalMotionInstance` (6),
 `MotionInstance` (1) are present, mostly as unnamed `vfn_*` / `FUN_102e..` functions. Found: `MotionLayerSystem` add-instance
 0x102ed2b0 inserts the instance into a list ordered by its priority field (+0x40) and clamps its target weight, the ramp is
 `(target - current) / fade` when the fade is above zero (this is what `blend::insertion_index` and `Instance::new` already do).
-The per-frame layer pass that reads the wrapper's mix flag (+0x4c) was not located among the anonymous functions, so the
-mix-mode semantics (additive on the layers below vs. replacement of the clip's nodes) stay unported; the host's upper-body mask
-remains an [I] rule.
+The per-frame pass is found: `MotionLayerSystem` slot 6 (0x102ed520, the update) calls `FUN_102ed620`, which runs for every
+node record (400 bytes) `FUN_102fb5b0(layer, node)`: it samples the layer's instance for the node (instance vfn +0xc; a
+layer without a track for the node contributes nothing, or the node's bind pose when the instance's flag +0x57 is clear and a
+predicate holds), recurses into the next layer and combines: **if the instance's mix flag (+0x4c, set by `SetBlendMode` mode 2)
+is 1 and a lower layer exists, the layer is additive: its difference from the node's bind pose (position, rotation and scale
+deltas) is scaled by the layer weight (+0x28) and added onto the lower result**; otherwise the two are blended by the weight.
+So the original has no body-part mask: an overlay motion in mix mode adds its delta from the bind pose, and a clip that
+barely moves the legs leaves the walk alone. That is what `Instance::set_blend_mode(2)` + `Animator::evaluate`'s `add_into(clip,
+rest, ...)` implement. The host's `Overlay` + `upper_body_mask` is therefore a stand-in for this: replacing it by
+`play_slot` + `set_blend_mode(slot, 2)` is the faithful path, with the visible risk that the hit clips' leg deltas (stumbles) now
+show; it needs a QA with before/after screenshots and was not done in this round.
 
 ## Open (feature work, not dead)
 

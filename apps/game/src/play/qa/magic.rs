@@ -247,7 +247,11 @@ pub fn magic_faithful() -> Sc {
         "turn the camera by 100 degrees",
         100f32.to_radians(),
     );
-    sc.wait(1.0);
+    // The turn model needs 100 / 200 deg/s of simulated time; a frame hitch must not fail the
+    // check, so it waits for the body to arrive (generous limit) instead of a fixed second.
+    sc.until("the body has turned with the camera", 8.0, |cx| {
+        cx.st.n.get("yaw_err").copied().unwrap_or(9.9).to_degrees() < 10.0
+    });
     sc.check("the body follows the camera in PS_Magic_Loop", |cx| {
         let err = cx.st.n.get("yaw_err").copied().unwrap_or(9.9);
         expect(

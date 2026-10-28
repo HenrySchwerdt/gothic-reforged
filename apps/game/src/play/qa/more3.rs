@@ -592,3 +592,95 @@ pub fn potion() -> Sc {
     );
     sc
 }
+
+/// Runtime-created items: a weapon dropped from the hand (`PSInventory::DropSlot`) becomes a
+/// loose item entity of the world (shown, focusable, pickable), and picking it up puts it back
+/// into the inventory.
+pub fn item_drop() -> Sc {
+    use gothic_sim::script::host::InventoryApi;
+    let mut sc = Sc::new(90.0);
+    grab(&mut sc);
+    sc.wait(2.0);
+    sc.act("hold the sword in the right hand and drop it", |cx| {
+        let hero = cx.core().0.hero;
+        let sword = {
+            let c = cx.core();
+            let eq = &c.0.sim.actor(hero).equipment;
+            eq.right.clone()
+        };
+        let Some(sword) = sword else {
+            cx.note("the hero has no weapon");
+            return;
+        };
+        cx.st.store.insert("sword".into(), sword.name.clone());
+        let n0 = cx.core().0.sim.actor(hero).inventory.count(&sword.name);
+        cx.st.n.insert("n0".into(), f64::from(n0));
+        let entries = cx.world.resource::<WorldObjects>().list.len();
+        cx.st.n.insert("entries0".into(), entries as f64);
+        let mut core = cx.core_mut();
+        core.0.sim.hold(hero, Some(&sword), None);
+        let ent = gothic_sim::script::host::EntityId(hero.0 + 1);
+        let mut host = gothic_sim::script_host::SimHost::new(&mut core.0.sim);
+        host.drop_slot(ent, gothic_sim::script::enums::Slot::RightHand);
+    });
+    sc.wait(2.5);
+    sc.check(
+        "the dropped weapon is an entry of the world with a mesh",
+        |cx| {
+            let name = cx.st.store.get("sword").cloned().unwrap_or_default();
+            let e0 = cx.st.n.get("entries0").copied().unwrap_or(0.0) as usize;
+            let o = cx.world.resource::<WorldObjects>();
+            let found = o
+                .list
+                .iter()
+                .skip(e0)
+                .find(|e| e.def.name == name)
+                .map(|e| (e.visual.is_some(), e.entity));
+            let note = format!("{name}: entry (visual, entity) {found:?}");
+            expect(
+                found.is_some_and(|(v, ent)| v && ent.is_some()),
+                note.clone(),
+                note,
+            )
+        },
+    );
+    sc.shot("dropped_item");
+    sc.act("pick it up (what Confirm::PickUp does)", |cx| {
+        let name = cx.st.store.get("sword").cloned().unwrap_or_default();
+        let e0 = cx.st.n.get("entries0").copied().unwrap_or(0.0) as usize;
+        let at = cx
+            .world
+            .resource::<WorldObjects>()
+            .list
+            .iter()
+            .enumerate()
+            .skip(e0)
+            .find(|(_, e)| e.def.name == name)
+            .map(|(i, e)| (i, e.entity));
+        if let Some((i, Some(item))) = at {
+            cx.world.resource_mut::<Interaction>().pending_item = Some(i);
+            cx.world
+                .write_message(CoreCommand(Command::PickUp { item }));
+        }
+    });
+    sc.wait(2.0);
+    sc.check(
+        "the weapon is back in the inventory and the entry is used up",
+        |cx| {
+            let hero = cx.core().0.hero;
+            let name = cx.st.store.get("sword").cloned().unwrap_or_default();
+            let n = cx.core().0.sim.actor(hero).inventory.count(&name);
+            let n0 = cx.st.n.get("n0").copied().unwrap_or(0.0) as u32;
+            let o = cx.world.resource::<WorldObjects>();
+            let e0 = cx.st.n.get("entries0").copied().unwrap_or(0.0) as usize;
+            let taken = o
+                .list
+                .iter()
+                .skip(e0)
+                .any(|e| e.def.name == name && e.taken);
+            let note = format!("{name}: count {n0} -> {n}, entry taken {taken}");
+            expect(n == n0 && taken, note.clone(), note)
+        },
+    );
+    sc
+}

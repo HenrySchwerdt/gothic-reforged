@@ -144,6 +144,7 @@ pub fn register(app: &mut App) {
             take_registrations,
             object_layers,
             spawn_item_visuals,
+            dropped_items,
             route_npcs,
         ),
     );
@@ -168,11 +169,15 @@ fn send_content(
     let treasure = std::mem::take(&mut objects.treasure);
     let spells = std::mem::take(&mut objects.spells);
     let set = gothic_session::content_commands(
-        objects.list.iter().enumerate().map(|(tag, e)| gothic_session::Placed {
-            tag: tag as u32,
-            def: &e.def,
-            pos: Pos::new(e.pos_cm.x, e.pos_cm.y, e.pos_cm.z),
-        }),
+        objects
+            .list
+            .iter()
+            .enumerate()
+            .map(|(tag, e)| gothic_session::Placed {
+                tag: tag as u32,
+                def: &e.def,
+                pos: Pos::new(e.pos_cm.x, e.pos_cm.y, e.pos_cm.z),
+            }),
         &treasure,
         &recipes,
         &spells,
@@ -205,6 +210,70 @@ fn take_registrations(mut events: MessageReader<CoreEvent>, mut objects: ResMut<
             }
             _ => {}
         }
+    }
+}
+
+/// Items that left a character's hands (`PSInventory::DropSlot`, a knocked-out or killed
+/// character drops its weapons): the loose item entity the scripts know gets a world entry, so
+/// it is shown, focused and picked up like the items of the world documents.
+///
+/// Original path (`gCInventoryStack::Drop`, Game:0x100c06a0): the stack's item entity, if the
+/// character has one attached, is detached from the skeleton (`DetachItemFromSkeleton`) and moved
+/// to the owner's world node (`MoveToWorldNode`); without one `gCInventorySlot::SpawnItem(owner,
+/// template, true)` creates it from the template. Then the entity's `gCItem_PS` gets
+/// `SetDropped(true)` (+0x148 = 1, +0x144 = 0) and `SetQuality(stack quality)`, and its physics
+/// property set (id 0xd) is pushed with a scaled impulse (`DAT_103080fc`) so it falls and settles
+/// under physics. Declared approximation here: the item appears at the character's feet at the
+/// moment of the drop (no rigid body to settle, no impulse).
+fn dropped_items(
+    mut events: MessageReader<CoreEvent>,
+    mut objects: ResMut<WorldObjects>,
+    mut doc: Local<Option<u32>>,
+) {
+    for e in events.read() {
+        let Event::Sim(gothic_sim::sim::EventKind::ItemDropped {
+            template,
+            entity,
+            pos,
+            ..
+        }) = &e.0
+        else {
+            continue;
+        };
+        let doc = *doc.get_or_insert_with(|| {
+            objects.docs.push(ObjDoc {
+                path: "<runtime>".into(),
+                on: true,
+            });
+            (objects.docs.len() - 1) as u32
+        });
+        let def = WorldObjectDef {
+            assets: Vec::new(),
+            document: String::new(),
+            id: format!("dropped{entity}"),
+            name: template.clone(),
+            display: None,
+            position: [pos.x, pos.y, pos.z],
+            heading: 0.0,
+            use_type: String::new(),
+            focus_name: "Entity".into(),
+            is_item: true,
+            lock: None,
+            treasure_sets: Vec::new(),
+            stacks: Vec::new(),
+            used: false,
+        };
+        objects.list.push(ObjEntry {
+            def,
+            pos_cm: Vec3::new(pos.x, pos.y, pos.z),
+            entity: Some(*entity),
+            taken: false,
+            visual: None,
+            visual_tried: false,
+            doc,
+        });
+        let at = objects.list.len() - 1;
+        objects.by_entity.insert(*entity, at);
     }
 }
 
