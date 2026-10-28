@@ -8,9 +8,19 @@ fn main() {
     let db = GameDatabase::load_install(Path::new(&a[1]), "German").unwrap();
     let mut st = GameState::new();
     let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+    for x in &a[4..] {
+        if let Some(item) = x.strip_prefix('+') {
+            st.add_item(item, 1);
+        }
+    }
+    for x in &a[4..] {
+        if let Some(e) = x.strip_prefix('=') {
+            st.events.insert(e.to_ascii_lowercase());
+        }
+    }
     let (mut s, r) = eng.start(&mut st, &a[3]);
     println!("start: {:?} status {:?}", r.outputs.len(), st.quest_status(&a[2]));
-    for want in &a[4..] {
+    for want in a[4..].iter().filter(|x| !x.starts_with('+') && !x.starts_with('=')) {
         let menu = eng.menu(&st, &s);
         println!("  menu: {:?}", menu.iter().map(|c| (c.info.map(|i| db.info(i).name.clone()), c.label.chars().take(30).collect::<String>())).collect::<Vec<_>>());
         let pick = menu.iter().find(|c| {

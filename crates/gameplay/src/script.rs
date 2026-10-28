@@ -203,35 +203,89 @@ impl Ctx<'_> {
         ok
     }
 
-    /// `Give` [R 3 id 13]: a missing stack is created in the giver's inventory first.
+    /// `Give` [R 3 id 13] = `gCInfo_PS::Give` -> `gCInventory_PS::TransferItemsTo` (Game
+    /// 0x100b6e20): a missing stack is created in the giver's inventory first; the stack list moves
+    /// the items (the stack of a mission item given to an NPC vanishes, a whole stack leaves its
+    /// slot first) and reports whether the quest manager has to be told (`NotifyQuestManager`).
     fn transfer(&mut self, from: &str, to: &str, item: &str, n: u32) {
+        use crate::inventory::list::TransferContext;
+        use crate::inventory::stack::StackType;
         if from == to || n == 0 {
             return;
         }
+        let want = n;
         if from == "player" {
             let have = self.st.item_count(item);
             if have < n {
                 self.st.add_item(item, n - have);
             }
-            self.st.take_item(item, n);
         } else {
             let inv = &mut self.st.npc_mut(from).inventory;
-            let n = n.min(inv.count(item));
-            inv.take(item, n);
+            let have = inv.count(item);
+            if have < n {
+                inv.add(item, n - have);
+            }
         }
-        if to == "player" {
-            self.st.add_item(item, n);
-        } else {
-            self.st.npc_mut(to).inventory.add(item, n);
+        // Both stack lists leave the state while the items move.
+        let mut src = self.take_inventory(from);
+        let mut dst = self.take_inventory(to);
+        let ctx = TransferContext {
+            dst_is_player: to == "player",
+            dst_name: to,
+            dst_is_npc: to != "player",
+            trade_page_open: false,
+        };
+        let (mut left, mut moved, mut notify) = (want as i32, 0i32, None);
+        while left > 0 {
+            let Some(idx) = src
+                .stacks()
+                .iter()
+                .position(|s| s.template.eq_ignore_ascii_case(item))
+            else {
+                break;
+            };
+            let take = left.min(src.stacks()[idx].amount);
+            match src.transfer_items_to(&mut dst, idx, take, StackType::Normal, &ctx) {
+                Some(t) => {
+                    moved += t.moved;
+                    left -= t.moved;
+                    notify = t.notify.or(notify);
+                }
+                None => break,
+            }
+        }
+        self.put_inventory(from, src);
+        self.put_inventory(to, dst);
+        if moved < 1 {
+            return;
         }
         self.res.outputs.push(Output::Item {
             from: from.into(),
             to: to.into(),
             item: item.into(),
-            amount: n,
+            amount: moved as u32,
         });
-        let (f, t) = (Self::hook_name(from), Self::hook_name(to));
-        questmgr::on_receive_item(self.db, self.st, &f, &t, item, n, &mut self.res);
+        if let Some((template, n)) = notify {
+            let (f, t) = (Self::hook_name(from), Self::hook_name(to));
+            questmgr::on_receive_item(self.db, self.st, &f, &t, &template, n as u32, &mut self.res);
+        }
+    }
+
+    fn take_inventory(&mut self, who: &str) -> crate::inventory::Inventory {
+        let slot = if who == "player" {
+            &mut self.st.inventory
+        } else {
+            &mut self.st.npc_mut(who).inventory
+        };
+        std::mem::replace(slot, crate::inventory::Inventory::new())
+    }
+
+    fn put_inventory(&mut self, who: &str, inv: crate::inventory::Inventory) {
+        if who == "player" {
+            self.st.inventory = inv;
+        } else {
+            self.st.npc_mut(who).inventory = inv;
+        }
     }
 
     fn effect(&mut self, s: &ScriptStep) {
