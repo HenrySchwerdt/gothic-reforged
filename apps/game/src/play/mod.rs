@@ -43,6 +43,7 @@ mod souls;
 mod souls_hud;
 mod souls_wire;
 mod teleport;
+mod emitters;
 mod triggers;
 mod uibridge;
 mod windows;
@@ -501,6 +502,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     .insert_resource(roster)
     .insert_resource(destinations)
     .insert_resource(triggers::WorldTriggers::new(triggers::load(&data_dir)))
+    .insert_resource(emitters::WorldEmitters::new(emitters::load(&data_dir)))
     .init_resource::<ScriptInput>()
     .init_resource::<interact::Interaction>()
     .init_resource::<barks::BarkState>()
@@ -524,6 +526,7 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     npc_stream::register(app, &data_dir);
     teleport::register(app);
     triggers::register(app);
+    emitters::register(app);
     routines::register(app);
     nav::register(app, &data_dir);
     events::register(app);

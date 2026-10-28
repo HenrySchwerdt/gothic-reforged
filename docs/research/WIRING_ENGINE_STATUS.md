@@ -40,8 +40,8 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   `on_damage` could be wired to hits on a `gCTouchDamage_PS` entity if one is ever damaged by the hero.
 * `world::zones::*` (9): J8 of `WIRING_GLUE_SCAN.md`: negative zones and dynamic collision circles do not exist for NPC
   pathing / avoidance. Owned by the NPC / nav agent (`day/cov-npc`); the port is ready (`blocked_at`, `blocked_along`).
-* `audio::emitter::{step, select_sample, voice_path}`: world `eCAudioEmitter_PS` entities are not created (`AudioEmitterPs`
-  has no spawner); sfx templates use the same property set but go through `PlayEffectSound`. `lipsync::viseme_for_label`
+* `audio::emitter::{select_sample, voice_path}`: reached only when a spawned emitter fires inside the QA window, and the
+  `(voice)` effect command; `step` is wired (see dump findings). `lipsync::viseme_for_label`
   is for `.lip` label text, the game reads the binary `.xlip` frames.
 * `audio::sequencer::set_accept_triggers`: only the console command calls it in the original (see dump findings); `execute_stop`
   runs on a stop trigger, which the game never raises.
@@ -63,7 +63,10 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   consistent but the flip (Equipment derived) means re-expressing `_AI_SelectWeapon`'s swaps, `drop_slot`, `unequip_stack`
   (script_host), magic `remove_item` and persist as `hold_stacks` / `unequip_stack` calls first. Not done: needs its own
   parity pass over the combat QA (10 mutation sites listed by `grep "equipment\.\(left\|right\|body\) ="`).
-* World audio emitters: not searched in this round.
+* World audio emitters: `eCAudioEmitter_PS` is created by the property-set factory on load (`Create` 0x100724c0, driven by
+  `OnProcess` 0x10057ef0). The worlds hold 149 such sets (property survey: 149 `eEAudioEmitterMode` values); the new
+  `play/emitters.rs` reads them (cache `.local/world_emitters.json`) and spawns `AudioEmitterPs` entities within 300 m of the
+  hero, so `EmitterState::step` runs in play (`world_walk`: 4679 hits).
 
 ## Open (feature work, not dead)
 
