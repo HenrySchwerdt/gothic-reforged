@@ -2028,6 +2028,9 @@ impl<W: WorldQuery> gothic_script::host::CombatApi for SimHost<'_, W> {
             s.last_dist = Some(d);
         }
     }
+    fn focus_entity(&self) -> EntityId {
+        self.sim.script.player.focus
+    }
     fn alternative_target(&self, npc: EntityId) -> EntityId {
         self.script(npc).alt_target
     }

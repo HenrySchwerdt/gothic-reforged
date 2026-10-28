@@ -111,6 +111,13 @@ pub enum Command {
         /// Target hour of the day, `None` until morning.
         hour: Option<u32>,
     },
+    /// Order the companions: attack the focused character (`SendPerceptionCmdAttack`) or follow
+    /// again (`SendPerceptionCmdFollow`). The original has no script caller; the order comes from
+    /// the player's input, which a host binds to this command.
+    CompanionCommand {
+        /// Attack (true) or follow (false).
+        attack: bool,
+    },
     /// Toggle sneaking.
     ToggleSneak,
     /// Jump.
@@ -905,6 +912,7 @@ impl Core {
                 self.sim.player_sleep(*hour);
                 self.state_rev += 1;
             }
+            Command::CompanionCommand { attack } => self.sim.player_companion_command(*attack),
             Command::ToggleSneak => self.sim.player_toggle_sneak(),
             Command::Jump => self.sim.player_jump(),
             Command::HeroModeChanged {
@@ -1290,6 +1298,16 @@ impl Core {
                             amount: *amount,
                             gained: to == "player",
                         });
+                    }
+                }
+                Output::Voice { command, speaker } => {
+                    let who = if speaker.is_empty() || speaker.eq_ignore_ascii_case(&npc_name) {
+                        npc
+                    } else {
+                        self.sim.find(speaker).or(npc)
+                    };
+                    if let Some(w) = who {
+                        self.sim.dialog_voice(command, w);
                     }
                 }
                 Output::Message { text } => out.push(Event::Notice(text.clone())),

@@ -76,3 +76,21 @@ act "one spell behind" for part of the list (the effect of the previous rune app
 ice bomb, `SummonSkeleton` -> `Shadowbeast`), while the same sequence at core level is correct. The difference between the two is
 the presentation: the hero's `HoldInventoryStacks` instruction is executed by the host (`hero_hold_swap`) with the stack indices
 of the time the state queued it. Owner: equipment / hero presentation (desktop2).
+
+## Companion commands, news speech, QA timing (day/cov-npc)
+
+* **`SendPerceptionCmdAttack` / `SendPerceptionCmdFollow` (S:31ff0 / S:32170).** No script function of the decompiled library
+  calls them (the only references to FUN_10031ff0 / FUN_10032170 are their registration wrappers `sub_d2e60` / `sub_d2ec0`), the
+  info command table of the data has no such command (`info-survey` `script_command_histogram`: `JoinPlayer` 2, `FullStop` 1, `SayConfirm` 3,
+  `SayHoldingPosition` 1, ... no attack/follow order), and the Game.dll decompile does not name them. `StartSayFollow` only answers
+  `if (player == other)`: the order is given by the player's input, so the trigger is a key of the hero, not a dialog. The port now offers
+  `Sim::player_companion_command(attack)` / `Command::CompanionCommand { attack }` (test `crates/sim/tests/companion.rs`); a host binds a key
+  to it. This also fixed a real gap: `SimHost` never implemented `focus_entity`, so `AssessCmdAttack` could never see the player's focus.
+* **Info voice commands.** `SayConfirm`, `SayHoldingPosition`, `SayGuardNews` and `SayBossNews` of the info scripts now emit
+  `Output::Voice` next to their text line; the core runs `speech::start_say_confirm`, `start_say_holding_position`, `guard_news_plan`
+  (counts of the enclave's murders and thefts) and `boss_news_finish` (which also starts the revolution at level 3) for the speaker.
+  `crime_investigation_plan` (`_AI_SayCrimeInvestigation`, S:3be50) has no caller in the library and no info command: unreached in the
+  shipped game.
+* **QA timing.** `npc_orc1`'s "damage lands at 60 percent of the Hit clip" compares frame timestamps; it now widens its 0.2 s tolerance by twice the
+  longest frame between the clip's start and the hit (frames over 50 ms are recorded), so a loaded machine no longer fails it. `spell_zoo`
+  isolates its victim (`ai_controlled` off), so the shaman no longer casts at the hero.

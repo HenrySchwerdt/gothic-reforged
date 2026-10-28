@@ -588,6 +588,68 @@ impl<W: WorldQuery> Sim<W> {
         Some(f(&mut host, hero))
     }
 
+    /// The companion commands "attack what I focus" / "follow me" (`SendPerceptionCmdAttack`
+    /// S:31ff0, `SendPerceptionCmdFollow` S:32170): every companion of the hero hears the order
+    /// (`AssessCmdAttack` attacks the focus with reason `PlayerCommand`, `AssessCmdFollow` ends a
+    /// wait). The original has no script caller for them: the order comes from the player's input.
+    pub fn player_companion_command(&mut self, attack: bool) {
+        use gothic_script::assess::{send_perception_cmd_attack, send_perception_cmd_follow};
+        let Some(hero) = self.hero else { return };
+        let mut host = SimHost::new(self);
+        let h = entity_of(hero);
+        host.self_entity = h;
+        if attack {
+            send_perception_cmd_attack(&mut host, h);
+        } else {
+            send_perception_cmd_follow(&mut host, h);
+        }
+        // The companions' new tasks reach the simulation's brains.
+        let now = self.now_ms();
+        for i in 0..self.actors.len() {
+            if self.actors[i].party_leader == Some(hero) {
+                self.reflect_script_task(i, now);
+            }
+        }
+    }
+
+    /// The voice of an info command whose lines the script library decides: `SayConfirm`
+    /// (`StartSayConfirm`), `SayHoldingPosition` (`StartSayHoldingPosition`), `SayGuardNews`
+    /// (`_AI_SayGuardNews` line plan from the enclave's murder / theft counts) and `SayBossNews`
+    /// (`_AI_SayBossNews`, which may end in a revolution). The lines are queued on the speaker.
+    pub fn dialog_voice(&mut self, command: &str, npc: ActorId) {
+        use gothic_script::enums::PlayerCrime;
+        use gothic_script::host::{AiCommand, NpcApi, ScriptCtx, WorldApi};
+        use gothic_script::speech;
+        let e = entity_of(npc);
+        let Some(hero) = self.hero else { return };
+        let mut host = SimHost::new(self);
+        host.self_entity = e;
+        match command.to_ascii_lowercase().as_str() {
+            "sayconfirm" => {
+                speech::start_say_confirm(&mut host, e, entity_of(hero));
+            }
+            "sayholdingposition" => {
+                speech::start_say_holding_position(&mut host, e, entity_of(hero));
+            }
+            "sayguardnews" => {
+                let enclave = host.enclave(e);
+                let (m, t) = if enclave.is_some() {
+                    (
+                        host.enclave_crime_count(enclave, PlayerCrime::Murder),
+                        host.enclave_crime_count(enclave, PlayerCrime::Theft),
+                    )
+                } else {
+                    (0, 0)
+                };
+                for l in speech::guard_news_plan(m, t).0 {
+                    host.queue_ai(e, AiCommand::SayLine { key: l.key });
+                }
+            }
+            "saybossnews" => speech::boss_news_finish(&mut host, e),
+            _ => {}
+        }
+    }
+
     /// Reactions the ported predicates report for a talk with `npc` (`HasGuardNews`,
     /// `HasBossNews`, `HasHealInfo`, S:bcf00 / S:bd050 / S:bd2c0): the dialog engine offers the
     /// `EnclaveCrime`, `PoliticalCrime` and `Heal` infos only then.
