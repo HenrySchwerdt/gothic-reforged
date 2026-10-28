@@ -11,6 +11,8 @@ import bevy_pbr::render::{
     pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
 };
 
+const NMAP_Y: f32 = 1.0;
+
 struct CharParams {
     tint: vec4<f32>,
     // x: alpha cutoff (0 = none), y: rim start, z: rim end, w: rim intensity
@@ -20,10 +22,14 @@ struct CharParams {
     // static point lights: xyz position, w = 1 / range^2; colour x2 in light_cols
     lights: array<vec4<f32>, 3>,
     light_cols: array<vec4<f32>, 3>,
+    // x: has a normal map
+    flags: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> params: CharParams;
 @group(3) @binding(1) var tex: texture_2d<f32>;
 @group(3) @binding(2) var samp: sampler;
+@group(3) @binding(3) var normal_tex: texture_2d<f32>;
+@group(3) @binding(4) var normal_samp: sampler;
 
 fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
     let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -45,6 +51,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         n = -n;
     }
     let v = normalize(view.world_position.xyz - in.world_position.xyz);
+    // Normal map (the material's `Normal` sampler, DXT5nm: x in alpha, y in green, z rebuilt).
+    // The actor meshes carry no tangents, so the frame comes from the screen-space derivatives.
+    if params.flags.x > 0.5 {
+        let nm = textureSample(normal_tex, normal_samp, in.uv);
+        let xy = vec2<f32>(nm.a, nm.g) * 2.0 - 1.0;
+        let nt = vec3<f32>(xy.x, xy.y * NMAP_Y, sqrt(max(1.0 - dot(xy, xy), 0.0)));
+        let dp1 = dpdx(in.world_position.xyz);
+        let dp2 = dpdy(in.world_position.xyz);
+        let duv1 = dpdx(in.uv);
+        let duv2 = dpdy(in.uv);
+        let dp2perp = cross(dp2, n);
+        let dp1perp = cross(n, dp1);
+        let tt = dp2perp * duv1.x + dp1perp * duv2.x;
+        let bb = dp2perp * duv1.y + dp1perp * duv2.y;
+        let invmax = inverseSqrt(max(max(dot(tt, tt), dot(bb, bb)), 1.0e-12));
+        n = normalize(tt * invmax * nt.x + bb * invmax * nt.y + n * nt.z);
+    }
     let ndv = max(dot(n, v), 0.0);
     let sh = params.sh;
     let amb = sh[0].rgb + sh[1].rgb * n.x + sh[2].rgb * n.y + sh[3].rgb * n.z;
@@ -72,6 +95,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     // vecShadowDensity: the weather ShadowDensity scales how dark shadows get (sh[0].w).
     shadow = 1.0 - (1.0 - shadow) * params.sh[0].w;
+    // XFX_PS_NORMAL: `fShadowed *= saturate(4 * N.L)` after the density scale (ge_default.fx
+    // CalcDirLight, line 699).
+    if params.flags.x > 0.5 {
+        shadow = shadow * saturate(4.0 * max(dot(n, sun_l), 0.0));
+    }
     light = light + params.sun.rgb * max(dot(n, sun_l), 0.0) * shadow;
 
     // Static point lights (the original's per-object packet: position, colour x 2, 1 / range^2).

@@ -96,6 +96,8 @@ pub struct CpuMaterial {
     pub material: StandardMaterial,
     /// Texture key (shared between looks) and image; `None` for untextured materials.
     pub texture: Option<(String, Arc<Image>)>,
+    /// Normal map (key, linear image) of the material, if it has one.
+    pub normal: Option<(String, Arc<Image>)>,
 }
 
 pub struct CpuMesh {
@@ -435,6 +437,17 @@ impl ActorStreamer {
                                 })
                                 .clone();
                             material.base_color_texture = Some(handle);
+                        }
+                        if let Some((key, image)) = m.material.normal {
+                            let handle = textures
+                                .entry(key)
+                                .or_insert_with(|| {
+                                    assets.images.add(
+                                        Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone()),
+                                    )
+                                })
+                                .clone();
+                            material.normal_map_texture = Some(handle);
                         }
                         PartMesh {
                             mesh: assets.meshes.add(m.mesh),

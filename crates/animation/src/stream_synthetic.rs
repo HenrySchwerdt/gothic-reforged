@@ -198,6 +198,7 @@ impl SyntheticSource {
                     ..Default::default()
                 },
                 texture: Some((format!("syn_tex_{name}"), Arc::new(self.texture(seed)))),
+                normal: None,
             },
         }
     }
@@ -262,6 +263,7 @@ impl BuildSource for SyntheticSource {
                         material: CpuMaterial {
                             material: StandardMaterial::default(),
                             texture: None,
+                            normal: None,
                         },
                     }],
                     joint,

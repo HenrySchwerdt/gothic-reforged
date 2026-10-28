@@ -181,6 +181,10 @@ pub struct ActorLibrary {
     bindings: HashMap<(String, String), Arc<ClipBinding>>,
     textures: HashMap<String, Option<Handle<Image>>>,
     shared_materials: HashMap<(String, u32, u8), Handle<StandardMaterial>>,
+    /// Normal map stem (as the material file names it, switch applied) of a diffuse stem (lower case).
+    normal_for: HashMap<String, String>,
+    /// Normal stem of the material file `material_file` read last.
+    last_normal: Option<String>,
     statics: HashMap<String, Arc<StaticAsset>>,
     compositions: HashMap<String, Arc<Composition>>,
     loco: HashMap<(String, LocoKey), Option<String>>,
@@ -343,6 +347,8 @@ impl ActorLibrary {
             bindings: HashMap::new(),
             textures: HashMap::new(),
             shared_materials: HashMap::new(),
+            normal_for: HashMap::new(),
+            last_normal: None,
             statics: HashMap::new(),
             compositions: HashMap::new(),
             loco: HashMap::new(),
@@ -583,6 +589,19 @@ impl ActorLibrary {
         handle
     }
 
+    /// A normal map as a linear (non-sRGB) image handle; DXT5nm layout (x in alpha, y in green).
+    fn normal_texture(&mut self, stem: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
+        let key = format!("n:{}", texture_key(stem));
+        if let Some(cached) = self.textures.get(&key) {
+            return cached.clone();
+        }
+        let handle = self
+            .decode_texture(stem, &texture_key(stem))
+            .map(|i| images.add(linear_normal(i)));
+        self.textures.insert(key, handle.clone());
+        handle
+    }
+
     /// Reads and decodes a texture (local remaster profile first, see
     /// `gothic_formats::remaster`; then the image archive with its stand-ins). CPU only.
     fn decode_texture(&mut self, stem: &str, key: &str) -> Option<Image> {
@@ -642,6 +661,9 @@ impl ActorLibrary {
                 parsed.diffuse().map(|d| d.stem().to_string())
             );
         }
+        self.last_normal = parsed
+            .texture(gothic_formats::xshmat::TextureRole::Normal)
+            .map(|t| t.stem().to_string());
         Some((
             parsed.diffuse().map(|d| d.stem().to_string()),
             parsed
@@ -686,9 +708,11 @@ impl ActorLibrary {
             .iter()
             .find(|c| self.material_index.contains_key(&c.to_lowercase()))
             .cloned();
+        self.last_normal = None;
         let (mut stem, blend) = found
             .and_then(|f| self.material_file(&f))
             .unwrap_or((None, None));
+        let normal = self.last_normal.take();
         if stem.is_none() {
             stem = material.diffuse_texture().map(str::to_string);
         }
@@ -697,6 +721,16 @@ impl ActorLibrary {
             let switched = self.switch_stem(base, sw);
             variant_found = switched != base || base.rsplit_once("_S").is_none() || sw == 0;
             stem = Some(switched);
+        }
+        // The material's normal map (`Normal` sampler of the `.xshmat`), switched like the diffuse.
+        if let (Some(d), Some(n)) = (stem.as_deref(), normal) {
+            let n = match switch {
+                Some(sw) => self.switch_stem(&n, sw),
+                None => n,
+            };
+            if self.image_index.contains_key(&format!("{}.ximg", n.to_lowercase())) {
+                self.normal_for.insert(d.to_lowercase(), n);
+            }
         }
         (stem, blend, variant_found)
     }
@@ -805,9 +839,14 @@ impl ActorLibrary {
         if let Some(h) = self.shared_materials.get(&key) {
             return h.clone();
         }
+        let normal = stem
+            .as_deref()
+            .and_then(|s| self.normal_for.get(&s.to_lowercase()).cloned())
+            .and_then(|n| self.normal_texture(&n, stores.images));
         let texture = stem.and_then(|s| self.texture(&s, stores.images));
         let handle = stores.materials.add(StandardMaterial {
             base_color_texture: texture.clone(),
+            normal_map_texture: normal,
             ..actor_standard_material(texture.is_some(), blend)
         });
         self.shared_materials.insert(key, handle.clone());
@@ -825,6 +864,7 @@ impl ActorLibrary {
         if let Some(m) = cache.get(&key) {
             return m.clone();
         }
+        let diffuse_stem = stem.clone();
         let texture = stem.and_then(|s| {
             let key = texture_key(&s);
             // A texture this library already found missing is not looked up again.
@@ -837,9 +877,18 @@ impl ActorLibrary {
             }
             image.map(|i| (key, Arc::new(i)))
         });
+        let normal = diffuse_stem
+            .as_deref()
+            .and_then(|s| self.normal_for.get(&s.to_lowercase()).cloned())
+            .and_then(|n| {
+                let key = format!("n:{}", texture_key(&n));
+                let image = linear_normal(self.decode_texture(&n, &texture_key(&n))?);
+                Some((key, Arc::new(image)))
+            });
         let material = CpuMaterial {
             material: actor_standard_material(texture.is_some(), blend),
             texture,
+            normal,
         };
         cache.insert(key, material.clone());
         material
@@ -1419,6 +1468,18 @@ fn apply_remaster(actor: &mut Actor, ov: &gothic_formats::remaster::OverrideMesh
         max_influences: 4,
         submeshes,
     }];
+}
+
+/// A decoded block-compressed normal map as linear data (the decoder tags colour images sRGB).
+fn linear_normal(mut image: Image) -> Image {
+    use bevy::render::render_resource::TextureFormat as F;
+    image.texture_descriptor.format = match image.texture_descriptor.format {
+        F::Bc1RgbaUnormSrgb => F::Bc1RgbaUnorm,
+        F::Bc2RgbaUnormSrgb => F::Bc2RgbaUnorm,
+        F::Bc3RgbaUnormSrgb => F::Bc3RgbaUnorm,
+        f => f,
+    };
+    image
 }
 
 fn texture_image(image: &Ximg) -> Option<Image> {

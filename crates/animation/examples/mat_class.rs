@@ -29,7 +29,15 @@ fn main() -> anyhow::Result<()> {
             }
             at = e.max(s + 8);
         }
-        println!("{p}: {found:?}");
+        let tex = gothic_formats::xshmat::Xshmat::parse(&b)
+            .map(|x| {
+                x.textures
+                    .iter()
+                    .map(|t| format!("{:?}:{}", t.role, t.stem()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        println!("{p}: {found:?} {tex:?}");
     }
     Ok(())
 }

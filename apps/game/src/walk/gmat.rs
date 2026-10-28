@@ -569,6 +569,8 @@ pub struct CharParams {
     /// w = 1 / range^2. Colours (x2 like the original packet) in `light_cols`; zero = unused.
     pub lights: [Vec4; CHAR_LIGHTS],
     pub light_cols: [Vec4; CHAR_LIGHTS],
+    /// x: the material has a normal map (DXT5nm, x in alpha / y in green).
+    pub flags: Vec4,
 }
 
 /// Static lights evaluated per character fragment.
@@ -581,6 +583,9 @@ pub struct CharMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub tex: Option<Handle<Image>>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub normal: Option<Handle<Image>>,
     pub alpha_mode: AlphaMode,
 }
 
@@ -643,8 +648,15 @@ fn convert_standard(
                         sh,
                         lights: char_lights().0,
                         light_cols: char_lights().1,
+                        flags: Vec4::new(
+                            f32::from(src.normal_map_texture.is_some()),
+                            0.0,
+                            0.0,
+                            0.0,
+                        ),
                     },
                     tex: src.base_color_texture.clone(),
+                    normal: src.normal_map_texture.clone(),
                     alpha_mode: src.alpha_mode,
                 })
             })

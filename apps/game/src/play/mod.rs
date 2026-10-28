@@ -562,6 +562,28 @@ pub(crate) fn yaw_of_dir(dx: f32, dz: f32) -> f32 {
 }
 
 /// The environment's time of day is the simulation clock's.
-fn publish_sim_hour(core: Res<CoreRes>, mut commands: Commands) {
+fn publish_sim_hour(mut core: ResMut<CoreRes>, mut commands: Commands, mut applied: Local<bool>) {
+    // `--hour H` (or `GR_TIME`, a day fraction) starts the simulation clock at that hour; in play
+    // mode the environment follows the sim clock, so the flag has to move the clock itself.
+    if !*applied {
+        *applied = true;
+        let args: Vec<String> = std::env::args().collect();
+        let hour = args
+            .iter()
+            .position(|a| a == "--hour")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| s.parse::<f32>().ok())
+            .or_else(|| {
+                std::env::var("GR_TIME")
+                    .ok()
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .map(|t| t * 24.0)
+            });
+        if let Some(h) = hour {
+            let clock = &mut core.0.sim.clock;
+            let day = clock.game_ms / 86_400_000;
+            clock.game_ms = day * 86_400_000 + (h.rem_euclid(24.0) * 3_600_000.0) as u64;
+        }
+    }
     commands.insert_resource(crate::walk::env::SimHour(core.0.sim.clock.hour_of_day()));
 }
