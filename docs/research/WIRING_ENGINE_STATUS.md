@@ -68,6 +68,23 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   `play/emitters.rs` reads them (cache `.local/world_emitters.json`) and spawns `AudioEmitterPs` entities within 300 m of the
   hero, so `EmitterState::step` runs in play (`world_walk`: 4679 hits).
 
+## Equipment flip, look-at, inventory order (this round)
+
+* `Equipment` is derived from the stack links (`crates/sim/src/worn.rs`: `wear`, `hold`, `unwear`, `derive_equipment`);
+  mirror and `brain.melee_kit` are gone. Hands win when a hand slot is occupied, else the carry slots (`BackRight`,
+  `BackLeft`, `Bow`); a bow in the left hand brings the quiver (a count). Fixture items without a stack keep their place.
+* Head look-at: `Entity::SetLookAtTarget` (`ScriptHost::set_look_at`, called by the ported combat scripts) now sets
+  `Actor::look_at`; the dialog partner looks at the hero; `play/look_at.rs` drives `lookat::LookAtSet` (default limits of
+  `ImportLookAtConstraints`, no `.xlac` ships in the animation archive) and `Animator::look` applies the head rotation after
+  the clips. QA `look_at`.
+* Inventory page order: the list control shows the stack array filtered by category (`gCHUDListCtrlInvStacks`
+  0x100a1570: category 0 hidden, filter field +0x2c); where the array gets sorted is not found in the dump (`Compare` has no
+  static caller). The page now orders stacks with the ported `Compare` chain; this reproduces `.local/ref/orig-inventory.png`
+  (sword 1, bow 3, arrows 4 in the weapon tab) once the hero stacks carry their quick slots.
+* `spell_zoo` fails on `It_Spell_Flamesword` (events Phase, Weapon; no Cast) on the build before the flip as well.
+* Not done: replacing the `anim.rs` overlay glue by the `Animator` slot functions. Slot layers have no bone mask, the overlay
+  (upper body) and aim blends need one first.
+
 ## Open (feature work, not dead)
 
 * Inventory bridge: `Equipment` (sim) and the stack list (`Inventory`) are two truths. 95 functions of
