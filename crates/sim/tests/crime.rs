@@ -82,9 +82,9 @@ fn theft_seen_by_guard_triggers_attack_enclave_memory_and_help() {
     assert_eq!(e.theft_count, 1);
     assert!(e.suspect_comment);
     assert_eq!(sim.attitude(guard, hero), Attitude::Angry);
-    // CallHelp: the second guard joins with StopThief.
-    assert_eq!(sim.actor(guard2).brain.task, Task::Attack);
-    assert_eq!(sim.actor(guard2).attack_reason, AttackReason::StopThief);
+    // CallHelp (S:332e0) does nothing for a caller whose own attack reason is Theft: the second
+    // guard does not join (the decompiled function returns early).
+    assert_ne!(sim.actor(guard2).brain.task, Task::Attack);
     let ev = sim.drain_events();
     assert!(ev.iter().any(|e| matches!(
         e.kind,
@@ -94,10 +94,7 @@ fn theft_seen_by_guard_triggers_attack_enclave_memory_and_help() {
             ..
         }
     )));
-    assert!(
-        ev.iter()
-            .any(|e| matches!(e.kind, EventKind::HelpCalled { helper, .. } if helper == guard2))
-    );
+
 
     // The guard runs down the thief and hits him.
     let hp0 = sim.actor(hero).hp;

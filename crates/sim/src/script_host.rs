@@ -424,11 +424,11 @@ fn protection_type(p: Protection) -> DamageType {
     }
 }
 
-fn s_crime(c: Crime) -> se::PlayerCrime {
+pub(crate) fn s_crime(c: Crime) -> se::PlayerCrime {
     by_name(c, se::PlayerCrime::from_name).unwrap_or(se::PlayerCrime::None)
 }
 
-fn crime_s(c: se::PlayerCrime) -> Crime {
+pub(crate) fn crime_s(c: se::PlayerCrime) -> Crime {
     match c {
         se::PlayerCrime::Livestock => Crime::Livestock,
         se::PlayerCrime::Attack => Crime::Attack,
