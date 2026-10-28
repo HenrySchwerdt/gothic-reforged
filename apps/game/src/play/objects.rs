@@ -163,71 +163,29 @@ fn send_content(
         return;
     }
     objects.sent = true;
-    if !objects.spells.is_empty() {
-        commands.write(CoreCommand(Command::LoadSpells(objects.spells.clone())));
-    }
     let recipes = std::mem::take(&mut objects.recipes);
-    for (id, r) in recipes.iter().enumerate() {
-        objects
-            .recipe_ids
-            .insert(r.item.to_ascii_lowercase(), id as i32);
-        objects
-            .recipe_cat
-            .insert(r.item.to_ascii_lowercase(), r.category);
-        commands.write(CoreCommand(Command::AddRecipe {
-            id: id as i32,
-            recipe: r.recipe.clone(),
-        }));
-        commands.write(CoreCommand(Command::AddRecipeItem {
-            template: r.item.clone(),
-            category: r.category,
-        }));
-    }
-    objects.recipes = recipes;
     let treasure = std::mem::take(&mut objects.treasure);
-    let mut n_obj = 0;
-    let mut n_item = 0;
-    for (tag, e) in objects.list.iter().enumerate() {
-        let d = &e.def;
-        let pos = Pos::new(e.pos_cm.x, e.pos_cm.y, e.pos_cm.z);
-        if d.is_item {
-            if d.used || !item_known(&core, &d.name) {
-                continue;
-            }
-            commands.write(CoreCommand(Command::AddItem {
-                tag: tag as u32,
-                template: d.name.clone(),
-                pos,
-            }));
-            n_item += 1;
-            continue;
-        }
-        let use_type = d.script_use();
-        let mut loot = d.stacks.clone();
-        if use_type == UseType::Chest {
-            let mut roll = gothic_gameplay::treasure::Roll(seed_of(&format!("{}{tag}", d.id)));
-            loot.extend(treasure.plunder(
-                &core.0.sim.items,
-                &d.treasure_sets,
-                &mut roll,
-                &gothic_gameplay::treasure::NoHero,
-            ));
-            loot.retain(|(item, _)| item_known(&core, item));
-        }
-        commands.write(CoreCommand(Command::AddObject {
+    let spells = std::mem::take(&mut objects.spells);
+    let set = gothic_session::content_commands(
+        objects.list.iter().enumerate().map(|(tag, e)| gothic_session::Placed {
             tag: tag as u32,
-            use_type,
-            pos,
-            data: ObjectData {
-                name: d.display.clone().unwrap_or_else(|| d.name.clone()),
-                lock: d.lock.as_ref().map(super::data::LockDef::to_lock),
-                used: d.used,
-                loot,
-                ..Default::default()
-            },
-        }));
-        n_obj += 1;
+            def: &e.def,
+            pos: Pos::new(e.pos_cm.x, e.pos_cm.y, e.pos_cm.z),
+        }),
+        &treasure,
+        &recipes,
+        &spells,
+        &core.0.sim.items,
+        &|name| item_known(&core, name),
+    );
+    for c in set.commands {
+        commands.write(CoreCommand(c));
     }
+    let (n_obj, n_item) = (set.objects, set.items);
+    objects.recipe_ids.extend(set.recipe_ids);
+    objects.recipe_cat.extend(set.recipe_cat);
+    objects.recipes = recipes;
+    objects.spells = spells;
     objects.treasure = treasure;
     eprintln!(
         "play: registered {n_obj} interact objects / points and {n_item} loose items, {} recipes",
@@ -354,14 +312,9 @@ fn route_npcs(
                 .and_then(|e| e.entity)
         };
         let (work, relax, sleep) = (find(&extra.work), find(&extra.relax), find(&extra.sleep));
-        if work.is_some() || relax.is_some() || sleep.is_some() {
+        if let Some(c) = gothic_session::routine_command(id, work, relax, sleep) {
             objects.with_points += 1;
-            commands.write(CoreCommand(Command::SetRoutinePoints {
-                actor: id,
-                work,
-                relax,
-                sleep,
-            }));
+            commands.write(CoreCommand(c));
         }
     }
 }

@@ -28,6 +28,7 @@ gothic-input = { path = "../../crates/input" }
 gothic-projectile = { path = "../../crates/projectile" }
 gothic-animation = { path = "../../crates/animation", optional = true }
 gothic-ui = { path = "../../crates/ui", optional = true }
+gothic-session = { path = "../../crates/session" }
 gothic-audio = { path = "../../crates/audio", optional = true }
 gothic-runtime = { path = "../../crates/runtime", optional = true }
 gothic-nav = { path = "../../crates/nav", optional = true }
