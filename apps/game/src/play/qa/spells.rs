@@ -260,12 +260,21 @@ pub fn spell_zoo() -> Sc {
     let mut sc = Sc::new(1800.0);
     grab(&mut sc);
     super::npc_ai::find_and_place(&mut sc, "Shaman", 900.0);
-    sc.act("the victim is the shaman", |cx| {
-        let _ = ActorId(0);
-        let _ = cx;
+    sc.act("the victim stands still and does not fight back (setup)", |cx| {
+        // An isolated target: the shaman's own spells would interrupt the hero's cast state and
+        // mix its events into the list (`ai_controlled` off: it thinks and attacks no more).
+        if let Some(t) = tgt_id(cx) {
+            let _: ActorId = t;
+            cx.core_mut().0.sim.actor_mut(t).ai_controlled = false;
+        }
     });
     batch_steps(&mut sc, "p", Batch::Person, "person spells");
     super::npc_ai::find_and_place(&mut sc, "Wolf", 700.0);
+    sc.act("the wolf stands still too (setup)", |cx| {
+        if let Some(t) = tgt_id(cx) {
+            cx.core_mut().0.sim.actor_mut(t).ai_controlled = false;
+        }
+    });
     batch_steps(&mut sc, "a", Batch::Animal, "animal spells");
     batch_steps(&mut sc, "t", Batch::Teleport, "teleport");
     sc

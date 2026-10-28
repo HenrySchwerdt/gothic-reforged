@@ -58,6 +58,11 @@ pub enum Output {
     Message {
         text: String,
     },
+    /// An info command whose voice lines are decided by the script library (`SayConfirm`,
+    /// `SayHoldingPosition`, `SayBossNews`, `SayGuardNews`): the host runs the ported function for
+    /// `speaker` (`_AI_SayConfirm` S:51680, `_AI_SayHoldingPosition` S:517c0, `_AI_SayBossNews`
+    /// S:3c490, `_AI_SayGuardNews` S:3a3c0). The text line itself is the preceding [`Output::Say`].
+    Voice { command: String, speaker: String },
     /// World/AI action the host has to carry out (the state may also record it).
     Effect {
         command: String,
@@ -270,11 +275,20 @@ impl Ctx<'_> {
                     &s.entity1
                 });
                 self.res.outputs.push(Output::Say {
-                    speaker,
+                    speaker: speaker.clone(),
                     key: s.text.clone(),
                     text,
                     direction: s.id2.clone(),
                 });
+                if matches!(
+                    cmd,
+                    Cmd::SayConfirm | Cmd::SayHoldingPosition | Cmd::SayBossNews | Cmd::SayGuardNews
+                ) {
+                    self.res.outputs.push(Output::Voice {
+                        command: name.to_string(),
+                        speaker,
+                    });
+                }
             }
             Cmd::SaySvm | Cmd::SaySound => {
                 let speaker = self.who(&s.entity1);

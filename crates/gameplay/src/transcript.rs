@@ -40,6 +40,7 @@ pub fn render_output(db: &GameDatabase, npc: &str, o: &Output, verbose: bool) ->
             };
             format!("{}: {t}{d}", who(npc, speaker))
         }
+        Output::Voice { .. } => return None,
         Output::Svm { speaker, id } => format!("{}: ({id})", who(npc, speaker)),
         Output::Presentation { kind, arg, text } => match text {
             Some(t) => format!("  [{kind}] {t}"),

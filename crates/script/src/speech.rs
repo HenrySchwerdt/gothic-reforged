@@ -527,6 +527,9 @@ pub fn boss_news_finish(host: &mut dyn ScriptHost, boss: EntityId) {
     }
 }
 
+/// UNREACHED IN THE SHIPPED GAME: no script function of the decompiled library calls `_AI_SayCrimeInvestigation` (the only
+/// reference to FUN_1003be50 is its own body, `.local/research/script_game`) and no info command of the data names it (the
+/// info command table has no such entry: `script_command_histogram` of `info-survey`). Kept as a faithful port.
 /// Port of `_AI_SayCrimeInvestigation` (S:3be50): the question an investigator asks and the
 /// answer. `crime` 1 is a murder, 2 a theft; `step` 1 asks, 2 accuses. The follow-up (reached
 /// when the player had something to say) is "No" after the first question and "Interrupted"
