@@ -407,18 +407,8 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
         }
     }
     fn unequip_item(&mut self, e: EntityId, template: &str) {
-        if let Some(a) = self.actor_mut(e) {
-            let eq = &mut a.equipment;
-            for slot in [&mut eq.left, &mut eq.right, &mut eq.body] {
-                if slot
-                    .as_ref()
-                    .is_some_and(|i| i.name.eq_ignore_ascii_case(template))
-                {
-                    *slot = None;
-                }
-            }
-            eq.accessories
-                .retain(|i| !i.name.eq_ignore_ascii_case(template));
+        if let Some(id) = actor_of(e) {
+            self.sim.unwear(id, template);
         }
     }
     fn is_equipped(&self, e: EntityId, template: &str) -> bool {

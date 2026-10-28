@@ -131,6 +131,8 @@ impl Actor {
     /// Put `def` on (`gCInventory_PS::EquipStack`): into its carry slot, and into the hand when
     /// the hands are drawn and it is something that goes there.
     pub fn wear(&mut self, def: &ItemDef, items: &ItemDb) {
+        // stacks that came through a count-only path have no item data yet
+        self.inventory.rebind(items);
         let kind = def.use_kind();
         if ammo(kind) {
             // the quiver is a count; a bow in the hand carries it
@@ -186,6 +188,7 @@ impl Actor {
     /// `HoldStacks`: `right` and `left` go into the hands, what they held goes back to its
     /// carry slot; `None` for both puts everything away.
     pub fn hold(&mut self, right: Option<&ItemDef>, left: Option<&ItemDef>, items: &ItemDb) {
+        self.inventory.rebind(items);
         self.adopt(items);
         let r = right
             .filter(|d| !ammo(d.use_kind()))
@@ -201,6 +204,7 @@ impl Actor {
 
     /// `UnEquipStack`: the item leaves its slot (hand or carry slot) and stays in the bag.
     pub fn unwear(&mut self, template: &str, items: &ItemDb) {
+        self.inventory.rebind(items);
         let slot = self
             .inventory
             .stacks()
