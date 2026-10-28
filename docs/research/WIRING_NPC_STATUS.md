@@ -65,3 +65,14 @@ the null id counts 65. For the 315 characters near Ardea: 648 references, 170 re
 slot defaults, 1 is unknown; characters with at least one point 63 (exact) -> 72 (16-byte match); the exporter change adds nothing
 inside Ardea (its 10 new entities lie elsewhere). Across the world: 23 404 references, exact 5 358 -> 6 127 by 16-byte match, characters
 with a point 2 248 -> 2 524.
+
+## Open issue found by `spell_zoo` (equipment refactor, not changed here)
+
+After the merge of `day/desktop2` (equipment derived from the stack list, commit 53f1f4c) the hero's runes granted at run time
+behave differently in the running game: (1) `Command::GiveHero` put the item into the game state only, the stack had no rule data and
+could not be held, so a second rune never replaced the first (fixed in `Core`: the item goes into the hero's bag with its
+`ItemInfo`; `crates/runtime/tests/spells.rs` covers consecutive casts at core level and passes). (2) In the QA run the casts still
+act "one spell behind" for part of the list (the effect of the previous rune appears: `Poison` -> the ice bomb area, `Sleep` ->
+ice bomb, `SummonSkeleton` -> `Shadowbeast`), while the same sequence at core level is correct. The difference between the two is
+the presentation: the hero's `HoldInventoryStacks` instruction is executed by the host (`hero_hold_swap`) with the stack indices
+of the time the state queued it. Owner: equipment / hero presentation (desktop2).

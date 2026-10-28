@@ -32,7 +32,8 @@ fn spell_items(cx: &Cx, batch: Batch) -> Vec<String> {
     let mut best: std::collections::BTreeMap<String, String> = Default::default();
     for i in cx.core().0.sim.items.iter() {
         let Some(sp) = i.spell.clone() else { continue };
-        if sp.contains("Template") {
+        // Blessing is no rune: the item opens the bless window (`Modify`), nothing to select.
+        if sp.contains("Template") || sp == "Spl_BlessWeapon" {
             continue;
         }
         let keep = match batch {

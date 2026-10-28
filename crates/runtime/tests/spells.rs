@@ -63,23 +63,14 @@ fn the_hero_casts_one_spell_after_the_other_at_a_character() {
         })
         .expect("spawned");
     let mut seen: Vec<String> = Vec::new();
-    c.tick(
-        0.05,
-        &[
-            Command::GiveHero {
-                template: "It_Spell_Disease".into(),
-                amount: 1,
-            },
-            Command::GiveHero {
-                template: "It_Spell_Poison".into(),
-                amount: 1,
-            },
-        ],
-    );
     for name in ["It_Spell_Disease", "It_Spell_Poison"] {
         c.tick(
             0.05,
             &[
+                Command::GiveHero {
+                    template: name.into(),
+                    amount: 1,
+                },
                 Command::SelectSpell {
                     template: name.into(),
                 },
