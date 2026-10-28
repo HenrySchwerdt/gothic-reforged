@@ -840,8 +840,9 @@ pub fn staff_parade() -> Sc {
 }
 
 /// The player states of jumping and sneaking in every weapon mode: `PS_Normal_Sneak`,
-/// `PS_Melee_Jump`, `PS_Melee_JumpBack`, `PS_Ranged_Jump`, `PS_Ranged_Sneak` (S:825f0 `PS_*_Jump`,
-/// `PS_*_Sneak`, S:7fc20, S:860c0). Records every state the hero's script passes through and
+/// `PS_Melee_Jump`, `PS_Ranged_Jump`, `PS_Ranged_Sneak` (S:825f0 `PS_*_Jump`, `PS_*_Sneak`,
+/// S:860c0; the hop back `PS_Melee_JumpBack` S:7fc20 is the guard key held or tapped when no quick
+/// attack is possible and needs the stamina of the move, not covered here). Records every state the hero's script passes through and
 /// asserts the expected ones were entered.
 pub fn player_states() -> Sc {
     let mut sc = Sc::new(150.0);
@@ -866,10 +867,6 @@ pub fn player_states() -> Sc {
     sc.wait(2.0);
     sc.act("Alt: jump with the sword", |cx| cx.tap(KeyCode::AltLeft));
     sc.wait(2.0);
-    sc.act("S twice: the hop back", |cx| cx.tap(KeyCode::KeyS));
-    sc.wait(0.12);
-    sc.act("S", |cx| cx.tap(KeyCode::KeyS));
-    sc.wait(2.0);
     sc.act("Space: sword away", |cx| cx.tap(KeyCode::Space));
     sc.wait(2.0);
     sc.act("bow: quick slot 3", |cx| cx.tap(KeyCode::Digit3));
@@ -877,7 +874,11 @@ pub fn player_states() -> Sc {
     sc.act("Alt: jump with the bow", |cx| cx.tap(KeyCode::AltLeft));
     sc.wait(2.0);
     sc.act("Ctrl: sneak with the bow", |cx| cx.tap(KeyCode::ControlLeft));
-    sc.wait(1.5);
+    sc.wait(1.0);
+    sc.check("the bow hero sneaks (PS_Ranged_Sneak toggles the sneak pose)", |cx| {
+        let sneaking = cx.play().sneaking;
+        expect(sneaking, "sneaking", "not sneaking after the sneak key with the bow ready")
+    });
     sc.act("Ctrl: stand up again", |cx| cx.tap(KeyCode::ControlLeft));
     sc.wait(1.5);
     sc.check("the sneak, jump and hop states were entered in their weapon modes", |cx| {

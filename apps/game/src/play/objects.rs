@@ -257,6 +257,7 @@ fn dropped_items(
             heading: 0.0,
             use_type: String::new(),
             focus_name: "Entity".into(),
+            use_func: String::new(),
             is_item: true,
             lock: None,
             treasure_sets: Vec::new(),
