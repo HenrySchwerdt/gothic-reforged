@@ -142,6 +142,13 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             cx.st.n.insert(format!("{key}t0"), f64::from(cx.now));
             cx.st.n.insert(format!("{key}cast"), 0.0);
             let name = list[n].clone();
+            {
+                // Setup: the hero is in his own shape again (a transformation lasts 30 to 60 s).
+                let mut core = cx.core_mut();
+                for t in core.0.sim.script.magic.transforms.iter_mut() {
+                    t.until_ms = 0;
+                }
+            }
             if let Some(t) = tgt {
                 // Setup: the victim goes back to an idle routine state (a sleeper or a stunned
                 // character would hide the next spell's effect).
@@ -162,6 +169,19 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
                     .write_message(CoreCommand(Command::SelectSpell { template: name }));
             }
             return Poll::Wait;
+        }
+        // A cast that fizzled (the victim was out of sight for a moment) is tried once more.
+        let fizzled = cx
+            .st
+            .store
+            .get(&format!("{key}ev{i}"))
+            .is_some_and(|e| !e.contains("Cast") && !e.contains("Weapon") && !e.contains("Transform"));
+        if phase_t > 3.2 && cx.st.n[&format!("{key}cast")] == 1.0 && fizzled {
+            cx.st.n.insert(format!("{key}cast"), 2.0);
+            cx.world.write_message(CoreCommand(Command::CastSpell {
+                target: tgt,
+                power: false,
+            }));
         }
         if phase_t > 1.5 && cx.st.n[&format!("{key}cast")] == 0.0 {
             cx.st.n.insert(format!("{key}cast"), 1.0);

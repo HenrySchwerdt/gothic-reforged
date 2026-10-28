@@ -265,6 +265,9 @@ pub fn sleep_perception() -> Sc {
             gothic_portcov::count("on_animal_sleep") as f64,
         );
         sleeping_spot(cx, id);
+        // (a hostile wolf would attack before it lies down; the callback is what is under test)
+        cx.core_mut().0.sim.actor_mut(id).base_attitude_to_player =
+            gothic_sim::types::Attitude::Neutral;
         cx.core_mut().0.sim.qa_enter_state(id, State::AnimalSleep);
     });
     sc.wait(5.0);

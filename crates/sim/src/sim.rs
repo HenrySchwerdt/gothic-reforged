@@ -1347,6 +1347,14 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.actors[i].brain.next_perception_ms = now + 100;
         let id = self.actors[i].id;
+        // A sleeper notices the world only through its own callback (`OnSleep`, `OnAnimalSleep`).
+        if matches!(
+            self.script.npc(id).task_cb,
+            gothic_script::routine::state::Callback::OnSleep
+                | gothic_script::routine::state::Callback::OnAnimalSleep
+        ) {
+            return;
+        }
         // A gate guard scans only when `OnGateGuard` (S:86c80) says so.
         if self.script.npc(id).local_cb == gothic_script::routine::state::Callback::OnGateGuard {
             let mut host = crate::script_host::SimHost::new(self);

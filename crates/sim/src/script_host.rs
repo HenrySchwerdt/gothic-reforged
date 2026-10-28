@@ -2219,6 +2219,41 @@ mod tests {
     }
 
     #[test]
+    fn a_sleeping_animal_listens_for_the_player() {
+        let mut s = sim();
+        let hero = s.hero.unwrap();
+        s.script_routines = true;
+        let wolf = s.spawn(
+            Actor::npc(ActorId(0), "Wolf", Species::Wolf, 5, 5),
+            Pos::flat(300.0, 0.0),
+        );
+        s.actor_mut(wolf).base_attitude_to_player = crate::types::Attitude::Hostile;
+        let spot = s
+            .script
+            .add_point(se::UseType::SleepGround, EntityId::NONE, Pos::flat(300.0, 0.0));
+        s.script.npc_mut(wolf).dest = spot;
+        s.qa_enter_state(wolf, State::AnimalSleep);
+        let mut seen = Vec::new();
+        for i in 0..400 {
+            // The hero is far away while the wolf lies down, then comes close.
+            let x = if i < 100 { 5000.0 } else { 380.0 + (i % 40) as f32 * 3.0 };
+            s.world.teleport(hero, Pos::flat(x, 0.0));
+            s.step();
+            seen.push((s.script.npc(wolf).state, s.script.npc(wolf).task_cb));
+        }
+        assert!(
+            seen.iter().any(|(st, _)| *st == Some(State::AnimalSleepSleepGround)),
+            "{:?}",
+            seen.last()
+        );
+        assert!(
+            seen.iter().any(|(st, _)| *st == Some(State::Attack)),
+            "the woken wolf attacks: {:?}",
+            seen.last()
+        );
+    }
+
+    #[test]
     fn a_smith_hammers_at_the_anvil() {
         let ev = routine_events(se::UseType::Anvil, &[se::UseType::Forge], 3000);
         assert!(ev.iter().any(|(_, e)| matches!(
