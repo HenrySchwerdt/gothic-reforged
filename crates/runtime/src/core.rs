@@ -1046,9 +1046,16 @@ impl Core {
                 self.grant_perks(&[p.as_str()]);
             }
             Command::GiveHero { template, amount } => {
-                self.sim
-                    .state
-                    .add_item(&template.to_ascii_lowercase(), *amount);
+                // Into the hero's own bag with the item's rule data (a stack without it cannot be
+                // worn or held), the game state mirrors it.
+                let info = self.sim.items.info(template);
+                self.sim.actor_mut(self.hero).inventory.add_items(
+                    template,
+                    info,
+                    (*amount).min(i32::MAX as u32) as i32,
+                    0,
+                    gothic_gameplay::inventory::StackType::Normal,
+                );
                 self.sync_inventory();
                 self.state_rev += 1;
             }
