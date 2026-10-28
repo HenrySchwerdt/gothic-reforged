@@ -286,6 +286,9 @@ pub struct Sim<W: WorldQuery> {
     /// What the hero's body does (`Entity::IsSprinting` etc. in the stamina tick, S:b0520); the
     /// host sets it from the movement mode machine.
     pub hero_move: vitals::Movement,
+    /// Did the hero change his position during the last step (`IsStanding`, S:9100)?
+    pub hero_moved: bool,
+    hero_pos_prev: Pos,
     pub npc_templates: BTreeMap<String, NpcRecord>,
     /// Script-port state (routine tasks, interact points, queued AI commands), see
     /// [`crate::script_host`].
@@ -351,6 +354,8 @@ impl<W: WorldQuery> Sim<W> {
             dialog_partner: None,
             gui_open: false,
             hero_move: vitals::Movement::Idle,
+            hero_moved: false,
+            hero_pos_prev: Pos::default(),
             npc_templates: BTreeMap::new(),
             script: crate::script_host::ScriptTables::default(),
             processing: None,
@@ -536,6 +541,11 @@ impl<W: WorldQuery> Sim<W> {
 
     pub fn step(&mut self) {
         self.tick += 1;
+        if let Some(h) = self.hero {
+            let p = self.pos(h);
+            self.hero_moved = p.dist(self.hero_pos_prev) > 0.5;
+            self.hero_pos_prev = p;
+        }
         let now = self.now_ms();
         self.clock
             .advance(u64::from(self.cfg.tick_ms), self.cfg.game_speed);
@@ -1361,6 +1371,14 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.actors[i].brain.next_perception_ms = now + 100;
         let id = self.actors[i].id;
+        // A sleeper notices the world only through its own callback (`OnSleep`, `OnAnimalSleep`).
+        if matches!(
+            self.script.npc(id).task_cb,
+            gothic_script::routine::state::Callback::OnSleep
+                | gothic_script::routine::state::Callback::OnAnimalSleep
+        ) {
+            return;
+        }
         // A gate guard scans only when `OnGateGuard` (S:86c80) says so.
         if self.script.npc(id).local_cb == gothic_script::routine::state::Callback::OnGateGuard {
             let mut host = crate::script_host::SimHost::new(self);

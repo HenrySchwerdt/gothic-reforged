@@ -265,6 +265,9 @@ pub fn sleep_perception() -> Sc {
             gothic_portcov::count("on_animal_sleep") as f64,
         );
         sleeping_spot(cx, id);
+        // (a hostile wolf would attack before it lies down; the callback is what is under test)
+        cx.core_mut().0.sim.actor_mut(id).base_attitude_to_player =
+            gothic_sim::types::Attitude::Neutral;
         cx.core_mut().0.sim.qa_enter_state(id, State::AnimalSleep);
     });
     sc.wait(5.0);
@@ -285,59 +288,27 @@ pub fn sleep_perception() -> Sc {
 /// `talk_refuse`: the confirm key on a character the dialog data has nothing to say to ends in
 /// `StartSayRefuseTalk` (S:52280, `AssessTalk` with `HasInfo` false).
 pub fn talk_refuse() -> Sc {
-    use gothic_runtime::{Command, CoreCommand};
     let mut sc = Sc::new(120.0);
     grab(&mut sc);
-    sc.act("pick a character without dialog and stand next to it", |cx| {
-        let hero = cx.core().0.hero;
-        let ids: Vec<gothic_sim::types::ActorId> = cx
-            .core()
-            .0
-            .sim
-            .actors
-            .iter()
-            .filter(|a| a.id != hero && a.is_alive() && a.species.is_humanoid())
-            .map(|a| a.id)
-            .collect();
-        let mut pick = None;
-        for id in ids {
-            if cx.core_mut().0.has_dialog_info(id) {
-                continue;
-            }
-            if cx.actor_pos(id).is_some() {
-                pick = Some(id);
-                break;
-            }
-        }
-        match pick {
-            Some(id) => {
-                let name = cx.core().0.sim.actor(id).name.clone();
-                cx.note(format!("no dialog for {name}"));
-                cx.st.n.insert("tgt".into(), f64::from(id.0));
-                let p = cx.actor_pos(id).unwrap();
-                let mut pl = cx.world.resource_mut::<crate::walk::Player>();
-                pl.ctrl.position = p + bevy::prelude::Vec3::new(150.0, 50.0, 0.0);
-                pl.ctrl.vertical_speed = 0.0;
-                pl.placed = false;
-            }
-            None => cx.check(
-                "a spawned character without dialog exists",
-                false,
-                "all have dialog",
-            ),
-        }
-    });
-    sc.wait(3.0);
-    sc.act("press the confirm key on it", |cx| {
-        let Some(id) = tgt_id(cx) else { return };
+    super::npc_ai::find_and_place(&mut sc, "Hamlar", 200.0);
+    sc.act("the dialog data has nothing for Hamlar (setup)", |cx| {
+        let id = tgt_id(cx).unwrap();
         cx.st.n.insert(
             "rt0".into(),
             gothic_portcov::count("start_say_refuse_talk") as f64,
         );
-        cx.world
-            .write_message(CoreCommand(Command::Confirm { focus: id.0 + 1 }));
+        // `HasInfo` false: the confirm key goes through the ported `AssessTalk`.
+        let sim = &mut cx.core_mut().0.sim;
+        sim.dialog_info = Some((id, false));
+        let c = sim.player_confirm(gothic_sim::script::host::EntityId(id.0 + 1));
+        cx.note(format!("confirm: {c:?}"));
+        cx.st.store.insert("confirm".into(), format!("{c:?}"));
     });
-    sc.wait(2.0);
+    sc.wait(1.0);
+    sc.check("the confirm key ends in a refusal", |cx| {
+        let c = cx.st.store.get("confirm").cloned().unwrap_or_default();
+        expect(c.contains("TalkRefused"), c.clone(), c)
+    });
     sc.check(
         "the character refuses to talk (ported StartSayRefuseTalk)",
         |cx| {

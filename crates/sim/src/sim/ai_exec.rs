@@ -189,7 +189,7 @@ impl<W: WorldQuery> Sim<W> {
     pub(super) fn script_routine_think(&mut self, i: usize, now: u64) {
         if self.qa_drive == Some(self.actors[i].id) {
             // QA: the state entered by `qa_enter_state` runs as it would at its work point.
-            self.script_task_think(i, now);
+            self.script_state_drive(i, now);
             return;
         }
         use gothic_script::routine::select::select_routine_task;
