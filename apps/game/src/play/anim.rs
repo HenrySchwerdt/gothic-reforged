@@ -69,11 +69,14 @@ pub fn start_overlay(
     let rig = animator.rig.clone();
     match lib.motion(&rig, &name) {
         Ok(motion) => {
-            // Pack clips are full-body animations; the stock ones act on the upper body.
-            let mask: Vec<f32> = if motion.clip.name.starts_with(super::er_pack::PREFIX) {
-                vec![1.0; rig.slot_node.len()]
-            } else {
+            // A script clip plays on the whole body: the original has no body mask and no
+            // additive layer (`SetBlendMode` mix is never set, see WIRING_ENGINE_STATUS.md); a
+            // motion replaces the nodes it has tracks for, blended in by its intro fade.
+            let mask: Vec<f32> = if std::env::var_os("GR_OVERLAY_UPPER").is_some() {
+                // the old host rule, kept for before/after renders (`overlay_visual` QA)
                 rig.upper_body_mask()
+            } else {
+                vec![1.0; rig.slot_node.len()]
             };
             animator.set_overlay(Some(Overlay {
                 motion,
@@ -91,17 +94,56 @@ pub fn start_overlay(
     }
 }
 
-/// Runs the overlay queue: clears finished overlays and starts the next step.
+/// Runs the overlay queue: clears finished overlays and starts the next step. The weight of a
+/// running overlay follows the clip's fades of `G3_Ani_Blendings.txt`: it comes in over the
+/// smaller of the extro of what played before and its own intro (`sAIPlayAniStart`,
+/// Game:0x1016a360, `blend::script_fade`) and leaves over the standard fade at its end
+/// (the locomotion mixer replacing a finished clip, `blend::mixer_fade`).
 pub fn overlay_system(
     mut lib: ResMut<ActorLibrary>,
-    mut q: Query<(&mut Animator, &mut OverlayQueue, &CombatStance)>,
+    blendings: Res<super::Blendings>,
+    mut q: Query<(Entity, &mut Animator, &mut OverlayQueue, &CombatStance)>,
+    mut fades: Local<std::collections::HashMap<Entity, (String, f32)>>,
 ) {
-    for (mut animator, mut queue, stance) in &mut q {
+    for (entity, mut animator, mut queue, stance) in &mut q {
         let done = animator
             .overlay
             .as_ref()
             .is_none_or(|o| o.time >= o.motion.clip.duration);
         if !done {
+            // intro fade of a fresh overlay (what played before is the primary clip)
+            let name = animator
+                .overlay
+                .as_ref()
+                .map(|o| o.motion.clip.name.clone())
+                .unwrap_or_default();
+            let intro = match fades.get(&entity) {
+                Some((n, f)) if *n == name => *f,
+                _ => {
+                    let old = animator.current_name().unwrap_or("").to_owned();
+                    let f = gothic_animation::blend::script_fade(&blendings.0, &old, &name);
+                    fades.insert(entity, (name, f));
+                    f
+                }
+            };
+            let outro = gothic_animation::blend::STANDARD_FADE;
+            if let Some(o) = animator.overlay.as_mut()
+                && !super::er_pack::is_pack(o)
+            {
+                let t = o.time;
+                let d = o.motion.clip.duration;
+                let w_in = if intro > 1e-4 {
+                    (t / intro).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let w_out = if outro > 1e-4 {
+                    ((d - t) / outro).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                o.weight = w_in.min(w_out);
+            }
             continue;
         }
         animator.overlay = None;

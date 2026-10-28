@@ -153,6 +153,22 @@ stacks in the state yet. Left for the dialog owner.
   vector's meaning (direction / mass term) sits in the physics property set's virtual function and is not resolved, and the
   host has no rigid bodies for loose items, so the settle is not ported; items still appear at the character's feet.
 
+## Script clips on the whole body (done) and the drop vector
+
+* `anim.rs` overlays (hit reactions of the hero, casts, shot recoveries) no longer use `Rig::upper_body_mask`: the clip plays on
+  the whole body at weight 1 like a primary-slot script clip, coming in over `min(extro(old), intro(new))` and leaving over the
+  standard fade (`blend::script_fade`, `mixer_fade`; `G3_Ani_Blendings.txt` via `eCAnimationAdmin::GetAniIntroBlending`
+  0x100213a0 / `GetAniExtroBlending` 0x10021450; `sAIPlayAniStart` 0x1016a360). The combat moves of the hero and the NPCs
+  (`hero_moves`, `npc_moves`) already played full-body in the primary slot. Remaining masked host constructs: the aim overlays
+  of `ranged.rs` (slots 4 and 5 of `UpdateAim`: whether the original's aim clips carry leg tracks was not measured) and the
+  actor viewer. `GR_OVERLAY_UPPER=1` restores the old mask for comparisons: QA `overlay_visual` renders the walk, a stumble and a
+  swing while walking (`.local/qa/overlay_visual/`), before in `.local/qa/cov-engine/ov_before`, after in `ov_after`; the legs
+  now follow the stumble clip.
+* Drop impulse: virtual +0x170 of the physics property set (type 0xd, class `eCRigidBody_PS`) is **`SetLinearVelocity`**
+  (RTTI slot 92, 108 bytes), not a getter, and +0x1c8 is `AddForceAtPos` (slot 114). `Drop` therefore resets the velocity through
+  the first call and then applies a force of 150.0 x a vector at the item's world position; the vector is a stack local the
+  decompiler did not tie to a value, so the force direction stays open. No rigid bodies exist for loose items in the host.
+
 ## EMotionFX in the dump (mix mode)
 
 EMotionFX is linked statically into Engine.dll: `MotionLayerSystem` (7 functions), `MotionSystem` (2), `SkeletalMotionInstance` (6),
