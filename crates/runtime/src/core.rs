@@ -588,7 +588,7 @@ impl Core {
         let Some(def) = self.sim.items.get(item).cloned() else {
             return false;
         };
-        self.sim.actor_mut(self.hero).equipment.equip(def);
+        self.sim.wear(self.hero, &def);
         true
     }
 
@@ -619,6 +619,9 @@ impl Core {
             self.command(c, &mut out);
         }
         self.clock += f64::from(dt);
+        // Writes to the game state since the last tick (a granted item) reach the hero's bag
+        // before the step links its equipment; otherwise the bag would win the comparison.
+        self.sync_inventory();
         self.sync_sectors(&mut out);
         self.update_processing_range(&mut out);
         self.acc += dt;
@@ -717,6 +720,7 @@ impl Core {
         );
         let scene = self.range.scene_mut();
         let mut changed = false;
+        let mut saved = Vec::new();
         for (name, on) in wanted {
             let known = scene.sectors.sector(&name).map(|s| s.enabled);
             if known == Some(on) {
@@ -725,14 +729,21 @@ impl Core {
             if known.is_none() {
                 scene.sectors.register(&name, on);
             }
-            scene.sectors.enable(&mut scene.tree, &name, on);
+            saved.push(gothic_world::sector::SectorSave { name, enabled: on });
+        }
+        // `gCSectorPersistence_PS::UpdateSectors`: re-apply the image of the flags.
+        let unknown = scene.sectors.update_all(&mut scene.tree, &saved);
+        for s in &saved {
+            if unknown.contains(&s.name) {
+                continue;
+            }
             let shown = scene
                 .sectors
-                .sector(&name)
-                .map_or_else(|| name.clone(), |s| s.name.clone());
+                .sector(&s.name)
+                .map_or_else(|| s.name.clone(), |x| x.name.clone());
             out.push(Event::SectorSwitched {
                 sector: shown,
-                enabled: on,
+                enabled: s.enabled,
             });
             changed = true;
         }
@@ -828,7 +839,7 @@ impl Core {
                     && species.can_attack()
                     && let Some(w) = gothic_sim::data::default_weapon(&self.sim.items, species)
                 {
-                    self.sim.actor_mut(id).equipment.equip(w);
+                    self.sim.wear(id, &w);
                 }
                 out.push(Event::ActorSpawned {
                     actor: id,
@@ -1014,7 +1025,7 @@ impl Core {
             }
             Command::EquipNpc { actor, template } => {
                 if let Some(def) = self.sim.items.get(template).cloned() {
-                    self.sim.actor_mut(*actor).equipment.equip(def);
+                    self.sim.wear(*actor, &def);
                 }
             }
             Command::GiveNpc {

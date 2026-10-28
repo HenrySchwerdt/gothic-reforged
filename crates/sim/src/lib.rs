@@ -47,6 +47,7 @@ pub mod trade;
 pub mod types;
 pub mod vitals;
 pub mod world;
+pub mod worn;
 
 pub use actor::Actor;
 pub use combat::{Attack, HitOutcome};

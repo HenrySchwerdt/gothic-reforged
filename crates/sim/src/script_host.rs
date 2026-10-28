@@ -571,6 +571,20 @@ impl<'a, W: WorldQuery> SimHost<'a, W> {
             .unwrap_or_default()
     }
 
+    /// `UnEquipStack` of whatever the hand `slot` holds.
+    fn unwear_slot(&mut self, e: EntityId, slot: se::Slot) {
+        let Some(id) = actor_of(e) else { return };
+        let Some(name) = self.equipped(e, slot).map(|i| i.name.clone()) else {
+            return;
+        };
+        if matches!(
+            slot,
+            se::Slot::RightHand | se::Slot::LeftHand | se::Slot::EquipLeftHand
+        ) {
+            self.sim.unwear(id, &name);
+        }
+    }
+
     fn equipped(&self, e: EntityId, slot: se::Slot) -> Option<&crate::item::ItemDef> {
         let a = self.actor(e)?;
         match slot {
@@ -1505,32 +1519,33 @@ impl<W: WorldQuery> InventoryApi for SimHost<'_, W> {
         if stack < 0 {
             return;
         }
-        if let Some(a) = self.actor_mut(e) {
-            if stack == se::Slot::RightHand as i32 + 1 {
-                a.equipment.right = None;
-            } else if stack == se::Slot::LeftHand as i32 + 1 {
-                a.equipment.left = None;
-            }
-        }
+        let slot = if stack == se::Slot::RightHand as i32 + 1 {
+            se::Slot::RightHand
+        } else if stack == se::Slot::LeftHand as i32 + 1 {
+            se::Slot::LeftHand
+        } else {
+            return;
+        };
+        self.unwear_slot(e, slot);
     }
     fn hold_stacks(&mut self, e: EntityId, right: i32, left: i32) {
         // `PSInventory::HoldStacks`: the held stacks move from the back slots into the hands; no
         // stack held means everything hangs on the back again.
-        if let Some(a) = self.actor_mut(e) {
-            a.drawn = right >= 0 || left >= 0;
-        }
+        let Some(id) = actor_of(e) else { return };
+        let items = &self.sim.items;
+        let (r, l) = self.sim.actors[id.0 as usize].weapon_defs(items);
+        self.sim.hold(
+            id,
+            r.as_ref().filter(|_| right >= 0),
+            l.as_ref().filter(|_| left >= 0),
+        );
+        self.sim.actors[id.0 as usize].drawn = right >= 0 || left >= 0;
     }
     fn drop_slot(&mut self, e: EntityId, slot: se::Slot) {
         if let Some(a) = actor_of(e) {
             self.sim.script.dropped.push((a, slot));
         }
-        if let Some(a) = self.actor_mut(e) {
-            match slot {
-                se::Slot::RightHand => a.equipment.right = None,
-                se::Slot::LeftHand | se::Slot::EquipLeftHand => a.equipment.left = None,
-                _ => {}
-            }
-        }
+        self.unwear_slot(e, slot);
     }
     fn delete_unequipped_stacks(&mut self, e: EntityId) {
         if let Some(a) = self.actor_mut(e) {

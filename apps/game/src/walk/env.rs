@@ -56,7 +56,7 @@ pub struct OrigEnv {
     /// Static point lights (Bevy space, metres), bucketed by [`LIGHT_CELL`].
     light_grid: HashMap<(i32, i32), Vec<StaticLight>>,
     since_lights: f32,
-    char_lights: Vec<StaticLight>,
+    char_packet: lights::Packet,
     /// The world's wind entity, waiting to be written into the materials.
     pending_wind: Option<SpeedTreeWind>,
     /// The world's precipitation entity and the emitter the weather currently asks for at the
@@ -96,7 +96,7 @@ impl OrigEnv {
             since_push: PUSH_INTERVAL,
             light_grid: HashMap::new(),
             since_lights: LIGHT_INTERVAL,
-            char_lights: Vec::new(),
+            char_packet: lights::Packet::default(),
             pending_wind: None,
             precip_base: PrecipParams::default(),
             precip: PrecipParams::default(),
@@ -374,34 +374,34 @@ fn env_update(
             .flatten()
             .copied()
             .collect();
-        let sel = lights::select(c.to_array(), 12.0, cand, CHAR_LIGHTS);
-        if sel != env.char_lights {
+        // One packet for the characters around the camera: the strongest three of the lights
+        // reaching a 12 m box (`GetDynamicStaticLightData`).
+        let r = 12.0;
+        let packet = lights::packet(
+            [c.x - r, c.y - r, c.z - r],
+            [c.x + r, c.y + r, c.z + r],
+            cand,
+        );
+        if packet != env.char_packet {
             if std::env::var_os("GR_ENV_LOG").is_some() {
-                for l in &sel {
+                for i in 0..packet.count {
                     eprintln!(
-                        "CHARLIGHT cam={:?} pos={:?} col={:?} range_m={:.1} d={:.1}",
+                        "CHARLIGHT cam={:?} pos={:?} range2inv={:.6}",
                         c,
-                        l.position,
-                        l.color,
-                        l.range,
-                        (Vec3::from(l.position) - c).length()
+                        [packet.x[i], packet.y[i], packet.z[i]],
+                        packet.inv_range2[i]
                     );
                 }
             }
             let mut pos = [Vec4::ZERO; CHAR_LIGHTS];
             let mut col = [Vec4::ZERO; CHAR_LIGHTS];
-            for (i, l) in sel.iter().enumerate() {
-                pos[i] = Vec4::new(
-                    l.position[0],
-                    l.position[1],
-                    l.position[2],
-                    1.0 / (l.range * l.range),
-                );
-                let k = lights::COLOR_BOOST;
-                col[i] = Vec4::new(l.color[0] * k, l.color[1] * k, l.color[2] * k, 0.0);
+            for i in 0..packet.count.min(CHAR_LIGHTS) {
+                pos[i] = Vec4::new(packet.x[i], packet.y[i], packet.z[i], packet.inv_range2[i]);
+                // the packet already carries the colour boost
+                col[i] = Vec4::new(packet.r[i], packet.g[i], packet.b[i], 0.0);
             }
             push_char_lights(&mut chars, pos, col);
-            env.char_lights = sel;
+            env.char_packet = packet;
         }
     }
     if changed && env.since_push >= PUSH_INTERVAL {

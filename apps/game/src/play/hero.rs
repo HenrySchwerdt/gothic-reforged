@@ -866,13 +866,14 @@ fn focus(
         _ => None,
     };
     // `PSFocus::GetFocusEntity(melee)` for `PS_Melee_Loop`: the same search in the melee mode.
-    state.melee_focus = locked
-        .or_else(|| {
-            find_focus(&FocusConfig::hero(), FocusMode::Melee, &viewer, &cands).and_then(|i| match ids[i] {
-                Target::Npc(a) | Target::Body(a) => Some(a),
-                _ => None,
-            })
-        });
+    state.melee_focus = locked.or_else(|| {
+        find_focus(&FocusConfig::hero(), FocusMode::Melee, &viewer, &cands).and_then(|i| match ids
+            [i]
+        {
+            Target::Npc(a) | Target::Body(a) => Some(a),
+            _ => None,
+        })
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -897,6 +898,7 @@ pub(super) fn sync(
     parts: Query<&gothic_animation::runtime::PartMeshes, With<HeroActor>>,
     mut part_vis: Query<&mut Visibility, (Without<HeroActor>, Without<PlayerBody>)>,
     mut body_hidden: Local<bool>,
+    mut hero_parts: Local<Option<gothic_animation::body_parts::BodyPartSet>>,
 ) {
     if let Ok(mut v) = body.single_mut() {
         *v = Visibility::Hidden;
@@ -906,13 +908,24 @@ pub(super) fn sync(
     if hide_body != *body_hidden {
         *body_hidden = hide_body;
         if let Ok(p) = parts.single() {
-            for (_, es) in &p.0 {
+            // The actor's part list (`eCVisualAnimationFactory`): the visibility flag of each
+            // part is the factory's, the mesh entities follow it.
+            let set = hero_parts.get_or_insert_with(|| {
+                let mut s = gothic_animation::body_parts::BodyPartSet::new();
+                for (name, _) in &p.0 {
+                    s.add(name, name, None, 1.0);
+                }
+                s
+            });
+            for (name, es) in &p.0 {
+                set.set_visible(name, !hide_body);
+                let shown = set.is_visible(name);
                 for e in es {
                     if let Ok(mut v) = part_vis.get_mut(*e) {
-                        *v = if hide_body {
-                            Visibility::Hidden
-                        } else {
+                        *v = if shown {
                             Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
                         };
                     }
                 }

@@ -531,10 +531,6 @@ impl<W: WorldQuery> Sim<W> {
         let has_ranged = {
             let a = &self.actors[i];
             matches!(a.equipment.left_use(), Use::Bow | Use::CrossBow)
-                || a.brain.melee_kit.as_ref().is_some_and(|(l, _)| {
-                    l.as_ref()
-                        .is_some_and(|d| matches!(d.use_kind(), Use::Bow | Use::CrossBow))
-                })
                 || a.inventory.iter().any(|(t, _)| {
                     self.items
                         .get(t)
@@ -547,7 +543,6 @@ impl<W: WorldQuery> Sim<W> {
             select_weapon_mode(&host, npc, entity(tid), has_ranged)
         };
         let Some(want) = want else { return };
-        self.npc_stow_melee(i);
         match want {
             M::Melee | M::None => self.npc_ready_melee(i),
             M::Ranged => self.npc_ready_ranged(i),
@@ -571,71 +566,62 @@ impl<W: WorldQuery> Sim<W> {
         self.actors[i].drawn = true;
     }
 
-    /// Remember the melee weapons before the hands take something else.
-    fn npc_stow_melee(&mut self, i: usize) {
-        let a = &mut self.actors[i];
-        if a.equipment.weapon_mode() == crate::item::WeaponMode::Melee {
-            a.brain.melee_kit = Some((a.equipment.left.take(), a.equipment.right.take()));
-        } else if matches!(a.equipment.right_use(), Use::Cast | Use::Arrow | Use::Bolt) {
-            a.equipment.right = None;
-            if matches!(a.equipment.left_use(), Use::Bow | Use::CrossBow) {
-                a.equipment.left = None;
-            }
-        }
-    }
-
+    /// The melee weapons go into the hands (`HoldStacks`): the ones waiting in the carry slots
+    /// (or already drawn), else one found in the bag, else the species' natural weapon.
     fn npc_ready_melee(&mut self, i: usize) {
-        let kit = self.actors[i].brain.melee_kit.take();
-        let a = &mut self.actors[i];
-        if let Some((l, r)) = kit {
-            a.equipment.left = l;
-            a.equipment.right = r;
+        let items = &self.items;
+        let a = &self.actors[i];
+        let (r, l) = a.weapon_defs(items);
+        let melee = |d: &Option<crate::item::ItemDef>| {
+            d.as_ref().is_some_and(|d| {
+                d.use_kind().is_melee_weapon() || matches!(d.use_kind(), Use::Shield | Use::Torch)
+            })
+        };
+        let right = r.filter(|d| d.use_kind().is_melee_weapon());
+        if right.is_some() {
+            let left = if melee(&l) { l } else { None };
+            let id = a.id;
+            self.sim_hold(id, right.as_ref(), left.as_ref());
             return;
         }
-        if a.equipment.weapon_mode() == crate::item::WeaponMode::Melee {
-            return;
-        }
-        a.equipment.left = None;
         let found = a
             .inventory
             .iter()
-            .filter_map(|(t, _)| self.items.get(t))
+            .filter_map(|(t, _)| items.get(t))
             .find(|d| d.use_kind().is_melee_weapon())
             .cloned();
         let sp = a.species;
-        let def = found.or_else(|| crate::data::default_weapon(&self.items, sp));
-        if let Some(d) = def {
-            self.actors[i].equipment.equip(d);
-        }
+        let def = found.or_else(|| crate::data::default_weapon(items, sp));
+        let id = a.id;
+        self.sim_hold(id, def.as_ref(), None);
+    }
+
+    fn sim_hold(
+        &mut self,
+        id: ActorId,
+        right: Option<&crate::item::ItemDef>,
+        left: Option<&crate::item::ItemDef>,
+    ) {
+        self.hold(id, right, left);
     }
 
     fn npc_ready_ranged(&mut self, i: usize) {
+        let items = &self.items;
         let a = &self.actors[i];
-        let bow = a
-            .brain
-            .melee_kit
-            .iter()
-            .filter_map(|(l, _)| l.clone())
-            .find(|d| matches!(d.use_kind(), Use::Bow | Use::CrossBow))
-            .or_else(|| {
-                a.inventory
-                    .iter()
-                    .filter_map(|(t, _)| self.items.get(t))
-                    .find(|d| matches!(d.use_kind(), Use::Bow | Use::CrossBow))
-                    .cloned()
-            });
+        let is_bow = |d: &crate::item::ItemDef| matches!(d.use_kind(), Use::Bow | Use::CrossBow);
+        let bow = a.weapon_defs(items).1.filter(is_bow).or_else(|| {
+            a.inventory
+                .iter()
+                .filter_map(|(t, _)| items.get(t))
+                .find(|d| is_bow(d))
+                .cloned()
+        });
         let Some(bow) = bow else {
             return self.npc_ready_melee(i);
         };
-        let ammo = if bow.use_kind() == Use::CrossBow {
-            "Bolt"
-        } else {
-            "Arrow"
-        };
-        let ammo_def = self.items.get(ammo).cloned();
-        let a = &mut self.actors[i];
-        a.equipment.left = Some(bow);
-        a.equipment.right = ammo_def;
+        // the arrows of the quiver come with the bow in the hand (`derive_equipment`)
+        let id = a.id;
+        self.sim_hold(id, None, Some(&bow));
     }
 
     fn npc_ready_spell(&mut self, i: usize, spell: &str) {
@@ -645,18 +631,12 @@ impl<W: WorldQuery> Sim<W> {
         let a = &mut self.actors[i];
         a.inventory.insert(spell, 1);
         // A staff stays in the other hand (the `(Staff, Cast)` row of the hand table, CA 2.12).
+        let items = &self.items;
         let staff = a
-            .brain
-            .melee_kit
-            .as_ref()
-            .and_then(|(l, r)| {
-                [l, r]
-                    .into_iter()
-                    .flatten()
-                    .find(|d| d.use_kind() == Use::Staff)
-            })
-            .cloned();
-        a.equipment.left = staff;
-        a.equipment.right = Some(def);
+            .weapon_defs(items)
+            .0
+            .filter(|d| d.use_kind() == Use::Staff);
+        let id = a.id;
+        self.sim_hold(id, Some(&def), staff.as_ref());
     }
 }

@@ -120,8 +120,6 @@ pub struct Brain {
     pub plan: NpcPlan,
     /// Headless timers: when the `Raise` clip of the move in flight started.
     pub last_raise_ms: Option<u64>,
-    /// The melee weapons stowed while the actor holds a bow or a spell (`left`, `right`).
-    pub melee_kit: Option<(Option<crate::item::ItemDef>, Option<crate::item::ItemDef>)>,
     pub task: Task,
     pub since_ms: u64,
     /// Task to return to after a stumble.

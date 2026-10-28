@@ -270,14 +270,29 @@ impl<W: WorldQuery> Sim<W> {
             a.enclave = r.enclave.clone();
             a.base_attitude_to_player = r.attitude;
             a.level = r.level;
-            a.equipment = Equipment {
-                left: r.equipment.left.clone(),
-                right: r.equipment.right.clone(),
-                body: r.equipment.body.clone(),
-                accessories: r.equipment.accessories.clone(),
-            };
             a.inventory = r.inventory.clone();
             a.inventory.rebind(items);
+            if a.inventory.stacks().iter().any(|s| s.is_linked()) {
+                // the stack list carries what is worn
+                a.derive_equipment(items);
+            } else {
+                // a save of the time before the links were kept: put the saved items on
+                a.equipment = Equipment::default();
+                let (right, left) = (r.equipment.right.clone(), r.equipment.left.clone());
+                let eq = &r.equipment;
+                for d in eq
+                    .right
+                    .iter()
+                    .chain(&eq.left)
+                    .chain(&eq.body)
+                    .chain(&eq.accessories)
+                {
+                    a.wear(d, items);
+                }
+                if r.drawn {
+                    a.hold(right.as_ref(), left.as_ref(), items);
+                }
+            }
             a.perks = r.perks.clone();
             a.immortal = r.immortal;
             a.boss = r.boss;

@@ -480,14 +480,32 @@ impl<W: WorldQuery> Sim<W> {
         self.equip_def(id, def).map_err(|u| format!("{u:?}"))
     }
 
+    /// Put `def` on `id` (`gCInventory_PS::EquipStack`).
+    pub fn wear(&mut self, id: ActorId, def: &ItemDef) {
+        let items = &self.items;
+        self.actors[id.0 as usize].wear(def, items);
+    }
+
+    /// `HoldStacks` for `id`: the given items into the hands, the rest back to the carry slots.
+    pub fn hold(&mut self, id: ActorId, right: Option<&ItemDef>, left: Option<&ItemDef>) {
+        let items = &self.items;
+        self.actors[id.0 as usize].hold(right, left, items);
+    }
+
+    /// `UnEquipStack` by template.
+    pub fn unwear(&mut self, id: ActorId, template: &str) {
+        let items = &self.items;
+        self.actors[id.0 as usize].unwear(template, items);
+    }
+
     pub fn equip_def(&mut self, id: ActorId, def: ItemDef) -> Result<(), Unmet> {
         let a = &self.actors[id.0 as usize];
         // NPC equipment ignores requirements (loot is generated for them).
         if a.is_player {
             check_requirements(&def, |t| a.attribute(&self.cfg, t), &a.perks)?;
         }
-        let a = &mut self.actors[id.0 as usize];
-        a.equipment.equip(def);
+        let items = &self.items;
+        self.actors[id.0 as usize].wear(&def, items);
         Ok(())
     }
 
@@ -842,7 +860,10 @@ impl<W: WorldQuery> Sim<W> {
             let mut host = crate::script_host::SimHost::new(self);
             let ve = crate::script_host::entity_of(victim);
             host.self_entity = ve;
-            let ke = killer.map_or(gothic_script::host::EntityId::NONE, crate::script_host::entity_of);
+            let ke = killer.map_or(
+                gothic_script::host::EntityId::NONE,
+                crate::script_host::entity_of,
+            );
             gothic_script::down::kill(&mut host, ve, ke);
         }
         self.script.felled.clear();
@@ -935,7 +956,10 @@ impl<W: WorldQuery> Sim<W> {
         {
             let mut host = crate::script_host::SimHost::new(self);
             host.self_entity = ve;
-            let ae = by.map_or(gothic_script::host::EntityId::NONE, crate::script_host::entity_of);
+            let ae = by.map_or(
+                gothic_script::host::EntityId::NONE,
+                crate::script_host::entity_of,
+            );
             gothic_script::down::defeat(&mut host, ve, ae);
         }
         self.script.felled.clear();
