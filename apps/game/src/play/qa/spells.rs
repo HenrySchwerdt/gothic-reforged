@@ -73,10 +73,16 @@ fn collect(sc: &mut Sc, key: &'static str) {
     let mut cur: MessageCursor<CoreEvent> = MessageCursor::default();
     sc.watch(move |cx| {
         let idx = cx.st.n.get(&format!("{key}i")).copied().unwrap_or(-1.0) as i64;
+        let hero_entity = cx.core().0.hero.0 + 1;
         let evs: Vec<String> = {
             let msgs = cx.world.resource::<Messages<CoreEvent>>();
             cur.read(msgs)
                 .filter_map(|e| match &e.0 {
+                    // Only the hero's own casts count (the shaman casts at him all the time).
+                    Event::Magic(
+                        gothic_sim::script::magic::api::MagicEvent::Phase { caster, .. }
+                        | gothic_sim::script::magic::api::MagicEvent::Cast { caster, .. },
+                    ) if caster.0 != hero_entity => None,
                     Event::Magic(m) => Some(format!("{m:?}")),
                     _ => None,
                 })
@@ -142,21 +148,39 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
             cx.st.n.insert(format!("{key}t0"), f64::from(cx.now));
             cx.st.n.insert(format!("{key}cast"), 0.0);
             let name = list[n].clone();
-            {
+            let was_transformed = {
                 // Setup: the hero is in his own shape again (a transformation lasts 30 to 60 s).
                 let mut core = cx.core_mut();
+                let any = !core.0.sim.script.magic.transforms.is_empty();
                 for t in core.0.sim.script.magic.transforms.iter_mut() {
                     t.until_ms = 0;
                 }
-            }
+                any
+            };
             if let Some(t) = tgt {
                 // Setup: the victim goes back to an idle routine state (a sleeper or a stunned
                 // character would hide the next spell's effect).
                 let idle = gothic_sim::script::routine::state::State::from_name("ZS_HangAround").unwrap();
                 cx.core_mut().0.sim.qa_enter_state(t, idle);
             }
-            // (the item is handed over a second later: the end of a transformation empties the hands)
-            cx.st.store.insert(format!("{key}pending"), name);
+            if was_transformed {
+                // (the item is handed over a second later: the end of a transformation empties the hands)
+                cx.st.store.insert(format!("{key}pending"), name);
+            } else {
+                cx.world.write_message(CoreCommand(Command::GiveHero {
+                    template: name.clone(),
+                    amount: 1,
+                }));
+                if name.to_ascii_lowercase().contains("potion") {
+                    // Potions are drunk (`UseItem`), they are no runes.
+                    cx.world
+                        .write_message(CoreCommand(Command::UseItem { template: name }));
+                    cx.st.n.insert(format!("{key}cast"), 1.0);
+                } else {
+                    cx.world
+                        .write_message(CoreCommand(Command::SelectSpell { template: name }));
+                }
+            }
             return Poll::Wait;
         }
         if phase_t > 1.0
