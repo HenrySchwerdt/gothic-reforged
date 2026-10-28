@@ -839,6 +839,67 @@ pub fn staff_parade() -> Sc {
     sc
 }
 
+/// The player states of jumping and sneaking in every weapon mode: `PS_Normal_Sneak`,
+/// `PS_Melee_Jump`, `PS_Melee_JumpBack`, `PS_Ranged_Jump`, `PS_Ranged_Sneak` (S:825f0 `PS_*_Jump`,
+/// `PS_*_Sneak`, S:7fc20, S:860c0). Records every state the hero's script passes through and
+/// asserts the expected ones were entered.
+pub fn player_states() -> Sc {
+    let mut sc = Sc::new(150.0);
+    grab(&mut sc);
+    sc.watch(|cx| {
+        let (_, state, _) = cx.core().0.sim.hero_script_state();
+        if let Some(s) = state {
+            let seen = cx.st.store.entry("seen".into()).or_default();
+            let name = format!(",{}", s.name());
+            if !seen.contains(&format!("{name},")) && !seen.ends_with(&name) {
+                seen.push_str(&name);
+            }
+        }
+    });
+    sc.act("setup: stamina and health", |cx| set_hero_full(cx));
+    sc.wait(2.0);
+    sc.act("Ctrl: sneak on", |cx| cx.tap(KeyCode::ControlLeft));
+    sc.wait(1.5);
+    sc.act("Ctrl: sneak off", |cx| cx.tap(KeyCode::ControlLeft));
+    sc.wait(1.5);
+    sc.act("Space: draw the sword", |cx| cx.tap(KeyCode::Space));
+    sc.wait(2.0);
+    sc.act("Alt: jump with the sword", |cx| cx.tap(KeyCode::AltLeft));
+    sc.wait(2.0);
+    sc.act("S twice: the hop back", |cx| cx.tap(KeyCode::KeyS));
+    sc.wait(0.12);
+    sc.act("S", |cx| cx.tap(KeyCode::KeyS));
+    sc.wait(2.0);
+    sc.act("Space: sword away", |cx| cx.tap(KeyCode::Space));
+    sc.wait(2.0);
+    sc.act("bow: quick slot 3", |cx| cx.tap(KeyCode::Digit3));
+    sc.wait(2.5);
+    sc.act("Alt: jump with the bow", |cx| cx.tap(KeyCode::AltLeft));
+    sc.wait(2.0);
+    sc.act("Ctrl: sneak with the bow", |cx| cx.tap(KeyCode::ControlLeft));
+    sc.wait(1.5);
+    sc.act("Ctrl: stand up again", |cx| cx.tap(KeyCode::ControlLeft));
+    sc.wait(1.5);
+    sc.check("the sneak, jump and hop states were entered in their weapon modes", |cx| {
+        let seen = cx.st.store.get("seen").cloned().unwrap_or_default();
+        cx.note(format!("states seen: {seen}"));
+        let want = ["Sneak", "Jump"];
+        let missing: Vec<&str> = want
+            .iter()
+            .copied()
+            .filter(|w| !seen.split(',').any(|n| n.contains(w)))
+            .collect();
+        let melee_jump = seen.split(',').any(|n| n == "PS_Melee_Jump");
+        let ranged_jump = seen.split(',').any(|n| n == "PS_Ranged_Jump");
+        expect(
+            missing.is_empty() && melee_jump && ranged_jump,
+            format!("states: {seen}"),
+            format!("missing {missing:?}, melee jump {melee_jump}, ranged jump {ranged_jump}, states: {seen}"),
+        )
+    });
+    sc
+}
+
 /// Close-up poses: sword in hand, bow in Aim_Aim from behind and from the side, arrow on the
 /// string, fireball at the cast and at the release (frames are cropped around the hero by the
 /// caller of the scenario).

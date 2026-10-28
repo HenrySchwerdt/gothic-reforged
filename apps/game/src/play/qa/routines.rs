@@ -18,9 +18,18 @@ fn skip(s: State) -> bool {
         )
 }
 
-fn zoo(sc: &mut Sc, key: &'static str, secs: f32) {
+/// Shard `part` of `of`: the states are dealt out round robin so that every shard finishes within
+/// the harness time limit (about 90 states of 2 s each per shard).
+fn zoo(sc: &mut Sc, key: &'static str, secs: f32, part: usize, of: usize) {
     sc.act(format!("{key}: list the states"), move |cx| {
-        let list: Vec<&str> = State::ALL.iter().copied().filter(|s| !skip(*s)).map(|s| s.name()).collect();
+        let list: Vec<&str> = State::ALL
+            .iter()
+            .copied()
+            .filter(|s| !skip(*s))
+            .enumerate()
+            .filter(|(i, _)| i % of == part)
+            .map(|(_, s)| s.name())
+            .collect();
         cx.note(format!("{key}: {} states", list.len()));
         cx.st.store.insert(format!("{key}list"), list.join(","));
         cx.st.n.insert(format!("{key}i"), -1.0);
@@ -52,17 +61,30 @@ fn zoo(sc: &mut Sc, key: &'static str, secs: f32) {
     });
 }
 
-pub fn routine_zoo() -> Sc {
-    let mut sc = Sc::new(2400.0);
+fn routine_zoo_shard(part: usize) -> Sc {
+    let mut sc = Sc::new(900.0);
     grab(&mut sc);
     super::npc_ai::find_and_place(&mut sc, "Hamlar", 600.0);
-    zoo(&mut sc, "h", 2.0);
+    zoo(&mut sc, "h", 2.0, part, 3);
     sc.check("the character is alive after every state", |cx| {
         let id = tgt_id(cx).unwrap();
         let a = cx.core().0.sim.actor(id);
         expect(a.is_alive(), format!("alive, hp {}", a.hp), "dead")
     });
     sc
+}
+
+/// First third of the `ZS_*` states (`routine_zoo2` and `routine_zoo3` are the others).
+pub fn routine_zoo() -> Sc {
+    routine_zoo_shard(0)
+}
+
+pub fn routine_zoo2() -> Sc {
+    routine_zoo_shard(1)
+}
+
+pub fn routine_zoo3() -> Sc {
+    routine_zoo_shard(2)
 }
 
 /// `crime_theft`: the hero takes an item lying next to a character of the world data. The taking
