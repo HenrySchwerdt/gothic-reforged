@@ -91,6 +91,20 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   EMotionFX behaviour that is not in the dump. The upper-body mask of `Rig::upper_body_mask` stays an [I] host rule until that is
   settled; adding masks to slot layers would be inventing an API the original does not have.
 
+## Never called after the full QA run (55 scenarios, flaky ones re-run singly)
+
+* gameplay (75 of 162): `inventory/list.rs` 37 (drop / split / merge / transfer / learn / skill / default-item / armor-set
+  functions: they need UI flows: drop and split from the inventory page, teacher learning through the stack list, trade transfer
+  through `transfer_stack_to`), `inventory/stack.rs` 13, `inventory/order.rs` 3, `stats.rs` 14 (now reachable through
+  `consume_item` -> `ConsumeItems` -> `apply_stat`; hit once a potion is used in a scenario), `mover.rs` 4 (`doors` runs them; the
+  full run lost them to a flaky door focus), `slot.rs` 2, `item.rs` 1, `script.rs` 1.
+* world (48 of 64): see the "not reachable" section (property-set layer, trigger lists, zones owned by the NPC agent); `sector.rs`
+  `enable_layer_activation`, `add_layer`, `contains_entity`, `enable_context` need layer documents the runtime does not build.
+* Rune swap bug (merged day/cov-npc + flip): `derive_equipment` put an item whose stack was used up back over the item in the
+  hand (fixture rule); fixtures now only fill a free place. Regression test `a_used_up_rune_does_not_come_back_over_the_next_one`.
+  `spell_zoo` after the merge: effects of Poison, Sleep, IceBomb, SummonSkeleton are the right ones; DestroyEvil and DuskToDawn
+  fizzle (`eff_magic_fizzle_01`): their casting conditions (evil target, darkness) are not met in the scenario.
+
 ## Open (feature work, not dead)
 
 * Inventory bridge: `Equipment` (sim) and the stack list (`Inventory`) are two truths. 95 functions of
