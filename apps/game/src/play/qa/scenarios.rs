@@ -58,6 +58,7 @@ pub const NAMES: &[&str] = &[
     "defeat_witness",
     "world_routines",
     "world_chest",
+    "world_boulder",
     "world_doors",
 ];
 
@@ -109,6 +110,7 @@ pub fn build(name: &str) -> Option<Sc> {
         "world_walk" => super::world::world_walk(),
         "world_doors" => super::world::world_doors(),
         "world_chest" => super::world::world_chest(),
+        "world_boulder" => super::world::world_boulder(),
         "world_routines" => super::world::world_routines(),
         "world_census" => super::world::world_census(),
         "spell_zoo" => super::spells::spell_zoo(),

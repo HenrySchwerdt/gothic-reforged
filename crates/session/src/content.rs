@@ -84,6 +84,7 @@ pub fn content_commands<'a>(
                 lock: d.lock.as_ref().map(LockDef::to_lock),
                 used: d.used,
                 loot,
+                use_func: d.use_func.clone(),
                 ..Default::default()
             },
         });

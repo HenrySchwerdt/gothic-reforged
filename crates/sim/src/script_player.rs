@@ -42,6 +42,9 @@ pub struct ObjectData {
     pub owner: EntityId,
     /// Contents of a container as `(template, amount)`.
     pub loot: Vec<(String, u32)>,
+    /// `gCInteraction_PS.ScriptUseFunc` (`OB_Light`, `OB_Medium`, `OB_Heavy`, `OB_Faring_Boulder`
+    /// of an orc boulder: its weight class).
+    pub use_func: String,
 }
 
 /// Player-side script state of a simulation.
@@ -114,6 +117,17 @@ impl ScriptTables {
     /// Register an interact object at `pos` and return its entity.
     pub fn add_object(&mut self, use_type: se::UseType, pos: Pos, data: ObjectData) -> EntityId {
         let id = self.add_point(use_type, EntityId::NONE, pos);
+        if use_type == se::UseType::OrcBoulder {
+            use gothic_script::player::api::BoulderClass;
+            let class = match data.use_func.to_ascii_lowercase().as_str() {
+                "ob_light" => BoulderClass::Light,
+                "ob_medium" => BoulderClass::Medium,
+                "ob_heavy" => BoulderClass::Heavy,
+                "ob_faring_boulder" => BoulderClass::Faring,
+                _ => BoulderClass::default(),
+            };
+            self.player.boulders.insert(id.0, class);
+        }
         self.player.objects.insert(id.0, data);
         id
     }

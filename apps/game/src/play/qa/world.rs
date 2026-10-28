@@ -1302,3 +1302,91 @@ fn door_focused() -> std::sync::Arc<dyn Fn(&mut Cx) -> bool + Send + Sync> {
             .is_some_and(|o| o.def.name.contains("Door_Geldern"))
     })
 }
+
+/// Orc boulders (`PS_Interact_TiltOrcBoulder` and the strength-gated stages, S:765b0..S:77b40):
+/// the object's `ScriptUseFunc` (`OB_Medium`, ...) gives its weight class, the use key tilts, the
+/// next use key asks for holding, which a weak hero is refused with `TooHeavy` and sent back to
+/// `PS_Normal`.
+pub fn world_boulder() -> Sc {
+    use super::more::{Goal, approach};
+    use gothic_sim::script::enums::UseType;
+    use std::sync::Arc;
+    let mut sc = Sc::new(400.0);
+    grab(&mut sc);
+    sc.act("setup: stand next to an orc boulder", |cx| {
+        let at = {
+            let w = cx
+                .world
+                .resource::<crate::walk::play::objects::WorldObjects>();
+            w.list
+                .iter()
+                .filter(|o| !o.def.is_item && o.def.script_use() == UseType::OrcBoulder)
+                .map(|o| (o.pos_cm, o.def.use_func.clone()))
+                .next()
+        };
+        let (p, f) = at.unwrap_or((Vec3::ZERO, String::new()));
+        cx.note(format!("boulder at {p:?}, use function {f:?}"));
+        place_hero(cx, p + Vec3::new(250.0, 400.0, 0.0));
+    });
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.wait(6.0);
+    let goal: Goal = Arc::new(|cx| {
+        let hero = cx.hero_pos();
+        let w = cx
+            .world
+            .resource::<crate::walk::play::objects::WorldObjects>();
+        w.list
+            .iter()
+            .filter(|o| {
+                o.entity.is_some()
+                    && !o.def.is_item
+                    && o.def.script_use() == UseType::OrcBoulder
+                    && (o.pos_cm - hero).length() < 20_000.0
+            })
+            .min_by(|a, b| {
+                (a.pos_cm - hero)
+                    .length()
+                    .total_cmp(&(b.pos_cm - hero).length())
+            })
+            .map(|o| o.pos_cm)
+    });
+    approach(
+        &mut sc,
+        "orc boulder",
+        goal,
+        160.0,
+        -0.3,
+        Arc::new(|cx| matches!(cx.play().target, Some(crate::walk::play::Target::Object(_)))),
+    );
+    sc.act("use key: tilt", |cx| {
+        let s = {
+            let c = cx.core();
+            c.0.sim.actor(c.0.hero).strength(&c.0.sim.cfg)
+        };
+        cx.note(format!("hero strength {s}"));
+        cx.use_key();
+    });
+    sc.wait(3.0);
+    sc.check("the use key starts the tilting state", |cx| {
+        let (task, state, _) = cx.core().0.sim.hero_script_state();
+        let name = state.map(|s| s.name()).unwrap_or("-");
+        expect(
+            name.contains("OrcBoulder"),
+            format!("task {task:?}, state {name}"),
+            format!("task {task:?}, state {name}"),
+        )
+    });
+    sc.act("use key: ask for the next stage", |cx| cx.use_key());
+    sc.wait(4.0);
+    sc.check("a weak hero is refused (TooHeavy) and ends in PS_Normal", |cx| {
+        let (task, state, _) = cx.core().0.sim.hero_script_state();
+        let name = state.map(|s| s.name()).unwrap_or("-");
+        expect(
+            task == Some(gothic_sim::script::routine::state::State::PsNormal)
+                && !name.contains("OrcBoulder"),
+            format!("task {task:?}, state {name}"),
+            format!("task {task:?}, state {name}"),
+        )
+    });
+    sc
+}

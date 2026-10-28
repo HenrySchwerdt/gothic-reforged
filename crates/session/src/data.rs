@@ -33,6 +33,8 @@ pub struct WorldObjectDef {
     pub use_type: String,
     /// `FocusNameType` of the interaction (`Entity`, `Skeleton`, `Disable`).
     pub focus_name: String,
+    /// `ScriptUseFunc` of the interaction (`OB_Heavy` of a boulder).
+    pub use_func: String,
     /// It is a loose item (carries `gCItem_PS`).
     pub is_item: bool,
     /// Lock of a chest or door.
@@ -159,6 +161,7 @@ pub fn load_objects(path: &Path) -> Vec<WorldObjectDef> {
             heading,
             use_type,
             focus_name: inter["FocusNameType"].as_str().unwrap_or("").to_string(),
+            use_func: inter["ScriptUseFunc"].as_str().unwrap_or("").to_string(),
             is_item: sets.get("gCItem_PS").is_some(),
             lock,
             treasure_sets,
