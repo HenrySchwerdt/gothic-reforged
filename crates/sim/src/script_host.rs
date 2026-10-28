@@ -1788,8 +1788,10 @@ impl<W: WorldQuery> WorldApi for SimHost<'_, W> {
             .and_then(|i| self.sim.script.zones.get(i))
             .is_some_and(|z| z.1)
     }
-    fn is_standing(&self, _e: EntityId) -> bool {
-        false
+    fn is_standing(&self, e: EntityId) -> bool {
+        // The hero stands still when he did not move during the last step; others are never
+        // "standing".
+        self.sim.hero.is_some() && actor_of(e) == self.sim.hero && !self.sim.hero_moved
     }
     fn find_npc(&self, name: &str) -> EntityId {
         opt_entity(self.sim.find(name))
@@ -2176,6 +2178,44 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn a_sleeper_listens_for_the_player_and_wakes_to_footsteps() {
+        let mut s = sim();
+        let hero = s.hero.unwrap();
+        s.script_routines = true;
+        let man = s.spawn(
+            Actor::npc(ActorId(0), "Sleeper", Species::Human, 5, 5),
+            Pos::flat(300.0, 0.0),
+        );
+        s.actor_mut(man).base_attitude_to_player = crate::types::Attitude::Neutral;
+        let spot = s
+            .script
+            .add_point(se::UseType::SleepGround, EntityId::NONE, Pos::flat(300.0, 0.0));
+        s.script.npc_mut(man).dest = spot;
+        s.qa_enter_state(man, State::Sleep);
+        let mut seen = Vec::new();
+        for i in 0..300 {
+            // The hero strolls around the sleeper.
+            s.world.teleport(hero, Pos::flat(380.0 + (i % 40) as f32 * 3.0, 0.0));
+            s.step();
+            seen.push(s.script.npc(man).state);
+        }
+        assert_eq!(
+            s.script.npc(man).task_cb,
+            gothic_script::routine::state::Callback::OnSleep
+        );
+        let att = s.attitude(man, hero);
+        assert!(seen.contains(&Some(State::SleepGround)), "{att:?}");
+        let los = SimHost::new(&mut s).has_free_los(entity_of(man), entity_of(hero));
+        let d = s.dist(man, hero);
+        assert!(
+            seen.contains(&Some(State::ReactToFootsteps)),
+            "{:?} attitude {att:?} los {los} dist {d} moved {}",
+            seen.last(),
+            s.hero_moved
+        );
     }
 
     #[test]

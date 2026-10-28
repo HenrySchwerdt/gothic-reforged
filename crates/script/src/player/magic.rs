@@ -403,7 +403,7 @@ fn ps_magic_potion(host: &mut dyn ScriptHost, p: EntityId) -> Flow {
                     left: -1,
                 },
             );
-            continue_routine(host, p);
+            host.set_state(p, State::PsNormalLoop);
             Flow::Done
         }
     }

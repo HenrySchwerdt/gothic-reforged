@@ -408,7 +408,22 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
     }
     fn equip_item(&mut self, e: EntityId, template: &str) -> bool {
         match actor_of(e) {
-            Some(id) => self.sim.equip(id, template).is_ok(),
+            Some(id) => {
+                // A spell potion is held in the right hand like a rune (the cast reads the spell
+                // of the item in that hand); other potions are not equipment.
+                let potion = self.sim.items.get(template).and_then(|d| {
+                    (d.spell.is_some()
+                        && d.use_type
+                            .as_deref()
+                            .is_some_and(|u| u.eq_ignore_ascii_case("potion")))
+                    .then(|| d.clone())
+                });
+                if let Some(d) = potion {
+                    self.sim.actor_mut(id).equipment.right = Some(d);
+                    return true;
+                }
+                self.sim.equip(id, template).is_ok()
+            }
             None => false,
         }
     }
