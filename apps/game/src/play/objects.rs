@@ -47,7 +47,7 @@ pub struct WorldObjects {
     pub list: Vec<ObjEntry>,
     pub docs: Vec<ObjDoc>,
     pub by_entity: HashMap<u32, usize>,
-    by_guid: HashMap<String, usize>,
+    by_guid: gothic_session::GuidIndex<usize>,
     pub treasure: Treasure,
     pub item_mesh: HashMap<String, String>,
     pub recipe_ids: HashMap<String, i32>,
@@ -98,7 +98,7 @@ impl WorldObjects {
                 (w.docs.len() - 1) as u32
             });
             let pos_cm = origin.point(Vec3::from(def.position));
-            w.by_guid.insert(def.id.clone(), w.list.len());
+            w.by_guid.insert(&def.id, w.list.len());
             w.list.push(ObjEntry {
                 def,
                 pos_cm,
@@ -124,6 +124,7 @@ impl WorldObjects {
     }
 
     pub fn entry_of_guid(&self, guid: &str) -> Option<&ObjEntry> {
+        // The engine finds an entity by the 16-byte GUID (`gothic_session::guid`).
         self.by_guid.get(guid).and_then(|i| self.list.get(*i))
     }
 

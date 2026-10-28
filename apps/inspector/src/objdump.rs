@@ -113,6 +113,58 @@ fn write(value: &Value, opts: &Opts, default: &str) -> Result<()> {
     Ok(())
 }
 
+/// The identity (first 16 bytes, 32 hex digits) of every entity a character of the world refers to
+/// as a routine point: `gCNavigation_PS.WorkingPoints / RelaxingPoints / SleepingPoints`. The engine
+/// resolves such a reference by the 16-byte GUID only (`bCPropertyID::operator==` 0x1000ea00, see
+/// `gothic_session::guid`); the entities can be of any class (waypoints, patrol and guard spots,
+/// free points), so the interactive-class filter of `object-dump` would drop most of them.
+fn routine_point_ids(
+    vfs: &mut VirtualFileSystem,
+    slots: &[(String, gothic_formats::vfs::Slot)],
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut ids = std::collections::HashMap::new();
+    for (_, slot) in slots {
+        let bytes = vfs.read(*slot)?;
+        let mut stats = DecodeStats::default();
+        let Ok((_, sets)) = WorldDocument::parse_with_properties(
+            &bytes,
+            &|c| c == "gCNavigation_PS",
+            &mut stats,
+        ) else {
+            continue;
+        };
+        for set in sets.iter().flatten() {
+            for p in &set.properties {
+                if !matches!(
+                    p.name.as_str(),
+                    "WorkingPoints"
+                        | "RelaxingPoints"
+                        | "SleepingPoints"
+                        | "WorkingPoint"
+                        | "RelaxingPoint"
+                        | "SleepingPoint"
+                ) {
+                    continue;
+                }
+                match &p.value {
+                    PropValue::IdArray(v) => {
+                        for g in v {
+                            ids.entry(g.chars().take(32).collect::<String>())
+                                .or_insert_with(|| g.clone());
+                        }
+                    }
+                    PropValue::Id(g) => {
+                        ids.entry(g.chars().take(32).collect::<String>())
+                            .or_insert_with(|| g.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(ids)
+}
+
 /// `object-dump DATA_DIR [--cx X --cz Z --radius R] [--out F]` (default `.local/objects.json`).
 fn object_dump(opts: &Opts) -> Result<()> {
     let usage = "object-dump DATA_DIR [--cx X] [--cz Z] [--radius R] [--out F]";
@@ -149,6 +201,9 @@ fn object_dump(opts: &Opts) -> Result<()> {
         .map(|(p, s)| (p.to_owned(), s))
         .collect();
     let names = names_table(dir);
+    let routine_ids = routine_point_ids(&mut vfs, &slots)?;
+    eprintln!("{} routine point identities referenced by characters", routine_ids.len());
+    let mut routine_only = 0usize;
     let mut out = Vec::new();
     for (path, slot) in slots {
         let bytes = vfs.read(slot)?;
@@ -164,9 +219,16 @@ fn object_dump(opts: &Opts) -> Result<()> {
             if (x - cx).hypot(z - cz) > radius {
                 continue;
             }
-            // NPCs are handled by npc-dump; keep everything else that is interactive.
-            if s.is_empty() || s.iter().any(|p| p.class == "gCNPC_PS") {
+            // NPCs are handled by npc-dump; keep everything else that is interactive, and every
+            // entity a character uses as a routine point whatever its class.
+            let id_hex = gothic_formats::propstream::hex(&e.source_id);
+            let routine_point =
+                routine_ids.contains_key(&id_hex.chars().take(32).collect::<String>());
+            if s.iter().any(|p| p.class == "gCNPC_PS") || (s.is_empty() && !routine_point) {
                 continue;
+            }
+            if s.is_empty() {
+                routine_only += 1;
             }
             let mut sets_json = Map::new();
             for p in &s {
@@ -181,7 +243,9 @@ fn object_dump(opts: &Opts) -> Result<()> {
             };
             out.push(json!({
                 "name": e.name,
-                "id": gothic_formats::propstream::hex(&e.source_id),
+                "id": id_hex,
+                "routine_point": routine_point,
+                "classes": e.property_sets,
                 "display_name": display("German").or_else(|| display("English")),
                 "document": path,
                 "index": i,
@@ -192,8 +256,30 @@ fn object_dump(opts: &Opts) -> Result<()> {
             }));
         }
     }
-    eprintln!("{} interactive world entities", out.len());
-    write(&json!({ "objects": out }), opts, ".local/objects.json")
+    eprintln!(
+        "{} interactive world entities ({routine_only} of them only routine points)",
+        out.len()
+    );
+    // References that no world document answers: templates of the game data (the default points
+    // every character without a point of its own refers to).
+    let found: std::collections::HashSet<String> = out
+        .iter()
+        .filter_map(|o| o["id"].as_str().map(|i| i.chars().take(32).collect()))
+        .collect();
+    let mut unresolved: Vec<Value> = routine_ids
+        .iter()
+        .filter(|(k, _)| !found.contains(*k))
+        .map(|(k, full)| {
+            json!({ "id": full, "key": k, "template": catalog.name_of(full).or_else(|| catalog.name_of(k)), "path": catalog.path_of(full).or_else(|| catalog.path_of(k)) })
+        })
+        .collect();
+    unresolved.sort_by_key(|v| v["id"].as_str().unwrap_or("").to_owned());
+    eprintln!("{} referenced routine points are in no world document", unresolved.len());
+    write(
+        &json!({ "objects": out, "unresolved_routine_points": unresolved }),
+        opts,
+        ".local/objects.json",
+    )
 }
 
 /// `treasure-dump DATA_DIR [--out F]` (default `.local/treasure.json`): every `TS_*` template

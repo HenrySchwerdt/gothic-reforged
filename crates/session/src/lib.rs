@@ -4,5 +4,7 @@
 //! (hosts keep only their own bookkeeping: entities, visuals, coordinate frames).
 pub mod content;
 pub mod data;
+pub mod guid;
 
 pub use content::{ContentSet, Placed, content_commands, routine_command, sector_commands, sector_name};
+pub use guid::{GUID_HEX_DIGITS, GuidIndex, guid_key};
