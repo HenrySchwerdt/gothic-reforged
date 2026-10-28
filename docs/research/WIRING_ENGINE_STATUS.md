@@ -82,8 +82,14 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   static caller). The page now orders stacks with the ported `Compare` chain; this reproduces `.local/ref/orig-inventory.png`
   (sword 1, bow 3, arrows 4 in the weapon tab) once the hero stacks carry their quick slots.
 * `spell_zoo` fails on `It_Spell_Flamesword` (events Phase, Weapon; no Cast) on the build before the flip as well.
-* Not done: replacing the `anim.rs` overlay glue by the `Animator` slot functions. Slot layers have no bone mask, the overlay
-  (upper body) and aim blends need one first.
+* `spell_zoo`: `PS_Magic_FlameSword` (S:7b780) conjures a weapon: Phase(Load) and `MagicEvent::Weapon`, no Cast event, so the
+  scenario now expects `Weapon` for `It_Spell_Flamesword` (passes).
+* Overlay glue (`anim.rs`) not replaced by the slot functions, evidence: the original wrapper has no body-part mask. `PlayMotion`
+  takes an `eSMotionDesc` (fade, mode, speed, loops, weight; no mask) and `SetBlendMode` (0x10049d10) only sets the instance's mix
+  flag (+0x4c) for mode 2. The stock hit-reaction clips bind 59 of 67 rig slots, 11 of them below the spine (measured), so a
+  non-additive slot layer would take the legs over; whether the original's mix flag is an additive layer or something else is
+  EMotionFX behaviour that is not in the dump. The upper-body mask of `Rig::upper_body_mask` stays an [I] host rule until that is
+  settled; adding masks to slot layers would be inventing an API the original does not have.
 
 ## Open (feature work, not dead)
 

@@ -93,7 +93,14 @@ fn collect(sc: &mut Sc, key: &'static str) {
         if idx >= 0
             && let Some(t) = tgt_id(cx)
         {
-            let st = cx.core().0.sim.script.npc(t).state.map(|s| s.name().to_string());
+            let st = cx
+                .core()
+                .0
+                .sim
+                .script
+                .npc(t)
+                .state
+                .map(|s| s.name().to_string());
             if let Some(n) = st {
                 let s = cx.st.store.entry(format!("{key}st{idx}")).or_default();
                 if !s.contains(&format!("{n},")) {
@@ -125,9 +132,22 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
         let tgt = tgt_id(cx);
         if i < 0 || phase_t > 5.0 {
             if i >= 0 {
-                let ev = cx.st.store.get(&format!("{key}ev{i}")).cloned().unwrap_or_default();
-                let st = cx.st.store.get(&format!("{key}st{i}")).cloned().unwrap_or_default();
-                cx.note(format!("spell {}: events {ev} victim states {st}", list[i as usize]));
+                let ev = cx
+                    .st
+                    .store
+                    .get(&format!("{key}ev{i}"))
+                    .cloned()
+                    .unwrap_or_default();
+                let st = cx
+                    .st
+                    .store
+                    .get(&format!("{key}st{i}"))
+                    .cloned()
+                    .unwrap_or_default();
+                cx.note(format!(
+                    "spell {}: events {ev} victim states {st}",
+                    list[i as usize]
+                ));
             }
             let n = (i + 1) as usize;
             if n >= list.len() {
@@ -154,29 +174,39 @@ fn batch_steps(sc: &mut Sc, key: &'static str, batch: Batch, label: &'static str
         }
         Poll::Wait
     });
-    sc.check(format!("{label}: every spell produced a Cast event"), move |cx| {
-        let list: Vec<String> = cx.st.store[&format!("{key}list")]
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect();
-        let bad: Vec<&String> = list
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                !cx.st
-                    .store
-                    .get(&format!("{key}ev{i}"))
-                    .is_some_and(|e| e.contains("Cast"))
-            })
-            .map(|(_, n)| n)
-            .collect();
-        expect(
-            bad.is_empty(),
-            format!("{} spells cast", list.len()),
-            format!("no Cast event for {bad:?}"),
-        )
-    });
+    sc.check(
+        format!("{label}: every spell produced its event (Cast; Weapon for the flame sword)"),
+        move |cx| {
+            let list: Vec<String> = cx.st.store[&format!("{key}list")]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            let bad: Vec<&String> = list
+                .iter()
+                .enumerate()
+                .filter(|(i, n)| {
+                    // `PS_Magic_FlameSword` (S:7b780) conjures a weapon: Phase(Load) and `Weapon`,
+                    // no projectile, so no `Cast` event.
+                    let want = if n.eq_ignore_ascii_case("It_Spell_Flamesword") {
+                        "Weapon"
+                    } else {
+                        "Cast"
+                    };
+                    !cx.st
+                        .store
+                        .get(&format!("{key}ev{i}"))
+                        .is_some_and(|e| e.contains(want))
+                })
+                .map(|(_, n)| n)
+                .collect();
+            expect(
+                bad.is_empty(),
+                format!("{} spells cast", list.len()),
+                format!("no Cast event for {bad:?}"),
+            )
+        },
+    );
 }
 
 pub fn spell_zoo() -> Sc {
