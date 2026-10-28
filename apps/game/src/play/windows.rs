@@ -94,6 +94,27 @@ fn recipe_view(core: &CoreRes, win: &OpenWindow) -> RecipeView {
         .iter()
         .enumerate()
         .filter_map(|(key, l)| {
+            if let LineAction::Fry(raw, n) = &l.action {
+                // The fry page: the raw meat is the ingredient, the fried meat the product.
+                return Some(RecipeRow {
+                    key,
+                    product: l.item.clone(),
+                    name: name(&l.item),
+                    description: core
+                        .0
+                        .db
+                        .text(&format!("FD_{}", l.item))
+                        .unwrap_or_default(),
+                    craftable: *n > 0,
+                    ingredients: vec![Ingredient {
+                        item: raw.clone(),
+                        name: name(raw),
+                        need: 1,
+                        have: hero.inventory.count(raw),
+                    }],
+                    requirement: String::new(),
+                });
+            }
             let LineAction::Craft(id) = l.action else {
                 return None;
             };

@@ -87,6 +87,12 @@ pub fn craft(host: &mut dyn ScriptHost, player: EntityId, id: i32) -> Synth {
     synthesize(host, player, id)
 }
 
+/// Fry raw meat at a barbecue or campfire (`OnPlayerTransformStack` S:6a8d0 -> `OnPlayerFryStack`
+/// S:6a740); returns the number of pieces fried.
+pub fn fry(host: &mut dyn ScriptHost, player: EntityId, template: &str, amount: u32) -> u32 {
+    crate::player::craft::transform_stack(host, player, template, amount)
+}
+
 /// Use an inventory item.
 pub fn use_item(host: &mut dyn ScriptHost, player: EntityId, template: &str) -> UseOutcome {
     use_stack(host, player, template)

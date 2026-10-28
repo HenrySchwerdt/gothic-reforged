@@ -585,7 +585,18 @@ pub(super) fn input(
     // `USE` (message 63) belongs to `PS_Normal` / `PS_Interact`: with a weapon drawn the left
     // button is the attack, aim or cast key and never talks. A click that only captured the
     // cursor is not a use.
-    let use_click = use_pressed && !state.drawn && (grabbed || script.active);
+    let mut use_click = use_pressed && !state.drawn && (grabbed || script.active);
+    // An orc boulder is worked in three stages with the use key (`PS_Interact_*OrcBoulder_Loop`
+    // read the stage request) and left with the exit key or a movement key; it has no held pose.
+    if script_state.is_some_and(|s| s.name().contains("OrcBoulder")) {
+        if w.confirm || use_click {
+            commands.write(CoreCommand(Command::AdvanceInteraction));
+            w.confirm = false;
+            use_click = false;
+        } else if w.end_interaction || moving_key {
+            commands.write(CoreCommand(Command::EndInteraction));
+        }
+    }
     if (talk || w.confirm || use_click)
         && let Some(target) = state.target
     {

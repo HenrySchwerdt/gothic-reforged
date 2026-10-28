@@ -25,6 +25,8 @@ use gothic_ui::{Notify, ToastKind};
 pub enum LineAction {
     Take(usize),
     Craft(i32),
+    /// Fry this raw template (all pieces the hero carries).
+    Fry(String, u32),
 }
 
 #[derive(Clone, Debug)]
@@ -241,7 +243,13 @@ fn handle_events(
                                 sfx(&mut sound, "sfx_ani_chest_open_01_A00", Some(hero_pos));
                                 inter.window = Some(loot_window(&core, &objects, object));
                             }
-                            (UiWindow::Smithing | UiWindow::Alchemy | UiWindow::Cooking, _) => {
+                            (
+                                UiWindow::Smithing
+                                | UiWindow::Alchemy
+                                | UiWindow::Cooking
+                                | UiWindow::Fry,
+                                _,
+                            ) => {
                                 inter.window = Some(station_window(&core, &objects, *w));
                             }
                             (other, _) => {
@@ -412,6 +420,9 @@ fn loot_window(core: &CoreRes, _objects: &WorldObjects, object: u32) -> OpenWind
 
 /// Recipes of the station's category whose blueprint the hero carries.
 fn station_window(core: &CoreRes, objects: &WorldObjects, window: UiWindow) -> OpenWindow {
+    if window == UiWindow::Fry {
+        return fry_window(core);
+    }
     let category = match window {
         UiWindow::Smithing => SkillCategory::Smith,
         UiWindow::Alchemy => SkillCategory::Alchemy,
@@ -459,6 +470,41 @@ fn station_window(core: &CoreRes, objects: &WorldObjects, window: UiWindow) -> O
         .into(),
         lines,
         footer: "1-9: herstellen    Esc: schliessen".into(),
+        dirty: true,
+    }
+}
+
+/// The barbecue's page (`GUI2::OpenFry`): the raw meat the hero carries (`OnPlayerFryStack`
+/// S:6a740 fries `It_Meat` and `It_Meatbug`).
+fn fry_window(core: &CoreRes) -> OpenWindow {
+    use gothic_sim::script::player::craft::fried_form;
+    let hero = core.0.sim.actor(core.0.hero);
+    let mut lines = Vec::new();
+    for (raw, n) in hero.inventory.iter() {
+        if *n == 0 {
+            continue;
+        }
+        let Some(name) = ["It_Meat", "It_Meatbug"]
+            .into_iter()
+            .find(|t| t.eq_ignore_ascii_case(raw))
+        else {
+            continue;
+        };
+        let Some(done) = fried_form(name) else { continue };
+        lines.push(WindowLine {
+            text: format!("{} x {} -> {}", n, item_name(core, name), item_name(core, done)),
+            action: LineAction::Fry(name.to_string(), *n as u32),
+            item: done.to_string(),
+            count: *n as i32,
+        });
+    }
+    OpenWindow {
+        kind: WindowKind::Station {
+            window: UiWindow::Fry,
+        },
+        title: "Braten".into(),
+        lines,
+        footer: "1-9: braten    Esc: schliessen".into(),
         dirty: true,
     }
 }
@@ -582,6 +628,12 @@ fn window_input(
             (WindowKind::Station { .. }, LineAction::Craft(id)) => {
                 cmd.write(CoreCommand(Command::Craft { recipe: *id }));
             }
+            (WindowKind::Station { .. }, LineAction::Fry(t, n)) => {
+                cmd.write(CoreCommand(Command::Fry {
+                    template: t.clone(),
+                    amount: *n,
+                }));
+            }
             _ => {}
         }
         inter.refresh_at = Some(now + 0.15);
@@ -597,15 +649,18 @@ fn window_input(
             WindowKind::Body { actor } => {
                 take_from_body(&mut core, *actor, None, &mut notify);
             }
-            WindowKind::Station { .. } => {
-                if let Some(WindowLine {
-                    action: LineAction::Craft(id),
-                    ..
-                }) = win.lines.first()
-                {
+            WindowKind::Station { .. } => match win.lines.first().map(|l| &l.action) {
+                Some(LineAction::Craft(id)) => {
                     cmd.write(CoreCommand(Command::Craft { recipe: *id }));
                 }
-            }
+                Some(LineAction::Fry(t, n)) => {
+                    cmd.write(CoreCommand(Command::Fry {
+                        template: t.clone(),
+                        amount: *n,
+                    }));
+                }
+                _ => {}
+            },
             WindowKind::Trade { .. } => inter.trade_deal = true,
         }
         inter.refresh_at = Some(now + 0.15);

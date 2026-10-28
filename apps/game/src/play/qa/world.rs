@@ -1307,6 +1307,38 @@ fn door_focused() -> std::sync::Arc<dyn Fn(&mut Cx) -> bool + Send + Sync> {
 /// the object's `ScriptUseFunc` (`OB_Medium`, ...) gives its weight class, the use key tilts, the
 /// next use key asks for holding, which a weak hero is refused with `TooHeavy` and sent back to
 /// `PS_Normal`.
+/// Keeps characters (a companion follows the hero and takes the focus before an object does) at
+/// least 9 m away from the point stored in `bx / by / bz` while the scenario runs.
+fn keep_clear(sc: &mut Sc) {
+    sc.watch(|cx| {
+        let (Some(x), Some(y), Some(z)) = (
+            cx.st.n.get("bx").copied(),
+            cx.st.n.get("by").copied(),
+            cx.st.n.get("bz").copied(),
+        ) else {
+            return;
+        };
+        let at = Vec3::new(x as f32, y as f32, z as f32);
+        let mut core = cx.core_mut();
+        let hero = core.0.hero;
+        let near: Vec<_> = core
+            .0
+            .sim
+            .world
+            .actors
+            .iter()
+            .filter(|(id, (p, _))| **id != hero && (Vec3::new(p.x, p.y, p.z) - at).length() < 900.0)
+            .map(|(id, (_, yaw))| (*id, *yaw))
+            .collect();
+        for (id, yaw) in near {
+            core.0.sim.world.actors.insert(
+                id,
+                (gothic_sim::world::Pos::new(at.x + 60_000.0, at.y, at.z), yaw),
+            );
+        }
+    });
+}
+
 /// Boulders on active layers with no character within 8 m (a character beside it would take the
 /// focus), nearest to `from` first: `(position, use function, registered)`.
 fn lonely_boulders(cx: &mut Cx, from: Vec3) -> Vec<(Vec3, String, bool)> {
@@ -1344,6 +1376,7 @@ pub fn world_boulder() -> Sc {
     use std::sync::Arc;
     let mut sc = Sc::new(400.0);
     grab(&mut sc);
+    keep_clear(&mut sc);
     sc.act("setup: stand next to an orc boulder", |cx| {
         let from = cx.hero_pos();
         let (p, f) = lonely_boulders(cx, from)
@@ -1377,10 +1410,21 @@ pub fn world_boulder() -> Sc {
             let c = cx.core();
             c.0.sim.actor(c.0.hero).strength(&c.0.sim.cfg)
         };
-        cx.note(format!("hero strength {s}"));
+        let t = cx.play().target;
+        let (task, state, _) = cx.core().0.sim.hero_script_state();
+        cx.note(format!("hero strength {s}, target {t:?}, task {task:?}, state {state:?}"));
+        let grabbed = cx.cursor_grabbed();
+        let (mode, drawn) = (cx.play().mode, cx.play().drawn);
+        cx.note(format!("grabbed {grabbed}, mode {mode:?}, drawn {drawn}"));
         cx.use_key();
     });
-    sc.wait(3.0);
+    sc.wait(0.5);
+    sc.act("what the use key did", |cx| {
+        let t = cx.play().target;
+        let log: Vec<String> = cx.inter().log.iter().rev().take(10).cloned().collect();
+        cx.note(format!("after the key: target {t:?}, log {log:?}"));
+    });
+    sc.wait(2.5);
     sc.check("the use key starts the tilting state", |cx| {
         let (task, state, _) = cx.core().0.sim.hero_script_state();
         let name = state.map(|s| s.name()).unwrap_or("-");
@@ -1409,6 +1453,126 @@ pub fn world_boulder() -> Sc {
                 && !name.contains("OrcBoulder"),
             format!("task {task:?}, state {name}"),
             format!("task {task:?}, state {name}"),
+        )
+    });
+    sc
+}
+
+/// Frying (`OnPlayerTransformStack` S:6a8d0 -> `OnPlayerFryStack` S:6a740): at a barbecue the page
+/// lists the raw meat the hero carries; picking it turns every piece into its fried form.
+pub fn world_fry() -> Sc {
+    use super::more::{Goal, approach};
+    use gothic_sim::script::enums::UseType;
+    use std::sync::Arc;
+    let mut sc = Sc::new(420.0);
+    grab(&mut sc);
+    keep_clear(&mut sc);
+    sc.act("setup: stand next to a barbecue, three pieces of raw meat", |cx| {
+        let hero = cx.hero_pos();
+        let at = {
+            let w = cx
+                .world
+                .resource::<crate::walk::play::objects::WorldObjects>();
+            w.list
+                .iter()
+                .enumerate()
+                .filter(|(i, o)| {
+                    !o.def.is_item
+                        && o.def.script_use() == UseType::Barbecue
+                        && w.layer_on(*i)
+                })
+                .map(|(_, o)| o.pos_cm)
+                .min_by(|a, b| (*a - hero).length().total_cmp(&(*b - hero).length()))
+        };
+        let p = at.unwrap_or(Vec3::ZERO);
+        cx.note(format!("barbecue at {p:?}"));
+        cx.st.n.insert("bx".into(), f64::from(p.x));
+        cx.st.n.insert("by".into(), f64::from(p.y));
+        cx.st.n.insert("bz".into(), f64::from(p.z));
+        super::scenarios::grant(cx, "It_Meat", 3);
+        place_hero(cx, p + Vec3::new(250.0, 400.0, 0.0));
+    });
+    sc.until("standing", 120.0, |cx| cx.player().ctrl.grounded);
+    sc.wait(6.0);
+    let goal: Goal = Arc::new(|cx| {
+        let (x, y, z) = (cx.st.n.get("bx")?, cx.st.n.get("by")?, cx.st.n.get("bz")?);
+        Some(Vec3::new(*x as f32, *y as f32, *z as f32))
+    });
+    approach(
+        &mut sc,
+        "barbecue",
+        goal,
+        270.0,
+        -0.3,
+        Arc::new(|cx| matches!(cx.play().target, Some(crate::walk::play::Target::Object(_)))),
+    );
+    sc.act("record the meat", |cx| {
+        let raw = cx.count_item("It_Meat");
+        let fried = cx.count_item("It_Meat_Fried");
+        cx.st.n.insert("raw0".into(), f64::from(raw));
+        cx.st.n.insert("fried0".into(), f64::from(fried));
+        let t = cx.play().target;
+        cx.note(format!("raw {raw}, fried {fried}, target {t:?}"));
+        cx.use_key();
+    });
+    sc.wait(0.7);
+    sc.act("what the use key did", |cx| {
+        let log: Vec<String> = cx
+            .inter()
+            .log
+            .iter()
+            .rev()
+            .filter(|l| !l.starts_with("projectile"))
+            .take(8)
+            .cloned()
+            .collect();
+        let screen = cx.ui().screen;
+        let win = cx.inter().window.as_ref().map(|w| (w.title.clone(), w.lines.len()));
+        let (task, state, secs) = cx.core().0.sim.hero_script_state();
+        cx.note(format!(
+            "screen {screen:?}, window {win:?}, task {task:?}, state {state:?} ({secs:.1} s), log {log:?}"
+        ));
+    });
+    sc.wait(4.0);
+    sc.act("the hero after 4 s", |cx| {
+        let (task, state, secs) = cx.core().0.sim.hero_script_state();
+        let screen = cx.ui().screen;
+        let win = cx.inter().window.as_ref().map(|w| (w.title.clone(), w.lines.len()));
+        cx.note(format!("later: screen {screen:?}, window {win:?}, task {task:?}, state {state:?} ({secs:.1} s)"));
+    });
+    sc.until("the fry page", 10.0, |cx| {
+        cx.ui().screen == gothic_ui::Screen::Recipe
+    });
+    sc.wait(1.0);
+    sc.shot("fry_page");
+    super::click_step(&mut sc, "fry row", |cx| {
+        let b = cx.buttons();
+        b.iter()
+            .find(|b| {
+                let t = b.text.to_lowercase();
+                !t.contains("herstellen") && !t.contains("schlie") && !t.contains("zur")
+            })
+            .map(|b| b.center)
+    });
+    sc.wait(0.5);
+    super::click_step(&mut sc, "fry button", |cx| {
+        cx.buttons()
+            .iter()
+            .find(|b| {
+                let t = b.text.to_lowercase();
+                t.contains("herstellen") || t.contains("braten") || t.contains("craft")
+            })
+            .map(|b| b.center)
+    });
+    sc.wait(1.5);
+    sc.shot("fried");
+    sc.check("all the raw meat was fried", |cx| {
+        let (raw0, fried0) = (cx.st.n["raw0"] as u32, cx.st.n["fried0"] as u32);
+        let (raw, fried) = (cx.count_item("It_Meat"), cx.count_item("It_Meat_Fried"));
+        expect(
+            raw0 >= 3 && raw == raw0 - 3 && fried == fried0 + 3,
+            format!("raw {raw0} -> {raw}, fried {fried0} -> {fried}"),
+            format!("raw {raw0} -> {raw}, fried {fried0} -> {fried}"),
         )
     });
     sc

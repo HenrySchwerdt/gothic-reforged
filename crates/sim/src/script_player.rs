@@ -640,6 +640,17 @@ impl<W: WorldQuery> Sim<W> {
         self.with_hero(|h, p| commands::craft(h, p, recipe))
     }
 
+    /// The use key during an orc boulder interaction.
+    pub fn player_advance_interaction(&mut self) {
+        self.with_hero(|h, p| commands::advance_interaction(h, p));
+    }
+
+    /// Fry `amount` pieces of a raw meat (the barbecue's transform request).
+    pub fn player_fry(&mut self, template: &str, amount: u32) -> u32 {
+        self.with_hero(|h, p| commands::fry(h, p, template, amount))
+            .unwrap_or(0)
+    }
+
     /// Use an inventory item.
     pub fn player_use_item(
         &mut self,

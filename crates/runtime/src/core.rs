@@ -84,6 +84,15 @@ pub enum Command {
         /// Recipe id.
         recipe: i32,
     },
+    /// The use key during an orc boulder interaction: ask for the next stage (tilt, hold, lift).
+    AdvanceInteraction,
+    /// Fry raw meat at a barbecue (`OnPlayerTransformStack`).
+    Fry {
+        /// Raw item template.
+        template: String,
+        /// Pieces to fry.
+        amount: u32,
+    },
     /// Use an inventory item (`OnPlayerUseStack`).
     UseItem {
         /// Item template.
@@ -878,6 +887,11 @@ impl Core {
                 if let Some(r) = self.sim.player_craft(*recipe) {
                     out.push(Event::CraftResult(r));
                 }
+            }
+            Command::AdvanceInteraction => self.sim.player_advance_interaction(),
+            Command::Fry { template, amount } => {
+                self.sim.player_fry(template, *amount);
+                self.state_rev += 1;
             }
             Command::UseItem { template } => {
                 if let Some(r) = self.sim.player_use_item(template) {
