@@ -714,11 +714,30 @@ impl<'a> QuestBot<'a> {
                 break;
             }
             let menu = self.engine.menu(&self.state, &session);
+            let open: Vec<gothic_gameplay::InfoId> = menu
+                .iter()
+                .filter_map(|c| c.info)
+                .filter(|id| !chosen.contains(&self.db.info(*id).name))
+                .collect();
             let pick = menu
                 .iter()
                 .filter_map(|c| c.info.map(|id| (c, id)))
                 .filter(|(_, id)| !chosen.contains(&self.db.info(*id).name))
-                .map(|(c, id)| (self.score(id), c, self.ends_dialog(id)))
+                .map(|(c, id)| {
+                    // A line that ends the conversation goes last, unless a sibling with
+                    // `ClearChildren` would consume it unseen (`gCInfoManager_PS::
+                    // OnInfoScriptFinished 0x101cd5a0` marks every info with the same parent as
+                    // given): `Ben_DefeatHim` starts with the provoking line, the calming
+                    // sibling closes that door.
+                    let parent = &self.db.info(id).parent;
+                    let consumed = !parent.is_empty()
+                        && open.iter().any(|o| {
+                            *o != id
+                                && self.db.info(*o).clear_children
+                                && self.db.info(*o).parent.eq_ignore_ascii_case(parent)
+                        });
+                    (self.score(id), c, self.ends_dialog(id) && !consumed)
+                })
                 .filter(|(s, _, _)| *s > 0)
                 // Lines that end the conversation come last: whatever else is on offer first.
                 .max_by_key(|(s, _, ends)| (!*ends, *s))

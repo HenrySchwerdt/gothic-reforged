@@ -94,3 +94,23 @@ of the time the state queued it. Owner: equipment / hero presentation (desktop2)
 * **QA timing.** `npc_orc1`'s "damage lands at 60 percent of the Hit clip" compares frame timestamps; it now widens its 0.2 s tolerance by twice the
   longest frame between the clip's start and the hit (frames over 50 ms are recorded), so a loaded machine no longer fails it. `spell_zoo`
   isolates its victim (`ai_controlled` off), so the shaman no longer casts at the hero.
+
+## Which input gives the companion orders (for desktop2)
+
+None of the player's inputs does. The action table of the session is `gCSessionKeys::CreateDefaultKeys` (Game.dll 0x1017f690;
+`CreateINIKeys` 0x10182500 for custom controls): 47 `gESessionKey` ids (`crates/input/src/keys.rs`, `SessionKey`): moves, camera, `Use1`/`Use2`,
+quick slots 0-9, `Confirm`, `Abort`, inventory, journal, character screen, magic book, map, quick save/load, `WeaponMode`, `Lock`,
+`LookBack`, `FirstPerson`, `ResetCamera`, `ToggleHud`, `TakeAll` and the three potion keys. There is no companion order among them,
+and `OnPlayerGameKeyPressed` / `OnPlayerAction` (decompiled script side) have no case that calls `SendPerceptionCmdAttack` /
+`SendPerceptionCmdFollow`. The companion's behaviour comes from the dialog: the infos with the conditions `Companion`, `Wait`,
+`Dismiss`, `Join` (`WaitPlayerParty`, `DismissPlayerParty`, `JoinPlayerParty`, all wired in `Core::choose`) and, for "follow me" after a wait,
+`AssessCmdFollow`'s effect is what `Wait` followed by `Join` does. So desktop2 should not bind a key: `Command::CompanionCommand` is
+there for a host that wants the orders (VR gestures), the original has none.
+
+## Questbot (isolated mode, current branch)
+
+Baseline 518 / 570 completed (stuck: NotActivated 22, ObjectiveUnmet 13, NoActivator 3; unsuccessful 14). First fix, in the bot's choice
+order: `Ben_DefeatHim` is started by `BPANKRATZ3557` (Activator, ends the conversation), whose sibling `BPANKRATZ3558` has `ClearChildren`;
+the original's `gCInfoManager_PS::OnInfoScriptFinished` (Game 0x101cd5a0) marks every info with the same parent as given when the
+chosen one has ClearChildren, so choosing the calming line first closes the quest for good. A line that ends the conversation is no
+longer deferred behind a sibling when such a sibling is on offer (`crates/questbot/src/bot.rs`).
