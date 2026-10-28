@@ -76,6 +76,12 @@ pub fn use_stack(host: &mut dyn ScriptHost, p: EntityId, template: &str) -> UseO
             UseOutcome::Magic(State::PsMagic)
         }
         UseType::Potion => {
+            // A spell potion (the animal forms): it goes into the right hand and the hero
+            // drinks it in `PS_MagicPotion`, which casts the potion's spell.
+            if !host.item_spell(template).is_empty() && host.equip_item(p, template) {
+                host.set_task(p, State::PsMagicPotion);
+                return UseOutcome::Magic(State::PsMagicPotion);
+            }
             if host.consume_item(p, template) {
                 UseOutcome::Consumed
             } else {

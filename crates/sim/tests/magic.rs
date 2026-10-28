@@ -339,3 +339,84 @@ fn the_bow_hangs_on_the_back_when_the_hands_are_emptied() {
         "{stacks:?}"
     );
 }
+/// A transformation potion: drunk through `PS_MagicPotion`, the potion's spell turns the hero into
+/// the animal of its `Spawn` template (`MagicTransform`, S:57880) and `TransformBack` ends it.
+#[test]
+fn a_transformation_potion_turns_the_hero_into_an_animal() {
+    let spells = r#"[
+ {"name":"Spl_Transform_Wolf","spell_type":1,"deity":3,"min_mana":30,"max_mana":0,"target":0,"cast_type":2,
+  "func_on_cast":"MagicInstant","func_on_hit":"MagicTransform","anim_cast":"","anim_power":"",
+  "spawn":{"template":"Wolf","guid":"53a0542c0862174eab1c370f107d80ee00000000"}}
+]"#;
+    let mut db = synthetic_items();
+    db.insert(ItemDef {
+        name: "It_Potion_Wolf".into(),
+        category: "Alchemy".into(),
+        use_type: Some("Potion".into()),
+        spell: Some("Spl_Transform_Wolf".into()),
+        ..ItemDef::default()
+    });
+    let mut sim = Sim::new(SimConfig::default(), open_world(), db);
+    sim.load_spells(spells).expect("spells");
+    let hero = sim.spawn_hero(Pos::flat(0.0, 0.0));
+    sim.state.add_item("it_potion_wolf", 1);
+    let info = sim.items.info("It_Potion_Wolf");
+    sim.actor_mut(hero).inventory.add_items(
+        "It_Potion_Wolf",
+        info,
+        1,
+        0,
+        gothic_gameplay::inventory::StackType::Normal,
+    );
+    sim.drain_events();
+    let out = sim.player_use_item("It_Potion_Wolf");
+    assert!(matches!(
+        out,
+        Some(gothic_script::player::use_item::UseOutcome::Magic(State::PsMagicPotion))
+    ), "{out:?}");
+    sim.run_ticks(400);
+    let ev = events_of(&mut sim);
+    let tf: Vec<_> = ev
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EventKind::Magic(MagicEvent::Transform { template, secs, .. }) => {
+                Some((template.clone(), *secs))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        tf.iter().any(|(t, s)| t == "Wolf" && *s > 30.0),
+        "{tf:?} state {:?} task {:?} / {:?}",
+        sim.script.npc(hero).state,
+        sim.script.npc(hero).task,
+        ev.iter().map(|e| format!("{:?}", e.kind)).filter(|k| k.contains("Magic")).collect::<Vec<_>>()
+    );
+}
+
+/// Selecting another rune puts it into the hand in place of the one held.
+#[test]
+fn selecting_another_rune_replaces_the_one_in_the_hand() {
+    let (mut sim, hero, _) = world(1);
+    let hand = |sim: &Sim<Grid2dWorld>| {
+        sim.actor(hero)
+            .equipment
+            .right
+            .as_ref()
+            .map(|d| d.name.clone())
+    };
+    for name in ["It_Spell_Fireball", "It_Spell_SummonSkeleton"] {
+        let info = sim.items.info(name);
+        sim.actor_mut(hero).inventory.add_items(
+            name,
+            info,
+            1,
+            0,
+            gothic_gameplay::inventory::StackType::Normal,
+        );
+    }
+    assert!(sim.player_select_spell("It_Spell_Fireball"));
+    assert_eq!(hand(&sim).as_deref(), Some("It_Spell_Fireball"));
+    assert!(sim.player_select_spell("It_Spell_SummonSkeleton"));
+    assert_eq!(hand(&sim).as_deref(), Some("It_Spell_SummonSkeleton"));
+}

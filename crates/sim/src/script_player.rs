@@ -182,6 +182,12 @@ fn counter_index(c: VoiceCounter) -> usize {
 }
 
 impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
+    fn dialog_has_info(&self, npc: EntityId) -> bool {
+        match (self.sim.dialog_info, actor_of(npc)) {
+            (Some((a, has)), Some(n)) if a == n => has,
+            _ => true,
+        }
+    }
     fn book_progress(&self, book: gothic_script::player::api::Book) -> i32 {
         self.sim.script.player.books[book as usize]
     }
@@ -402,7 +408,22 @@ impl<W: WorldQuery> PlayerApi for SimHost<'_, W> {
     }
     fn equip_item(&mut self, e: EntityId, template: &str) -> bool {
         match actor_of(e) {
-            Some(id) => self.sim.equip(id, template).is_ok(),
+            Some(id) => {
+                // A spell potion is held in the right hand like a rune (the cast reads the spell
+                // of the item in that hand); other potions are not equipment.
+                let potion = self.sim.items.get(template).and_then(|d| {
+                    (d.spell.is_some()
+                        && d.use_type
+                            .as_deref()
+                            .is_some_and(|u| u.eq_ignore_ascii_case("potion")))
+                    .then(|| d.clone())
+                });
+                if let Some(d) = potion {
+                    self.sim.actor_mut(id).equipment.right = Some(d);
+                    return true;
+                }
+                self.sim.equip(id, template).is_ok()
+            }
             None => false,
         }
     }
@@ -551,6 +572,88 @@ impl<W: WorldQuery> Sim<W> {
         let mut host = SimHost::new(self);
         host.self_entity = hero;
         Some(f(&mut host, hero))
+    }
+
+    /// The companion commands "attack what I focus" / "follow me" (`SendPerceptionCmdAttack`
+    /// S:31ff0, `SendPerceptionCmdFollow` S:32170): every companion of the hero hears the order
+    /// (`AssessCmdAttack` attacks the focus with reason `PlayerCommand`, `AssessCmdFollow` ends a
+    /// wait). The original has no script caller for them: the order comes from the player's input.
+    pub fn player_companion_command(&mut self, attack: bool) {
+        use gothic_script::assess::{send_perception_cmd_attack, send_perception_cmd_follow};
+        let Some(hero) = self.hero else { return };
+        let mut host = SimHost::new(self);
+        let h = entity_of(hero);
+        host.self_entity = h;
+        if attack {
+            send_perception_cmd_attack(&mut host, h);
+        } else {
+            send_perception_cmd_follow(&mut host, h);
+        }
+        // The companions' new tasks reach the simulation's brains.
+        let now = self.now_ms();
+        for i in 0..self.actors.len() {
+            if self.actors[i].party_leader == Some(hero) {
+                self.reflect_script_task(i, now);
+            }
+        }
+    }
+
+    /// The voice of an info command whose lines the script library decides: `SayConfirm`
+    /// (`StartSayConfirm`), `SayHoldingPosition` (`StartSayHoldingPosition`), `SayGuardNews`
+    /// (`_AI_SayGuardNews` line plan from the enclave's murder / theft counts) and `SayBossNews`
+    /// (`_AI_SayBossNews`, which may end in a revolution). The lines are queued on the speaker.
+    pub fn dialog_voice(&mut self, command: &str, npc: ActorId) {
+        use gothic_script::enums::PlayerCrime;
+        use gothic_script::host::{AiCommand, NpcApi, ScriptCtx, WorldApi};
+        use gothic_script::speech;
+        let e = entity_of(npc);
+        let Some(hero) = self.hero else { return };
+        let mut host = SimHost::new(self);
+        host.self_entity = e;
+        match command.to_ascii_lowercase().as_str() {
+            "sayconfirm" => {
+                speech::start_say_confirm(&mut host, e, entity_of(hero));
+            }
+            "sayholdingposition" => {
+                speech::start_say_holding_position(&mut host, e, entity_of(hero));
+            }
+            "sayguardnews" => {
+                let enclave = host.enclave(e);
+                let (m, t) = if enclave.is_some() {
+                    (
+                        host.enclave_crime_count(enclave, PlayerCrime::Murder),
+                        host.enclave_crime_count(enclave, PlayerCrime::Theft),
+                    )
+                } else {
+                    (0, 0)
+                };
+                for l in speech::guard_news_plan(m, t).0 {
+                    host.queue_ai(e, AiCommand::SayLine { key: l.key });
+                }
+            }
+            "saybossnews" => speech::boss_news_finish(&mut host, e),
+            _ => {}
+        }
+    }
+
+    /// Reactions the ported predicates report for a talk with `npc` (`HasGuardNews`,
+    /// `HasBossNews`, `HasHealInfo`, S:bcf00 / S:bd050 / S:bd2c0): the dialog engine offers the
+    /// `EnclaveCrime`, `PoliticalCrime` and `Heal` infos only then.
+    pub fn dialog_triggers(&mut self, npc: ActorId) -> std::collections::BTreeSet<String> {
+        use gothic_script::routine::info::{has_boss_news, has_guard_news, has_heal_info};
+        let mut set = std::collections::BTreeSet::new();
+        let e = entity_of(npc);
+        let host = SimHost::new(self);
+        if has_guard_news(&host, e) {
+            set.insert("EnclaveCrime".to_string());
+        }
+        if has_boss_news(&host, e) {
+            set.insert("PoliticalCrime".to_string());
+        }
+        if has_heal_info(&host, e) {
+            set.insert("Heal".to_string());
+        }
+        set
     }
 
     /// The confirm key on the focused entity (actors are `EntityId(n + 1)`, objects and items

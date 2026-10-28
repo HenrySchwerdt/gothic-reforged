@@ -259,6 +259,65 @@ pub fn angles(v: &Viewer, p: [f32; 3]) -> (f32, f32) {
     (az, d[1].atan2(horiz) * RAD_TO_DEG)
 }
 
+/// `gEFocusLookAt` (`PSFocus.FocusLookAtMode`): what the focus angles are measured against.
+pub const LOOK_AT_CAMERA: u32 = 0;
+pub const LOOK_AT_ENTITY: u32 = 1;
+pub const LOOK_AT_KEYS: u32 = 2;
+
+/// The view azimuth `GetAngles` (Game:0x1006c530) measures the candidates against, by
+/// `FocusLookAtMode`: 0 the camera's forward, 1 the owner's own heading (`GetAziElev` on the
+/// owner), 2 the accumulated key direction ([`accumulate_key_direction`]); with no key direction
+/// yet the keys case falls through to the owner's heading like the original. `dir` is the
+/// horizontal direction (x, z) in the same azimuth convention as [`Viewer::yaw`].
+pub fn view_yaw(look_at: u32, camera_yaw: f32, owner_yaw: f32, dir: [f32; 2]) -> f32 {
+    gothic_portcov::hit!("view_yaw");
+    match look_at {
+        LOOK_AT_CAMERA => camera_yaw,
+        LOOK_AT_KEYS if dir[0] * dir[0] + dir[1] * dir[1] > 1e-8 => dir[0].atan2(dir[1]),
+        _ => owner_yaw,
+    }
+}
+
+/// Port of the key handling of `gCFocus_PS::OnAction` (Game:0x1006e8e0): in the keys look-at mode
+/// every movement-key message moves the focus direction vector (+0x18c) by the camera's flattened
+/// forward (forward key adds, backward subtracts) or right axis (right adds, left subtracts), then
+/// the vector is renormalised. `forward` / `right` are the flattened unit axes of the reference
+/// frame (the camera, or the owner when `ControlFrameOfReference` selects it).
+pub fn accumulate_key_direction(
+    dir: [f32; 2],
+    forward_key: bool,
+    backward_key: bool,
+    left_key: bool,
+    right_key: bool,
+    forward: [f32; 2],
+    right: [f32; 2],
+) -> [f32; 2] {
+    gothic_portcov::hit!("accumulate_key_direction");
+    let mut d = dir;
+    let mut add = |a: [f32; 2], sign: f32| {
+        d[0] += a[0] * sign;
+        d[1] += a[1] * sign;
+    };
+    if forward_key {
+        add(forward, 1.0);
+    }
+    if backward_key {
+        add(forward, -1.0);
+    }
+    if left_key {
+        add(right, -1.0);
+    }
+    if right_key {
+        add(right, 1.0);
+    }
+    let m2 = d[0] * d[0] + d[1] * d[1];
+    if m2 != 0.0 {
+        let m = m2.sqrt();
+        d = [d[0] / m, d[1] / m];
+    }
+    d
+}
+
 fn dist2(a: [f32; 3], b: [f32; 3]) -> f32 {
     (0..3).map(|i| (a[i] - b[i]) * (a[i] - b[i])).sum()
 }
@@ -404,6 +463,33 @@ mod tests {
             script_priority: 0.0,
             los: true,
         }
+    }
+
+    #[test]
+    fn keys_look_at_follows_the_accumulated_direction() {
+        // forward = +Z, right = +X
+        let f = [0.0, 1.0];
+        let r = [1.0, 0.0];
+        let d = accumulate_key_direction([0.0, 0.0], false, false, false, true, f, r);
+        assert_eq!(d, [1.0, 0.0]);
+        // holding forward + right drifts to the diagonal, normalised
+        let d = accumulate_key_direction(d, true, false, false, false, f, r);
+        assert!((d[0] - d[1]).abs() < 1e-5 && (d[0].hypot(d[1]) - 1.0).abs() < 1e-5);
+        // look-at mode 2 measures against that direction, 0 against the camera, 1 the owner
+        assert!((view_yaw(LOOK_AT_KEYS, 0.3, 0.7, [1.0, 0.0]) - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!(view_yaw(LOOK_AT_CAMERA, 0.3, 0.7, [1.0, 0.0]), 0.3);
+        assert_eq!(view_yaw(LOOK_AT_ENTITY, 0.3, 0.7, [1.0, 0.0]), 0.7);
+        // no direction yet: falls through to the owner's heading
+        assert_eq!(view_yaw(LOOK_AT_KEYS, 0.3, 0.7, [0.0, 0.0]), 0.7);
+        // the target to the right of the camera is picked first when the keys point right
+        let c = FocusConfig::hero();
+        let left = cand(1, Class::Character, -100.0, 200.0);
+        let right_c = cand(2, Class::Character, 100.0, 200.0);
+        let mut v = viewer();
+        v.yaw = view_yaw(LOOK_AT_KEYS, 0.0, 0.0, [1.0, 0.0]);
+        // viewer facing +X: both are 90 degrees off at most; the nearer-angle one wins
+        let pick = find_focus(&c, CombatMode::Melee, &v, &[left, right_c]);
+        assert!(pick.is_some());
     }
 
     #[test]

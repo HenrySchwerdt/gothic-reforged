@@ -256,7 +256,10 @@ pub fn confirm(host: &mut dyn ScriptHost, p: EntityId, focus: EntityId) -> Confi
                 Confirm::Rob(focus)
             }
             AiMode::Combat | AiMode::Flee | AiMode::Arena => Confirm::Nothing,
-            _ => match assess_talk(host, focus, p, true) {
+            _ => match {
+                let has_info = host.dialog_has_info(focus);
+                assess_talk(host, focus, p, has_info)
+            } {
                 TalkOutcome::Talk => Confirm::Talk(focus),
                 TalkOutcome::Refused => Confirm::TalkRefused(focus),
                 TalkOutcome::Ignored => Confirm::Nothing,

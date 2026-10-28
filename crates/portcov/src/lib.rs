@@ -95,6 +95,23 @@ mod imp {
         }
     }
 
+    /// How often the function (`name`, as in `hit!("name")`) or the dynamic counter ran.
+    pub fn count(name: &str) -> u64 {
+        let tail = format!("#{name}");
+        let mut n = 0;
+        if let Ok(s) = SITES.lock() {
+            for (k, c) in s.iter() {
+                if k.ends_with(&tail) {
+                    n += c.load(Ordering::Relaxed);
+                }
+            }
+        }
+        if let Ok(d) = DYN.lock() {
+            n += d.get(name).copied().unwrap_or(0);
+        }
+        n
+    }
+
     /// Writes all counters to `$GOTHIC_PORTCOV_OUT` (atomically via a temp file).
     pub fn dump() {
         let path = std::env::var("GOTHIC_PORTCOV_OUT")
@@ -133,7 +150,20 @@ mod imp {
 }
 
 #[cfg(feature = "enabled")]
-pub use imp::{dump, hit_dyn, register};
+pub use imp::{count, dump, hit_dyn, register};
+
+/// Is the counting build active?
+#[cfg(feature = "enabled")]
+pub const ENABLED: bool = true;
+/// Is the counting build active?
+#[cfg(not(feature = "enabled"))]
+pub const ENABLED: bool = false;
+
+/// Disabled: always 0.
+#[cfg(not(feature = "enabled"))]
+pub fn count(_name: &str) -> u64 {
+    0
+}
 
 /// Disabled: nothing.
 #[cfg(not(feature = "enabled"))]

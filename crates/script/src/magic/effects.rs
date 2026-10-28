@@ -200,12 +200,20 @@ fn set_status(host: &mut dyn ScriptHost, target: EntityId, mask: u32, on: bool) 
     host.emit_magic(MagicEvent::Status { target, mask, on });
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicBurn` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicBurn` (S:56e60): set the target on fire.
 pub fn magic_burn(host: &mut dyn ScriptHost, _caster: EntityId, target: EntityId) {
     gothic_portcov::hit!("magic_burn");
     set_status(host, target, STATUS_BURNING, true);
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicFreeze` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicFreeze` (S:56f30): freeze the target (`ZS_Freeze` handles the rest).
 pub fn magic_freeze(host: &mut dyn ScriptHost, _caster: EntityId, target: EntityId) {
     gothic_portcov::hit!("magic_freeze");
@@ -233,6 +241,9 @@ pub fn magic_disease(host: &mut dyn ScriptHost, caster: EntityId, target: Entity
     assess_target(host, target, caster, AttackReason::ReactToDamage);
 }
 
+/// DEAD IN THE SHIPPED DATA: only `Spl_Refresh` names `MagicRefresh`, and no item and no NPC
+/// template refers to that spell (`.local/tple`, `items.json`). Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicRefresh` (S:572d0): mana to the maximum.
 pub fn magic_refresh(host: &mut dyn ScriptHost, caster: EntityId) {
     gothic_portcov::hit!("magic_refresh");
@@ -282,6 +293,10 @@ pub fn magic_heal_other(host: &mut dyn ScriptHost, target: EntityId) {
     stats::set_pool(host, target, Pool::Hit, max);
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicKeepStamina` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicKeepStamina` (S:58b70): only the hero; the engine parks a "stamina held at
 /// maximum" flag on him (it reuses `GuardStatus` and `LastDistToGuardPoint`).
 pub fn magic_keep_stamina(host: &mut dyn ScriptHost, who: EntityId) {
@@ -292,6 +307,10 @@ pub fn magic_keep_stamina(host: &mut dyn ScriptHost, who: EntityId) {
     }
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicSpeedUp` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicSpeedUp` (S:58a30): only the hero; he runs fast for `(StaminaMax - 200) / 2 + 60`
 /// seconds (never less than 60).
 pub fn magic_speed_up(host: &mut dyn ScriptHost, who: EntityId) {
@@ -303,6 +322,10 @@ pub fn magic_speed_up(host: &mut dyn ScriptHost, who: EntityId) {
     }
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicStun` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicStun` (S:58cb0): every character within 12 m, nearest first, that is neither
 /// dead nor down, not already stunned, not on guard duty and not in the caster's party gets the
 /// `ZS_Stunned` task. The scan ends at the first character beyond the radius.
@@ -333,6 +356,10 @@ pub fn magic_stun(host: &mut dyn ScriptHost, caster: EntityId) {
     }
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicDispel` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicDispel` (S:53460): for a damage element (ice 5, fire 4, lightning 6 — the DLL's
 /// parameter 4, 5 or 6 picks it) remove the area-spell entities of that element within 25 m
 /// and put out the characters burning or frozen there.
@@ -639,6 +666,10 @@ pub fn magic_summon_monster(host: &mut dyn ScriptHost, caster: EntityId) {
     summon_party_monster(host, caster, &template);
 }
 
+/// DEAD IN THE SHIPPED DATA: no spell of `spells.json`, no item and no entity template of the
+/// game data (`.local/tple`, 55 MB of exported templates) names `MagicSummonCompanion` as a function; the only
+/// references are the script registry wrappers. Kept as a faithful port; see
+/// `docs/research/WIRING_NPC_STATUS.md`.
 /// Port of `MagicSummonCompanion` (S:55b90): the creature named by the spell's `Spawn`.
 pub fn magic_summon_companion(host: &mut dyn ScriptHost, caster: EntityId) {
     gothic_portcov::hit!("magic_summon_companion");
@@ -855,7 +886,8 @@ pub fn call_spell_function(
         "MagicPoison" => magic_poison(host, caster, target),
         "MagicDisease" => magic_disease(host, caster, target),
         "MagicRefresh" => magic_refresh(host, caster),
-        "MagicCure" => magic_cure(host, caster),
+        // `MagicHeal` is the registry alias of the same function (0x10053870, `Spl_Cure`).
+        "MagicCure" | "MagicHeal" => magic_cure(host, caster),
         "MagicCurePoison" => magic_cure_poison(host, caster),
         "MagicCureDisease" => magic_cure_disease(host, caster),
         "MagicHealOther" => magic_heal_other(host, target),

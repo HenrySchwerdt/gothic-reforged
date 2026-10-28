@@ -101,6 +101,11 @@ pub struct GameState {
     pub log: Vec<LogEntry>,
     /// Entities the dialog host reports as "owner is near X" (`CondOwnerNearEntity`).
     pub near: BTreeSet<String>,
+    /// Reactions the host reports as firing for the dialog partner (`Heal`, `EnclaveCrime`,
+    /// `PoliticalCrime`, ...): the engine-side predicates (`HasHealInfo`, `HasGuardNews`,
+    /// `HasBossNews`) decide, the dialog engine only reads the answer. Set per dialog, not saved.
+    #[serde(skip)]
+    pub triggers: BTreeSet<String>,
     pub game_over: bool,
 }
 
@@ -134,6 +139,7 @@ impl GameState {
             chapter: 0,
             log: Vec::new(),
             near: BTreeSet::new(),
+            triggers: BTreeSet::new(),
             game_over: false,
         }
     }

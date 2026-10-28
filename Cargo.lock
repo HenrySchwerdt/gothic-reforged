@@ -3886,6 +3886,7 @@ dependencies = [
  "gothic-render-plus",
  "gothic-render-rules",
  "gothic-runtime",
+ "gothic-session",
  "gothic-sim",
  "gothic-static-render",
  "gothic-ui",
@@ -3934,6 +3935,16 @@ name = "gothic-script"
 version = "0.1.0"
 dependencies = [
  "gothic-portcov",
+]
+
+[[package]]
+name = "gothic-session"
+version = "0.1.0"
+dependencies = [
+ "gothic-gameplay",
+ "gothic-runtime",
+ "gothic-sim",
+ "serde_json",
 ]
 
 [[package]]

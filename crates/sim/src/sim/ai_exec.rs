@@ -63,6 +63,25 @@ impl<W: WorldQuery> Sim<W> {
         self.actors[id.0 as usize].brain.goto = None;
     }
 
+    /// QA hook: put an idle actor into any script state, as its routine or a reaction would
+    /// (`state` runs through `run_script_states` like every other task).
+    pub fn qa_enter_state(&mut self, id: ActorId, state: State) {
+        let now = self.now_ms();
+        {
+            let a = &mut self.actors[id.0 as usize];
+            a.ai_mode = AiMode::Routine;
+            a.brain.task = Task::Routine;
+            a.brain.busy_until_ms = now;
+            if a.hp < 1 {
+                a.hp = 1;
+            }
+        }
+        self.script_enter(id, state);
+        self.reflect_script_task(id.0 as usize, now);
+        self.script.npc_mut(id).on_dest = true;
+        self.qa_drive = Some(id);
+    }
+
     /// Put the script state machine of `id` into `ZS_Attack` (called when a fight starts).
     pub(super) fn script_begin_attack(&mut self, id: ActorId) {
         self.script_enter(id, State::Attack);
@@ -145,7 +164,7 @@ impl<W: WorldQuery> Sim<W> {
 
     /// Mirror the script task into the simulation task: tasks the script ended return the actor
     /// to its routine.
-    pub(super) fn reflect_script_task(&mut self, i: usize, now: u64) {
+    pub(crate) fn reflect_script_task(&mut self, i: usize, now: u64) {
         let id = self.actors[i].id;
         let task = self.script.npc(id).task;
         match task_for(task) {
@@ -168,6 +187,11 @@ impl<W: WorldQuery> Sim<W> {
     /// task state of the point's use type (`ZS_Smith`, `ZS_Guard`, `ZS_Sleep`, ...), whose
     /// `Action` / `AniStateAction` commands reach the presentation as `EventKind::Anim`.
     pub(super) fn script_routine_think(&mut self, i: usize, now: u64) {
+        if self.qa_drive == Some(self.actors[i].id) {
+            // QA: the state entered by `qa_enter_state` runs as it would at its work point.
+            self.script_state_drive(i, now);
+            return;
+        }
         use gothic_script::routine::select::select_routine_task;
         use gothic_script::routine::time as rtime;
         let id = self.actors[i].id;
@@ -191,13 +215,13 @@ impl<W: WorldQuery> Sim<W> {
             self.actors[i].brain.busy_until_ms = now;
         }
         let dest = self.script.npc(id).dest;
-        if dest.is_none() {
+        if dest.is_none() && self.script.npc(id).task.is_none() {
             return;
         }
-        let Some(target) = SimHost::<W>::entity_position_of(&self.script, dest) else {
-            return;
-        };
         if self.script.npc(id).task.is_none() {
+            let Some(target) = SimHost::<W>::entity_position_of(&self.script, dest) else {
+                return;
+            };
             // Not at work yet: walk to the routine point; the task state starts on arrival.
             if self.pos(id).dist_xz(target) > 30.0 {
                 self.world.move_towards(id, target, WALK_SPEED * self.dt());
@@ -211,8 +235,21 @@ impl<W: WorldQuery> Sim<W> {
             };
             self.script_enter(id, task);
         }
-        // The task state drives from here: its own walks to work objects, animations, waits.
-        // Task callbacks (`OnGoto`, `OnWork`) run every tick like the combat tasks'.
+        self.script_state_drive(i, now);
+    }
+
+    /// The task state drives: its own walks to work objects, animations, waits. The state
+    /// clocks advance, task callbacks (`OnGoto`, `OnWork`, `OnSleep`, `OnFollowPlayer`, ...) run
+    /// every tick like the combat tasks'.
+    pub(super) fn script_state_drive(&mut self, i: usize, now: u64) {
+        let id = self.actors[i].id;
+        let npc = entity(id);
+        {
+            let dt = self.dt();
+            let s = self.script.npc_mut(id);
+            s.state_time += dt;
+            s.task_time += dt;
+        }
         let cb = self.script.npc(id).task_cb;
         if cb != Callback::None {
             let mut host = SimHost::new(self);
@@ -267,6 +304,12 @@ impl<W: WorldQuery> Sim<W> {
                 use_type,
             });
         }
+        if cmd == AiCommand::StandUp {
+            // `_AI_StandUp` (S:4a950): leave any sitting, lying or kneeling pose.
+            let mut host = SimHost::new(self);
+            host.self_entity = entity(id);
+            gothic_script::combat::commands::start_stand_up(&mut host, entity(id));
+        }
         match cmd {
             AiCommand::Attack { action, target } => {
                 let tid = actor_id(target);
@@ -300,6 +343,17 @@ impl<W: WorldQuery> Sim<W> {
                     kind,
                     walk_mode,
                     stop: CONTACT_DISTANCE,
+                    since_ms: now,
+                });
+            }
+            AiCommand::GotoFollow { target, within } => {
+                // `_AI_GotoFollow`: walk up to the leader and stop `within` cm from it.
+                self.actors[i].brain.goto = Some(GotoState {
+                    target: Some(actor_id(target)),
+                    pos: None,
+                    kind: GotoKind::Approach,
+                    walk_mode: 2,
+                    stop: within,
                     since_ms: now,
                 });
             }
@@ -343,6 +397,12 @@ impl<W: WorldQuery> Sim<W> {
             }
             AiCommand::Shoot { target } => {
                 let tid = actor_id(target);
+                {
+                    // `_AI_Shoot` (S:4a710): the action becomes Shoot, one projectile is needed.
+                    let mut host = SimHost::new(self);
+                    host.self_entity = entity(id);
+                    gothic_script::combat::commands::start_shoot(&mut host, entity(id));
+                }
                 self.face(i, tid);
                 let loaded = matches!(
                     self.actors[i].equipment.right_use(),

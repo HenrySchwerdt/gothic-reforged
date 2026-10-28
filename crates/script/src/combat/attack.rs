@@ -198,8 +198,12 @@ fn attack_enter(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
         return Out::Leave;
     }
     host.set_look_at(npc, EntityId::NONE);
-    host.set_ai_mode(npc, AiMode::Combat);
     let target = host.current_target(npc);
+    if host.ai_mode(npc) != AiMode::Combat {
+        // The shout that opens the fight (`StartSayAttackReason`, S:512d0, called by S:14480).
+        crate::speech::start_say_attack_reason(host, npc, target);
+    }
+    host.set_ai_mode(npc, AiMode::Combat);
     if target == host.player() && !host.is_transformed(npc) {
         host.set_last_fight_vs_player(npc, LastFight::Running);
     }
@@ -756,6 +760,10 @@ fn end_wrap_up(host: &mut dyn ScriptHost, npc: EntityId) -> Out {
         assess_target(host, npc, other, why);
         return Out::Leave;
     }
+    if host.combat_state(npc) == 1 && target.is_some() {
+        // The remark after the fight (`StartSayAttackEnd`, S:50cf0, called by S:1a610).
+        crate::speech::start_say_attack_end(host, npc, target);
+    }
     let player = host.player();
     let now = host.playing_time();
     if target.is_some() && host.current_attacker(target) == player {
@@ -1074,8 +1082,13 @@ mod tests {
         w.set_ai_mode(b, AiMode::Dead);
         assert!(on_attack(&mut w, a));
         assert_eq!(w.current_state(a), Some(State::AttackEnd));
-        // The end state: stand up, holster, wait two seconds, resume the routine.
-        assert_eq!(step(&mut w, a), Some(AiCommand::StandUp));
+        // The end state: the victory shout (StartSayAttackEnd, S:50cf0), stand up, holster, wait
+        // two seconds, resume the routine.
+        assert!(matches!(
+            step(&mut w, a),
+            Some(AiCommand::SayLine { key }) if key.starts_with("Victory")
+        ));
+        // (the stand-up is queued by the same pass)
         assert!(matches!(
             step(&mut w, a),
             Some(AiCommand::HoldInventoryStacks {

@@ -102,6 +102,13 @@ pub enum Command {
         /// Target hour of the day, `None` until morning.
         hour: Option<u32>,
     },
+    /// Order the companions: attack the focused character (`SendPerceptionCmdAttack`) or follow
+    /// again (`SendPerceptionCmdFollow`). The original has no script caller; the order comes from
+    /// the player's input, which a host binds to this command.
+    CompanionCommand {
+        /// Attack (true) or follow (false).
+        attack: bool,
+    },
     /// Toggle sneaking.
     ToggleSneak,
     /// Jump.
@@ -855,6 +862,13 @@ impl Core {
             Command::Attack { target } => self.hero_attack(*target),
             Command::SetDrawn(d) => self.sim.actor_mut(self.hero).drawn = *d,
             Command::Confirm { focus } => {
+                // `HasInfo`: is there anything to say to the focused character?
+                self.sim.dialog_info = gothic_sim::script::host::EntityId(*focus)
+                    .0
+                    .checked_sub(1)
+                    .map(ActorId)
+                    .filter(|a| (a.0 as usize) < self.sim.actors.len())
+                    .map(|a| (a, self.has_dialog_info(a)));
                 if let Some(c) = self.sim.player_confirm(EntityId(*focus)) {
                     out.push(Event::Confirmed(c));
                 }
@@ -884,6 +898,7 @@ impl Core {
                 self.sim.player_sleep(*hour);
                 self.state_rev += 1;
             }
+            Command::CompanionCommand { attack } => self.sim.player_companion_command(*attack),
             Command::ToggleSneak => self.sim.player_toggle_sneak(),
             Command::Jump => self.sim.player_jump(),
             Command::HeroModeChanged {
@@ -1039,9 +1054,16 @@ impl Core {
                 self.grant_perks(&[p.as_str()]);
             }
             Command::GiveHero { template, amount } => {
-                self.sim
-                    .state
-                    .add_item(&template.to_ascii_lowercase(), *amount);
+                // Into the hero's own bag with the item's rule data (a stack without it cannot be
+                // worn or held), the game state mirrors it.
+                let info = self.sim.items.info(template);
+                self.sim.actor_mut(self.hero).inventory.add_items(
+                    template,
+                    info,
+                    (*amount).min(i32::MAX as u32) as i32,
+                    0,
+                    gothic_gameplay::inventory::StackType::Normal,
+                );
                 self.sync_inventory();
                 self.state_rev += 1;
             }
@@ -1095,6 +1117,21 @@ impl Core {
 
     // ---- dialog ---------------------------------------------------------------------
 
+    /// `HasInfo`: does the dialog data have something to say to the hero for `npc` right now?
+    pub fn has_dialog_info(&mut self, npc: ActorId) -> bool {
+        let name = self.sim.actor(npc).name.clone();
+        let db = self.db.clone();
+        let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+        self.sim.state.triggers = self.sim.dialog_triggers(npc);
+        // The player's generic root infos (goodbye, ...) are offered to everybody; only the
+        // character's own infos and the partner-dependent ones (trade, teach, party, ...) count.
+        !eng.own_root_available(&self.sim.state, &name).is_empty()
+            || eng
+                .root_list(&self.sim.state, &name)
+                .iter()
+                .any(|&i| eng.hero_info_depends_on_partner(i))
+    }
+
     fn start_dialog(&mut self, npc: ActorId, out: &mut Vec<Event>) {
         if self.dialog.is_some() {
             return;
@@ -1104,6 +1141,7 @@ impl Core {
         self.sim.gui_open = true;
         let db = self.db.clone();
         let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+        self.sim.state.triggers = self.sim.dialog_triggers(npc);
         let (session, r) = eng.start(&mut self.sim.state, &name);
         out.push(Event::DialogStarted {
             npc,
@@ -1128,7 +1166,24 @@ impl Core {
             return;
         };
         let eng = Engine::with(&db, Assumptions::PERMISSIVE);
+        // The kind of party move the info stands for (`JoinPlayerParty` / `JoinPlayerMob` /
+        // `JoinPlayerSlavery`, `DismissPlayerMob`, `WaitPlayerParty`).
+        let cond = choice
+            .info
+            .map(|id| gothic_gameplay::model::InfoCond::from_raw(db.info(id).condition_type));
+        use gothic_gameplay::model::InfoCond as C;
+        use gothic_sim::script::enums::PartyMemberType as K;
+        self.sim.join_kind = match cond {
+            Some(C::MobJoin | C::MobDismiss) => Some(K::Mob),
+            Some(C::SlaveJoin) => Some(K::Slave),
+            _ => None,
+        };
+        let npc_id = d.npc;
         let r = eng.choose(&mut self.sim.state, &mut d.session, &choice);
+        self.sim.join_kind = None;
+        if cond == Some(C::Wait) {
+            self.sim.wait_party(npc_id);
+        }
         let finished = r.ended || d.session.ended;
         self.absorb(&r, out);
         if finished {
@@ -1229,6 +1284,16 @@ impl Core {
                             amount: *amount,
                             gained: to == "player",
                         });
+                    }
+                }
+                Output::Voice { command, speaker } => {
+                    let who = if speaker.is_empty() || speaker.eq_ignore_ascii_case(&npc_name) {
+                        npc
+                    } else {
+                        self.sim.find(speaker).or(npc)
+                    };
+                    if let Some(w) = who {
+                        self.sim.dialog_voice(command, w);
                     }
                 }
                 Output::Message { text } => out.push(Event::Notice(text.clone())),

@@ -303,8 +303,9 @@ pub fn quality_bonus(quality: u32, base: i32) -> i32 {
 }
 
 /// Port of `GetPlayerSkillDamageBonus` (S:2e410): the player's perk bonus on a hit of `base`
-/// damage against `victim`. Only for the player; the two Hunter perks (game versus other
-/// animals, S:57fc0/57bd0) are not ported.
+/// damage against `victim`. Only for the player. The bow adds the two Hunter perks: `Perk_Hunter_1`
+/// doubles the damage against game (`IsGame`, S:57fc0), `Perk_Hunter_2` against the other animals
+/// (`IsAnimal`, S:57bd0).
 pub fn skill_bonus(
     host: &dyn ScriptHost,
     attacker: EntityId,
@@ -338,7 +339,17 @@ pub fn skill_bonus(
     let right = host.slot_use_type(attacker, Slot::RightHand);
     if ev.kind == HitKind::Projectile {
         match (left, right) {
-            (UseType::Bow, _) => tiered("Perk_Bow_3", "Perk_Bow_2", &mut bonus),
+            (UseType::Bow, _) => {
+                tiered("Perk_Bow_3", "Perk_Bow_2", &mut bonus);
+                use crate::magic::effects::{is_animal, is_game};
+                if is_game(host, victim) {
+                    if skill("Perk_Hunter_1") {
+                        bonus += base;
+                    }
+                } else if is_animal(host, victim) && skill("Perk_Hunter_2") {
+                    bonus += base;
+                }
+            }
             (UseType::CrossBow, _) => tiered("Perk_Crossbow_3", "Perk_Crossbow_2", &mut bonus),
             _ => {}
         }

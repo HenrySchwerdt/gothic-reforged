@@ -226,8 +226,8 @@ fn friend(
     }
 }
 
-fn reaction(assume: Assumptions, what: &'static str) -> Result<(), Unmet> {
-    if assume.triggered_reactions {
+fn reaction(assume: Assumptions, st: &GameState, what: &'static str) -> Result<(), Unmet> {
+    if assume.triggered_reactions || st.triggers.contains(what) {
         Ok(())
     } else {
         Err(Unmet::NotTriggered(what))
@@ -357,17 +357,17 @@ fn predicate(
             }
         }
         Trade => flag(npc.trade_enabled, assume, "TradeEnabled")?,
-        PickPocket => reaction(assume, "PickPocket")?,
-        MasterThief => reaction(assume, "MasterThief")?,
-        Heal => reaction(assume, "Heal")?,
-        EnclaveCrime => reaction(assume, "EnclaveCrime")?,
-        PoliticalCrime => reaction(assume, "PoliticalCrime")?,
-        FirstWarn => reaction(assume, "FirstWarn")?,
-        SecondWarn => reaction(assume, "SecondWarn")?,
-        Animal => reaction(assume, "Animal")?,
-        NotFriend | NotFriendOrThief => reaction(assume, "NotFriend")?,
+        PickPocket => reaction(assume, st, "PickPocket")?,
+        MasterThief => reaction(assume, st, "MasterThief")?,
+        Heal => reaction(assume, st, "Heal")?,
+        EnclaveCrime => reaction(assume, st, "EnclaveCrime")?,
+        PoliticalCrime => reaction(assume, st, "PoliticalCrime")?,
+        FirstWarn => reaction(assume, st, "FirstWarn")?,
+        SecondWarn => reaction(assume, st, "SecondWarn")?,
+        Animal => reaction(assume, st, "Animal")?,
+        NotFriend | NotFriendOrThief => reaction(assume, st, "NotFriend")?,
         // Crime(0): guard/crime flag [I] - a reaction without trigger.
-        Crime => reaction(assume, "Crime")?,
+        Crime => reaction(assume, st, "Crime")?,
         // No predicate beyond the common checks.
         EnclaveFriend => friend(st, assume, "enc:", "EnclaveFriend (fame >= 75)")?,
         PoliticalFriend => friend(st, assume, "pol:", "PoliticalFriend (fame >= 75)")?,

@@ -219,6 +219,9 @@ pub struct PlayState {
     pub melee_focus: Option<ActorId>,
     /// `gCFocus_PS::FocusLocked` (this+0x158) with the locked entity (`PSFocus` proxy this+0x130).
     pub focus_lock: Option<ActorId>,
+    /// `gCFocus_PS` focus direction vector (+0x18c): the horizontal (x, z) direction the movement
+    /// keys last pointed to; the focus angles use it in the keys look-at mode.
+    pub focus_dir: [f32; 2],
     /// The hero sneaks (`AniState::Sneak` of the ported state).
     pub sneaking: bool,
     /// The quick bar: template per slot 1..10.
@@ -427,27 +430,19 @@ pub fn install(app: &mut App, args: &[String]) -> Result<()> {
     let roster = npcs::select_roster(&npcs, &looks, &layer_flags);
     // Register the sectors with the initial flag of their layer roots before any character
     // exists: the core files each actor under its document's sector.
-    let mut sectors: Vec<gothic_runtime::Command> = Vec::new();
-    for d in &roster.docs {
-        if !sectors.iter().any(|c| matches!(c, gothic_runtime::Command::RegisterSector { name, .. } if *name == d.sector)) {
-            sectors.push(gothic_runtime::Command::RegisterSector {
-                name: d.sector.clone(),
-                enabled: d.enabled,
-            });
-        }
-    }
     let objects = objects::WorldObjects::build(object_defs, &layer_flags);
-    for d in &objects.docs {
-        let name = layers::sector_name(&d.path);
-        if !sectors.iter().any(
-            |c| matches!(c, gothic_runtime::Command::RegisterSector { name: n, .. } if *n == name),
-        ) {
-            sectors.push(gothic_runtime::Command::RegisterSector {
-                name,
-                enabled: d.on,
-            });
-        }
-    }
+    let sectors = gothic_session::sector_commands(
+        roster
+            .docs
+            .iter()
+            .map(|d| (d.sector.clone(), d.enabled))
+            .chain(
+                objects
+                    .docs
+                    .iter()
+                    .map(|d| (layers::sector_name(&d.path), d.on)),
+            ),
+    );
     core.tick(0.0, &sectors);
     let destinations = teleport::Destinations::load();
     teleport::register_waypoints(&mut core, &destinations);

@@ -248,6 +248,11 @@ pub enum VoiceCounter {
 
 /// Everything the player states need besides the NPC and inventory traits.
 pub trait PlayerApi {
+    /// Does the dialog data have an entry for the talk with `npc` (`HasInfo`)? Hosts without
+    /// dialog data say yes.
+    fn dialog_has_info(&self, _npc: EntityId) -> bool {
+        true
+    }
     /// Read a speech counter (zero until written).
     fn voice_counter(&self, c: VoiceCounter) -> u32;
     /// Write a speech counter.

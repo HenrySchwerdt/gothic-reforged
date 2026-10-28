@@ -99,6 +99,19 @@ fn trace(sc: &mut Sc, key: &'static str) {
         }
         let last = cx.st.n.get("hp_last").copied().unwrap_or(f64::from(hp));
         let now = f64::from(cx.now);
+        // Frame times: the timestamps of clips and damage are frame times, so a hitch (a loaded
+        // machine) moves them by up to that frame; hitches are kept to widen the tolerance.
+        {
+            let prev = cx.st.n.insert("fr_prev".into(), now).unwrap_or(now);
+            if now - prev > 0.05 {
+                cx.st
+                    .store
+                    .entry("hitches".into())
+                    .or_default()
+                    .push_str(&format!("{now:.3},{:.3}
+", now - prev));
+            }
+        }
         if f64::from(hp) < last && last <= f64::from(max) {
             let tr = cx.st.store.entry("hero_drops".into()).or_default();
             tr.push_str(&format!("{now:.3},{}\n", last - f64::from(hp)));
@@ -268,6 +281,19 @@ fn swing_checks(sc: &mut Sc, key: &'static str, min_hero_hits: usize) {
                 .collect();
             let d = drops(cx);
             let _ = key;
+            let hitches: Vec<(f32, f32)> = cx
+                .st
+                .store
+                .get("hitches")
+                .map(|s| {
+                    s.lines()
+                        .filter_map(|l| {
+                            let (a, b) = l.split_once(',')?;
+                            Some((a.parse().ok()?, b.parse().ok()?))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             let mut matched = 0;
             let mut worst = 0.0f32;
             let mut unmatched = Vec::new();
@@ -283,7 +309,13 @@ fn swing_checks(sc: &mut Sc, key: &'static str, min_hero_hits: usize) {
                     let want = 0.6 * dur / speed.max(0.05);
                     let got = t - t0;
                     let err = (got - want).abs();
-                    if got >= 0.0 && err < 0.2 && best.is_none_or(|b| err < b) {
+                    // 0.2 s plus twice the longest frame between the clip's start and the hit.
+                    let hitch = hitches
+                        .iter()
+                        .filter(|(ft, _)| *ft >= *t0 && *ft <= *t + 0.1)
+                        .map(|(_, dt)| *dt)
+                        .fold(0.0f32, f32::max);
+                    if got >= 0.0 && err < 0.2 + 2.0 * hitch && best.is_none_or(|b| err < b) {
                         best = Some(err);
                     }
                 }

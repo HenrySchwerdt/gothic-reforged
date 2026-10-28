@@ -301,6 +301,13 @@ impl<W: WorldQuery> MagicApi for SimHost<'_, W> {
             .and_then(|i| i.spell.clone())
             .unwrap_or_default()
     }
+    fn item_spell(&self, template: &str) -> String {
+        self.sim
+            .items
+            .get(template)
+            .and_then(|i| i.spell.clone())
+            .unwrap_or_default()
+    }
     fn stack_amount(&self, e: EntityId, stack: i32) -> i32 {
         let Some(item) = self.stack_item(e, stack) else {
             return 0;

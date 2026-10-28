@@ -1,6 +1,6 @@
 //! Headless survey of the NPC appearance chain: every world NPC entity (and optionally only a
 //! document filter) is resolved through `appearance::resolve`; unresolved reasons and texture
-//! problems are counted. Usage: npc_survey [DATA_DIR] [--doc SUBSTR] [--verbose]
+//! problems are counted. Usage: npc_survey [DATA_DIR] [--doc SUBSTR] [--verbose] [--dump]
 use gothic_animation::{ActorLibrary, appearance};
 use gothic_formats::{
     props::records::{NpcEntity, NpcLook, TemplateCatalog},
@@ -15,11 +15,13 @@ fn main() -> anyhow::Result<()> {
     let mut dir = r"D:\SteamLibrary\steamapps\common\Gothic 3\Data".to_string();
     let mut doc_filter = None;
     let mut verbose = false;
+    let mut dump = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--doc" => doc_filter = args.next().map(|s| s.to_ascii_lowercase()),
             "--verbose" => verbose = true,
+            "--dump" => dump = true,
             _ => dir = a,
         }
     }
@@ -84,6 +86,35 @@ fn main() -> anyhow::Result<()> {
         // Items without any visual data are scripted objects, not characters.
         if look.visual.skeleton.is_none() && look.visual.parts.is_empty() {
             continue;
+        }
+        if dump {
+            let parts: Vec<String> = look
+                .visual
+                .parts
+                .iter()
+                .map(|p| format!("{}={}@{}", p.slot, p.file, p.switch))
+                .collect();
+            let items: Vec<String> = look
+                .inventory
+                .equipped
+                .iter()
+                .map(|i| {
+                    format!(
+                        "{}:{}:{}@{}",
+                        i.slot,
+                        i.template,
+                        i.visual.as_ref().and_then(|v| v.mesh.as_deref()).unwrap_or("-"),
+                        i.visual.as_ref().map_or(0, |v| v.mesh_switch)
+                    )
+                })
+                .collect();
+            println!(
+                "NPC {} [{}]: {} || {}",
+                look.name,
+                look.document,
+                parts.join(" | "),
+                items.join(" | ")
+            );
         }
         for m in appearance::missing_meshes(&library, look) {
             *missing.entry(m).or_default() += 1;

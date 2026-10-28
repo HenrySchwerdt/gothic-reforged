@@ -13,7 +13,7 @@ use crate::combat::{
 };
 use crate::config::SimConfig;
 use crate::crime::{
-    Enclave, EnclaveStatus, Memorized, Reaction, crime_for_reason, excuse_succeeds,
+    Enclave, EnclaveStatus, Memorized, Reaction, crime_for_reason,
     is_bothered_by_theft_of, memorize_player_crime, react_to_crime,
 };
 use crate::data::NpcRecord;
@@ -22,7 +22,7 @@ use crate::item::{ItemDb, ItemDef, Unmet, check_requirements};
 use crate::perception::{can_perceive, can_receive_perception, sees_within};
 use crate::rng::Rng;
 use crate::routine::{
-    GameClock, RoutineResolver, TaskContext, follow_distance, routine_time, select_routine_task,
+    GameClock, RoutineResolver, TaskContext, routine_time, select_routine_task,
 };
 use crate::types::*;
 use crate::vitals::{self, TickEnv};
@@ -260,6 +260,13 @@ pub struct Sim<W: WorldQuery> {
     pub clock: GameClock,
     pub world: W,
     pub items: ItemDb,
+    /// QA: an actor whose script state is driven directly (`qa_enter_state`).
+    pub qa_drive: Option<ActorId>,
+    /// The dialog data has (or has not) an entry for the actor the hero is about to talk to,
+    /// filled in by the core before the confirm key is handled.
+    pub dialog_info: Option<(ActorId, bool)>,
+    /// Member kind the next `join_party` stands for (mob / slavery infos), set by the core.
+    pub join_kind: Option<gothic_script::enums::PartyMemberType>,
     pub actors: Vec<Actor>,
     pub state: GameState,
     pub db: Option<Arc<GameDatabase>>,
@@ -279,6 +286,9 @@ pub struct Sim<W: WorldQuery> {
     /// What the hero's body does (`Entity::IsSprinting` etc. in the stamina tick, S:b0520); the
     /// host sets it from the movement mode machine.
     pub hero_move: vitals::Movement,
+    /// Did the hero change his position during the last step (`IsStanding`, S:9100)?
+    pub hero_moved: bool,
+    hero_pos_prev: Pos,
     pub npc_templates: BTreeMap<String, NpcRecord>,
     /// Script-port state (routine tasks, interact points, queued AI commands), see
     /// [`crate::script_host`].
@@ -327,6 +337,9 @@ impl<W: WorldQuery> Sim<W> {
             clock: GameClock::at(0, 8),
             world,
             items,
+            qa_drive: None,
+            dialog_info: None,
+            join_kind: None,
             actors: Vec::new(),
             state: GameState::new(),
             db: None,
@@ -341,6 +354,8 @@ impl<W: WorldQuery> Sim<W> {
             dialog_partner: None,
             gui_open: false,
             hero_move: vitals::Movement::Idle,
+            hero_moved: false,
+            hero_pos_prev: Pos::default(),
             npc_templates: BTreeMap::new(),
             script: crate::script_host::ScriptTables::default(),
             processing: None,
@@ -400,8 +415,16 @@ impl<W: WorldQuery> Sim<W> {
             self.script.enclave_id(&e);
         }
         self.world.teleport(id, at);
+        let dead = actor.ai_mode == AiMode::Dead;
         self.actors.push(actor);
         self.push(EventKind::Spawned { actor: id });
+        if dead {
+            // A character that comes into the world dead enters through `Rtn_Dead` (S:86a80).
+            let mut host = crate::script_host::SimHost::new(self);
+            let e = crate::script_host::entity_of(id);
+            host.self_entity = e;
+            gothic_script::routine::select::rtn_dead(&mut host, e);
+        }
         id
     }
 
@@ -413,6 +436,13 @@ impl<W: WorldQuery> Sim<W> {
         h.mana = h.mana_max();
         let id = self.spawn(h, at);
         self.hero = Some(id);
+        {
+            // The player entity enters through `Rtn_Player` (S:86ba0): `PS_Normal`.
+            let mut host = crate::script_host::SimHost::new(self);
+            let e = crate::script_host::entity_of(id);
+            host.self_entity = e;
+            gothic_script::routine::select::rtn_player(&mut host, e, 0);
+        }
         id
     }
 
@@ -511,6 +541,11 @@ impl<W: WorldQuery> Sim<W> {
 
     pub fn step(&mut self) {
         self.tick += 1;
+        if let Some(h) = self.hero {
+            let p = self.pos(h);
+            self.hero_moved = p.dist(self.hero_pos_prev) > 0.5;
+            self.hero_pos_prev = p;
+        }
         let now = self.now_ms();
         self.clock
             .advance(u64::from(self.cfg.tick_ms), self.cfg.game_speed);
@@ -1252,36 +1287,35 @@ impl<W: WorldQuery> Sim<W> {
         self.push(EventKind::Potion { actor: id, healed });
     }
 
+    /// A party member: the ported `ZS_FollowPlayer` / `ZS_WaitForPlayer` states drive it
+    /// (`OnFollowPlayer` stops it within the follow distance and sends it to wait when the
+    /// player swims, `ZS_FollowPlayer_Loop` walks it up to the player).
     fn follow_think(&mut self, i: usize, now: u64) {
+        use gothic_script::routine::state::State as S;
         let Some(h) = self.hero else { return };
         let id = self.actors[i].id;
         if self.actors[i].party_leader != Some(h) {
             self.actors[i].brain.task = Task::Routine;
             return;
         }
-        if self.actors[i].brain.task == Task::WaitForPlayer {
-            return;
+        let follow = |s: Option<S>| matches!(s, Some(S::FollowPlayer | S::FollowPlayerLoop));
+        let wait = |s: Option<S>| matches!(s, Some(S::WaitForPlayer | S::WaitForPlayerLoop));
+        let st = self.script.npc(id).task;
+        if !follow(st) && !wait(st) {
+            let want = if self.actors[i].brain.task == Task::WaitForPlayer {
+                S::WaitForPlayer
+            } else {
+                S::FollowPlayer
+            };
+            self.script_enter(id, want);
         }
-        if matches!(
-            self.actors[h.0 as usize].ani_state,
-            AniState::Swim | AniState::Dive
-        ) {
+        self.script_state_drive(i, now);
+        let st = self.script.npc(id).task;
+        if wait(st) {
             self.actors[i].brain.task = Task::WaitForPlayer;
-            return;
+        } else if follow(st) {
+            self.actors[i].brain.task = Task::FollowPlayer;
         }
-        let rank = self
-            .actors
-            .iter()
-            .filter(|a| a.party_leader == Some(h) && a.brain.task == Task::FollowPlayer)
-            .position(|a| a.id == id)
-            .map(|r| r as u32);
-        let fd = follow_distance(rank);
-        let d = self.dist(id, h);
-        if d > fd {
-            self.world
-                .move_towards(id, self.pos(h), (RUN_SPEED * self.dt()).min(d - fd));
-        }
-        let _ = now;
     }
 
     fn routine_think(&mut self, i: usize, now: u64) {
@@ -1337,6 +1371,14 @@ impl<W: WorldQuery> Sim<W> {
         }
         self.actors[i].brain.next_perception_ms = now + 100;
         let id = self.actors[i].id;
+        // A sleeper notices the world only through its own callback (`OnSleep`, `OnAnimalSleep`).
+        if matches!(
+            self.script.npc(id).task_cb,
+            gothic_script::routine::state::Callback::OnSleep
+                | gothic_script::routine::state::Callback::OnAnimalSleep
+        ) {
+            return;
+        }
         // A gate guard scans only when `OnGateGuard` (S:86c80) says so.
         if self.script.npc(id).local_cb == gothic_script::routine::state::Callback::OnGateGuard {
             let mut host = crate::script_host::SimHost::new(self);
@@ -1479,35 +1521,44 @@ impl<W: WorldQuery> Sim<W> {
         reacted
     }
 
-    /// `CallHelp` (S:332e0): friendly guards within 1000 of the thief join with `StopThief`.
+    /// `CallHelp` (S:332e0): the ported function lets friendly guards near the thief attack it
+    /// with `StopThief`; the simulation reports who answered.
     fn call_help(&mut self, caller: ActorId, thief: ActorId) {
-        let tp = self.pos(thief);
+        let before: Vec<bool> = self
+            .actors
+            .iter()
+            .map(|a| a.attack_reason == AttackReason::StopThief)
+            .collect();
+        {
+            let mut host = crate::script_host::SimHost::new(self);
+            let c = crate::script_host::entity_of(caller);
+            host.self_entity = c;
+            gothic_script::perception::call_help(
+                &mut host,
+                c,
+                crate::script_host::entity_of(thief),
+            );
+        }
         for j in 0..self.actors.len() {
             let gid = ActorId(j as u32);
-            if gid == caller || gid == thief {
-                continue;
+            if gid != caller
+                && !before[j]
+                && self.actors[j].attack_reason == AttackReason::StopThief
+            {
+                let now = self.now_ms();
+                self.reflect_script_task(j, now);
+                self.push(EventKind::HelpCalled {
+                    by: caller,
+                    helper: gid,
+                });
             }
-            let g = &self.actors[j];
-            if !g.is_guard() || !g.ai_controlled || g.is_down_or_dead() {
-                continue;
-            }
-            if self.pos(gid).dist(tp) > 1000.0 {
-                continue;
-            }
-            if self.attitude(gid, caller) != Attitude::Friendly {
-                continue;
-            }
-            self.push(EventKind::HelpCalled {
-                by: caller,
-                helper: gid,
-            });
-            self.assess_target(gid, thief, AttackReason::StopThief);
         }
     }
 
-    /// `_AI_Excuse` (S:3d130) on `npc` for the crime it remembers [CA 10.5]. Success calms it
-    /// down and forgets the personal memory [I]; failure makes it attack.
+    /// `_AI_Excuse` (S:3d130) on `npc` for the crime it remembers [CA 10.5]: the ported
+    /// `gothic_script::routine::dialog::excuse` rolls and makes the guard warn or attack.
     pub fn excuse(&mut self, npc: ActorId) -> bool {
+        use gothic_script::routine::dialog::{ExcuseOutcome, excuse};
         let Some(hero) = self.hero else { return false };
         let ni = npc.0 as usize;
         let crime = {
@@ -1519,13 +1570,18 @@ impl<W: WorldQuery> Sim<W> {
                 .map_or(Crime::None, |e| e.known_crime);
             a.last_player_crime.max(enc)
         };
-        let h = &self.actors[hero.0 as usize];
-        let ok = excuse_succeeds(
-            &mut self.rng,
-            crime,
-            h.theft(&self.cfg),
-            h.has_perk("perk_excuse"),
-        );
+        let out = {
+            let mut host = crate::script_host::SimHost::new(self);
+            let g = crate::script_host::entity_of(npc);
+            host.self_entity = g;
+            excuse(
+                &mut host,
+                g,
+                crate::script_host::entity_of(hero),
+                crate::script_host::s_crime(crime),
+            )
+        };
+        let ok = out == ExcuseOutcome::Believed;
         self.push(EventKind::Excuse { npc, success: ok });
         let now = self.now_ms();
         if ok {
@@ -1533,31 +1589,43 @@ impl<W: WorldQuery> Sim<W> {
             if self.actors[ni].brain.task == Task::Attack {
                 self.back_to_routine(ni, now);
             }
-        } else {
-            self.assess_target(npc, hero, AttackReason::Theft);
         }
         ok
     }
 
-    /// Pickpocketing [CA 8.2]. A caught thief gets `AssessTarget(Theft)` from the victim.
+    /// Pickpocketing [CA 8.2]: the ported `PickPocket` (S:3dd70) rolls; a caught thief gets
+    /// `AssessTarget(Theft)` from the victim inside it.
     pub fn pickpocket(&mut self, target: ActorId) -> PickpocketResult {
+        use gothic_script::routine::dialog::{PickpocketOutcome, pick_pocket};
         let Some(hero) = self.hero else {
             return PickpocketResult::Impossible;
         };
-        let res = economy::pickpocket(
-            &self.cfg,
-            &mut self.rng,
-            &self.actors[hero.0 as usize],
-            &self.actors[target.0 as usize],
-        );
+        let out = {
+            let mut host = crate::script_host::SimHost::new(self);
+            let v = crate::script_host::entity_of(target);
+            host.self_entity = v;
+            pick_pocket(&mut host, v, crate::script_host::entity_of(hero))
+        };
+        let res = match out {
+            PickpocketOutcome::TooHard => PickpocketResult::TooHard,
+            PickpocketOutcome::Impossible => PickpocketResult::Impossible,
+            PickpocketOutcome::Caught => PickpocketResult::Caught,
+            PickpocketOutcome::Success { .. } => PickpocketResult::Success {
+                xp: if self.cfg.extended_content {
+                    (self.actors[target.0 as usize].level_max(&self.cfg).min(50) / 7) as u64
+                } else {
+                    0
+                },
+            },
+        };
         self.push(EventKind::Pickpocket {
             target,
             result: res,
         });
-        match res {
-            PickpocketResult::Caught => self.assess_target(target, hero, AttackReason::Theft),
-            PickpocketResult::Success { xp } if xp > 0 => self.give_xp(xp),
-            _ => {}
+        if let PickpocketResult::Success { xp } = res
+            && xp > 0
+        {
+            self.give_xp(xp);
         }
         res
     }
@@ -1644,35 +1712,44 @@ impl<W: WorldQuery> Sim<W> {
         Ok(price)
     }
 
-    /// `CanJoinPlayerParty` (S:a80a0): at most one active companion [CA 11.4].
+    /// `CanJoinPlayerParty` (S:a80a0) then `JoinPlayerParty` (S:a8480): at most one active
+    /// companion [CA 11.4]; waiting ones are dismissed to make room.
     pub fn join_party(&mut self, npc: ActorId) -> bool {
+        use gothic_script::enums::PartyMemberType as K;
+        use gothic_script::routine::party::{
+            can_join_player_party, join_player_mob, join_player_party, join_player_slavery,
+        };
+        let kind = self.join_kind.take().unwrap_or(K::Party);
         let Some(h) = self.hero else { return false };
-        let summoned = self.actors[npc.0 as usize].summoned;
-        if !summoned {
-            let blocked = self.actors.iter().any(|a| {
-                a.id != npc
-                    && a.party_leader == Some(h)
-                    && !a.summoned
-                    && a.brain.task == Task::FollowPlayer
-            });
-            if blocked {
-                return false;
+        let members_before: Vec<ActorId> = self
+            .actors
+            .iter()
+            .filter(|a| a.party_leader == Some(h))
+            .map(|a| a.id)
+            .collect();
+        let ne = crate::script_host::entity_of(npc);
+        let ok = {
+            let mut host = crate::script_host::SimHost::new(self);
+            host.self_entity = ne;
+            let ok = can_join_player_party(&mut host, ne);
+            if ok {
+                match kind {
+                    K::Mob => join_player_mob(&mut host, ne),
+                    K::Slave => join_player_slavery(&mut host, ne),
+                    _ => join_player_party(&mut host, ne),
+                };
             }
-            // Waiting companions are dismissed.
-            let waiting: Vec<ActorId> = self
-                .actors
-                .iter()
-                .filter(|a| {
-                    a.party_leader == Some(h) && !a.summoned && a.brain.task == Task::WaitForPlayer
-                })
-                .map(|a| a.id)
-                .collect();
-            for w in waiting {
-                self.dismiss_party(w);
+            ok
+        };
+        for m in members_before {
+            if m != npc && self.actors[m.0 as usize].party_leader != Some(h) {
+                self.left_party(m);
             }
         }
+        if !ok {
+            return false;
+        }
         let a = &mut self.actors[npc.0 as usize];
-        a.party_leader = Some(h);
         a.brain.task = Task::FollowPlayer;
         let name = a.name.to_ascii_lowercase();
         self.state.party.insert(name);
@@ -1680,16 +1757,38 @@ impl<W: WorldQuery> Sim<W> {
         true
     }
 
-    pub fn dismiss_party(&mut self, npc: ActorId) {
+    fn left_party(&mut self, npc: ActorId) {
         let a = &mut self.actors[npc.0 as usize];
-        a.party_leader = None;
         a.brain.task = Task::Routine;
         let name = a.name.to_ascii_lowercase();
         self.state.party.remove(&name);
         self.push(EventKind::PartyLeft { actor: npc });
     }
 
+    /// `DismissPlayerParty` (S:a8690), or `DismissPlayerMob` (S:a8b10) for a mob member.
+    pub fn dismiss_party(&mut self, npc: ActorId) {
+        let mob = self.join_kind.take() == Some(gothic_script::enums::PartyMemberType::Mob);
+        {
+            let mut host = crate::script_host::SimHost::new(self);
+            let ne = crate::script_host::entity_of(npc);
+            host.self_entity = ne;
+            if mob {
+                gothic_script::routine::party::dismiss_player_mob(&mut host, ne);
+            } else {
+                gothic_script::routine::party::dismiss_player_party(&mut host, ne);
+            }
+        }
+        self.left_party(npc);
+    }
+
+    /// `WaitPlayerParty` (S:a8f40).
     pub fn wait_party(&mut self, npc: ActorId) {
+        {
+            let mut host = crate::script_host::SimHost::new(self);
+            let ne = crate::script_host::entity_of(npc);
+            host.self_entity = ne;
+            gothic_script::routine::party::wait_player_party(&mut host, ne);
+        }
         self.actors[npc.0 as usize].brain.task = Task::WaitForPlayer;
     }
 

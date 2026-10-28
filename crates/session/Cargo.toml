@@ -1,0 +1,16 @@
+[package]
+name = "gothic-session"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "New-game content shared by the desktop and Quest hosts: world objects, loot, recipes, routine points and sectors as core commands"
+
+[dependencies]
+gothic-sim = { path = "../sim" }
+gothic-runtime = { path = "../runtime" }
+gothic-gameplay = { path = "../gameplay" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

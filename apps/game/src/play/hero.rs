@@ -802,9 +802,36 @@ fn focus(
             push(Target::Object(i), FocusClass::Interact, p, 40.0);
         }
     }
+    // `FocusLookAtMode` (set by `PS_Melee_Loop`): 0 camera, 1 the hero's own heading, 2 the focus
+    // direction vector that `gCFocus_PS::OnAction` (Game:0x1006e8e0) accumulates from the movement
+    // keys. `GetAngles` (Game:0x1006c530) measures the candidates against it.
+    let look_at = core.0.sim.script.player.focus_modes.1;
+    if look_at == gothic_gameplay::focus::LOOK_AT_KEYS && !frame.blocked {
+        let right = (cam.rotation * Vec3::X)
+            .xz()
+            .normalize_or_zero();
+        state.focus_dir = gothic_gameplay::focus::accumulate_key_direction(
+            state.focus_dir,
+            frame.msg(SessionKey::Forward).is_some(),
+            frame.msg(SessionKey::Backward).is_some(),
+            frame.msg(SessionKey::StrafeLeft).is_some(),
+            frame.msg(SessionKey::StrafeRight).is_some(),
+            fwd.to_array(),
+            right.to_array(),
+        );
+    }
+    let hero_yaw = {
+        let f = gothic_coords::forward3(player.yaw);
+        f.x.atan2(f.z)
+    };
     let viewer = FocusViewer {
         pos: [hero.x, hero.y, hero.z],
-        yaw: fwd.x.atan2(fwd.y),
+        yaw: gothic_gameplay::focus::view_yaw(
+            look_at,
+            fwd.x.atan2(fwd.y),
+            hero_yaw,
+            state.focus_dir,
+        ),
         reach: FOCUS_REACH,
     };
     // `gCFocus_PS::OnAction` (Game:0x1006e8e0): the lock key (message 0x27) toggles `FocusLocked`.
