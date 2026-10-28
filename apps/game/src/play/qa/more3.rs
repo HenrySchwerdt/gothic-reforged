@@ -7,6 +7,7 @@ use crate::walk::play::interact::Interaction;
 use crate::walk::play::objects::WorldObjects;
 use crate::walk::play::{Mode, Target};
 use bevy::prelude::*;
+use gothic_runtime::{Command, CoreCommand};
 use gothic_sim::script::enums::UseType;
 use std::sync::Arc;
 
@@ -370,7 +371,8 @@ pub fn doors() -> Sc {
 pub fn sleep_bed() -> Sc {
     let mut sc = Sc::new(240.0);
     grab(&mut sc);
-    let goal: Goal = Arc::new(|cx| nearest_object(cx, |o| matches!(o.def.script_use(), UseType::Bed)));
+    let goal: Goal =
+        Arc::new(|cx| nearest_object(cx, |o| matches!(o.def.script_use(), UseType::Bed)));
     approach(
         &mut sc,
         "a bed",
@@ -382,7 +384,8 @@ pub fn sleep_bed() -> Sc {
     sc.act("setup: hurt, tired, evening (22:00)", |cx| {
         let hero = cx.core().0.hero;
         let mut core = cx.core_mut();
-        core.0.sim.clock.game_ms = core.0.sim.clock.game_ms / 86_400_000 * 86_400_000 + 22 * 3_600_000;
+        core.0.sim.clock.game_ms =
+            core.0.sim.clock.game_ms / 86_400_000 * 86_400_000 + 22 * 3_600_000;
         let a = core.0.sim.actor_mut(hero);
         a.hp = 10;
         a.stamina = 5;
@@ -390,24 +393,30 @@ pub fn sleep_bed() -> Sc {
     sc.act("use key (lie down)", |cx| cx.use_key());
     sc.wait(8.0);
     sc.shot("in_bed");
-    sc.check("the bed slept until the wake hour and restored the hero", |cx| {
-        let h = cx.core().0.sim.clock.hour_of_day();
-        let hero = cx.core().0.hero;
-        let a = cx.core().0.sim.actor(hero);
-        let max = a.base.hp_max;
-        let note = format!("hour {h:.2}, hp {}/{max}, stamina {}", a.hp, a.stamina);
-        expect((h - 9.0).abs() < 0.6 && a.hp >= max, note.clone(), note)
-    });
+    sc.check(
+        "the bed slept until the wake hour and restored the hero",
+        |cx| {
+            let h = cx.core().0.sim.clock.hour_of_day();
+            let hero = cx.core().0.hero;
+            let a = cx.core().0.sim.actor(hero);
+            let max = a.base.hp_max;
+            let note = format!("hour {h:.2}, hp {}/{max}, stamina {}", a.hp, a.stamina);
+            expect((h - 9.0).abs() < 0.6 && a.hp >= max, note.clone(), note)
+        },
+    );
     sc.act("Command::Sleep { hour: Some(20) }", |cx| {
-        cx.world
-            .write_message(gothic_runtime::CoreCommand(gothic_runtime::Command::Sleep {
-                hour: Some(20),
-            }));
+        cx.world.write_message(gothic_runtime::CoreCommand(
+            gothic_runtime::Command::Sleep { hour: Some(20) },
+        ));
     });
     sc.wait(1.0);
     sc.check("the dialog sleep advanced to 20:00", |cx| {
         let h = cx.core().0.sim.clock.hour_of_day();
-        expect((h - 20.0).abs() < 0.3, format!("hour {h:.2}"), format!("hour {h:.2}"))
+        expect(
+            (h - 20.0).abs() < 0.3,
+            format!("hour {h:.2}"),
+            format!("hour {h:.2}"),
+        )
     });
     sc
 }
@@ -416,8 +425,8 @@ pub fn sleep_bed() -> Sc {
 /// another turns its head node towards it (the animator applies the rotation after the clips)
 /// and relaxes when the target is cleared.
 pub fn look_at() -> Sc {
-    use crate::walk::play::look_at::LookAt;
     use crate::walk::play::NpcActor;
+    use crate::walk::play::look_at::LookAt;
     use gothic_animation::Animator;
     let mut sc = Sc::new(90.0);
     grab(&mut sc);
@@ -428,7 +437,14 @@ pub fn look_at() -> Sc {
             .query_filtered::<(&NpcActor, &GlobalTransform), With<Animator>>();
         let all: Vec<_> = q
             .iter(cx.world)
-            .map(|(n, g)| (n.0, g.translation(), g.forward().as_vec3(), g.right().as_vec3()))
+            .map(|(n, g)| {
+                (
+                    n.0,
+                    g.translation(),
+                    g.forward().as_vec3(),
+                    g.right().as_vec3(),
+                )
+            })
             .collect();
         let hero = cx.core().0.hero;
         let alive = |cx: &Cx, id| cx.core().0.sim.actor(id).is_alive();
@@ -470,7 +486,9 @@ pub fn look_at() -> Sc {
                 .find(|(n, ..)| n.0.0 == who)
                 .map(|(_, a, l)| {
                     (
-                        a.look.first().map_or(0.0, |(_, r)| r.angle_between(Quat::IDENTITY)),
+                        a.look
+                            .first()
+                            .map_or(0.0, |(_, r)| r.angle_between(Quat::IDENTITY)),
                         l.following.map(|t| t.0),
                     )
                 });
@@ -503,5 +521,74 @@ pub fn look_at() -> Sc {
         let note = format!("look rotations left {left:?}");
         expect(left == Some(0), note.clone(), note)
     });
+    sc
+}
+
+/// Potions are consumed through `gCInventory_PS::ConsumeItems` and the player memory
+/// (`gCPlayerMemory_PS::Consume`): a health potion heals, a mana potion refills mana, an
+/// `HPMax` potion raises the maximum for good (`gameplay::stats`).
+pub fn potion() -> Sc {
+    let mut sc = Sc::new(60.0);
+    grab(&mut sc);
+    sc.wait(2.0);
+    sc.act("setup: hurt, no mana, the three potions", |cx| {
+        let hero = cx.core().0.hero;
+        {
+            let mut core = cx.core_mut();
+            let a = core.0.sim.actor_mut(hero);
+            a.hp = 60;
+            a.mana = 5;
+        }
+        let a = cx.core().0.sim.actor(hero);
+        let (hp, mp, max) = (a.hp, a.mana, a.base.hp_max);
+        cx.st.n.insert("hp0".into(), f64::from(hp));
+        cx.st.n.insert("mp0".into(), f64::from(mp));
+        cx.st.n.insert("max0".into(), f64::from(max));
+        let n0 = ["It_Potion_Health", "It_Potion_Mana", "It_Potion_HPMax"]
+            .iter()
+            .map(|t| cx.core().0.sim.actor(hero).inventory.count(t))
+            .sum::<u32>();
+        cx.st.n.insert("n0".into(), f64::from(n0 + 3));
+        for t in ["It_Potion_Health", "It_Potion_Mana", "It_Potion_HPMax"] {
+            cx.world.write_message(CoreCommand(Command::GiveHero {
+                template: t.into(),
+                amount: 1,
+            }));
+        }
+    });
+    sc.wait(0.5);
+    sc.act("drink them", |cx| {
+        for t in ["It_Potion_Health", "It_Potion_Mana", "It_Potion_HPMax"] {
+            cx.world
+                .write_message(CoreCommand(Command::UseItem { template: t.into() }));
+        }
+    });
+    sc.wait(2.0);
+    sc.check(
+        "health heals, mana refills, HPMax raises the maximum, three potions used up",
+        |cx| {
+            let hero = cx.core().0.hero;
+            let a = cx.core().0.sim.actor(hero);
+            let left = a.inventory.count("It_Potion_Health")
+                + a.inventory.count("It_Potion_Mana")
+                + a.inventory.count("It_Potion_HPMax");
+            // the potions heal by a share of the maximum (`ApplyPerm` operation 2 of a pool: percent)
+            let used = cx.st.n["n0"] as u32 - left;
+            let (hp0, mp0, max0) = (
+                cx.st.n["hp0"] as i32,
+                cx.st.n["mp0"] as i32,
+                cx.st.n["max0"] as i32,
+            );
+            let note = format!(
+                "hp {hp0} -> {}, mana {mp0} -> {}, max hp {max0} -> {}, potions used {used}",
+                a.hp, a.mana, a.base.hp_max
+            );
+            expect(
+                a.hp > hp0 && a.mana > mp0 && a.base.hp_max > max0 && used == 3,
+                note.clone(),
+                note,
+            )
+        },
+    );
     sc
 }

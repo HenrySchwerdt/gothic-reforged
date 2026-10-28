@@ -105,6 +105,31 @@ Evidence is code or document, not a guess. "Needs" names the host feature that w
   `spell_zoo` after the merge: effects of Poison, Sleep, IceBomb, SummonSkeleton are the right ones; DestroyEvil and DuskToDawn
   fizzle (`eff_magic_fizzle_01`): their casting conditions (evil target, darkness) are not met in the scenario.
 
+## Callers of the inventory functions in the original (Game dump)
+
+Callers found with `index.json` (static call sites only):
+
+| Function | Original callers | Consequence for the port |
+| --- | --- | --- |
+| `DropSlot` 0x100b4530, `DropItemsFromSlot` 0x100b4630, `SplitStack`, `MergeStacks`, `SetStackAmount`, `TransferStackTo`, `TransferAllTo`, `PerformTransaction`, `SetStackHotKey`, `FindStackIndexByHotKey`, `CanEquip` | none (script natives: `PSInventory.*` called by the scripts) | reached through the script host (`InventoryApi`), not from a screen. `drop_slot` now runs through `Inventory::drop_slot` (the hand's stack leaves, the item is a loose item at the feet): hit by the `Down` script flow (spell_zoo, 9 hits) |
+| `TransferItemsTo` 0x100b6e20 | loot list `gCHUDListCtrlInvLootStacks` (vfn_72, `FUN_100a0bc0`), `gCInfo_PS::Give` (dialog `Give`), the transaction transfer | loot and `Give` (dialog) already use `transfer_items_to`; `Give` is a dialog script op |
+| `LearnSkill` / `LearnSpell` | `gCInfo_PS::OnEndInfo` (the info ends: teaching is an info's script op) | not a screen: the dialog engine (`gameplay::dialog`) would call it; our teach path uses `economy::learn_attribute` for attributes only |
+| `LearnStack` | `LearnSkill`, `LearnSpell`, `gCSession::Teach` (console command `Teach`) | console only besides the two above |
+| `CanLearnSkill` | `gCInfo_PS::Execute` (the info's condition for teaching) | dialog condition |
+
+So the remaining inventory functions have no inventory / trade / teach screen caller in the original: the screens call
+`TransferItemsTo`, the trade list `FUN_100a1fa0` and `GetTransactionAmount`; everything else is script or dialog driven.
+
+## EMotionFX in the dump (mix mode)
+
+EMotionFX is linked statically into Engine.dll: `MotionLayerSystem` (7 functions), `MotionSystem` (2), `SkeletalMotionInstance` (6),
+`MotionInstance` (1) are present, mostly as unnamed `vfn_*` / `FUN_102e..` functions. Found: `MotionLayerSystem` add-instance
+0x102ed2b0 inserts the instance into a list ordered by its priority field (+0x40) and clamps its target weight, the ramp is
+`(target - current) / fade` when the fade is above zero (this is what `blend::insertion_index` and `Instance::new` already do).
+The per-frame layer pass that reads the wrapper's mix flag (+0x4c) was not located among the anonymous functions, so the
+mix-mode semantics (additive on the layers below vs. replacement of the clip's nodes) stay unported; the host's upper-body mask
+remains an [I] rule.
+
 ## Open (feature work, not dead)
 
 * Inventory bridge: `Equipment` (sim) and the stack list (`Inventory`) are two truths. 95 functions of
